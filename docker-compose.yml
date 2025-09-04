@@ -1,0 +1,99 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+services:
+  mysql:
+    image: mysql:9.4
+    container_name: wegent-mysql
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: task_manager
+      MYSQL_USER: task_user
+      MYSQL_PASSWORD: task_password
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p123456"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  backend:
+    # build:
+      # dockerfile: docker/backend/Dockerfile
+    image: ghcr.io/wecode-ai/wegent-backend:1.0.0
+    
+    container_name: wegent-backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: mysql+pymysql://task_user:task_password@mysql:3306/task_manager
+      EXECUTOR_DELETE_TASK_URL: http://executor_manager:8001/executor-manager/executor/delete
+      SECRET_KEY: your-secret-key-here
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+    depends_on:
+      mysql:
+        condition: service_healthy
+    networks:
+      - wegent-network
+
+  frontend:
+    # build:
+    #   dockerfile: docker/frontend/Dockerfile
+    image: ghcr.io/wecode-ai/wegent-web:1.0.0
+    
+    container_name: wegent-frontend
+    restart: always
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    working_dir: /app
+    command: npm start
+    depends_on:
+      - backend
+    networks:
+      - wegent-network
+  executor_manager:
+    image: ghcr.io/wecode-ai/wegent-executor-manager:1.0.0
+    
+    container_name: wegent-executor-manager
+    ports:
+      - "8001:8001"
+    environment:
+      - TASK_API_DOMAIN=http://backend:8000
+      - MAX_CONCURRENT_TASKS=5
+      - PORT=8001
+      - CALLBACK_HOST=http://executor_manager:8001
+      - NETWORK=wegent-network
+      - EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:1.0.0
+      - EXECUTOR_PORT_RANGE_MIN=10000
+      - EXECUTOR_PORT_RANGE_MAX=10100
+      - EXECUTOR_WORKSPCE=${HOME}/wecode-bot
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      - backend
+    networks:
+      - wegent-network
+
+volumes:
+  mysql_data:
+    driver: local
+
+networks:
+  wegent-network:
+    driver: bridge
+    external: false
+    name: wegent-network

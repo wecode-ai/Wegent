@@ -1,0 +1,86 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Weibo, Inc.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0d1117;
+  --foreground: #f0f6fc;
+}
+
+body {
+  color: rgb(var(--foreground));
+  background: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--background))
+    )
+    rgb(var(--background));
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Remove default blue outline from Headless UI */
+[data-headlessui-state~="open"] {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+button:focus,
+button:focus,
+button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Custom toast styles */
+.Toastify__toast {
+  background-color: #161b22;
+  color: #f0f6fc;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  font-size: 14px;
+  min-height: 40px;
+  padding: 8px 12px;
+}
+
+.Toastify__toast--success {
+  background-color: #161b22;
+  color: #56d364;
+  border-color: #30363d;
+}
+
+.Toastify__toast--error {
+  background-color: #161b22;
+  color: #f85149;
+  border-color: #30363d;
+}
+
+.Toastify__toast-body {
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+
+.Toastify__close-button {
+  color: #f0f6fc;
+  opacity: 0.7;
+}
+
+.Toastify__close-button:hover {
+  opacity: 1;
+}
+
+.Toastify__progress-bar {
+  display: none;
+}

@@ -1,0 +1,10 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+requests==2.31.0
+pymysql==1.1.0
+fastapi==0.109.1
+uvicorn==0.25.0
+pydantic==2.10.6
+claude_code_sdk==0.0.17
