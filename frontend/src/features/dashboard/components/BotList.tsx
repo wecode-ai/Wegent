@@ -201,7 +201,7 @@ export default function BotList() {
         maxWidth="3xl"
       >
         <div className="flex flex-col md:flex-row gap-6 items-stretch min-h-[400px]">
-          {/* 左侧表单 */}
+          {/* Left form */}
           <div className="basis-[35%] min-w-0 space-y-4 h-full flex flex-col">
             <div>
               <label className="block text-sm font-medium text-white mb-2">
@@ -328,7 +328,7 @@ export default function BotList() {
               </div>
             )}
           </div>
-          {/* 右侧 Prompt */}
+          {/* Right Prompt */}
           <div className="basis-[65%] min-w-0 flex flex-col h-full">
             <label className="block text-sm font-medium text-white mb-2">
               Prompt

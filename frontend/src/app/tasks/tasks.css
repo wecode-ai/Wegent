@@ -54,7 +54,7 @@
   scrollbar-width: thin; /* Firefox */
   scrollbar-color: #30363d #21262d; /* Firefox */
 }
-/* 修复 markdown code/pre 溢出问题 */
+/* Fix markdown code/pre overflow issue */
 .markdown-body pre, .markdown-body code {
   max-width: 100%;
   white-space: pre-wrap;

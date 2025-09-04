@@ -15,5 +15,5 @@ export const handlers = [
   ...teamHandlers,
   ...botHandlers,
   ...githubHandlers,
-  // 任务列表
+  // Task list
 ]

@@ -25,11 +25,11 @@ export default function MessagesArea() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // 拉取任务详情
+  // Fetch task details
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
 
-    // 增加 isSilent 参数，定时刷新时不显示 loading
+    // Add isSilent parameter, do not show loading during timed refresh
     const fetchDetail = (isSilent: boolean = false) => {
       if (!selectedTask?.id) {
         setTaskDetail(null)
@@ -50,13 +50,13 @@ export default function MessagesArea() {
         })
     }
 
-    // 首次加载/切换任务时显示 loading
+    // Show loading when first loading/switching tasks
     fetchDetail(false);
 
     if (selectedTask?.id) {
       intervalId = setInterval(() => {
-        fetchDetail(true); // 定时刷新时静默更新
-      }, 5000); // 30秒自动刷新
+        fetchDetail(true); // Silent update during timed refresh
+      }, 5000); // Auto-refresh every 30 seconds
     }
 
     return () => {
@@ -64,12 +64,12 @@ export default function MessagesArea() {
     }
   }, [selectedTask?.id])
 
-  // 由 taskDetail 计算 messages
+  // Calculate messages from taskDetail
   function generateTaskMessages(detail: TaskDetail | null): Message[] {
     if (!detail) return [];
     const messages: Message[] = [];
   
-    // 主任务 user prompt
+    // Main task user prompt
     if (detail.prompt) {
       messages.push({
         type: 'user',
@@ -78,7 +78,7 @@ export default function MessagesArea() {
       });
     }
   
-    // 存在子任务时，按 useTaskActionData 的逻辑合成
+    // When subtasks exist, synthesize according to useTaskActionData logic
     if (Array.isArray(detail.subtasks) && detail.subtasks.length > 0) {
       detail.subtasks.forEach((sub: TaskDetailSubtask) => {
         let promptContent = sub.prompt || '';
@@ -90,7 +90,7 @@ export default function MessagesArea() {
           truncated = true;
         }
   
-        // 生成 aiContent
+        // Generate aiContent
         let aiContent = '';
         const result = sub.result;
         if (result) {
@@ -109,7 +109,7 @@ export default function MessagesArea() {
           aiContent = `__PROGRESS_BAR__:${sub.status}:${sub.progress}`;
         }
   
-        // 合并 prompt 和 aiContent，截断时用特殊格式
+        // Merge prompt and aiContent, use special format when truncated
         let mergedContent = '';
         if (truncated) {
           mergedContent = `__PROMPT_TRUNCATED__:${shortPrompt}::${promptContent}\${$$}$${aiContent}`;
@@ -126,7 +126,7 @@ export default function MessagesArea() {
       });
       return messages;
     } else {
-      // 无子任务时，主任务 ai 消息（合并 bot_prompt）
+      // When there are no subtasks, main task ai message (merge bot_prompt)
       let aiContent = '';
       const timestamp = new Date(detail.updated_at).getTime();
       const result = detail.result;
@@ -159,7 +159,7 @@ export default function MessagesArea() {
     }
   }
 
-  // 展示 loading 虚拟消息
+  // Display loading virtual messages
   const displayMessages = isLoading
     ? [
         {
@@ -194,7 +194,7 @@ export default function MessagesArea() {
                   ? 'bg-[#161b22] border border-[#30363d] text-white'
                   : 'bg-[#161b22] border border-[#30363d] text-gray-300'
                 }`}>
-                {/* Bot 名称和图标，仅 ai 消息展示，且在时间之前 */}
+                {/* Bot name and icon, only displayed for ai messages, and before the timestamp */}
                 {msg.type === 'ai' && (
                   <div className="flex items-center mb-1 text-xs opacity-80">
                     <RiRobot2Line className="w-5 h-5 mr-1" />
@@ -211,21 +211,21 @@ export default function MessagesArea() {
                   </div>
                 )}
                 {/* Multi-line content support, split by ${$$}$ and render each line intelligently */}
-                {/* Bot消息区分Prompt和Result，Result用Markdown渲染 */}
+                {/* Bot messages distinguish between Prompt and Result, Result is rendered with Markdown */}
                 {msg.type === 'ai' && msg.content?.includes('${$$}$') ? (() => {
                   const [prompt, result] = msg.content.split('${$$}$');
                   return (
                     <>
-                      {/* Prompt部分，普通文本 */}
+                      {/* Prompt part, plain text */}
                       {prompt && (
                         <div className="text-sm whitespace-pre-line mb-2">
                           {prompt}
                         </div>
                       )}
-                      {/* Result部分，markdown渲染 */}
+                      {/* Result part, markdown rendering */}
                       {result && (
                         (() => {
-                          // 优先处理进度条
+                          // Prioritize progress bar handling
                           const progressMatch = result.match(/__PROGRESS_BAR__:(.*?):(\d+)/);
                           if (progressMatch) {
                             const status = progressMatch[1];
@@ -244,7 +244,7 @@ export default function MessagesArea() {
                               </div>
                             );
                           }
-                          // 不是进度条，正常markdown渲染
+                          // Not a progress bar, normal markdown rendering
                           return (
                             <div className="text-sm markdown-body break-all">
                                 <ReactMarkdown>{result}</ReactMarkdown>
@@ -255,9 +255,9 @@ export default function MessagesArea() {
                     </>
                   );
                 })() : (
-                  // 非Bot消息或无分割，保持原有多行处理
+                  // Non-Bot messages or no separator, keep original multi-line processing
                   (msg.content?.split('\n') || []).map((line, idx) => {
-                    // __PROMPT_TRUNCATED__ 处理
+                    // __PROMPT_TRUNCATED__ handling
                     if (line.startsWith('__PROMPT_TRUNCATED__:')) {
                       const match = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/);
                       if (match) {
@@ -274,7 +274,7 @@ export default function MessagesArea() {
                         );
                       }
                     }
-                    // __PROGRESS_BAR__ 处理
+                    // __PROGRESS_BAR__ handling
                     const progressMatch = line.match(/__PROGRESS_BAR__:(.*?):(\d+)/);
                     if (progressMatch) {
                       const status = progressMatch[1];
@@ -293,7 +293,7 @@ export default function MessagesArea() {
                         </div>
                       );
                     }
-                    // 普通文本
+                    // Plain text
                     return (
                       <div key={idx} className="text-sm markdown-body break-all">
                             {line}

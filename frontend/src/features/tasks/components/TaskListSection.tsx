@@ -29,7 +29,7 @@ export default function TaskListSection({
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
 
-  // 选中任务
+  // Select task
   const handleTaskClick = (task: Task) => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search)
@@ -38,7 +38,7 @@ export default function TaskListSection({
     }
   }
 
-  // 复制任务ID
+  // Copy task ID
   const handleCopyTaskId = async (taskId: number) => {
     const textToCopy = taskId.toString()
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
@@ -64,7 +64,7 @@ export default function TaskListSection({
     }
   }
 
-  // 删除任务
+  // Delete task
   const handleDeleteTask = async (taskId: number) => {
     setLoading(true)
     try {

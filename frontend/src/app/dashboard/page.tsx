@@ -30,7 +30,7 @@ function DashboardContent() {
 
   const handleTabChange = (idx: number) => {
     setTabIndex(idx)
-    // 同步URL参数
+    // Sync URL parameters
     const tabName = tabIndexToName[idx] || 'integrations'
     router.replace(`?tab=${tabName}`)
   }

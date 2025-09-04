@@ -68,7 +68,7 @@ export default function GitHubIntegration() {
   }
 
   const handleSave = async () => {
-    if (!user) return; // 修复类型问题
+    if (!user) return; // Fix type issue
     const domainToSave = editType === 'github' ? 'github.com' : editDomain.trim()
     const tokenToSave = editToken.trim()
     if (!domainToSave || !tokenToSave) return
@@ -92,7 +92,7 @@ export default function GitHubIntegration() {
   }
 
   const handleDelete = async (domain: string) => {
-    if (!user) return; // 修复类型问题
+    if (!user) return; // Fix type issue
     setTokenSaving(true)
     setError('')
     try {

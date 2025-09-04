@@ -26,21 +26,21 @@ export default function TasksPage() {
         <Suspense>
           <TaskParamSync />
         </Suspense>
-          {/* 新手引导弹窗 */}
+          {/* Beginner guide modal */}
           <BeginnerGuideModal
             teams={teams}
             teamLoading={isTeamsLoading}
           />
           <div className="flex h-screen bg-[#0d1117] text-white">
-            {/* 左侧边栏 */}
+            {/* Left sidebar */}
             <TaskSidebar />
-            {/* 主内容区 */}
+            {/* Main content area */}
             <div className="flex-1 flex flex-col">
-              {/* 顶部导航 */}
+              {/* Top navigation */}
               <TopNavigation activePage="tasks" showLogo={false}>
                 <UserMenu position="right-10" />
               </TopNavigation>
-              {/* 聊天区 */}
+              {/* Chat area */}
               <ChatArea teams={teams} isTeamsLoading={isTeamsLoading} />
             </div>
           </div>

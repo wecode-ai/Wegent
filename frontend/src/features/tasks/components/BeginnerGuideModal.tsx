@@ -27,17 +27,17 @@ export default function BeginnerGuideModal({
   const [isOpen, setIsOpen] = useState(false)
   const { user, isLoading: userLoading } = useUser()
 
-  // 判断是否需要设置 token
+  // Determine if token needs to be set
   const needSetToken = !user || !user.git_info || !user.git_info.some(
     (info) => !!info.git_token
   )
 
-  // 根据 teams 长度判断是否需要设置团队
+  // Determine if team needs to be set based on teams length
   const needSetTeam = !teams || teams.length === 0;
 
   // Decide whether to show modal based on needSetToken and needSetTeam
   useEffect(() => {
-    // 只有在 userLoading 和 teamLoading 都为 false 时才处理 isOpen
+    // Only process isOpen when both userLoading and teamLoading are false
     if (userLoading || teamLoading) {
       return
     }
@@ -74,7 +74,7 @@ export default function BeginnerGuideModal({
                   router.push(paths.dashboard.bot.getHref())
                 }}
               >
-                GitToken
+                Set Git Token
               </Button>
             )}
             {needSetTeam && (
@@ -86,7 +86,7 @@ export default function BeginnerGuideModal({
                   router.push('/dashboard?tab=team')
                 }}
               >
-                CreateTeam
+                Create Team
               </Button>
             )}
           </div>
