@@ -63,7 +63,7 @@ graph LR
 
 - **👻 Ghost**: The "soul" of an agent - defines personality, capabilities, and behavior patterns
 - **🧠 Model**: AI model configuration - defines environment variables and model parameters
-- **🐚 Shell**: The "environment" - runtime configuration that references a Model
+- **🐚 Shell**: The "executable" - A program capable of launching an agent
 - **🤖 Bot**: A complete agent instance combining Ghost + Shell + Model
 - **👥 Team**: Composed of multiple Bots + Collaboration Model, defining how agents work together
 - **🤝 Collaboration**: Defines the interaction patterns between Bots in a Team (like Workflow)
@@ -99,7 +99,15 @@ graph LR
 3. **Access the web interface**
    - Open http://localhost:3000 in your browser
 
-### [Create Your First Agent Team](docs/backend/example.yaml)
+4. **Create Your First Agent Team**
+```
+...todo...
+```
+
+5. **Run task**
+```
+...todo...
+```
 
 ## 🏗️ Architecture
 
