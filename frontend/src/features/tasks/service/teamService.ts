@@ -12,14 +12,14 @@ import type { TeamListResponse } from '@/apis/team'
  */
 export const teamService = {
   /**
-   * 获取团队列表
+   * Get team list
    */
   async getTeams(): Promise<TeamListResponse> {
     return teamApis.getTeams()
   },
 
   /**
-   * React hook: 获取团队相关状态
+   * React hook: Get team related status
    */
   useTeams() {
     const [teams, setTeams] = useState<Team[]>([])

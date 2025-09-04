@@ -29,11 +29,11 @@ export default function TeamSelector({
 }: TeamSelectorProps) {
   const { selectedTask } = useTaskContext()
 
-  // 下拉展开方向
+  // Dropdown expansion direction
   const [dropdownDirection, setDropdownDirection] = useState<'up' | 'down'>('down')
   const buttonRef = useRef<HTMLButtonElement>(null)
 
-  // 计算下拉展开方向
+  // Calculate dropdown expansion direction
   const handleDropdownClick = () => {
     if (!buttonRef.current) return
     const rect = buttonRef.current.getBoundingClientRect()
@@ -46,7 +46,7 @@ export default function TeamSelector({
     }
   }
 
-  // 自动根据 selectedTask 设置团队
+  // Automatically set team based on selectedTask
   useEffect(() => {
     if (selectedTask && 'team' in selectedTask && selectedTask.team && teams.length > 0) {
       const foundTeam = teams.find(t => t.id === (selectedTask.team as any).id) || null

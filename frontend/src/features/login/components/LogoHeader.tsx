@@ -18,8 +18,8 @@ export default function LogoHeader() {
         Login to WeCode AI
       </h2>
     </div>
-    /* 副标题 */
-    /* 分离副标题为单独元素，便于页面组合 */
+    /* Subtitle */
+    /* Separate subtitle as individual element, for page composition */
   )
 }
 

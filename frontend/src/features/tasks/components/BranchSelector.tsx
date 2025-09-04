@@ -12,8 +12,8 @@ import { GitRepoInfo, GitBranch } from '@/types/api'
 import { githubApis } from '@/apis/github'
 
 /**
- * BranchSelector 组件
- * 参考 RepositorySelector，内部拉取分支数据，统一 loading/empty/error 状态
+ * BranchSelector component
+ * Refer to RepositorySelector, internally fetches branch data, unified loading/empty/error states
  */
 interface BranchSelectorProps {
   selectedRepo: GitRepoInfo | null
@@ -35,11 +35,11 @@ export default function BranchSelector({
   const [error, setError] = useState<string | null>(null)
   const { selectedTask } = useTaskContext()
 
-  // 下拉展开方向
+  // Dropdown expansion direction
   const [dropdownDirection, setDropdownDirection] = useState<'up' | 'down'>('down')
   const buttonRef = useRef<HTMLButtonElement>(null)
 
-  // 计算下拉展开方向
+  // Calculate dropdown expansion direction
   const handleDropdownClick = () => {
     if (!buttonRef.current) return
     const rect = buttonRef.current.getBoundingClientRect()
@@ -52,7 +52,7 @@ export default function BranchSelector({
     }
   }
 
-  // 拉取分支列表
+  // Fetch branch list
   useEffect(() => {
     if (!selectedRepo) {
       setBranches([])
@@ -79,7 +79,7 @@ export default function BranchSelector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedRepo])
 
-  // 自动根据 selectedTask 设置分支
+  // Automatically set branch based on selectedTask
   useEffect(() => {
     if (!branches || branches.length === 0) return
     if (
@@ -93,19 +93,19 @@ export default function BranchSelector({
         return
       }
     }
-    // 如果没有 selectedTask 或找不到，默认选中第一个
+    // If there is no selectedTask or not found, select the first one by default
     if (!selectedBranch) {
       handleBranchChange(branches[0])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask, branches])
 
-  // 状态合并
+  // Merge states
   const showLoading = loading
   const showError = !!error
   const showNoBranch = !showLoading && !showError && branches.length === 0
 
-  // 没有选中项且无分支时不渲染
+  // Do not render when no item is selected and there are no branches
   if (!selectedBranch && branches.length === 0 && !showLoading && !showError) return null
 
   return (
@@ -125,7 +125,7 @@ export default function BranchSelector({
             {showLoading
               ? 'Loading...'
               : showError
-                ? '加载失败'
+                ? 'Load failed'
                 : showNoBranch
                   ? 'No branches'
                   : selectedBranch?.name}
@@ -135,7 +135,7 @@ export default function BranchSelector({
         <Listbox.Options
           className={`absolute ${dropdownDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'} left-0 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-20 min-w-full w-auto max-w-[220px] py-1 max-h-[300px] overflow-y-auto custom-scrollbar`}
         >
-          {/* 状态提示和分支列表 */}
+          {/* Status and branch list */}
           {showLoading && (
             <div className="px-3 py-2 text-sm text-gray-400 flex items-center">
               <FiGitBranch className="w-4 h-4 animate-pulse mr-2" />

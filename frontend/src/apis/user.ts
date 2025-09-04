@@ -9,7 +9,7 @@
 
 import type { GitInfo, User } from '@/types/api'
 
-// 类型定义
+// Type definitions
 export interface LoginRequest {
   user_name: string
   password: string
@@ -28,7 +28,7 @@ export interface UpdateUserRequest {
 }
 
 
-// Token 管理（内部使用，不对外暴露）
+// Token management (internal use, not exposed to the outside)
 const TOKEN_KEY = 'auth_token'
 
 function setToken(token: string) {
@@ -62,7 +62,7 @@ export const userApis = {
   async login(data: LoginRequest): Promise<User> {
     const res: LoginResponse = await apiClient.post("/auth/login", data)
     setToken(res.access_token)
-    // 登录后获取用户信息
+    // Get user information after login
     return await apiClient.get('/users/me')
   },
 

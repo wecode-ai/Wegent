@@ -6,9 +6,9 @@ import { taskApis } from '@/apis/tasks'
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 
 /**
- * 发送消息并创建任务
- * @param params 
- * @returns 
+ * Send message and create task
+ * @param params
+ * @returns
  */
 export async function sendMessage(params: {
   message: string
@@ -49,7 +49,7 @@ export async function sendMessage(params: {
   }
 }
 /**
- * 发送消息并模拟消息流（user/system），返回新消息数组
+ * Send message and simulate message flow (user/system), return new message array
  */
 export async function sendMessageWithSimulate(params: {
   message: string

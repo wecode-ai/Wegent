@@ -11,7 +11,7 @@ import { taskApis } from '@/apis/tasks'
 import { toast } from 'react-toastify'
 
 /**
- * 监听 URL 中的 taskId 参数，并自动设置 selectedTask
+ * Listen to the taskId parameter in the URL and automatically set selectedTask
  */
 export default function TaskParamSync() {
   const searchParams = useSearchParams()
@@ -45,5 +45,5 @@ export default function TaskParamSync() {
     }
   }, [searchParams, tasks])
 
-  return null // 只负责同步，不渲染任何内容
+  return null // Only responsible for synchronization, does not render any content
 }

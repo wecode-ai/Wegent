@@ -42,11 +42,11 @@ export const githubHandlers = [
   http.get('/api/github/validate-token', () => {
     return HttpResponse.json({ valid: true, user: { login: 'mock-user' } })
   }),
-  // 仓库列表
+  // Repository list
   http.get('/api/github/repositories', () => {
     return HttpResponse.json(MOCK_REPOS)
   }),
-  // 分支列表
+  // Branch list
   http.get('/api/github/repositories/branches', () => {
     return HttpResponse.json(MOCK_BRANCHES)
   }),

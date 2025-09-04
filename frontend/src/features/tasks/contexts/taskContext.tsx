@@ -26,13 +26,13 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [taskLoading, setTaskLoading] = useState<boolean>(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
 
-  // 分页相关
+  // Pagination related
   const [hasMore, setHasMore] = useState(true)
   const [loadingMore, setLoadingMore] = useState(false)
   const [loadedPages, setLoadedPages] = useState([1])
   const limit = 100
 
-  // 批量加载指定页（只负责数据请求和返回，不处理 loading 状态）
+  // Batch load specified pages (only responsible for data requests and responses, does not handle loading state)
   const loadPages = async (pagesArr: number[], append = false) => {
     if (pagesArr.length === 0) return { items: [], hasMore: false }
     const requests = pagesArr.map(p => taskApis.getTasks({ page: p, limit }))
@@ -50,7 +50,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   }
 
-  // 加载更多
+  // Load more
   const loadMore = async () => {
     if (loadingMore || !hasMore) return
     setLoadingMore(true)
@@ -62,7 +62,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setLoadingMore(false)
   }
 
-  // 刷新所有已加载页
+  // Refresh all loaded pages
   const refreshTasks = async () => {
     setTaskLoading(true)
     const result = await loadPages(loadedPages, false)
@@ -72,13 +72,13 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setTaskLoading(false)
   }
 
-  // 首次加载
+  // Initial load
   useEffect(() => {
     refreshTasks()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 定时每 30 秒自动刷新所有已加载页
+  // Automatically refresh all loaded pages every 30 seconds
   useEffect(() => {
     const interval = setInterval(() => {
       refreshTasks()

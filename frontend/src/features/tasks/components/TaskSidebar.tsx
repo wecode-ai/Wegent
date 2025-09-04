@@ -24,7 +24,7 @@ export default function TaskSidebar() {
   const { tasks, setSelectedTask, loadMore, hasMore, loadingMore } = useTaskContext()
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // 分组逻辑
+  // Grouping logic
   const groupTasksByDate = React.useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -40,7 +40,7 @@ export default function TaskSidebar() {
     };
   }, [tasks]);
 
-  // 新建任务
+  // New task
   const handleNewAgentClick = () => {
     setSelectedTask(null)
     if (typeof window !== 'undefined') {
@@ -48,7 +48,7 @@ export default function TaskSidebar() {
     }
   }
 
-  // 滚动触底加载更多
+  // Scroll to bottom to load more
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
@@ -107,7 +107,7 @@ export default function TaskSidebar() {
           ref={scrollRef}
         >
           {tasks.length === 0 ? (
-            <div className="text-center py-8 text-xs text-gray-400">暂无任务</div>
+            <div className="text-center py-8 text-xs text-gray-400">No tasks</div>
           ) : (
             <>
               <TaskListSection

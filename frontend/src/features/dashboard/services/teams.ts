@@ -6,7 +6,7 @@ import { teamApis } from '@/apis/team'
 import { Team } from '@/types/api'
 
 /**
- * 获取团队列表
+ * Get team list
  */
 export async function fetchTeamsList(): Promise<Team[]> {
   const teamsData = await teamApis.getTeams()
@@ -14,21 +14,21 @@ export async function fetchTeamsList(): Promise<Team[]> {
 }
 
 /**
- * 创建团队
+ * Create team
  */
 export async function createTeam(teamData: any): Promise<Team> {
   return await teamApis.createTeam(teamData)
 }
 
 /**
- * 删除团队
+ * Delete team
  */
 export async function deleteTeam(teamId: number): Promise<void> {
   await teamApis.deleteTeam(teamId)
 }
 
 /**
- * 编辑团队
+ * Edit team
  */
 export async function updateTeam(teamId: number, teamData: any): Promise<Team> {
   return await teamApis.updateTeam(teamId, teamData)

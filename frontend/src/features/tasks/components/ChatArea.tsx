@@ -32,7 +32,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
 
-  // 新增：获取 selectedTask 判断是否有消息
+  // New: Get selectedTask to determine if there are messages
   const { selectedTask } = useTaskContext()
   const hasMessages = Boolean(selectedTask && selectedTask.id)
 
@@ -49,7 +49,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
       setError(error)
     } else {
       setTaskInputMessage('')
-      // 创建任务成功后跳转到任务 url
+      // Redirect to task URL after successfully creating a task
       if (newTask && newTask.id) {
         const params = new URLSearchParams(Array.from(searchParams.entries()))
         params.set('taskId', String(newTask.id))
@@ -59,7 +59,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
     setIsLoading(false)
   }
 
-  // 样式参考 TaskParamWrapper.tsx
+  // Style reference: TaskParamWrapper.tsx
   return (
     <div className={
       hasMessages
@@ -78,7 +78,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
           </div>
         )}
 
-        {/* Messages Area - 仅有消息时展示 */}
+        {/* Messages Area - Only shown when there are messages */}
         {hasMessages && (
           <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar">
             <MessagesArea />

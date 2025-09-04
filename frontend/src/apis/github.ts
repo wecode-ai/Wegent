@@ -32,7 +32,7 @@ export const githubApis = {
   },
 
   async searchRepositories(query: string): Promise<GitRepoInfo[]> {
-    // 增加 timeout=30 参数，兼容后端接口
+    // Add timeout=30 parameter to be compatible with backend interface
     return await apiClient.get(`/github/repositories/search?q=${encodeURIComponent(query)}&timeout=30`);
   },
 

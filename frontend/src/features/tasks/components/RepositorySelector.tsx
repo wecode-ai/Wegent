@@ -30,17 +30,17 @@ export default function RepositorySelector({
   const [searchQuery, setSearchQuery] = useState('')
   const searchTimeout = useRef<NodeJS.Timeout | null>(null)
 
-  // 下拉展开方向
+  // Dropdown expansion direction
   const [dropdownDirection, setDropdownDirection] = useState<'up' | 'down'>('down')
   const buttonRef = useRef<HTMLButtonElement>(null)
 
-  // 计算下拉展开方向
+  // Calculate dropdown expansion direction
   const handleDropdownClick = () => {
     if (!buttonRef.current) return
     const rect = buttonRef.current.getBoundingClientRect()
     const spaceBelow = window.innerHeight - rect.bottom
     const spaceAbove = rect.top
-    // 下方空间不足 320px（下拉最大高度+margin），则向上展开，否则向下
+    // If there is insufficient space below 320px (dropdown max height + margin), expand upward, otherwise downward
     if (spaceBelow < 100 && spaceAbove > spaceBelow) {
       setDropdownDirection('up')
     } else {
@@ -48,7 +48,7 @@ export default function RepositorySelector({
     }
   }
 
-  // 拉取初始仓库列表
+  // Fetch initial repository list
   useEffect(() => {
     let ignore = false
     setLoading(true)
@@ -57,7 +57,7 @@ export default function RepositorySelector({
         if (!ignore) {
           setRepos(data)
           setError(null)
-          // 默认选中第一个仓库
+          // Select the first repository by default
           if (data.length > 0 && !selectedRepo) {
             handleRepoChange(data[0])
           }
@@ -73,13 +73,13 @@ export default function RepositorySelector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 远程搜索仓库（防抖）
+  // Remote search repositories (debounced)
   useEffect(() => {
     if (searchTimeout.current) {
       clearTimeout(searchTimeout.current)
     }
     if (!searchQuery) {
-      // 搜索框清空时，恢复初始仓库列表
+      // When search box is cleared, restore initial repository list
       setLoading(true)
       githubApis.getRepositories()
         .then((data) => {
@@ -106,15 +106,15 @@ export default function RepositorySelector({
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchQuery])
 
-  // 远程搜索后直接用 repos，无需本地过滤
+  // After remote search, use repos directly without local filtering
   const filteredRepos = repos
 
-  // 始终只 return 一个 Listbox，所有状态合并
+  // Always return only one Listbox, merge all states
   const showLoading = loading
   const showError = !!error
   const showNoRepo = !showLoading && !showError && repos.length === 0
 
-  // 没有选中项且无仓库时不渲染
+  // Do not render when no item is selected and there are no repositories
   if (!selectedRepo && repos.length === 0 && !showLoading && !showError) return null
 
   return (
@@ -130,7 +130,7 @@ export default function RepositorySelector({
             {showLoading
               ? 'Loading...'
               : showError
-                ? '加载失败'
+                ? 'Load failed'
                 : showNoRepo
                   ? 'No repositories'
                   : selectedRepo?.git_repo}
@@ -156,7 +156,7 @@ export default function RepositorySelector({
               />
             </div>
           </div>
-          {/* 状态提示和仓库列表 */}
+          {/* Status and repository list */}
           {showLoading && (
             <div className="px-3 py-2 text-sm text-gray-400 flex items-center">
               <FiGithub className="w-4 h-4 animate-pulse mr-2" />

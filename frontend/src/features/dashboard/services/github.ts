@@ -7,18 +7,18 @@ import { githubApis } from '@/apis/github'
 import { GitInfo, User } from '@/types/api'
 
 /**
- * 获取用户的gitInfo
+ * Get user's gitInfo
  */
 export async function fetchGitInfo(user: User): Promise<GitInfo[]> {
   return Array.isArray(user.git_info) ? user.git_info : []
 }
 
 /**
- * 保存/更新git token
+ * Save/Update git token
  */
 /**
- * 保存/更新git token
- * @param user 当前用户（从 UserContext 获取）
+ * Save/Update git token
+ * @param user Current user (from UserContext)
  */
 export async function saveGitToken(user: User, git_domain: string, git_token: string): Promise<boolean> {
   try {
@@ -40,11 +40,11 @@ export async function saveGitToken(user: User, git_domain: string, git_token: st
 }
 
 /**
- * 删除git token
+ * Delete git token
  */
 /**
- * 删除git token
- * @param user 当前用户（从 UserContext 获取）
+ * Delete git token
+ * @param user Current user (from UserContext)
  */
 export async function deleteGitToken(user: User, git_domain: string): Promise<boolean> {
   try {
