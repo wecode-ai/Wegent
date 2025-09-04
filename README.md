@@ -18,7 +18,7 @@ graph LR
         subgraph YAMLDef ["📄 YAML Definitions"]
             Ghost["👻 Ghost<br/>Agent Soul"]
             Model["🧠 Model<br/>Model Configuration"]
-            Shell["🐚 Shell<br/>Runtime Environment"]
+            Shell["🐚 Shell<br/>Agent Program"]
             Bot["🤖 Bot<br/>Agent Instance"]
             CollabModel["🤝 Collaboration<br/>Collaboration Model"]
             Team["👥 Team<br/>Collaborative Team"]
