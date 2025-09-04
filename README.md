@@ -38,6 +38,7 @@ graph LR
     Shell --> Bot
     Bot --> Team
     CollabModel --> Team
+    Shell --> Team
     
     %% Team Definition to Instance
     AIResource --> Wegent
@@ -72,9 +73,12 @@ graph LR
 
 ### ✨ Why Wegent?
 
-- **🌟 Standardized**: Universal AI agent runtime specifications, like Kubernetes for containers
-- **🔧 Declarative**: Define and manage agents through simple YAML configurations
-- **🤝 Collaborative**: Built-in support for multi-agent teamwork and orchestration
+- **Standardized**: Universal AI agent runtime specifications, like Kubernetes for containers
+- **Declarative**: Define and manage agents through simple YAML configurations
+- **Collaborative**: Built-in support for multi-agent teamwork and orchestration
+- **Multi-Model Support**: Currently supports Claude Code, with plans for Codex and Gemini
+- **Flexible Configuration**: Customizable agent personalities and capabilities
+- **Task Orchestration**: Intelligent scheduling and execution
 
 ## 🚀 Quick Start
 
@@ -130,10 +134,10 @@ graph TB
         ExecutorN["🚀 Executor N"]
     end
     
-    subgraph "🤖 AI Service Layer"
+    subgraph "🤖 Agent Layer"
         Claude["🧠 Claude Code"]
-        CodexPlanned["💻 Codex (Planned)"]
-        GeminiPlanned["✨ Gemini (Planned)"]
+        AngoPlanned["💻 Agno (Planned)"]
+        DifyPlanned["✨ Dify (Planned)"]
     end
   
     
@@ -146,17 +150,11 @@ graph TB
     ExecutorManager --> Executor2
     ExecutorManager --> ExecutorN
     
-    %% AI Service Integration (Currently only supports Claude Code)
+    %% AI Program Integration (Currently only supports Claude Code)
     Executor1 --> Claude
     Executor2 --> Claude
     ExecutorN --> Claude
 ```
-
-## ✨ Features
-
-- **Multi-Model Support**: Currently supports Claude Code, with plans for Codex and Gemini
-- **Flexible Configuration**: Customizable agent personalities and capabilities
-- **Task Orchestration**: Intelligent scheduling and execution
 
 ## 🛠️ Development
 
