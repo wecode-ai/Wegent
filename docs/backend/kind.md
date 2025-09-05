@@ -177,10 +177,8 @@ metadata:
   name: implement-feature
   namespace: default
 spec:
-  # Task title
   title: "Implement new feature"
-  # Task description/prompt
-  prompt: "Implement user login functionality, including frontend forms and backend API"
+  prompt: "Task description"
   # Team reference
   teamRef:
     name: dev-team

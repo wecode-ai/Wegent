@@ -86,7 +86,7 @@ metadata:
   name: claude-shell
   namespace: default
 spec:
-  runtime: "claudeCode"
+  runtime: "ClaudeCode"
 status:
   state: "Available"
 ---
@@ -150,7 +150,7 @@ metadata:
   namespace: default
 spec:
   title: "Implement new feature"
-  prompt: "Implement user login functionality, including frontend forms and backend API"
+  prompt: "Task description"
   teamRef:
     name: dev-team
     namespace: default
