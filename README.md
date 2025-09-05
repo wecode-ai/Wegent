@@ -87,8 +87,6 @@ graph LR
 - Docker and Docker Compose
 - Git
 
-### Installation
-
 1. **Clone the repository**
    ```bash
    git clone https://github.com/wecode-ai/wegent.git
@@ -103,15 +101,26 @@ graph LR
 3. **Access the web interface**
    - Open http://localhost:3000 in your browser
 
-4. **Create Your First Agent Team**
-```
-...todo...
-```
+4. **Configure GitHub Access Tokens**
+   - Follow the page instructions to configure your GitHub access token
+5. **Configure Bot**
+   
+   Wegent comes with a built-in development bot. Simply configure your Claude API key to start using it:
+   
+   ```bash
+    {
+        "env": {
+            "ANTHROPIC_MODEL": "claude-4.1-opus",
+            "ANTHROPIC_API_KEY": "xxxxxx",
+            "ANTHROPIC_BASE_URL": "sk-xxxxxx",
+            "ANTHROPIC_SMALL_FAST_MODEL": "claude-3.5-haiku"
+        }
+    }
+   ```bash
 
 5. **Run task**
-```
-...todo...
-```
+
+   On the task page, select your project and branch, describe your development requirements, such as implementing a bubble sort algorithm using Python
 
 ## 🏗️ Architecture
 
