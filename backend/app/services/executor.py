@@ -128,7 +128,6 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
             
             if first_subtask:
                 subtasks.append(first_subtask)
-                subtasks.append(first_subtask)
         
         return subtasks
 
@@ -201,11 +200,28 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
             ).first()
             
             next_subtask_id = next_subtask.id if next_subtask else None
-            
+
+            # get previous subtask ID
+            previous_subtask = db.query(Subtask).filter(
+                Subtask.task_id == subtask.task_id,
+                Subtask.sort_order < subtask.sort_order
+            ).order_by(
+                Subtask.sort_order.desc(),
+                Subtask.created_at.desc()
+            ).first()
+
+            executor_name = ""
+            executor_namespace = ""
+            if previous_subtask:
+                executor_name = previous_subtask.executor_name
+                executor_namespace = previous_subtask.executor_namespace
+
             formatted_subtasks.append({
                 "subtask_id": subtask.id,
                 "subtask_next_id": next_subtask_id,
                 "task_id": subtask.task_id,
+                "executor_name": executor_name,
+                "executor_namespace": executor_namespace,
                 "subtask_title": subtask.title,
                 "task_title": subtask.task.title,
                 "user": {

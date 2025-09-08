@@ -13,14 +13,24 @@ from app.services.task import task_service
 
 router = APIRouter()
 
-@router.post("", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
+
+@router.post("", response_model=dict)
+def create_task_id(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create new task with session id and return task_id"""
+    return {"task_id": task_service.create_task_id(db=db)}
+
+@router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task(
+    task_id: int,
     task_create: TaskCreate,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new task"""
-    return task_service.create_with_user(db=db, obj_in=task_create, user=current_user)
+    """Create new task with specified task_id"""
+    return task_service.create_with_user(db=db, obj_in=task_create, user=current_user, task_id=task_id)
 
 @router.get("", response_model=TaskListResponse)
 def get_tasks(

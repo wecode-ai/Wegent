@@ -26,7 +26,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
     """
 
     def create_with_user(
-        self, db: Session, *, obj_in: TaskCreate, user: User
+        self, db: Session, *, obj_in: TaskCreate, user: User, task_id: Optional[int] = None
     ) -> Task:
         """
         Create user task and automatically create subtasks based on team configuration
@@ -49,6 +49,17 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 detail="Prompt content is too long. Maximum allowed size is 60000 bytes in UTF-8 encoding."
             )
         
+        if not obj_in.git_url:
+            obj_in.git_url = ""
+        if not obj_in.git_repo:
+            obj_in.git_repo = ""
+        if not obj_in.git_domain:
+            obj_in.git_domain = ""
+        if not obj_in.branch_name:
+            obj_in.branch_name = ""
+        if not obj_in.git_repo_id:
+            obj_in.git_repo_id = 0    
+
         # If title is empty, extract first 50 characters from prompt as title
         title = obj_in.title
         if not title and obj_in.prompt:
@@ -58,22 +69,29 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 title += "..."
         
         # Create the main task
-        task = Task(
-            user_id=user.id,
-            k_id=obj_in.k_id,
-            user_name=user.user_name,
-            title=title,
-            team_id=obj_in.team_id,
-            git_url=obj_in.git_url,
-            git_repo=obj_in.git_repo,
-            git_repo_id=obj_in.git_repo_id,
-            git_domain=obj_in.git_domain,
-            branch_name=obj_in.branch_name,
-            prompt=obj_in.prompt,
-            status=TaskStatus.PENDING,
-            progress=0,
-            batch=0
-        )
+        task_data = {
+            "user_id": user.id,
+            "k_id": obj_in.k_id,
+            "user_name": user.user_name,
+            "title": title,
+            "team_id": obj_in.team_id,
+            "git_url": obj_in.git_url,
+            "git_repo": obj_in.git_repo,
+            "git_repo_id": obj_in.git_repo_id,
+            "git_domain": obj_in.git_domain,
+            "branch_name": obj_in.branch_name,
+            "prompt": obj_in.prompt,
+            "status": TaskStatus.PENDING,
+            "progress": 0,
+            "batch": 0
+        }
+        
+        if task_id is not None:
+            task_data["id"] = task_id
+        else:
+            task_data["id"] = self.create_task_id(db)
+            
+        task = Task(**task_data)
         
         db.add(task)
         db.commit()
@@ -533,6 +551,23 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         task.updated_at = datetime.utcnow()
         db.add(task)
         db.commit()
+
+
+    def get_session_id(self, db: Session) -> int:
+        """
+        Get a session id from session table
+        """
+        from sqlalchemy import text
+        session_result = db.execute(text("INSERT INTO session () VALUES ()"))
+        db.commit()
+        return session_result.lastrowid
+
+    def create_task_id(self, db: Session) -> int:
+        """
+        Create new task id with session id
+        """
+        session_id = self.get_session_id(db)
+        return session_id
 
 
 task_service = TaskService(Task)

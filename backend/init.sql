@@ -108,6 +108,11 @@ CREATE TABLE IF NOT EXISTS subtasks (
     INDEX idx_status (status)
 );
 
+-- Create session table with auto-increment id
+CREATE TABLE IF NOT EXISTS session (
+    id INT AUTO_INCREMENT PRIMARY KEY
+);
+
 -- Create kinds table to replace all k_* tables
 CREATE TABLE IF NOT EXISTS kinds (
     id INT AUTO_INCREMENT PRIMARY KEY,
