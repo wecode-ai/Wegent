@@ -31,7 +31,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             bot_id=obj_in.bot_id,
             executor_namespace=obj_in.executor_namespace,
             executor_name=obj_in.executor_name,
-            sort_order=obj_in.sort_order,
+            message_id=obj_in.message_id,
             status=SubtaskStatus.PENDING
         )
         db.add(db_obj)
@@ -53,12 +53,12 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         self, db: Session, *, task_id: int, user_id: int, skip: int = 0, limit: int = 100
     ) -> List[Subtask]:
         """
-        Get subtasks by task ID, sorted by sort_order
+        Get subtasks by task ID, sorted by message_id
         """
         return db.query(Subtask).filter(
             Subtask.task_id == task_id,
             Subtask.user_id == user_id
-        ).order_by(Subtask.sort_order.asc(), Subtask.created_at.asc()).offset(skip).limit(limit).all()
+        ).order_by(Subtask.message_id.asc(), Subtask.created_at.asc()).offset(skip).limit(limit).all()
 
     def get_subtask_by_id(
         self, db: Session, *, subtask_id: int, user_id: int

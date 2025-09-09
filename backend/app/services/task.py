@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 import httpx
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -83,10 +83,10 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
             existing_task = db.query(Task).filter(Task.id == task_id).first()
             if existing_task:
                 # 如果任务正在运行，则不允许更新
-                if existing_task.status == TaskStatus.RUNNING:
+                if existing_task.status != TaskStatus.COMPLETED:
                     raise HTTPException(
                         status_code=400,
-                        detail="Task is running, please wait for it to finish.",
+                        detail="Task is still running, please wait for it to complete"
                     )
                 
                 # 更新现有任务状态为PENDING
@@ -352,9 +352,10 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
 
         # Create ASSISTANT role subtask based on task object
         if team.workflow.get('model') == "pipline":
-            for _, bot_info in enumerate(team.bots):
+            executor_infos = self._get_pipeline_executor_info(existing_subtasks)
+            for i, bot_info in enumerate(team.bots):
                 bot = db.query(Bot).filter(
-                    Bot.id == bot_info['bot_id'],
+                    Bot.id == bot_info.get('bot_prompt'),
                     Bot.user_id == user_id,
                     Bot.is_active == True
                 ).first()
@@ -371,6 +372,8 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                     progress=0,
                     message_id=next_message_id,
                     parent_id=parent_id,
+                    executor_name=executor_infos[i].get('executor_name'),
+                    executor_namespace=executor_infos[i].get('executor_namespace')
                 )
 
                 # update id of next message and parent
@@ -379,6 +382,10 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 
                 db.add(subtask)
         else :
+            if existing_subtasks:
+                #取 existing_subtasks 最后一个的executor_name 和 executor_namespace
+                executor_name = existing_subtasks[0].executor_name
+                executor_namespace = existing_subtasks[0].executor_namespace
             assistant_subtask = Subtask(
                 user_id=user_id,
                 task_id=task.id,
@@ -386,11 +393,13 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 title=f"{task.title} - Assistant",
                 bot_ids=bot_ids,
                 role=SubtaskRole.ASSISTANT,
-                prompt=userPrompt,
+                prompt="",
                 status=SubtaskStatus.PENDING,
                 progress=0,
                 message_id=next_message_id,
                 parent_id=parent_id,
+                executor_name = executor_name,
+                executor_namespace = executor_namespace
             )
             db.add(assistant_subtask)
 
@@ -662,6 +671,16 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         ).fetchone()
         
         return session_exists is not None
+
+    def _get_pipeline_executor_info(self, existing_subtasks: List[Subtask]) -> List[Dict[str, str]]:
+        first_group_assistants = []
+        for i, s in existing_subtasks:
+            if s.role == SubtaskRole.USER:
+                break;
+            elif s.role == SubtaskRole.ASSISTANT:
+                first_group_assistants.insert({"executor_namespace": s.executor_namespace, "executor_name": s.executor_name})
+
+        return first_group_assistants
 
 
 task_service = TaskService(Task)
