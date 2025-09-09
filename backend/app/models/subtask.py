@@ -19,19 +19,25 @@ class SubtaskStatus(str, PyEnum):
     CANCELLED = "CANCELLED"
     DELETE = "DELETE"
 
+class SubtaskRole(str, PyEnum):
+    USER = "USER"
+    ASSISTANT = "ASSISTANT"
+
 class Subtask(Base):
     __tablename__ = "subtasks"
 
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
-    task_id = Column(Integer, ForeignKey("tasks.id"), nullable=False)
-    team_id = Column(Integer, ForeignKey("teams.id"), nullable=False)
+    task_id = Column(Integer, nullable=False)
+    team_id = Column(Integer, nullable=False)
     title = Column(String(256), nullable=False)
-    bot_id = Column(Integer, ForeignKey("bots.id"), nullable=False)
+    bot_ids = Column(JSON, nullable=False)
+    role = Column(SQLEnum(SubtaskRole), nullable=False, default=SubtaskRole.ASSISTANT)
     executor_namespace = Column(String(100))
     executor_name = Column(String(100))
     prompt = Column(Text)
-    sort_order = Column(Integer, nullable=False, default=0)
+    message_id = Column(Integer, nullable=False, default=1)
+    parent_id = Column(Integer, nullable=True)
     status = Column(SQLEnum(SubtaskStatus), nullable=False, default=SubtaskStatus.PENDING)
     progress = Column(Integer, nullable=False, default=0)
     batch = Column(Integer, nullable=False, default=0)
@@ -43,9 +49,6 @@ class Subtask(Base):
 
     # Relationships
     user = relationship("User")
-    task = relationship("Task", back_populates="subtasks")
-    team = relationship("Team")
-    bot = relationship("Bot")
 
     __table_args__ = (
         {'sqlite_autoincrement': True,

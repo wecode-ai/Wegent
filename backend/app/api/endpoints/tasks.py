@@ -30,7 +30,7 @@ def create_task(
     db: Session = Depends(get_db)
 ):
     """Create new task with specified task_id"""
-    return task_service.create_with_user(db=db, obj_in=task_create, user=current_user, task_id=task_id)
+    return task_service.create_task(db=db, obj_in=task_create, user=current_user, task_id=task_id)
 
 @router.get("", response_model=TaskListResponse)
 def get_tasks(
@@ -66,7 +66,7 @@ def update_task(
     db: Session = Depends(get_db)
 ):
     """Update task information"""
-    return task_service.update_with_user(
+    return task_service.update_task(
         db=db,
         task_id=task_id,
         obj_in=task_update,
@@ -80,5 +80,5 @@ def delete_task(
     db: Session = Depends(get_db)
 ):
     """Delete task"""
-    task_service.delete_with_user(db=db, task_id=task_id, user_id=current_user.id)
+    task_service.delete_task(db=db, task_id=task_id, user_id=current_user.id)
     return {"message": "Task deleted successfully"}

@@ -87,7 +87,8 @@ CREATE TABLE IF NOT EXISTS subtasks (
     task_id INT NOT NULL,
     team_id INT NOT NULL,
     title VARCHAR(256) NOT NULL,
-    bot_id INT NOT NULL,
+    bot_ids JSON NOT NULL COMMENT 'JSON array of bot IDs, e.g. [1,2,3]',
+    role ENUM('USER', 'ASSISTANT') NOT NULL DEFAULT 'ASSISTANT',
     prompt TEXT,
     executor_namespace VARCHAR(100),
     executor_name VARCHAR(100),
@@ -96,15 +97,12 @@ CREATE TABLE IF NOT EXISTS subtasks (
     batch INT NOT NULL DEFAULT 0,
     result JSON,
     error_message TEXT,
-    sort_order INT NOT NULL DEFAULT 0,
+    message_id INT NOT NULL DEFAULT 1,
+    parent_id INT DEFAULT NULL,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     completed_at DATETIME,
     FOREIGN KEY (user_id) REFERENCES users(id),
-    FOREIGN KEY (task_id) REFERENCES tasks(id),
-    FOREIGN KEY (team_id) REFERENCES teams(id),
-    FOREIGN KEY (bot_id) REFERENCES bots(id),
-    INDEX idx_task_sort (task_id, sort_order),
     INDEX idx_status (status)
 );
 

@@ -46,7 +46,6 @@ class Task(Base):
     # Relationships
     user = relationship("User", back_populates="tasks")
     team = relationship("Team")
-    subtasks = relationship("Subtask", back_populates="task")
 
     __table_args__ = (
         {'sqlite_autoincrement': True,

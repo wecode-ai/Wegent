@@ -17,7 +17,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
     Subtask service class
     """
 
-    def create_with_user(
+    def create_subtask(
         self, db: Session, *, obj_in: SubtaskCreate, user_id: int
     ) -> Subtask:
         """
@@ -60,7 +60,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             Subtask.user_id == user_id
         ).order_by(Subtask.sort_order.asc(), Subtask.created_at.asc()).offset(skip).limit(limit).all()
 
-    def get_by_id_and_user(
+    def get_subtask_by_id(
         self, db: Session, *, subtask_id: int, user_id: int
     ) -> Optional[Subtask]:
         """
@@ -77,13 +77,13 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             )
         return subtask
 
-    def update_with_user(
+    def update_subtask(
         self, db: Session, *, subtask_id: int, obj_in: SubtaskUpdate, user_id: int
     ) -> Subtask:
         """
         Update user Subtask
         """
-        subtask = self.get_by_id_and_user(db, subtask_id=subtask_id, user_id=user_id)
+        subtask = self.get_subtask_by_id(db, subtask_id=subtask_id, user_id=user_id)
         if not subtask:
             raise HTTPException(
                 status_code=404,
@@ -100,13 +100,13 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         db.refresh(subtask)
         return subtask
 
-    def delete_with_user(
+    def delete_subtask(
         self, db: Session, *, subtask_id: int, user_id: int
     ) -> None:
         """
         Delete user Subtask
         """
-        subtask = self.get_by_id_and_user(db, subtask_id=subtask_id, user_id=user_id)
+        subtask = self.get_subtask_by_id(db, subtask_id=subtask_id, user_id=user_id)
         if not subtask:
             raise HTTPException(
                 status_code=404,

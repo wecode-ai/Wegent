@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from pydantic import BaseModel
 
@@ -16,16 +16,22 @@ class SubtaskStatus(str, Enum):
     CANCELLED = "CANCELLED"
     DELETE = "DELETE"
 
+class SubtaskRole(str, Enum):
+    USER = "USER"
+    ASSISTANT = "ASSISTANT"
+
 class SubtaskBase(BaseModel):
     """Subtask base model"""
     task_id: int
     team_id: int
     title: str
-    bot_id: int
+    bot_ids: List[int] = []
+    role: SubtaskRole = SubtaskRole.ASSISTANT
     prompt: Optional[str] = None
     executor_namespace: Optional[str] = None
     executor_name: Optional[str] = None
-    sort_order: int = 0
+    message_id: int = 0
+    parent_id: Optional[int] = None
     status: SubtaskStatus = SubtaskStatus.PENDING
     progress: int = 0
     batch: int = 0
@@ -43,7 +49,8 @@ class SubtaskUpdate(BaseModel):
     progress: Optional[int] = None
     executor_namespace: Optional[str] = None
     executor_name: Optional[str] = None
-    sort_order: Optional[int] = None
+    message_id: Optional[int] = None
+    parent_id: Optional[int] = None
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
 
