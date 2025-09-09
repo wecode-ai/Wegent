@@ -85,10 +85,7 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
     def _get_subtasks_for_task(self, db: Session, task_id: int, status: str, limit: int) -> List[Subtask]:
         """Get subtasks for specified task, return first one sorted by message_id"""
         return db.query(Subtask).options(
-            selectinload(Subtask.task),
             selectinload(Subtask.user),
-            selectinload(Subtask.bot),
-            selectinload(Subtask.team)
         ).filter(
             Subtask.task_id == task_id,
             Subtask.role == SubtaskRole.ASSISTANT,
@@ -178,7 +175,6 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
             ).all()
             
             next_subtask = None
-            previous_subtask = None
             previous_subtask_results = []
            
             user_prompt = ""
@@ -189,8 +185,6 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 if related.message_id < subtask.message_id and related.role == SubtaskRole.ASSISTANT:
                     previous_subtask_results.append(related.result)
                 if related.message_id == subtask.message_id and related.role == SubtaskRole.ASSISTANT:
-                    if i > 0:
-                        previous_subtask = related_subtasks[i-1]
                     if i < len(related_subtasks) - 1:
                         next_subtask = related_subtasks[i+1]
                     break
@@ -202,10 +196,10 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 aggregated_prompt = user_prompt
             # 上一次subtask结果
             team = db.query(Team).filter(Team.id == subtask.team_id).first()
-            if previous_subtask_results and team.workflow.get('model') == "pipeline":
-                aggregated_prompt += f"Previous execution result: {previous_subtask_results[-1]}"
+            if previous_subtask_results and team.workflow.get('mode') == "pipeline":
+                aggregated_prompt += f"\nPrevious execution result: {previous_subtask_results[-1]}"
             # team中串流程prompt
-            if subtask.prompt is not "":
+            if subtask.prompt != "":
                 aggregated_prompt += f"\n{subtask.prompt}"
 
             # Build user git information
@@ -214,8 +208,8 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
 
             # Build bot information
             bots = []
-            for item in team.bots:
-                bot = db.query(Bot).filter(Bot.id == item.get("bot_id")).first()
+            for bot_id in subtask.bot_ids:
+                bot = db.query(Bot).filter(Bot.id == bot_id).first()
                 bots.append({
                     "id": bot.id,
                     "name": bot.name,
@@ -243,6 +237,7 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 },
                 "bot": bots,
                 "team_id": subtask.team_id,
+                "mode": team.workflow.get('mode'),
                 "git_domain": task.git_domain,
                 "git_repo": task.git_repo,
                 "git_repo_id": task.git_repo_id,
@@ -316,7 +311,7 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
         if not task:
             return
         
-        subtasks = db.query(Subtask).filter(Subtask.task_id == task_id, Subtask.role != SubtaskRole.ASSISTANT).order_by(Subtask.message_id.asc()).all()
+        subtasks = db.query(Subtask).filter(Subtask.task_id == task_id, Subtask.role == SubtaskRole.ASSISTANT).order_by(Subtask.message_id.asc()).all()
         if not subtasks:
             return
         

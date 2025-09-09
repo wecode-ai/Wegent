@@ -350,12 +350,14 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
             parent_id = 1
         next_message_id = next_message_id + 1
 
+        executor_name = ""
+        executor_namespace = ""
         # Create ASSISTANT role subtask based on task object
-        if team.workflow.get('model') == "pipline":
+        if team.workflow.get('mode') == "pipeline":
             executor_infos = self._get_pipeline_executor_info(existing_subtasks)
             for i, bot_info in enumerate(team.bots):
                 bot = db.query(Bot).filter(
-                    Bot.id == bot_info.get('bot_prompt'),
+                    Bot.id == bot_info.get('bot_id'),
                     Bot.user_id == user_id,
                     Bot.is_active == True
                 ).first()
@@ -372,8 +374,9 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                     progress=0,
                     message_id=next_message_id,
                     parent_id=parent_id,
-                    executor_name=executor_infos[i].get('executor_name'),
-                    executor_namespace=executor_infos[i].get('executor_namespace')
+                    # 如果executor_infos 不是空，则取i个，否则是空字符串
+                    executor_name=executor_infos[i].get('executor_name') if len(executor_infos) > 0 else "",
+                    executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > 0 else ""
                 )
 
                 # update id of next message and parent
@@ -674,12 +677,13 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
 
     def _get_pipeline_executor_info(self, existing_subtasks: List[Subtask]) -> List[Dict[str, str]]:
         first_group_assistants = []
-        for i, s in existing_subtasks:
+        for s in existing_subtasks:
             if s.role == SubtaskRole.USER:
-                break;
-            elif s.role == SubtaskRole.ASSISTANT:
-                first_group_assistants.insert({"executor_namespace": s.executor_namespace, "executor_name": s.executor_name})
+                break
+            if s.role == SubtaskRole.ASSISTANT:
+                first_group_assistants.append({"executor_namespace": s.executor_namespace, "executor_name": s.executor_name})
 
+        first_group_assistants.reverse()
         return first_group_assistants
 
 
