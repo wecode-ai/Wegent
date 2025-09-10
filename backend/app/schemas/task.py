@@ -97,7 +97,7 @@ class TaskDetail(BaseModel):
     completed_at: Optional[datetime] = None
     user: Optional[UserInDB] = None
     team: Optional[TeamInDB] = None
-    subtasks: Optional[List[SubtaskWithBot]] = None
+    subtasks: Any = None
 
     class Config:
         from_attributes = True
