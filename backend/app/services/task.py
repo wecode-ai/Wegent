@@ -34,9 +34,47 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         """
         task = None
         team = None
-        if task_id is None:
-            # 首次创建新任务
 
+        # 设置任务ID
+        if task_id is None:
+            task_id = self.create_task_id(db)
+        else:
+            # 验证task_id是否有效
+            if not self.validate_task_id(db, task_id):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid task_id: {task_id} does not exist in session"
+                )
+        
+        # 查询是否已存在
+        existing_task = db.query(Task).filter(Task.id == task_id).first()
+        if existing_task:
+            # 追加任务
+            # 如果任务正在运行，则不允许更新
+            if existing_task.status != TaskStatus.COMPLETED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task is still running, please wait for it to complete"
+                )
+            
+            # 更新现有任务状态为PENDING
+            existing_task.status = TaskStatus.PENDING
+            existing_task.progress = 0
+            task = existing_task
+
+            # Validate team exists and belongs to user
+            existing_team = db.query(Team).filter(
+                Team.id == existing_task.team_id,
+                Team.user_id == user.id
+            ).first()
+            if not existing_team:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Team not found"
+                )
+            team = existing_team
+        else:
+            # 首次创建新任务
             # 必须输入team_id
             if not obj_in.team_id:
                 raise HTTPException(
@@ -81,46 +119,12 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 title = obj_in.prompt[:50]
                 if len(obj_in.prompt) > 50:
                     title += "..."
-        else:
-            # 追加任务
-            # 验证task_id是否有效
-            if not self.validate_task_id(db, task_id):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid task_id: {task_id} does not exist in session"
-                )
-            
-            # 查询是否已存在
-            existing_task = db.query(Task).filter(Task.id == task_id).first()
-            if existing_task:
-                # 如果任务正在运行，则不允许更新
-                if existing_task.status != TaskStatus.COMPLETED:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Task is still running, please wait for it to complete"
-                    )
-                
-                # 更新现有任务状态为PENDING
-                existing_task.status = TaskStatus.PENDING
-                existing_task.progress = 0
-                task = existing_task
-            
-             # Validate team exists and belongs to user
-            existing_team = db.query(Team).filter(
-                Team.id == existing_task.team_id,
-                Team.user_id == user.id
-            ).first()
-            if not existing_team:
-                raise HTTPException(
-                    status_code=404,
-                    detail="Team not found"
-                )
-            team = existing_team
         
         # 如果不存在，则创建新任务
         if task is None:
             # 准备任务数据
             task_data = {
+                "id": task_id,
                 "user_id": user.id,
                 "k_id": obj_in.k_id,
                 "user_name": user.user_name,
@@ -135,12 +139,6 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 "status": TaskStatus.PENDING,
                 "progress": 0,
             }
-            
-            # 设置任务ID
-            if task_id is not None:
-                task_data["id"] = task_id
-            else:
-                task_data["id"] = self.create_task_id(db)
             
             # 创建并添加新任务
             task = Task(**task_data)
