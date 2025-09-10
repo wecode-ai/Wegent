@@ -26,52 +26,63 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
     Task service class
     """
 
-    def create_task(
+    def create_task_or_append(
         self, db: Session, *, obj_in: TaskCreate, user: User, task_id: Optional[int] = None
     ) -> Task:
         """
         Create user task and automatically create subtasks based on team configuration
         """
-        # Validate team exists and belongs to user
-        team = db.query(Team).filter(
-            Team.id == obj_in.team_id,
-            Team.user_id == user.id
-        ).first()
-        if not team:
-            raise HTTPException(
-                status_code=404,
-                detail="Team not found"
-            )
-        
-        # Additional business validation for prompt length
-        if obj_in.prompt and len(obj_in.prompt.encode('utf-8')) > 60000:
-            raise HTTPException(
-                status_code=400,
-                detail="Prompt content is too long. Maximum allowed size is 60000 bytes in UTF-8 encoding."
-            )
-        
-        if not obj_in.git_url:
-            obj_in.git_url = ""
-        if not obj_in.git_repo:
-            obj_in.git_repo = ""
-        if not obj_in.git_domain:
-            obj_in.git_domain = ""
-        if not obj_in.branch_name:
-            obj_in.branch_name = ""
-        if not obj_in.git_repo_id:
-            obj_in.git_repo_id = 0    
-
-        # If title is empty, extract first 50 characters from prompt as title
-        title = obj_in.title
-        if not title and obj_in.prompt:
-            # Extract first 50 characters, add ellipsis if exceeds 50 characters
-            title = obj_in.prompt[:50]
-            if len(obj_in.prompt) > 50:
-                title += "..."
-        
-        # 首先检查是否已存在相同ID的task
         task = None
-        if task_id is not None:
+        team = None
+        if task_id is None:
+            # 首次创建新任务
+
+            # 必须输入team_id
+            if not obj_in.team_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Team ID is required for creating a new task."
+                )
+            
+            # Validate team exists and belongs to user
+            existing_team = db.query(Team).filter(
+                Team.id == obj_in.team_id,
+                Team.user_id == user.id
+            ).first()
+            if not existing_team:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Team not found"
+                )
+            team = existing_team
+            
+            # Additional business validation for prompt length
+            if obj_in.prompt and len(obj_in.prompt.encode('utf-8')) > 60000:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Prompt content is too long. Maximum allowed size is 60000 bytes in UTF-8 encoding."
+                )
+            # git相关信息默认值
+            if not obj_in.git_url:
+                obj_in.git_url = ""
+            if not obj_in.git_repo:
+                obj_in.git_repo = ""
+            if not obj_in.git_domain:
+                obj_in.git_domain = ""
+            if not obj_in.branch_name:
+                obj_in.branch_name = ""
+            if not obj_in.git_repo_id:
+                obj_in.git_repo_id = 0    
+
+            # If title is empty, extract first 50 characters from prompt as title
+            title = obj_in.title
+            if not title and obj_in.prompt:
+                # Extract first 50 characters, add ellipsis if exceeds 50 characters
+                title = obj_in.prompt[:50]
+                if len(obj_in.prompt) > 50:
+                    title += "..."
+        else:
+            # 追加任务
             # 验证task_id是否有效
             if not self.validate_task_id(db, task_id):
                 raise HTTPException(
@@ -93,6 +104,18 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 existing_task.status = TaskStatus.PENDING
                 existing_task.progress = 0
                 task = existing_task
+            
+             # Validate team exists and belongs to user
+            existing_team = db.query(Team).filter(
+                Team.id == existing_task.team_id,
+                Team.user_id == user.id
+            ).first()
+            if not existing_team:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Team not found"
+                )
+            team = existing_team
         
         # 如果不存在，则创建新任务
         if task is None:
@@ -274,7 +297,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 branch_name=repository.get('branchName', '')
             )
 
-        return self.create_task(
+        return self.create_task_or_append(
                 db=db,
                 obj_in=task_create,
                 user=user

@@ -23,8 +23,8 @@ class TaskStatus(str, Enum):
 class TaskBase(BaseModel):
     """Task base model"""
     k_id: Optional[int] = None
-    title: str
-    team_id: int
+    title: Optional[str] = None
+    team_id: Optional[int] = None
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
     git_repo_id: Optional[int] = None

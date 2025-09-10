@@ -30,7 +30,7 @@ def create_task(
     db: Session = Depends(get_db)
 ):
     """Create new task with specified task_id"""
-    return task_service.create_task(db=db, obj_in=task_create, user=current_user, task_id=task_id)
+    return task_service.create_task_or_append(db=db, obj_in=task_create, user=current_user, task_id=task_id)
 
 @router.get("", response_model=TaskListResponse)
 def get_tasks(

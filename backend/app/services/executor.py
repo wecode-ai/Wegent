@@ -175,19 +175,21 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
             ).all()
             
             next_subtask = None
-            previous_subtask_results = []
+            previous_subtask_results = ""
            
             user_prompt = ""
-            
             for i, related in enumerate(related_subtasks):
                 if related.role == SubtaskRole.USER:
                     user_prompt = related.prompt
-                if related.message_id < subtask.message_id and related.role == SubtaskRole.ASSISTANT:
-                    previous_subtask_results.append(related.result)
-                if related.message_id == subtask.message_id and related.role == SubtaskRole.ASSISTANT:
+                    previous_subtask_results = ""
+                    continue
+                if related.message_id < subtask.message_id:
+                    previous_subtask_results = related.result
+                if related.message_id == subtask.message_id:
                     if i < len(related_subtasks) - 1:
                         next_subtask = related_subtasks[i+1]
                     break
+               
             
             # Build aggregated prompt
             aggregated_prompt = ""
@@ -196,10 +198,10 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 aggregated_prompt = user_prompt
             # 上一次subtask结果
             team = db.query(Team).filter(Team.id == subtask.team_id).first()
-            if previous_subtask_results and team.workflow.get('mode') == "pipeline":
-                aggregated_prompt += f"\nPrevious execution result: {previous_subtask_results[-1]}"
+            if previous_subtask_results != "" and team.workflow.get('mode') == "pipeline":
+                aggregated_prompt += f"\nPrevious execution result: {previous_subtask_results}"
             # team中串流程prompt
-            if subtask.prompt != "":
+            if subtask.prompt != "" and team.workflow.get('mode') == "pipeline":
                 aggregated_prompt += f"\n{subtask.prompt}"
 
             # Build user git information
