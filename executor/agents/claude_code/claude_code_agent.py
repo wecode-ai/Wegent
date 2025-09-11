@@ -149,7 +149,7 @@ class ClaudeCodeAgent(Agent):
             self.download_code()
 
             # Update cwd in options if not already set
-            if "cwd" not in self.options and os.path.exists(self.project_path):
+            if "cwd" not in self.options and self.project_path is not None and os.path.exists(self.project_path):
                 self.options["cwd"] = self.project_path
                 logger.info(f"Set cwd to {self.project_path}")
 

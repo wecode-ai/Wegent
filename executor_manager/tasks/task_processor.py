@@ -66,12 +66,12 @@ class TaskProcessor:
             try:
                 task_id = task.get("task_id", -1)
                 subtask_id = task.get("subtask_id", -1)
-                bot_config = task.get("bot") or {}
-                agent_name = bot_config.get("agent_name", "unknown")
+                bot_config = task.get("bot") or []
+                
                 # Get executor type, default is docker
                 executor_type = task.get("executor_type", "docker")
                 logger.info(
-                    f"Processing task: ID={task_id}, agent_name={agent_name}, executor_type={executor_type}"
+                    f"Processing task: ID={task_id}, executor_type={executor_type}"
                 )
                 executor = ExecutorDispatcher.get_executor(executor_type)
                 
@@ -95,12 +95,12 @@ class TaskProcessor:
                 task_result[task_id] = result
                 if result and result.get("executor_name"):
                     logger.info(
-                        f"Task processed successfully: ID={task_id}, agent_name={agent_name}, executor_type={executor_type}"
+                        f"Task processed successfully: ID={task_id}, executor_type={executor_type}"
                     )
                     success_count += 1
                 else:
                     logger.error(
-                        f"Failed to process task: ID={task_id}, agent_name={agent_name}, executor_type={executor_type}"
+                        f"Failed to process task: ID={task_id}, executor_type={executor_type}"
                     )
             except Exception as e:
                 logger.error(f"Error processing task: {e}")
