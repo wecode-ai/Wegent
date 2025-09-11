@@ -59,8 +59,12 @@ class AgentService:
             return existing_agent
 
         try:
-            bot_config = task_data.get("bot") or {}
-            agent_name = bot_config.get("agent_name", "").strip().lower()
+            bot_config = task_data.get("bot")
+            if isinstance(bot_config, list):
+                agent_name = bot_config[0].get("agent_name", "").strip().lower()
+            else:
+                agent_name = bot_config.get("agent_name", "").strip().lower()
+
             logger.info(f"[{_format_task_log(task_id, subtask_id)}] Creating new agent '{agent_name}'")
             agent = AgentFactory.get_agent(agent_name, task_data)
 

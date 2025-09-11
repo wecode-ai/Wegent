@@ -51,7 +51,6 @@ class AgnoAgent(Agent):
         self.prompt = task_data.get("prompt", "")
         self.project_path = None
         self.team = None
-        self.mcp_tools = None
 
         # Extract Agno options from task_data
         self.options = self._extract_agno_options(task_data)
@@ -115,6 +114,29 @@ class AgnoAgent(Agent):
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
 
+        # Handle both single bot object and bot array
+        if bot_config:
+            if isinstance(bot_config, list):
+                # Handle bot array - use the first bot configuration
+                team_members = []
+                for tmp_bot in bot_config:
+                    tmp_bot_options = {}
+                    logger.info(
+                        f"Found bot array with {len(bot_config)} bots, using bot: {tmp_bot.get('name', 'unnamed')}")
+                    # Extract all non-None parameters from the first bot
+                    for key in valid_options:
+                        if key in tmp_bot and tmp_bot[key] is not None:
+                            tmp_bot_options[key] = tmp_bot[key]
+                    team_members.append(tmp_bot)
+
+                options["team_members"] = team_members
+            else:
+                # Handle single bot object (original logic)
+                logger.info("Found single bot configuration")
+                for key in valid_options:
+                    if key in bot_config and bot_config[key] is not None:
+                        options[key] = bot_config[key]
+
         logger.info(f"Extracted Agno options: {options}")
         return options
 
@@ -150,16 +172,16 @@ class AgnoAgent(Agent):
                 default_headers=default_headers
             )
 
-    def _setup_mcp_tools(self) -> Optional[List[MCPTools]]:
+    async def _setup_mcp_tools(self, config) -> Optional[List[MCPTools]]:
         """
         Setup MCP tools if configured
         """
-        mcp_servers = self.options.get("mcp_servers")
+        mcp_servers = config.get("mcp_servers")
         if not mcp_servers:
             return None
 
         mcp_tools_list = []
-        
+
         try:
             # Handle dict format where keys are server names and values are server configs
             if isinstance(mcp_servers, dict):
@@ -168,7 +190,7 @@ class AgnoAgent(Agent):
                     # Skip if server_config is not a dict
                     if not isinstance(server_config, dict):
                         continue
-                    
+
                     # Extract server parameters
                     server_params = StreamableHTTPClientParams(
                         url=server_config.get("url"),
@@ -176,9 +198,7 @@ class AgnoAgent(Agent):
                     )
                     mcp_tools = MCPTools(transport="streamable-http", server_params=server_params)
                     mcp_tools_list.append(mcp_tools)
-                
-                return mcp_tools_list if mcp_tools_list else None
-                
+
             # Handle list format for backward compatibility
             elif isinstance(mcp_servers, list) and len(mcp_servers) > 0:
                 # Use the first server in the list
@@ -190,10 +210,17 @@ class AgnoAgent(Agent):
                 )
                 mcp_tools = MCPTools(transport="streamable-http", server_params=server_params)
                 mcp_tools_list.append(mcp_tools)
-                return mcp_tools_list
+
+            if mcp_tools_list:
+                logger.info("Setting up MCP tools")
+                # Connect all MCP tools in the list
+                for mcp_tool in mcp_tools_list:
+                    await mcp_tool.connect()
+
+            return mcp_tools_list
         except Exception as e:
             logger.error(f"Failed to setup MCP tools: {str(e)}")
-        
+
         return None
 
     async def _create_team(self) -> Team:
@@ -202,44 +229,41 @@ class AgnoAgent(Agent):
         """
         model = self._get_model()
         team_members = []
-        
-        # Setup MCP tools if available
-        self.mcp_tools = self._setup_mcp_tools()
 
         logger.info("start Setting up MCP tools")
-        if self.mcp_tools:
-            logger.info("Setting up MCP tools")
-            # Connect all MCP tools in the list
-            for mcp_tool in self.mcp_tools:
-                await mcp_tool.connect()
-        
+
         # Create team members based on configuration
         team_members_config = self.options.get("team_members")
         if team_members_config:
             if isinstance(team_members_config, list):
                 for member_config in team_members_config:
+                    # Setup MCP tools if available
+                    mcp_tools = await self._setup_mcp_tools(member_config)
                     member = AgnoSdkAgent(
                         name=member_config.get("name", "TeamMember"),
                         model=model,
-                        tools=self.mcp_tools if self.mcp_tools else [],
+                        tools=mcp_tools if mcp_tools else [],
                         description=member_config.get("description", "Team member")
                     )
                     team_members.append(member)
             else:
                 # Single member configuration
+                # Setup MCP tools if available
+                mcp_tools = await self._setup_mcp_tools(self.options)
                 member = AgnoSdkAgent(
                     name=team_members_config.get("name", "TeamMember"),
                     model=model,
-                    tools=self.mcp_tools if self.mcp_tools else [],
+                    tools=mcp_tools if mcp_tools else [],
                     description=team_members_config.get("description", "Team member")
                 )
                 team_members.append(member)
         else:
             # Default team member
+            mcp_tools = await self._setup_mcp_tools(self.options)
             member = AgnoSdkAgent(
                 name="DefaultAgent",
                 model=model,
-                tools=self.mcp_tools if self.mcp_tools else [],
+                tools=mcp_tools if mcp_tools else [],
                 description="Default team member"
             )
             team_members.append(member)
