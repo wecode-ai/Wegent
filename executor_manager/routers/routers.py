@@ -11,6 +11,7 @@ API routes module, defines FastAPI routes and models
 """
 
 import os
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from fastapi import FastAPI, HTTPException, APIRouter
 from pydantic import BaseModel
 from typing import Optional
@@ -124,7 +125,7 @@ class DeleteExecutorRequest(BaseModel):
 async def delete_executor(request: DeleteExecutorRequest):
     try:
         logger.info(f"Received request to delete executor: {request.executor_name}")
-        executor = ExecutorDispatcher.get_executor("docker")
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.delete_executor(request.executor_name)
         return result
     except Exception as e:
@@ -136,7 +137,7 @@ async def delete_executor(request: DeleteExecutorRequest):
 async def get_executor_load():
     try:
         logger.info("Received request to get executor load")
-        executor = ExecutorDispatcher.get_executor("docker")
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.get_executor_count()
         result["total"] = int(os.getenv("MAX_CONCURRENT_TASKS", "5"))
         return result

@@ -17,7 +17,7 @@ import os
 import schedule
 import time
 from datetime import datetime
-from executor_manager.config.config import TASK_FETCH_INTERVAL, TIME_LOG_INTERVAL, SCHEDULER_SLEEP_TIME
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE, TASK_FETCH_INTERVAL, TIME_LOG_INTERVAL, SCHEDULER_SLEEP_TIME
 from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.tasks.task_processor import TaskProcessor
 
@@ -43,7 +43,7 @@ class TaskScheduler:
     def fetch_and_process_tasks(self):
         """Fetch and process tasks"""
         
-        executor_count_result = ExecutorDispatcher.get_executor("docker").get_executor_count()
+        executor_count_result = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_executor_count()
         
         if executor_count_result["status"] != "success":
             logger.error(f"Failed to get job count: {executor_count_result.get('error_msg', 'Unknown error')}")
@@ -68,7 +68,7 @@ class TaskScheduler:
         return success
     
     def fetch_subtasks(self):
-        current_tasks = ExecutorDispatcher.get_executor("docker").get_current_task_ids()
+        current_tasks = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_current_task_ids()
         logger.info(f"Current task ids: {current_tasks}")
         if current_tasks.get("task_ids") and len(current_tasks.get("task_ids")) > 0:
             success, result = self.api_client.fetch_subtasks(",".join(current_tasks.get("task_ids")))

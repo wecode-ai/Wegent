@@ -13,7 +13,7 @@ class ExecutorDispatcher:
     Dynamically select the appropriate Executor instance based on the task type.
     """
 
-    _executors: Dict[str, object] = {}
+    _executors = {"docker": DockerExecutor()}
 
     @classmethod
     def get_executor(cls, task_type: str):
@@ -22,5 +22,5 @@ class ExecutorDispatcher:
         Supports 'docker', and can be extended to 'local' and others in the future.
         """
         if "docker" not in cls._executors:
-            cls._executors["docker"] = DockerExecutor()
+            cls._executors["docker"]
         return cls._executors["docker"]
