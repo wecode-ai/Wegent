@@ -123,22 +123,31 @@ class AgnoAgent(Agent):
         Get the model configuration based on options
         """
         model_config = self.options.get("model", "claude")
-        
+
+        default_headers = {
+            "wecode-user": "wenbo17",
+            "wecode-action": "wecode-group-test",
+            "wecode-model-id": "gpt-4.1-mini"
+        }
+
         if model_config == "claude":
             return Claude(
                 id=self.options.get("model_id", os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")),
                 api_key=self.options.get("api_key", os.environ.get("ANTHROPIC_API_KEY")),
+                default_headers=default_headers
             )
         elif model_config == "openai":
             return OpenAIChat(
                 id=self.options.get("model_id", os.environ.get("OPENAI_MODEL", "gpt-4")),
                 api_key=self.options.get("api_key", os.environ.get("OPENAI_API_KEY")),
+                default_headers=default_headers
             )
         else:
             # Default to Claude
             return Claude(
                 id=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
                 api_key=os.environ.get("ANTHROPIC_API_KEY"),
+                default_headers=default_headers
             )
 
     def _setup_mcp_tools(self) -> Optional[List[MCPTools]]:
