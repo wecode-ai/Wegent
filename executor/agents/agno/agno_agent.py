@@ -51,6 +51,7 @@ class AgnoAgent(Agent):
         self.prompt = task_data.get("prompt", "")
         self.project_path = None
         self.team = None
+        self.mode = task_data.get("mode", "")
 
         # Extract Agno options from task_data
         self.options = self._extract_agno_options(task_data)
@@ -232,6 +233,7 @@ class AgnoAgent(Agent):
 
         logger.info("start Setting up MCP tools")
 
+
         # Create team members based on configuration
         team_members_config = self.options.get("team_members")
         if team_members_config:
@@ -268,12 +270,33 @@ class AgnoAgent(Agent):
             )
             team_members.append(member)
 
+        mode_config = {}
+        if self.mode == "coordinate":
+            mode_config = {
+                "determine_input_for_members": True
+            }
+        elif self.mode == "collaborate":
+            mode_config = {
+                "delegate_task_to_all_members": True
+            }
+        elif self.mode == "route":
+            mode_config = {
+                "delegate_task_to_all_members": False,
+                "respond_directly": False,
+                "determine_input_for_members": True
+            }
+        else:
+            mode_config = {
+                "determine_input_for_members": True
+            }
+
         # Create team
         team = Team(
             name=self.options.get("team_name", "AgnoTeam"),
             members=team_members,
             model=model,
-            description=self.options.get("team_description", "Agno team for task execution")
+            description=self.options.get("team_description", "Agno team for task execution"),
+            **mode_config
         )
         
         return team
