@@ -270,24 +270,36 @@ class AgnoAgent(Agent):
             )
             team_members.append(member)
 
-        mode_config = {}
         if self.mode == "coordinate":
-            mode_config = {
-                "determine_input_for_members": True
-            }
-        elif self.mode == "collaborate":
-            mode_config = {
-                "delegate_task_to_all_members": True
-            }
-        elif self.mode == "route":
+            # 协调：队长拆分→选择性指派→汇总
             mode_config = {
                 "delegate_task_to_all_members": False,
                 "respond_directly": False,
-                "determine_input_for_members": True
+                "determine_input_for_members": True,
             }
-        else:
+
+        elif self.mode == "collaborate":
+            # 协作：所有成员并行，队长汇总
             mode_config = {
-                "determine_input_for_members": True
+                "delegate_task_to_all_members": True,
+                "respond_directly": False,  # ⚠️ 与 delegate_all 同开时保持 False，避免“广播后不汇总”
+                "determine_input_for_members": False,  # 让每个成员收到相同原始输入
+            }
+
+        elif self.mode == "route":
+            # 路由：只选最合适的一个成员
+            mode_config = {
+                "delegate_task_to_all_members": False,
+                "respond_directly": False,  # 若想“被选成员原样直出”，这里可改 True
+                "determine_input_for_members": True,  # 队长可轻度改写/压缩输入再转发
+            }
+
+        else:
+            # 默认走协调语义更稳
+            mode_config = {
+                "delegate_task_to_all_members": False,
+                "respond_directly": False,
+                "determine_input_for_members": True,
             }
 
         # Create team
