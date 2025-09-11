@@ -69,7 +69,7 @@ class TaskProcessor:
                 bot_config = task.get("bot") or []
                 
                 # Get executor type, default is docker
-                executor_type = task.get("executor_type", "docker")
+                executor_type = task.get("executor_type", config.EXECUTOR_DISPATCHER_MODE)
                 logger.info(
                     f"Processing task: ID={task_id}, executor_type={executor_type}"
                 )
