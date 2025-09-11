@@ -31,7 +31,7 @@ export default function TeamEdit({
   onTeamUpdated
 }: TeamEditProps) {
   const [name, setName] = useState('')
-  const [mode, setMode] = useState<'pipline' | 'route' | 'coordinate' | 'collaborate'>('pipline')
+  const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline')
   const [steps, setSteps] = useState([{ bot_id: 0, prompt: '' }])
   const [multiBotIds, setMultiBotIds] = useState<number[]>([])
   const [saving, setSaving] = useState(false)
@@ -41,7 +41,7 @@ export default function TeamEdit({
     if (isOpen) {
       if (editingTeam) {
         setName(editingTeam.name)
-        setMode(editingTeam.workflow?.mode || 'pipline')
+        setMode(editingTeam.workflow?.mode || 'pipeline')
         setSteps(editingTeam.bots.map(b => ({ bot_id: b.bot_id, prompt: b.bot_prompt })))
         if (['route', 'coordinate', 'collaborate'].includes(editingTeam.workflow?.mode)) {
           setMultiBotIds(editingTeam.bots.map(b => b.bot_id))
@@ -50,7 +50,7 @@ export default function TeamEdit({
         }
       } else {
         setName('')
-        setMode('pipline')
+        setMode('pipeline')
         setSteps([{ bot_id: bots[0]?.id || 0, prompt: '' }])
         setMultiBotIds([])
       }
@@ -64,9 +64,9 @@ export default function TeamEdit({
     )
   }
 
-  const handleModeChange = (newMode: 'pipline' | 'route' | 'coordinate' | 'collaborate') => {
+  const handleModeChange = (newMode: 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
     setMode(newMode)
-    if (newMode === 'pipline') {
+    if (newMode === 'pipeline') {
       setSteps([{ bot_id: bots[0]?.id || 0, prompt: '' }])
       setMultiBotIds([])
     } else {
@@ -93,7 +93,7 @@ export default function TeamEdit({
       return
     }
     let botsData
-    if (mode === 'pipline') {
+    if (mode === 'pipeline') {
       if (steps.some(s => !s.bot_id)) {
         setError('Each step must select a bot')
         return
@@ -171,7 +171,7 @@ export default function TeamEdit({
             onChange={(e) => handleModeChange(e.target.value)}
             optionType="button"
             buttonStyle="solid"
-            options={['pipline', 'route', 'coordinate', 'collaborate'].map(opt => ({
+            options={['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => ({
               label: <span className="capitalize">{opt}</span>,
               value: opt,
               style: { minWidth: 90, textAlign: 'center' }
@@ -180,9 +180,9 @@ export default function TeamEdit({
         </div>
         <div>
           <label className="block text-sm font-medium text-white mb-2">
-            {mode === 'pipline' ? 'Steps' : 'Bots'}
+            {mode === 'pipeline' ? 'Steps' : 'Bots'}
           </label>
-          {mode === 'pipline' ? (
+          {mode === 'pipeline' ? (
             <div className="space-y-4">
               {steps.length === 0 ? (
                 <div className="flex items-center">
