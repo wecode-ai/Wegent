@@ -25,7 +25,7 @@ export default function TaskListSection({
   title,
 }: TaskListSectionProps) {
   const router = useRouter()
-  const { selectedTask, setSelectedTask, refreshTasks } = useTaskContext()
+  const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext()
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -126,7 +126,7 @@ export default function TaskListSection({
           return (
             <div
               key={task.id}
-              className={`flex items-center justify-between py-1 rounded hover:bg-[#21262d] cursor-pointer ${selectedTask?.id === task.id ? 'bg-[#21262d]' : ''}`}
+              className={`flex items-center justify-between py-1 rounded hover:bg-[#21262d] cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-[#21262d]' : ''}`}
               onClick={() => handleTaskClick(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
               onMouseLeave={() => setHoveredTaskId(null)}

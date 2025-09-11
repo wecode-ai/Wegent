@@ -33,7 +33,7 @@ export default function BranchSelector({
   const [branches, setBranches] = useState<GitBranch[]>([])
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
-  const { selectedTask } = useTaskContext()
+  const { selectedTaskDetail } = useTaskContext()
 
   // Dropdown expansion direction
   const [dropdownDirection, setDropdownDirection] = useState<'up' | 'down'>('down')
@@ -83,11 +83,11 @@ export default function BranchSelector({
   useEffect(() => {
     if (!branches || branches.length === 0) return
     if (
-      selectedTask &&
-      'branch_name' in selectedTask &&
-      selectedTask.branch_name
+      selectedTaskDetail &&
+      'branch_name' in selectedTaskDetail &&
+      selectedTaskDetail.branch_name
     ) {
-      const foundBranch = branches.find(b => b.name === selectedTask.branch_name) || null
+      const foundBranch = branches.find(b => b.name === selectedTaskDetail.branch_name) || null
       if (foundBranch) {
         handleBranchChange(foundBranch)
         return
@@ -98,7 +98,7 @@ export default function BranchSelector({
       handleBranchChange(branches[0])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask, branches])
+  }, [selectedTaskDetail, branches])
 
   // Merge states
   const showLoading = loading

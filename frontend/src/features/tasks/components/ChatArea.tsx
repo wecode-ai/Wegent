@@ -5,6 +5,7 @@
 'use client'
 
 import React, { useState, useEffect } from 'react'
+import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline'
 import MessagesArea from './MessagesArea'
 import ChatInput from './ChatInput'
 import TeamSelector from './TeamSelector'
@@ -33,10 +34,8 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
   const searchParams = useSearchParams()
 
   // New: Get selectedTask to determine if there are messages
-  const { selectedTask } = useTaskContext()
-  const hasMessages = Boolean(selectedTask && selectedTask.id)
-
-  const { refreshTasks, setSelectedTask } = useTaskContext();
+  const { selectedTaskDetail, refreshTasks, setSelectedTask } = useTaskContext()
+  const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id)
 
   const handleSendMessage = async () => {
     setIsLoading(true)
@@ -46,7 +45,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
       team: selectedTeam,
       repo: selectedRepo,
       branch: selectedBranch,
-      task_id: selectedTask?.id,
+      task_id: selectedTaskDetail?.id,
     })
     if (error) {
       setError(error)
@@ -92,29 +91,39 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
         )}
 
         {/* Chat Input */}
-        <div className="relative w-full">
+        <div className="relative w-full flex flex-col rounded-xl border border-[#30363d] bg-[#161b22]">
           <ChatInput
             message={taskInputMessage}
             setMessage={setTaskInputMessage}
             handleSendMessage={handleSendMessage}
             isLoading={isLoading}
           />
-          {/* Team Selector - absolute left bottom inside ChatInput */}
-          {teams.length > 0 && (
-            <div className="absolute left-3 bottom-3 z-10">
-              <TeamSelector
-                selectedTeam={selectedTeam}
-                setSelectedTeam={setSelectedTeam}
-                teams={teams}
-                disabled={hasMessages}
-                isLoading={isTeamsLoading}
-              />
+          {/* Team Selector and Send Button */}
+          <div className="flex items-end justify-between px-3 py-2">
+            <div>
+              {teams.length > 0 && (
+                <TeamSelector
+                  selectedTeam={selectedTeam}
+                  setSelectedTeam={setSelectedTeam}
+                  teams={teams}
+                  disabled={hasMessages}
+                  isLoading={isTeamsLoading}
+                />
+              )}
             </div>
-          )}
+            <button
+              type="button"
+              onClick={handleSendMessage}
+              disabled={isLoading}
+              className="relative top-1 text-gray-500 hover:text-white transition-colors duration-200 disabled:opacity-50"
+            >
+              <ArrowTurnDownLeftIcon className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Bottom Controls */}
-        <div className="flex flex-row gap-1 mb-4 items-center">
+        <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center">
           <RepositorySelector
             selectedRepo={selectedRepo}
             handleRepoChange={setSelectedRepo}

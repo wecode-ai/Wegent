@@ -4,9 +4,8 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useTaskContext } from '../contexts/taskContext'
-import { taskApis } from '@/apis/tasks'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { RiRobot2Line } from 'react-icons/ri'
 
@@ -20,49 +19,21 @@ interface Message {
 }
 
 export default function MessagesArea() {
-  const { selectedTask } = useTaskContext()
-  const [taskDetail, setTaskDetail] = useState<TaskDetail | null>(null)
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState('')
+  const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext()
 
-  // Fetch task details
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
 
-    // Add isSilent parameter, do not show loading during timed refresh
-    const fetchDetail = (isSilent: boolean = false) => {
-      if (!selectedTask?.id) {
-        setTaskDetail(null)
-        return
-      }
-      if (!isSilent) setIsLoading(true)
-      setError('')
-      taskApis.getTaskDetail(selectedTask.id)
-        .then((detail: TaskDetail) => {
-          setTaskDetail(detail)
-        })
-        .catch((e: any) => {
-          setError(e?.message || 'Failed to fetch task detail')
-          setTaskDetail(null)
-        })
-        .finally(() => {
-          if (!isSilent) setIsLoading(false)
-        })
-    }
-
-    // Show loading when first loading/switching tasks
-    fetchDetail(false);
-
-    if (selectedTask?.id) {
+    if (selectedTaskDetail?.id) {
       intervalId = setInterval(() => {
-        fetchDetail(true); // Silent update during timed refresh
-      }, 5000); // Auto-refresh every 30 seconds
+        refreshSelectedTaskDetail();
+      }, 5000);
     }
 
     return () => {
       if (intervalId) clearInterval(intervalId);
     }
-  }, [selectedTask?.id])
+  }, [selectedTaskDetail?.id, refreshSelectedTaskDetail])
 
   // Calculate messages from taskDetail
   function generateTaskMessages(detail: TaskDetail | null): Message[] {
@@ -127,33 +98,10 @@ export default function MessagesArea() {
       return messages;
   }
   
-
-  // Display loading virtual messages
-  const displayMessages = isLoading
-    ? [
-        {
-          type: 'user',
-          content: 'loading...',
-          timestamp: 0,
-        },
-        {
-          type: 'ai',
-          content: 'loading task status...',
-          timestamp: 0,
-          botName: 'Bot',
-        },
-      ]
-      : generateTaskMessages(taskDetail);
+  const displayMessages = generateTaskMessages(selectedTaskDetail);
 
   return (
     <div className="flex-1 w-full max-w-2xl mx-auto flex flex-col">
-      {/* Error Message */}
-      {error && (
-        <div className="mb-4 bg-red-900/20 border border-red-800/50 rounded-md p-3">
-          <div className="text-sm text-red-300">{error}</div>
-        </div>
-      )}
-
       {/* Messages Area - only shown when there are messages or loading */}
       {(displayMessages.length > 0) && (
         <div className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar">

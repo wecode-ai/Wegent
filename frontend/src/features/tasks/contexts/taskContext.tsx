@@ -6,14 +6,16 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { taskApis } from '@/apis/tasks'
-import { Task } from '@/types/api'
+import { Task, TaskDetail } from '@/types/api'
 
 type TaskContextType = {
   tasks: Task[]
   taskLoading: boolean
   selectedTask: Task | null
+  selectedTaskDetail: TaskDetail | null
   setSelectedTask: (task: Task | null) => void
   refreshTasks: () => void
+  refreshSelectedTaskDetail: () => void
   loadMore: () => void
   hasMore: boolean
   loadingMore: boolean
@@ -25,6 +27,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskLoading, setTaskLoading] = useState<boolean>(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [selectedTaskDetail, setSelectedTaskDetail] = useState<TaskDetail | null>(null)
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true)
@@ -88,14 +91,35 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   }, [loadedPages])
 
+  const refreshSelectedTaskDetail = async () => {
+    if (!selectedTask) return
+    try {
+      const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id)
+      setSelectedTaskDetail(updatedTaskDetail)
+    } catch (error) {
+      console.error('Failed to refresh selected task detail:', error)
+    }
+  }
+
+  useEffect(() => {
+    if (selectedTask) {
+      refreshSelectedTaskDetail()
+    } else {
+      setSelectedTaskDetail(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTask])
+
   return (
     <TaskContext.Provider
       value={{
         tasks,
         taskLoading,
         selectedTask,
+        selectedTaskDetail,
         setSelectedTask,
         refreshTasks,
+        refreshSelectedTaskDetail,
         loadMore,
         hasMore,
         loadingMore,
@@ -105,7 +129,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     </TaskContext.Provider>
   )
 }
-
 /**
  * useTaskContext must be used within a TaskContextProvider.
  */
