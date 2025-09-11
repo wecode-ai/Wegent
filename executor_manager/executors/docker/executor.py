@@ -10,10 +10,12 @@
 Docker executor for running tasks in Docker containers
 """
 
+from email import utils
 import json
 import os
 import subprocess
 from typing import Any, Dict, Optional
+from urllib import request
 
 from shared.logger import setup_logger
 from shared.status import TaskStatus
@@ -23,8 +25,10 @@ from executor_manager.executors.docker.utils import (
     find_available_port,
     check_container_ownership,
     delete_container,
+    get_container_ports,
     get_running_task_details,
 )
+from shared.utils.ip_uitl import get_host_ip
 
 logger = setup_logger(__name__)
 
@@ -59,96 +63,114 @@ class DockerExecutor(Executor):
         subtask_id = task.get("subtask_id", -1)
         user_config = task.get("user") or {}
         user_name = user_config.get("name", "unknown")
-
-        # Generate a unique container name
-        executor_name = f"task-{user_name}-{task_id}-{subtask_id}"
-
-        # Get executor image from task or use default
-        executor_image = task.get("executor_image", os.getenv("EXECUTOR_IMAGE", ""))
-
-        if executor_image == "":
-            raise ValueError("Executor image not provided")
-
-        # Convert task to JSON string for container environment
-        task_str = json.dumps(task)
+        executor_name = task.get("executor_name")
 
         status = "success"
         progress = 30
         error_msg = ""
         callback_status = TaskStatus.RUNNING.value
-        try:
-            # Prepare Docker run command
-            cmd = [
-                "docker",
-                "run",
-                "-d",  # Run in detached mode
-                "--name",
-                executor_name,
-                # Add labels for container management
-                "--label",
-                "owner=executor_manager",
-                "--label",
-                f"task_id={task_id}",
-                "--label",
-                f"subtask_id={subtask_id}",
-                "--label",
-                f"user={user_name}",
-                "--label",
-                f"subtask_next_id={task.get('subtask_next_id', '')}",
-                "-e",
-                f"TASK_INFO={task_str}",
-                "-e",
-                f"EXECUTOR_NAME={executor_name}",
-                "-e",
-                "TZ=Asia/Shanghai",
-                "-e",
-                "LANG=en_US.UTF-8",
-                "-v",
-                "/var/run/docker.sock:/var/run/docker.sock"
-            ]
-            executor_workspace = os.getenv("EXECUTOR_WORKSPCE", "")
-            if executor_workspace:
-                cmd.extend(["-v", f"{executor_workspace}:/workspace"])
-            network = os.getenv("NETWORK", "")
-            if network:
-                cmd.extend(["--network", network])
-            port = find_available_port()
-            logger.info(f"Assigned port {port} for container {executor_name}")
-            cmd.extend(["-p", f"{port}:{port}"])
-            cmd.extend(["-e", f"PORT={port}"])
+        
+        if executor_name:
+            # 如果容器名字存在, 则直接查询容器对应的端口, 通过 http 请求发送任务
+            ports = get_container_ports(executor_name)
+            if len(ports) != 0:
+                port = ports[0]
+            else:
+                raise ValueError(f"Executor name {executor_name} not found")
+            ip = get_host_ip()
+            res = request.post(f"http://{ip}:{port}/api/tasks/execute", json=task)
+            if res.json()["status"] == "success":
+                status = "success"
+                progress = 100
+                error_msg = ""
+                error_msg = res.json()["error_msg"]
+            logger.info(f"Executor name: {executor_name}")
+        else:
+            # Generate a unique container name
+            executor_name = f"task-{user_name}-{task_id}-{subtask_id}"
 
-            # Add callback URL if provided
-            callback_url = build_callback_url(task)
-            if callback_url:
-                cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
+            # Get executor image from task or use default
+            executor_image = task.get("executor_image", os.getenv("EXECUTOR_IMAGE", ""))
 
-            # Add executor image at the end
-            cmd.append(executor_image)
+            if executor_image == "":
+                raise ValueError("Executor image not provided")
 
-            # Execute Docker run command
-            logger.info(
-                f"Starting Docker container for task {task_id}: {executor_name}"
-            )
-            result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            # Convert task to JSON string for container environment
+            task_str = json.dumps(task)
 
-            # Get container ID from output
-            container_id = result.stdout.strip()
-            logger.info(
-                f"Started Docker container {executor_name} with ID {container_id}"
-            )
+            try:
+                # Prepare Docker run command
+                cmd = [
+                    "docker",
+                    "run",
+                    "-d",  # Run in detached mode
+                    "--name",
+                    executor_name,
+                    # Add labels for container management
+                    "--label",
+                    "owner=executor_manager",
+                    "--label",
+                    f"task_id={task_id}",
+                    "--label",
+                    f"subtask_id={subtask_id}",
+                    "--label",
+                    f"user={user_name}",
+                    "--label",
+                    f"subtask_next_id={task.get('subtask_next_id', '')}",
+                    "-e",
+                    f"TASK_INFO={task_str}",
+                    "-e",
+                    f"EXECUTOR_NAME={executor_name}",
+                    "-e",
+                    "TZ=Asia/Shanghai",
+                    "-e",
+                    "LANG=en_US.UTF-8",
+                    "-v",
+                    "/var/run/docker.sock:/var/run/docker.sock"
+                ]
+                executor_workspace = os.getenv("EXECUTOR_WORKSPCE", "")
+                if executor_workspace:
+                    cmd.extend(["-v", f"{executor_workspace}:/workspace"])
+                network = os.getenv("NETWORK", "")
+                if network:
+                    cmd.extend(["--network", network])
+                port = find_available_port()
+                logger.info(f"Assigned port {port} for container {executor_name}")
+                cmd.extend(["-p", f"{port}:{port}"])
+                cmd.extend(["-e", f"PORT={port}"])
 
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Docker run error for task {task_id}: {e.stderr}")
-            status = "failed"
-            progress = 100
-            error_msg = f"Docker run error: {e.stderr}"
-            callback_status = TaskStatus.FAILED.value
-        except Exception as e:
-            logger.error(f"Error creating Docker container for task {task_id}: {e}")
-            status = "failed"
-            progress = 100
-            error_msg = f"Error: {e}"
-            callback_status = TaskStatus.FAILED.value
+                # Add callback URL if provided
+                callback_url = build_callback_url(task)
+                if callback_url:
+                    cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
+
+                # Add executor image at the end
+                cmd.append(executor_image)
+
+                # Execute Docker run command
+                logger.info(
+                    f"Starting Docker container for task {task_id}: {executor_name}"
+                )
+                result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+                # Get container ID from output
+                container_id = result.stdout.strip()
+                logger.info(
+                    f"Started Docker container {executor_name} with ID {container_id}"
+                )
+
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Docker run error for task {task_id}: {e.stderr}")
+                status = "failed"
+                progress = 100
+                error_msg = f"Docker run error: {e.stderr}"
+                callback_status = TaskStatus.FAILED.value
+            except Exception as e:
+                logger.error(f"Error creating Docker container for task {task_id}: {e}")
+                status = "failed"
+                progress = 100
+                error_msg = f"Error: {e}"
+                callback_status = TaskStatus.FAILED.value
 
         # Call callback if provided
         subtask_id = task.get("subtask_id", -1)

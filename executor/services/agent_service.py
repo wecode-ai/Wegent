@@ -58,8 +58,12 @@ class AgentService:
             return existing_agent
 
         try:
-            bot_config = task_data.get("bot") or {}
-            agent_name = bot_config.get("agent_name", "").strip().lower()
+            bot_config = task_data.get("bot") or []
+            # TODO: 暂时不支持混发 Agent, 暂时使用第一个 Agent
+            if len(bot_config) == 0:
+                logger.error(f"[{_format_task_log(task_id, subtask_id)}] No agent name found in task data")
+                return None
+            agent_name = bot_config[0].get("agent_name", "").strip().lower()
             logger.info(f"[{_format_task_log(task_id, subtask_id)}] Creating new agent '{agent_name}'")
             agent = AgentFactory.get_agent(agent_name, task_data)
 
