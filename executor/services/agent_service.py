@@ -16,6 +16,7 @@ from shared.logger import setup_logger
 from shared.status import TaskStatus
 from executor.agents import Agent, AgentFactory
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
+from executor.agents.agno.agno_agent import AgnoAgent
 
 logger = setup_logger("agent_service")
 
@@ -113,9 +114,13 @@ class AgentService:
 
     async def _close_agent_session(self, task_id: str, agent: Agent) -> Tuple[TaskStatus, Optional[str]]:
         try:
-            if agent.get_name() == "ClaudeCodeAgent":
+            agent_name = agent.get_name()
+            if agent_name == "ClaudeCodeAgent":
                 await ClaudeCodeAgent.close_client(task_id)
                 logger.info(f"[{_format_task_log(task_id, -1)}] Closed Claude client")
+            elif agent_name == "Agno":
+                await AgnoAgent.close_client(task_id)
+                logger.info(f"[{_format_task_log(task_id, -1)}] Closed Agno client")
             return TaskStatus.SUCCESS, None
         except Exception as e:
             logger.exception(f"[{_format_task_log(task_id, -1)}] Error closing agent: {e}")
@@ -169,6 +174,15 @@ class AgentService:
             logger.exception("Error closing Claude client connections")
             return TaskStatus.FAILED, str(e)
 
+    async def _close_agno_sessions(self) -> Tuple[TaskStatus, Optional[str]]:
+        try:
+            await AgnoAgent.close_all_clients()
+            logger.info("Closed all Agno client connections")
+            return TaskStatus.SUCCESS, None
+        except Exception as e:
+            logger.exception("Error closing Agno client connections")
+            return TaskStatus.FAILED, str(e)
+
     async def close_all_agent_sessions(self) -> Tuple[TaskStatus, str, Dict[str, str]]:
         results: List[str] = []
         errors: List[str] = []
@@ -182,6 +196,14 @@ class AgentService:
             else:
                 errors.append("Claude")
                 error_detail["ClaudeCodeAgent"] = msg or "Unknown error"
+
+        if "Agno" in agent_types:
+            status, msg = await self._close_agno_sessions()
+            if status == TaskStatus.SUCCESS:
+                results.append("Agno")
+            else:
+                errors.append("Agno")
+                error_detail["AgnoAgent"] = msg or "Unknown error"
 
         self._agent_sessions.clear()
 
