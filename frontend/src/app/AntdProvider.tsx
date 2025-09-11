@@ -24,6 +24,8 @@ export default function AntdProvider({
             colorTextPlaceholder: '#9ca3af',
             fontSize: 12,
             controlHeight: 34,
+            borderRadius: 6,
+            controlOutline: 'rgba(112, 167, 215, 0.3)',
           },
           components: {
             Select: {
@@ -33,12 +35,19 @@ export default function AntdProvider({
               optionActiveBg: '#21262d',
               controlItemBgHover: '#21262d',
               multipleItemBg: '#21262d',
+              hoverBorderColor: '#30363d',
+              activeBorderColor: '#30363d',
+              activeOutlineColor: '#30363d',
+              multipleItemBorderColor: '#30363d',
+              multipleItemBorderColorDisabled: 'disabled'
             },
             Radio: {
-              buttonBg: '#181c23',
+              buttonBg: '#0d1117',
               buttonCheckedBg: 'rgb(112,167,215)',
               buttonColor: '#f0f6fc',
               buttonSolidCheckedColor: '#0d1117',
+              buttonSolidCheckedHoverBg: 'rgb(112,167,215)',
+              buttonSolidCheckedActiveBg: 'rgb(112,167,215)',
             }
           }
         }}
