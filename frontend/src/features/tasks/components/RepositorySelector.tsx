@@ -4,11 +4,15 @@
 
 'use client'
 
-import { useState, useMemo, useRef } from 'react'
+import { useState, useMemo, useRef, useEffect } from 'react'
 import { Listbox } from '@headlessui/react'
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import { FiGithub, FiSearch } from 'react-icons/fi'
 import { GitRepoInfo } from '@/types/api'
+import { useUser } from '@/features/common/UserContext'
+import { useRouter } from 'next/navigation'
+import Modal from '@/features/common/Modal'
+import { Button } from '@headlessui/react'
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null
@@ -16,7 +20,6 @@ interface RepositorySelectorProps {
   disabled: boolean
 }
 
-import { useEffect } from 'react'
 import { githubApis } from '@/apis/github'
 
 export default function RepositorySelector({
@@ -24,10 +27,13 @@ export default function RepositorySelector({
   handleRepoChange,
   disabled
 }: RepositorySelectorProps) {
+  const { user } = useUser()
+  const router = useRouter()
   const [repos, setRepos] = useState<GitRepoInfo[]>([])
   const [loading, setLoading] = useState<boolean>(false)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [isModalOpen, setIsModalOpen] = useState(false)
   const searchTimeout = useRef<NodeJS.Timeout | null>(null)
 
   // Dropdown expansion direction
@@ -50,6 +56,11 @@ export default function RepositorySelector({
 
   // Fetch initial repository list
   useEffect(() => {
+    // Check if user has git_info configured before fetching repositories
+    if (!hasGitInfo()) {
+      return
+    }
+
     let ignore = false
     setLoading(true)
     githubApis.getRepositories()
@@ -71,10 +82,15 @@ export default function RepositorySelector({
       })
     return () => { ignore = true }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [user])
 
   // Remote search repositories (debounced)
   useEffect(() => {
+    // Check if user has git_info configured before searching repositories
+    if (!hasGitInfo()) {
+      return
+    }
+
     if (searchTimeout.current) {
       clearTimeout(searchTimeout.current)
     }
@@ -104,7 +120,7 @@ export default function RepositorySelector({
       if (searchTimeout.current) clearTimeout(searchTimeout.current)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchQuery])
+  }, [searchQuery, user])
 
   // After remote search, use repos directly without local filtering
   const filteredRepos = repos
@@ -114,10 +130,52 @@ export default function RepositorySelector({
   const showError = !!error
   const showNoRepo = !showLoading && !showError && repos.length === 0
 
+  // Check if user has git_info configured
+  const hasGitInfo = () => {
+    return user && user.git_info && user.git_info.length > 0
+  }
+
+  // If user doesn't have git_info configured, show a message instead of loading repos
+  if (!hasGitInfo()) {
+    return (
+      <>
+        <div
+          className="flex items-center space-x-1 text-gray-500 hover:text-gray-400 w-full cursor-pointer"
+          onClick={() => setIsModalOpen(true)}
+        >
+          <FiGithub className="w-3 h-3 flex-shrink-0" />
+          <span className="text-sm">Select git repository</span>
+        </div>
+        <Modal
+          isOpen={isModalOpen}
+          onClose={() => setIsModalOpen(false)}
+          title="Welcome!"
+          maxWidth="sm"
+        >
+          <div className="flex flex-col items-center">
+            <p className="text-sm text-gray-300 mb-6 text-center leading-relaxed">
+              Before you can start using the app, please complete the setup below first!
+            </p>
+            <Button
+              className="flex-1 min-w-0 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors duration-200 text-gray-900 bg-[#70a7d7] hover:bg-[#5b8bb3] focus:outline-none"
+              style={{ boxShadow: 'none' }}
+              onClick={() => {
+                setIsModalOpen(false)
+                router.push('/dashboard?tab=integrations')
+              }}
+            >
+              Set Token
+            </Button>
+          </div>
+        </Modal>
+      </>
+    )
+  }
+
   // Do not render when no item is selected and there are no repositories
   if (!selectedRepo && repos.length === 0 && !showLoading && !showError) return null
 
-  return (
+return (
     <Listbox value={selectedRepo} onChange={handleRepoChange} disabled={disabled || showLoading || showError || showNoRepo}>
       <div className="relative">
         <Listbox.Button

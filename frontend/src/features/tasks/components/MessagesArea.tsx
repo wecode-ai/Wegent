@@ -69,95 +69,64 @@ export default function MessagesArea() {
     if (!detail) return [];
     const messages: Message[] = [];
   
-    // Main task user prompt
-    if (detail.prompt) {
-      messages.push({
-        type: 'user',
-        content: detail.prompt,
-        timestamp: new Date(detail.created_at).getTime(),
-      });
-    }
-  
     // When subtasks exist, synthesize according to useTaskActionData logic
     if (Array.isArray(detail.subtasks) && detail.subtasks.length > 0) {
       detail.subtasks.forEach((sub: TaskDetailSubtask) => {
-        let promptContent = sub.prompt || '';
-        let truncated = false;
-        let shortPrompt = promptContent;
-        const MAX_PROMPT_LENGTH = 50;
-        if (promptContent.length > MAX_PROMPT_LENGTH) {
-          shortPrompt = promptContent.substring(0, MAX_PROMPT_LENGTH) + '...';
-          truncated = true;
-        }
-  
-        // Generate aiContent
-        let aiContent = '';
-        const result = sub.result;
-        if (result) {
-          if (typeof result === 'object') {
-            aiContent = result && Object.keys(result).length === 1 && 'value' in result
-              ? String(result.value)
-              : JSON.stringify(result);
-          } else {
-            aiContent = String(result);
+        const promptContent = sub.prompt || '';
+        let content = '';
+        let msgType: 'user' | 'ai' = 'ai';
+
+        if (sub.role === 'USER') {
+          msgType = 'user';
+          content = promptContent;
+        } else {
+          msgType = 'ai';
+          let truncated = false;
+          let shortPrompt = promptContent;
+          const MAX_PROMPT_LENGTH = 50;
+          if (promptContent.length > MAX_PROMPT_LENGTH) {
+            shortPrompt = promptContent.substring(0, MAX_PROMPT_LENGTH) + '...';
+            truncated = true;
           }
-        } else if (sub.status === 'COMPLETED') {
-          aiContent = 'Subtask completed';
-        } else if (sub.status === 'FAILED') {
-          aiContent = `Subtask failed: ${sub.error_message || 'Unknown error'}`;
-        } else {
-          aiContent = `__PROGRESS_BAR__:${sub.status}:${sub.progress}`;
+
+          // Generate aiContent
+          let aiContent = '';
+          const result = sub.result;
+          if (result) {
+            if (typeof result === 'object') {
+              aiContent = result && Object.keys(result).length === 1 && 'value' in result
+                ? String(result.value)
+                : JSON.stringify(result);
+            } else {
+              aiContent = String(result);
+            }
+          } else if (sub.status === 'COMPLETED') {
+            aiContent = 'Subtask completed';
+          } else if (sub.status === 'FAILED') {
+            aiContent = `Subtask failed: ${sub.error_message || 'Unknown error'}`;
+          } else {
+            aiContent = `__PROGRESS_BAR__:${sub.status}:${sub.progress}`;
+          }
+
+          // Merge prompt and aiContent, use special format when truncated
+          if (truncated) {
+            content = `__PROMPT_TRUNCATED__:${shortPrompt}::${promptContent}\${$$}$${aiContent}`;
+          } else {
+            content = `${promptContent}\${$$}$${aiContent}`;
+          }
         }
-  
-        // Merge prompt and aiContent, use special format when truncated
-        let mergedContent = '';
-        if (truncated) {
-          mergedContent = `__PROMPT_TRUNCATED__:${shortPrompt}::${promptContent}\${$$}$${aiContent}`;
-        } else {
-          mergedContent = `${promptContent}\${$$}$${aiContent}`;
-        }
-  
+
         messages.push({
-          type: 'ai',
-          content: mergedContent,
+          type: msgType,
+          content: content,
           timestamp: new Date(sub.updated_at).getTime(),
-          botName: sub.bot?.name || 'Bot',
+          botName: sub.bots?.[0]?.name || 'Bot',
         });
       });
-      return messages;
-    } else {
-      // When there are no subtasks, main task ai message (merge bot_prompt)
-      let aiContent = '';
-      const timestamp = new Date(detail.updated_at).getTime();
-      const result = detail.result;
-  
-      if (result) {
-        if (typeof result === 'object') {
-          aiContent = result && Object.keys(result).length === 1 && 'value' in result
-            ? String(result.value)
-            : JSON.stringify(result);
-        } else {
-          aiContent = String(result);
-        }
-      } else if (detail.status === 'COMPLETED') {
-        aiContent = 'Task completed';
-      } else if (detail.status === 'FAILED') {
-        aiContent = `Task failed: ${detail.error_message || 'Unknown error'}`;
-      } else {
-        aiContent = `__PROGRESS_BAR__:${detail.status}:${detail.progress}`;
-      }
-      const finalAiContent = aiContent;
-  
-      messages.push({
-        type: 'ai',
-        content: finalAiContent,
-        timestamp,
-        botName: 'Bot',
-      });
-  
-      return messages;
     }
+      return messages;
   }
+  
 
   // Display loading virtual messages
   const displayMessages = isLoading

@@ -36,6 +36,8 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
   const { selectedTask } = useTaskContext()
   const hasMessages = Boolean(selectedTask && selectedTask.id)
 
+  const { refreshTasks, setSelectedTask } = useTaskContext();
+
   const handleSendMessage = async () => {
     setIsLoading(true)
     setError('')
@@ -44,16 +46,20 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
       team: selectedTeam,
       repo: selectedRepo,
       branch: selectedBranch,
+      task_id: selectedTask?.id,
     })
     if (error) {
       setError(error)
     } else {
       setTaskInputMessage('')
       // Redirect to task URL after successfully creating a task
-      if (newTask && newTask.id) {
+      if (newTask && newTask.task_id) {
         const params = new URLSearchParams(Array.from(searchParams.entries()))
-        params.set('taskId', String(newTask.id))
+        params.set('taskId', String(newTask.task_id))
         router.push(`?${params.toString()}`)
+        // 主动刷新任务列表和任务详情
+        refreshTasks();
+        setSelectedTask({ id: newTask.task_id } as any); // 只传 id，详情组件会自动拉取
       }
     }
     setIsLoading(false)
@@ -92,7 +98,6 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
             setMessage={setTaskInputMessage}
             handleSendMessage={handleSendMessage}
             isLoading={isLoading}
-            disabled={hasMessages}
           />
           {/* Team Selector - absolute left bottom inside ChatInput */}
           {teams.length > 0 && (
