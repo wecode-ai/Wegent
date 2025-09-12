@@ -48,7 +48,7 @@ class AgentService:
 
     def _generate_agent_session_id(self, task_id: Any, subtask_id: Any) -> str:
         """Generate a unique session ID for an agent based on task and subtask IDs."""
-        return f"agent_session_{task_id}_{subtask_id}"
+        return f"agent_session_{task_id}"
 
     def create_agent(self, task_data: Dict[str, Any]) -> Optional[Agent]:
         task_id = task_data.get("task_id", -1)

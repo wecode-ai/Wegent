@@ -4,9 +4,11 @@
 
 import type { Metadata } from 'next'
 import './globals.css'
+import 'antd/dist/reset.css'
 import MockInit from '@/features/mock/MockInit'
 import { ToastContainer, Slide } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
+import AntdProvider from './AntdProvider'
 
 export const metadata: Metadata = {
   title: 'WeCode AI Assistant',
@@ -22,7 +24,9 @@ export default function RootLayout({
     <html lang="en">
       <body className="font-sans antialiased">
         <MockInit>
-          {children}
+          <AntdProvider>
+            {children}
+          </AntdProvider>
         </MockInit>
         <ToastContainer
           position="top-center"

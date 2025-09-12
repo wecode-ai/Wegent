@@ -25,7 +25,7 @@ export default function TaskListSection({
   title,
 }: TaskListSectionProps) {
   const router = useRouter()
-  const { selectedTask, setSelectedTask, refreshTasks } = useTaskContext()
+  const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext()
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -119,14 +119,14 @@ export default function TaskListSection({
   }
 
   return (
-    <div className="mb-3">
-      <h3 className="text-xs font-medium text-gray-500 tracking-wide mb-1.5" style={{ fontSize: '10px' }}>{title}</h3>
-      <div className="space-y-0.5">
+    <div className="mb-2">
+      <h3 className="text-xs font-medium text-gray-500 tracking-wide mb-1" style={{ fontSize: '10px' }}>{title}</h3>
+      <div className="space-y-0">
         {tasks.map(task => {
           return (
             <div
               key={task.id}
-              className={`flex items-center justify-between py-1.5 rounded hover:bg-[#21262d] cursor-pointer ${selectedTask?.id === task.id ? 'bg-[#21262d]' : ''}`}
+              className={`flex items-center justify-between py-1 rounded hover:bg-[#21262d] cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-[#21262d]' : ''}`}
               onClick={() => handleTaskClick(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
               onMouseLeave={() => setHoveredTaskId(null)}
@@ -136,8 +136,8 @@ export default function TaskListSection({
                   {getStatusIcon(task.status)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-400 leading-tight truncate">{task.title}</p>
-                  <p className="text-xs text-gray-600 mt-0.5">{formatTimeAgo(task.created_at)}</p>
+                  <p className="text-xs text-gray-400 leading-tight truncate m-0">{task.title}</p>
+                  <p className="text-xs text-gray-600 m-0">{formatTimeAgo(task.created_at)}</p>
                 </div>
               </div>
 

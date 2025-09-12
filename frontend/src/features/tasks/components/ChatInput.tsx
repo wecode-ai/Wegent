@@ -30,30 +30,20 @@ export default function ChatInput({
   }
 
   return (
-    <div className="relative w-full">
+    <div className="w-full">
       <TextareaAutosize
         value={message}
         onChange={(e) => {
           if (!disabled) setMessage(e.target.value)
         }}
         onKeyDown={handleKeyPress}
-        placeholder="Ask BotTeam to build, fix bugs, explore"
-        className={`w-full p-3 pb-10 pr-8 bg-[#161b22] border border-[#30363d] rounded-xl custom-scrollbar text-white placeholder-gray-400 focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        placeholder="Ask Team to build, fix bugs, explore"
+        className={`w-full p-3 bg-transparent custom-scrollbar text-white placeholder-gray-400 placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         disabled={disabled}
         minRows={3}
         maxRows={8}
         style={{ resize: 'none', overflow: 'auto' }}
       />
-      
-      {/* Send Button - absolute right bottom */}
-      <button
-        type="button"
-        onClick={handleSendMessage}
-        disabled={isLoading || disabled}
-        className="absolute bottom-3 right-3 p-1 text-gray-500 hover:text-white transition-colors duration-200 disabled:opacity-50"
-      >
-        <ArrowTurnDownLeftIcon className="w-4 h-4" />
-      </button>
     </div>
   )
 }

@@ -27,7 +27,7 @@ export default function TeamSelector({
   disabled,
   isLoading
 }: TeamSelectorProps) {
-  const { selectedTask } = useTaskContext()
+  const { selectedTaskDetail } = useTaskContext()
 
   // Dropdown expansion direction
   const [dropdownDirection, setDropdownDirection] = useState<'up' | 'down'>('down')
@@ -48,8 +48,8 @@ export default function TeamSelector({
 
   // Automatically set team based on selectedTask
   useEffect(() => {
-    if (selectedTask && 'team' in selectedTask && selectedTask.team && teams.length > 0) {
-      const foundTeam = teams.find(t => t.id === (selectedTask.team as any).id) || null
+    if (selectedTaskDetail && 'team' in selectedTaskDetail && selectedTaskDetail.team && teams.length > 0) {
+      const foundTeam = teams.find(t => t.id === (selectedTaskDetail.team as any).id) || null
       setSelectedTeam(foundTeam)
     } else if (teams && teams.length > 0) {
       setSelectedTeam(teams[0])
@@ -57,7 +57,7 @@ export default function TeamSelector({
       setSelectedTeam(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask, teams])
+  }, [selectedTaskDetail, teams])
 
   if (!selectedTeam || teams.length === 0) return null
 
@@ -77,7 +77,7 @@ export default function TeamSelector({
             <ChevronDownIcon className="w-4 h-4 flex-shrink-0" />
           </Listbox.Button>
           <Listbox.Options
-            className={`absolute ${dropdownDirection === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} left-0 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-20 min-w-full w-auto max-w-[220px] py-1`}
+            className={`absolute ${dropdownDirection === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} left-0 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-20 w-auto max-w-[220px] py-1`}
           >
             {teams.map((team) => (
               <Listbox.Option

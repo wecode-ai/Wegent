@@ -53,6 +53,7 @@ export interface TaskListResponse {
 }
 
 // Task Services
+
 export const taskApis = {
   getTasks: async (params?: PaginationParams & { status?: TaskStatus }): Promise<TaskListResponse> => {
     const query = new URLSearchParams()
@@ -62,8 +63,10 @@ export const taskApis = {
     return apiClient.get(`/tasks?${query}`)
   },
 
-  createTask: async (data: CreateTaskRequest): Promise<Task> => {
-    return apiClient.post('/tasks', data)
+  // Create task and return its id directly ({ task_id: number } from backend)
+  createTask: async (): Promise<number> => {
+    const res = await apiClient.post<{ task_id: number }>('/tasks')
+    return res.task_id
   },
 
   updateTask: async (id: number, data: UpdateTaskRequest): Promise<Task> => {
@@ -78,6 +81,29 @@ export const taskApis = {
     return apiClient.get(`/tasks/${id}`)
   },
 
+  // Send a message. If task_id not provided, create task first, then send.
+  sendTaskMessage: async (
+    params: { task_id?: number; message: string } & CreateTaskRequest
+  ): Promise<{ task_id: number }> => {
+    let taskId = params.task_id
+
+    if (!taskId) {
+      // /tasks 返回 { task_id }，直接拿到 id；本方法不再获取完整 Task
+      const newId = await taskApis.createTask()
+      taskId = newId
+    }
+
+    // Send message with related info (reuse CreateTaskRequest fields)
+    const { task_id: _ignored, message, ...rest } = params as any
+    await apiClient.post<SuccessMessage>(`/tasks/${taskId}`, {
+      message,
+      ...rest,
+    })
+
+    // 返回 mock 对象，仅包含 task_id
+    return { task_id: taskId }
+  },
+  
   deleteTask: async (id: number): Promise<SuccessMessage> => {
     return apiClient.delete(`/tasks/${id}`)
   }

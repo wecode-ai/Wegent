@@ -139,7 +139,11 @@ class Agent:
         raise NotImplementedError("Subclasses must implement execute()")
 
     def download_code(self):
-        git_url = self.task_data.get("git_url")
+        git_url = self.task_data.get("git_url","")
+        if git_url == "":
+            logger.info("git url is empty, skip download code")
+            return
+        
         user_config = self.task_data.get("user")
         git_token = user_config.get("git_token")
         username = user_config.get("user_name")

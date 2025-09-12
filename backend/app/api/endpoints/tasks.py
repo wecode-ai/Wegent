@@ -13,14 +13,24 @@ from app.services.task import task_service
 
 router = APIRouter()
 
-@router.post("", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
+
+@router.post("", response_model=dict)
+def create_task_id(
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create new task with session id and return task_id"""
+    return {"task_id": task_service.create_task_id(db=db)}
+
+@router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task(
+    task_id: int,
     task_create: TaskCreate,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new task"""
-    return task_service.create_with_user(db=db, obj_in=task_create, user=current_user)
+    """Create new task with specified task_id"""
+    return task_service.create_task_or_append(db=db, obj_in=task_create, user=current_user, task_id=task_id)
 
 @router.get("", response_model=TaskListResponse)
 def get_tasks(
@@ -56,7 +66,7 @@ def update_task(
     db: Session = Depends(get_db)
 ):
     """Update task information"""
-    return task_service.update_with_user(
+    return task_service.update_task(
         db=db,
         task_id=task_id,
         obj_in=task_update,
@@ -70,5 +80,5 @@ def delete_task(
     db: Session = Depends(get_db)
 ):
     """Delete task"""
-    task_service.delete_with_user(db=db, task_id=task_id, user_id=current_user.id)
+    task_service.delete_task(db=db, task_id=task_id, user_id=current_user.id)
     return {"message": "Task deleted successfully"}

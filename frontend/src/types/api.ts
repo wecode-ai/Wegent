@@ -87,11 +87,17 @@ export interface TaskDetailSubtask {
   task_id: number
   team_id: number
   title: string
-  bot_id: number
+  /** 多bot支持 */
+  bot_ids: number[]
+  /** 角色 */
+  role: string
+  /** 消息ID */
+  message_id: number
+  /** 父任务ID */
+  parent_id: number
   prompt: string
   executor_namespace: string
   executor_name: string
-  sort_order: number
   status: TaskStatus
   progress: number
   batch: number
@@ -102,7 +108,7 @@ export interface TaskDetailSubtask {
   created_at: string
   updated_at: string
   completed_at: string
-  bot: Bot
+  bots: Bot[]
 }
 
 export interface Task {

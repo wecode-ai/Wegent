@@ -431,7 +431,7 @@ class TaskKindService(KindBaseService):
                 # Query all Subtasks for this Task
                 subtasks = db.query(Subtask).filter(
                     Subtask.task_id == task.id
-                ).order_by(Subtask.sort_order.asc()).all()
+                ).order_by(Subtask.message_id.asc()).all()
                 
                 # Build subtasks array
                 subtask_list = []

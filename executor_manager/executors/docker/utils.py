@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 
 from executor_manager.config.config import PORT_RANGE_MAX, PORT_RANGE_MIN
 from shared.logger import setup_logger
-from shared.utils.ip_uitl import get_host_ip, is_ip_address
+from shared.utils.ip_util import get_host_ip, is_ip_address
 
 logger = setup_logger(__name__)
 
@@ -336,6 +336,74 @@ def get_running_task_details(label_selector: str = None) -> dict:
             "task_ids": [],
             "containers": []
         }
+
+def get_container_ports(container_name: str) -> dict:
+    """
+    Get port mappings for a specific container by name.
+    
+    Args:
+        container_name (str): Name of the container
+        
+    Returns:
+        dict: Result with status, ports information and optional error message
+    """
+    try:
+        # Check if container exists and is owned by executor_manager
+        if not check_container_ownership(container_name):
+            return {
+                "status": "failed",
+                "error_msg": f"Container '{container_name}' not found or not owned by executor_manager",
+                "ports": []
+            }
+            
+        # Get ports information for the specific container
+        cmd = [
+            "docker",
+            "ps",
+            "--filter",
+            f"name={container_name}",
+            "--format",
+            "{{.Ports}}",
+        ]
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        
+        # Parse port information
+        ports = []
+        port_pattern = r"0\.0\.0\.0:(\d+)->(\d+)/(\w+)"
+        
+        for line in result.stdout.splitlines():
+            if line.strip():
+                matches = re.findall(port_pattern, line)
+                for match in matches:
+                    host_port, container_port, protocol = match
+                    ports.append({
+                        "host_port": int(host_port),
+                        "container_port": int(container_port),
+                        "protocol": protocol
+                    })
+        
+        logger.info(f"Retrieved port mappings for container '{container_name}': {ports}")
+        return {
+            "status": "success",
+            "ports": ports
+        }
+        
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr.decode() if hasattr(e, 'stderr') else str(e)
+        logger.error(f"Docker error getting ports for container '{container_name}': {error_msg}")
+        return {
+            "status": "failed",
+            "error_msg": f"Docker error: {error_msg}",
+            "ports": []
+        }
+    except Exception as e:
+        logger.error(f"Error getting ports for container '{container_name}': {e}")
+        return {
+            "status": "failed",
+            "error_msg": f"Error: {e}",
+            "ports": []
+        }
+
 
 if __name__ == "__main__":
     print(get_running_task_details())

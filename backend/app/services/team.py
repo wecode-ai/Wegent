@@ -46,6 +46,7 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
             user_id=user_id,
             name=obj_in.name,
             bots=bot_list,
+            workflow=obj_in.workflow,
             is_active=True
         )
         db.add(db_obj)

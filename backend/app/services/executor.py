@@ -10,9 +10,10 @@ from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_, func
 
 from app.models.task import Task, TaskStatus
-from app.models.subtask import Subtask, SubtaskStatus
+from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
 from app.models.bot import Bot
 from app.models.user import User
+from app.models.team import Team
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.base import BaseService
 from app.core.config import settings
@@ -75,25 +76,22 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
         
         # Update subtask status to RUNNING (concurrent safe)
         updated_subtasks = self._update_subtasks_to_running(db, subtasks)
-
-        # Commit transaction to ensure status updates take effect
         db.commit()
 
         # Format return data
-        return self._format_subtasks_response(db, updated_subtasks)
+        result = self._format_subtasks_response(db, updated_subtasks)
+        return result
 
     def _get_subtasks_for_task(self, db: Session, task_id: int, status: str, limit: int) -> List[Subtask]:
-        """Get subtasks for specified task, return first one sorted by sort_order"""
+        """Get subtasks for specified task, return first one sorted by message_id"""
         return db.query(Subtask).options(
-            selectinload(Subtask.task),
             selectinload(Subtask.user),
-            selectinload(Subtask.bot),
-            selectinload(Subtask.team)
         ).filter(
             Subtask.task_id == task_id,
+            Subtask.role == SubtaskRole.ASSISTANT,
             Subtask.status == status
         ).order_by(
-            Subtask.sort_order.asc(),
+            Subtask.message_id.asc(),
             Subtask.created_at.asc()
         ).limit(limit).all()
 
@@ -114,20 +112,17 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
         subtasks = []
         for tid in task_ids:
             first_subtask = db.query(Subtask).options(
-                selectinload(Subtask.task),
                 selectinload(Subtask.user),
-                selectinload(Subtask.bot),
-                selectinload(Subtask.team)
             ).filter(
                 Subtask.task_id == tid,
+                Subtask.role == SubtaskRole.ASSISTANT,
                 Subtask.status == status
             ).order_by(
-                Subtask.sort_order.asc(),
+                Subtask.message_id.asc(),
                 Subtask.created_at.asc()
             ).first()
             
             if first_subtask:
-                subtasks.append(first_subtask)
                 subtasks.append(first_subtask)
         
         return subtasks
@@ -150,10 +145,8 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 # Reload the updated subtask
                 updated_subtask = db.query(Subtask).get(subtask.id)
                 updated_subtasks.append(updated_subtask)
-                
-                # If it's the first subtask, update task status to RUNNING
-                if updated_subtask.sort_order == 0:
-                    self._update_task_to_running(db, updated_subtask.task_id)
+                # update task status to RUNNING
+                self._update_task_to_running(db, updated_subtask.task_id)
         
         return updated_subtasks
 
@@ -170,44 +163,72 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
     def _format_subtasks_response(self, db: Session, subtasks: List[Subtask]) -> Dict[str, List[Dict]]:
         """Format subtask response data"""
         formatted_subtasks = []
+        
+        # 为每个子任务预先获取相邻的子任务信息
         for subtask in subtasks:
-            # Get previous subtask results
-            previous_results = self._get_previous_subtask_results(db, subtask)
+            # 一次性查询同一任务下的所有相关子任务
+            related_subtasks = db.query(Subtask).filter(
+                Subtask.task_id == subtask.task_id,
+            ).order_by(
+                Subtask.message_id.asc(),
+                Subtask.created_at.asc()
+            ).all()
+            
+            next_subtask = None
+            previous_subtask_results = ""
+           
+            user_prompt = ""
+            for i, related in enumerate(related_subtasks):
+                if related.role == SubtaskRole.USER:
+                    user_prompt = related.prompt
+                    previous_subtask_results = ""
+                    continue
+                if related.message_id < subtask.message_id:
+                    previous_subtask_results = related.result
+                if related.message_id == subtask.message_id:
+                    if i < len(related_subtasks) - 1:
+                        next_subtask = related_subtasks[i+1]
+                    break
+               
             
             # Build aggregated prompt
             aggregated_prompt = ""
-            # 1. If it's the first subtask, need to append task prompt
-            if subtask.sort_order == 0:
-                aggregated_prompt = subtask.task.prompt
-
-            # 2. If previous subtasks have results, append "Previous execution result: last item in previous_results"
-            if previous_results:
-                aggregated_prompt += f"Previous execution result: {previous_results[-1]}"
-
-            # 3. Finally append subtask prompt with newline separator
-            aggregated_prompt += f"\n{subtask.prompt}"
+            # 用户输入prompt
+            if user_prompt:
+                aggregated_prompt = user_prompt
+            # 上一次subtask结果
+            team = db.query(Team).filter(Team.id == subtask.team_id).first()
+            if previous_subtask_results != "" and team.workflow.get('mode') == "pipeline":
+                aggregated_prompt += f"\nPrevious execution result: {previous_subtask_results}"
+            # team中串流程prompt
+            if subtask.prompt != "" and team.workflow.get('mode') == "pipeline":
+                aggregated_prompt += f"\n{subtask.prompt}"
 
             # Build user git information
-            # Iterate through subtask.user.git_info to find item where git_domain equals subtask.task.git_domain
-            git_info = next((info for info in subtask.user.git_info if info.get("git_domain") == subtask.task.git_domain), None) if subtask.user.git_info else None
-            
-            # Get next subtask ID
-            next_subtask = db.query(Subtask).filter(
-                Subtask.task_id == subtask.task_id,
-                Subtask.sort_order > subtask.sort_order
-            ).order_by(
-                Subtask.sort_order.asc(),
-                Subtask.created_at.asc()
-            ).first()
-            
-            next_subtask_id = next_subtask.id if next_subtask else None
-            
+            task = db.query(Task).filter(Task.id == subtask.task_id).first()
+            git_info = next((info for info in subtask.user.git_info if info.get("git_domain") == task.git_domain), None) if subtask.user.git_info else None
+
+            # Build bot information
+            bots = []
+            for bot_id in subtask.bot_ids:
+                bot = db.query(Bot).filter(Bot.id == bot_id).first()
+                bots.append({
+                    "id": bot.id,
+                    "name": bot.name,
+                    "agent_name": bot.agent_name,
+                    "agent_config": bot.agent_config,
+                    "system_prompt": bot.system_prompt,
+                    "mcp_servers": bot.mcp_servers
+                })
+
             formatted_subtasks.append({
                 "subtask_id": subtask.id,
-                "subtask_next_id": next_subtask_id,
+                "subtask_next_id": next_subtask.id if next_subtask else None,
                 "task_id": subtask.task_id,
+                "executor_name": subtask.executor_name,
+                "executor_namespace": subtask.executor_namespace,
                 "subtask_title": subtask.title,
-                "task_title": subtask.task.title,
+                "task_title": task.title,
                 "user": {
                     "id": subtask.user.id,
                     "name": subtask.user.user_name,
@@ -216,20 +237,14 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                     "git_id": git_info.get("git_id") if git_info else None,
                     "git_login": git_info.get("git_login") if git_info else None
                 },
-                "bot": {
-                    "id": subtask.bot.id,
-                    "name": subtask.bot.name,
-                    "agent_name": subtask.bot.agent_name,
-                    "agent_config": subtask.bot.agent_config,
-                    "system_prompt": subtask.bot.system_prompt,
-                    "mcp_servers": subtask.bot.mcp_servers
-                },
+                "bot": bots,
                 "team_id": subtask.team_id,
-                "git_domain": subtask.task.git_domain,
-                "git_repo": subtask.task.git_repo,
-                "git_repo_id": subtask.task.git_repo_id,
-                "branch_name": subtask.task.branch_name,
-                "git_url": subtask.task.git_url,
+                "mode": team.workflow.get('mode'),
+                "git_domain": task.git_domain,
+                "git_repo": task.git_repo,
+                "git_repo_id": task.git_repo_id,
+                "branch_name": task.branch_name,
+                "git_url": task.git_url,
                 "prompt": aggregated_prompt,
                 "status": subtask.status,
                 "progress": subtask.progress,
@@ -240,24 +255,6 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
         return {
             "tasks": formatted_subtasks
         }
-
-    def _get_previous_subtask_results(self, db: Session, current_subtask: Subtask) -> List[str]:
-        """Get previous subtask results"""
-        previous_subtasks = db.query(Subtask).filter(
-            Subtask.task_id == current_subtask.task_id,
-            Subtask.sort_order < current_subtask.sort_order,
-            Subtask.status == SubtaskStatus.COMPLETED,
-            Subtask.result.isnot(None)
-        ).order_by(Subtask.sort_order.asc()).all()
-        
-        results = []
-        for subtask in previous_subtasks:
-            if subtask.result and isinstance(subtask.result, dict):
-                result_text = subtask.result
-                if result_text:
-                    results.append(f"{result_text}")
-        
-        return results
 
     async def update_subtask(
         self, db: Session, *, subtask_update: SubtaskExecutorUpdate
@@ -316,7 +313,7 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
         if not task:
             return
         
-        subtasks = db.query(Subtask).filter(Subtask.task_id == task_id).order_by(Subtask.sort_order.asc()).all()
+        subtasks = db.query(Subtask).filter(Subtask.task_id == task_id, Subtask.role == SubtaskRole.ASSISTANT).order_by(Subtask.message_id.asc()).all()
         if not subtasks:
             return
         

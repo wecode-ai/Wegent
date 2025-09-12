@@ -23,13 +23,13 @@ class TaskStatus(str, Enum):
 class TaskBase(BaseModel):
     """Task base model"""
     k_id: Optional[int] = None
-    title: str
-    team_id: int
-    git_url: str
-    git_repo: str
+    title: Optional[str] = None
+    team_id: Optional[int] = None
+    git_url: Optional[str] = None
+    git_repo: Optional[str] = None
     git_repo_id: Optional[int] = None
     git_domain: Optional[str] = None
-    branch_name: str
+    branch_name: Optional[str] = None
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
     progress: int = 0
@@ -97,7 +97,7 @@ class TaskDetail(BaseModel):
     completed_at: Optional[datetime] = None
     user: Optional[UserInDB] = None
     team: Optional[TeamInDB] = None
-    subtasks: Optional[List[SubtaskWithBot]] = None
+    subtasks: Any = None
 
     class Config:
         from_attributes = True
