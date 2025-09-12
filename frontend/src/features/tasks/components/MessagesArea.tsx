@@ -39,7 +39,6 @@ export default function MessagesArea() {
   function generateTaskMessages(detail: TaskDetail | null): Message[] {
     if (!detail) return [];
     const messages: Message[] = [];
-  
     // When subtasks exist, synthesize according to useTaskActionData logic
     if (Array.isArray(detail.subtasks) && detail.subtasks.length > 0) {
       detail.subtasks.forEach((sub: TaskDetailSubtask) => {
@@ -91,11 +90,11 @@ export default function MessagesArea() {
           type: msgType,
           content: content,
           timestamp: new Date(sub.updated_at).getTime(),
-          botName: sub.bots?.[0]?.name || 'Bot',
+          botName: (detail?.team?.workflow?.mode !== "pipeline" && detail?.team?.name?.trim()) ? detail.team.name : (sub?.bots?.[0]?.name?.trim() || 'Bot'),
         });
       });
     }
-      return messages;
+    return messages;
   }
   
   const displayMessages = generateTaskMessages(selectedTaskDetail);
