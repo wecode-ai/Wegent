@@ -8,7 +8,7 @@ WORKDIR /app/executor
 
 RUN claude update
 COPY executor/requirements.txt /app/executor/requirements.txt
-RUN pip install -r /app/executor/requirements.txt
+RUN pip install -r /app/executor/requirements.txt -U
 
 ENV PYTHONPATH=/app
 COPY executor /app/executor
