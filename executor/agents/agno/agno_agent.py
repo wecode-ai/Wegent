@@ -249,6 +249,7 @@ class AgnoAgent(Agent):
                     member = AgnoSdkAgent(
                         name=member_config.get("name", "TeamMember"),
                         model=self._get_model(agent_config),
+                        add_name_to_context=True,
                         tools=mcp_tools if mcp_tools else [],
                         description=member_config.get("description", "Team member"),
                         db=db,
@@ -265,6 +266,7 @@ class AgnoAgent(Agent):
                 member = AgnoSdkAgent(
                     name=team_members_config.get("name", "TeamMember"),
                     model=self._get_model(agent_config),
+                    add_name_to_context=True,
                     tools=mcp_tools if mcp_tools else [],
                     description=team_members_config.get("description", "Team member"),
                     db=db,
@@ -282,6 +284,7 @@ class AgnoAgent(Agent):
                 model=self._get_model(agent_config),
                 tools=mcp_tools if mcp_tools else [],
                 description="Default team member",
+                add_name_to_context=True,
                 db=db,
                 add_history_to_context=True,
                 num_history_runs=3,
@@ -491,11 +494,21 @@ class AgnoAgent(Agent):
                     from agno.run.agent import RunEvent
                     from agno.run.base import RunStatus
 
+                    if chunk.event not in [TeamRunEvent.run_content, "RunContent"]:
+                        logger.debug(f"Team chunk: {chunk.to_dict()}")
+
+                    if chunk.event in ["RunStarted", "TeamRunStarted", "ToolCallStarted", "TeamToolCallStarted"]:
+                        logger.info(f"{chunk.to_dict()}")
+
+                    # if chunk.event in ["RunCompleted", "TeamRunCompleted", "ToolCallCompleted", "TeamToolCallCompleted"]:
+                    #     logger.info(f"{chunk.to_dict()}")
+
+
+
                     if hasattr(chunk, 'event'):
                         if chunk.event in [TeamRunEvent.run_content]:
                             content = getattr(chunk, 'content', '')
                             if content:
-                                # logger.info(f"Team content: {content}")
                                 content_pieces.append(content)
                                 # Report progress
                                 # self.report_progress(
