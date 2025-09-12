@@ -38,7 +38,7 @@ export default function ChatInput({
         }}
         onKeyDown={handleKeyPress}
         placeholder="Ask Team to build, fix bugs, explore"
-        className={`w-full p-3 bg-transparent custom-scrollbar text-white placeholder-gray-400 placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className={`w-full p-3 bg-transparent custom-scrollbar text-white text-base placeholder-gray-400 placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         disabled={disabled}
         minRows={3}
         maxRows={8}
