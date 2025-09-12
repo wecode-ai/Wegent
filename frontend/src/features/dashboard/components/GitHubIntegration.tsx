@@ -6,8 +6,8 @@
 
 import { useEffect, useState } from 'react'
 import { Button } from '@headlessui/react'
-import { PencilIcon, PlusIcon } from '@heroicons/react/24/outline'
-import { FiGithub, FiGitlab, FiX } from 'react-icons/fi'
+import { PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { FiGithub, FiGitlab } from 'react-icons/fi'
 import Modal from '@/features/common/Modal'
 import LoadingState from '@/features/common/LoadingState'
 import { GitInfo } from '@/types/api'
@@ -75,17 +75,13 @@ export default function GitHubIntegration() {
     setTokenSaving(true)
     setError('')
     try {
-      const success = await saveGitToken(user, domainToSave, tokenToSave)
-      if (success) {
-        setShowModal(false)
-        setEditDomain('')
-        setEditToken('')
-        await refresh()
-      } else {
-        setError('Token validation failed')
-      }
+      await saveGitToken(user, domainToSave, tokenToSave)
+      setShowModal(false)
+      setEditDomain('')
+      setEditToken('')
+      await refresh()
     } catch (e) {
-      setError('Token validation failed')
+      setError('Failed to save token')
     } finally {
       setTokenSaving(false)
     }
@@ -116,45 +112,53 @@ export default function GitHubIntegration() {
         {isUserLoading || isLoading ? (
           <LoadingState fullScreen={false} message="Loading Git integrations..." />
         ) : (
-          <div>
-            <div className="flex flex-col gap-4">
-              {platforms.length === 0 && (
-                <div className="text-center text-gray-500 py-4">
-                  <p className="text-sm">No git tokens configured</p>
-                </div>
-              )}
-              {platforms.map(info => (
-                <div key={info.git_domain} className="flex items-center justify-between border-b border-[#30363d] pb-2 mb-2 last:border-b-0 last:pb-0 last:mb-0">
-                  <div className="flex items-center space-x-3 w-0 flex-1 min-w-0">
-                    {info.type === 'gitlab' ? (
-                      <FiGitlab className="w-4 h-4 text-orange-400" />
-                    ) : (
-                      <FiGithub className="w-4 h-4 text-white" />
-                    )}
-                    <div className="min-w-0">
-                      <h3 className="text-base font-medium text-white truncate">{info.git_domain}</h3>
-                      <p className="text-xs text-gray-400 break-all font-mono mb-2">{getMaskedTokenDisplay(info.git_token)}</p>
+          <>
+            {platforms.length > 0 ? (
+              platforms.map((info) => (
+                <div key={info.git_domain}>
+                  <div className="flex items-center justify-between py-2">
+                    <div className="flex items-center space-x-3 w-0 flex-1 min-w-0">
+                      {info.type === 'gitlab' ? (
+                        <FiGitlab className="w-4 h-4 text-orange-400" />
+                      ) : (
+                        <FiGithub className="w-4 h-4 text-white" />
+                      )}
+                      <div>
+                        <div className="flex items-center space-x-2">
+                          <h3 className="text-base font-medium text-white truncate">{info.git_domain}</h3>
+                        </div>
+                        <div>
+                          <p className="text-xs text-gray-400 break-all font-mono">{getMaskedTokenDisplay(info.git_token)}</p>
+                        </div>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <button
+                        onClick={() => handleEdit(info.git_domain)}
+                        className="p-1.5 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
+                        title="Edit Token"
+                      >
+                        <PencilIcon className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => handleDelete(info.git_domain)}
+                        className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
+                        title="Delete"
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                      </button>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <button
-                      onClick={() => handleEdit(info.git_domain)}
-                      className="p-1.5 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
-                      title="Edit Token"
-                    >
-                      <PencilIcon className="w-4 h-4" />
-                    </button>
-                    <button
-                      onClick={() => handleDelete(info.git_domain)}
-                      className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-[#21262d] rounded transition-colors duration-200"
-                      title="Delete"
-                    >
-                      <FiX className="w-4 h-4" />
-                    </button>
-                  </div>
+                  {platforms.length > 1 && info.git_domain !== platforms[platforms.length - 1].git_domain && (
+                    <div className="border-t border-[#30363d] mt-3 pt-3"></div>
+                  )}
                 </div>
-              ))}
-            </div>
+              ))
+            ) : (
+              <div className="text-center text-gray-500 py-4">
+                <p className="text-sm">No git tokens configured</p>
+              </div>
+            )}
             <div className="border-t border-[#30363d]"></div>
             <div className="flex justify-center mt-4">
               <Button
@@ -166,7 +170,7 @@ export default function GitHubIntegration() {
                 <span>New Token</span>
               </Button>
             </div>
-          </div>
+          </>
         )}
       </div>
       <Modal
