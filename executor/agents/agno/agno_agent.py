@@ -21,6 +21,9 @@ from agno.tools.mcp import StreamableHTTPClientParams
 from executor.agents.base import Agent
 from shared.logger import setup_logger
 from shared.status import TaskStatus
+from agno.db.sqlite import SqliteDb
+
+db = SqliteDb(db_file="/tmp/agno_data.db")
 
 logger = setup_logger("agno_agent")
 
@@ -148,7 +151,7 @@ class AgnoAgent(Agent):
         default_headers = {
             "wecode-user": "wenbo17",
             "wecode-action": "wecode-group-test",
-            "wecode-model-id": "gpt-4.1-mini"
+            "wecode-model-id": "gpt-4.1-mini",
         }
 
         logger.info(f"Model config: {agent_config}")
@@ -247,7 +250,10 @@ class AgnoAgent(Agent):
                         name=member_config.get("name", "TeamMember"),
                         model=self._get_model(agent_config),
                         tools=mcp_tools if mcp_tools else [],
-                        description=member_config.get("description", "Team member")
+                        description=member_config.get("description", "Team member"),
+                        db=db,
+                        add_history_to_context=True,
+                        num_history_runs=3,
                     )
                     team_members.append(member)
             else:
@@ -258,9 +264,12 @@ class AgnoAgent(Agent):
                 team_model_config = agent_config
                 member = AgnoSdkAgent(
                     name=team_members_config.get("name", "TeamMember"),
-                    model=self._get_model(),
+                    model=self._get_model(agent_config),
                     tools=mcp_tools if mcp_tools else [],
-                    description=team_members_config.get("description", "Team member")
+                    description=team_members_config.get("description", "Team member"),
+                    db=db,
+                    add_history_to_context=True,
+                    num_history_runs=3,
                 )
                 team_members.append(member)
         else:
@@ -270,9 +279,12 @@ class AgnoAgent(Agent):
             team_model_config = agent_config
             member = AgnoSdkAgent(
                 name="DefaultAgent",
-                model=self._get_model(),
+                model=self._get_model(agent_config),
                 tools=mcp_tools if mcp_tools else [],
-                description="Default team member"
+                description="Default team member",
+                db=db,
+                add_history_to_context=True,
+                num_history_runs=3,
             )
             team_members.append(member)
 
@@ -311,11 +323,14 @@ class AgnoAgent(Agent):
         logger.info(f"start create team. team_members.size: {len(team_members)}, mode: {self.mode}, team_model_config: {team_model_config}")
 
         # Create team
+        # agent session: https://docs.agno.com/concepts/agents/sessions
         team = Team(
             name=self.options.get("team_name", "AgnoTeam"),
             members=team_members,
             model=self._get_model(team_model_config),
             description=self.options.get("team_description", "Agno team for task execution"),
+            session_id=self.session_id,
+            db=db,
             **mode_config
         )
         
@@ -461,7 +476,13 @@ class AgnoAgent(Agent):
             final_response = None
 
             # Run the team with streaming
-            agen = self.team.arun(prompt, stream=True, stream_intermediate_steps=True, session_id=self.session_id)
+            agen = self.team.arun(prompt,
+                                  stream=True,
+                                  stream_intermediate_steps=True,
+                                  add_history_to_context=True,
+                                  session_id=self.session_id,
+                                  user_id=self.session_id
+                                  )
             
             try:
                 async for chunk in agen:
@@ -474,12 +495,12 @@ class AgnoAgent(Agent):
                         if chunk.event in [TeamRunEvent.run_content]:
                             content = getattr(chunk, 'content', '')
                             if content:
-                                logger.info(f"Team content: {content}")
+                                # logger.info(f"Team content: {content}")
                                 content_pieces.append(content)
                                 # Report progress
-                                self.report_progress(
-                                    70, TaskStatus.RUNNING.value, f"Processing: {content[:100]}..."
-                                )
+                                # self.report_progress(
+                                #     70, TaskStatus.RUNNING.value, f"Processing: {content[:100]}..."
+                                # )
                         
                         elif hasattr(chunk, 'status') and chunk.status == RunStatus.completed:
                             final_response = chunk
@@ -510,7 +531,7 @@ class AgnoAgent(Agent):
                 # Report completion with result
                 self.report_progress(
                     100, TaskStatus.COMPLETED.value, "Agno team execution completed",
-                    result={"content": result_content}
+                    result={"value": result_content}
                 )
                 return TaskStatus.COMPLETED
             else:
