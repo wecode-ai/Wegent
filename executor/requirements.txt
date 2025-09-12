@@ -8,3 +8,8 @@ fastapi==0.109.1
 uvicorn==0.25.0
 pydantic==2.10.6
 claude_code_sdk==0.0.17
+agno
+ag-ui-protocol
+anthropic
+openai
+mcp
