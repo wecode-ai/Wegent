@@ -163,6 +163,7 @@ class AgnoAgent(Agent):
             return OpenAIChat(
                 id=self.options.get("model_id", os.environ.get("OPENAI_MODEL", "gpt-4")),
                 api_key=self.options.get("api_key", os.environ.get("OPENAI_API_KEY")),
+                base_url=self.options.get("base_url", os.environ.get("OPENAI_BASE_URL")),
                 default_headers=default_headers
             )
         else:
@@ -301,6 +302,8 @@ class AgnoAgent(Agent):
                 "respond_directly": False,
                 "determine_input_for_members": True,
             }
+
+        logger.info(f"start create team. team_members.size: {len(team_members)}, mode: {self.mode}")
 
         # Create team
         team = Team(
