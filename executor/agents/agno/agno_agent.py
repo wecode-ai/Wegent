@@ -141,36 +141,37 @@ class AgnoAgent(Agent):
         logger.info(f"Extracted Agno options: {options}")
         return options
 
-    def _get_model(self):
+    def _get_model(self, agent_config):
         """
         Get the model configuration based on options
         """
-        model_config = self.options.get("model", "claude")
-
+        env = agent_config.get("env", {})
+        model_config = env.get("model", "claude")
         default_headers = {
             "wecode-user": "wenbo17",
             "wecode-action": "wecode-group-test",
             "wecode-model-id": "gpt-4.1-mini"
         }
 
+        logger.info(f"Model config: {agent_config}")
         if model_config == "claude":
             return Claude(
-                id=self.options.get("model_id", os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")),
-                api_key=self.options.get("api_key", os.environ.get("ANTHROPIC_API_KEY")),
+                id=env.get("model_id", os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")),
+                api_key=env.get("api_key", os.environ.get("ANTHROPIC_API_KEY")),
                 default_headers=default_headers
             )
         elif model_config == "openai":
             return OpenAIChat(
-                id=self.options.get("model_id", os.environ.get("OPENAI_MODEL", "gpt-4")),
-                api_key=self.options.get("api_key", os.environ.get("OPENAI_API_KEY")),
-                base_url=self.options.get("base_url", os.environ.get("OPENAI_BASE_URL")),
+                id=env.get("model_id", os.environ.get("OPENAI_MODEL", "gpt-4")),
+                api_key=env.get("api_key", os.environ.get("OPENAI_API_KEY")),
+                base_url=env.get("base_url", os.environ.get("OPENAI_BASE_URL")),
                 default_headers=default_headers
             )
         else:
             # Default to Claude
             return Claude(
-                id=os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022"),
-                api_key=os.environ.get("ANTHROPIC_API_KEY"),
+                id=env.get("model_id", os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")),
+                api_key=env.get("api_key", os.environ.get("ANTHROPIC_API_KEY")),
                 default_headers=default_headers
             )
 
@@ -229,22 +230,24 @@ class AgnoAgent(Agent):
         """
         Create a team with configured members
         """
-        model = self._get_model()
         team_members = []
 
         logger.info("start Setting up MCP tools")
 
-
         # Create team members based on configuration
         team_members_config = self.options.get("team_members")
+        team_model_config = None
         if team_members_config:
             if isinstance(team_members_config, list):
                 for member_config in team_members_config:
                     # Setup MCP tools if available
                     mcp_tools = await self._setup_mcp_tools(member_config)
+                    agent_config = member_config.get("agent_config", {})
+                    if not team_model_config:
+                        team_model_config = agent_config
                     member = AgnoSdkAgent(
                         name=member_config.get("name", "TeamMember"),
-                        model=model,
+                        model=self._get_model(agent_config),
                         tools=mcp_tools if mcp_tools else [],
                         description=member_config.get("description", "Team member")
                     )
@@ -253,9 +256,11 @@ class AgnoAgent(Agent):
                 # Single member configuration
                 # Setup MCP tools if available
                 mcp_tools = await self._setup_mcp_tools(self.options)
+                agent_config = self.options.get("agent_config", {})
+                team_model_config = agent_config
                 member = AgnoSdkAgent(
                     name=team_members_config.get("name", "TeamMember"),
-                    model=model,
+                    model=self._get_model(),
                     tools=mcp_tools if mcp_tools else [],
                     description=team_members_config.get("description", "Team member")
                 )
@@ -263,9 +268,11 @@ class AgnoAgent(Agent):
         else:
             # Default team member
             mcp_tools = await self._setup_mcp_tools(self.options)
+            agent_config = self.options.get("agent_config", {})
+            team_model_config = agent_config
             member = AgnoSdkAgent(
                 name="DefaultAgent",
-                model=model,
+                model=self._get_model(),
                 tools=mcp_tools if mcp_tools else [],
                 description="Default team member"
             )
@@ -303,13 +310,13 @@ class AgnoAgent(Agent):
                 "determine_input_for_members": True,
             }
 
-        logger.info(f"start create team. team_members.size: {len(team_members)}, mode: {self.mode}")
+        logger.info(f"start create team. team_members.size: {len(team_members)}, mode: {self.mode}, team_model_config: {team_model_config}")
 
         # Create team
         team = Team(
             name=self.options.get("team_name", "AgnoTeam"),
             members=team_members,
-            model=model,
+            model=self._get_model(team_model_config),
             description=self.options.get("team_description", "Agno team for task execution"),
             **mode_config
         )
