@@ -18,10 +18,8 @@ from agno.models.anthropic import Claude
 from agno.team import Team
 from agno.tools.mcp import MCPTools
 from agno.tools.mcp import StreamableHTTPClientParams
-from executor.agents.agno.response_processor import process_response
 from executor.agents.base import Agent
 from shared.logger import setup_logger
-from executor.config import config
 from shared.status import TaskStatus
 
 logger = setup_logger("agno_agent")
@@ -33,7 +31,7 @@ class AgnoAgent(Agent):
     """
 
     # Static dictionary for storing client connections to enable connection reuse
-    _clients: Dict[str, Any] = {}
+    _clients: Dict[str, Team] = {}
 
     def get_name(self) -> str:
         return "Agno"
@@ -463,7 +461,7 @@ class AgnoAgent(Agent):
             final_response = None
 
             # Run the team with streaming
-            agen = self.team.arun(prompt, stream=True, stream_intermediate_steps=True)
+            agen = self.team.arun(prompt, stream=True, stream_intermediate_steps=True, session_id=self.session_id)
             
             try:
                 async for chunk in agen:
@@ -490,7 +488,11 @@ class AgnoAgent(Agent):
                         elif chunk.event in [TeamRunEvent.run_cancelled, RunEvent.run_cancelled]:
                             logger.warning("Team run was cancelled")
                             return TaskStatus.CANCELLED
-                    
+
+                        elif chunk.event in [TeamRunEvent.run_completed]:
+                            logger.info("Team run completed")
+                            result_content = getattr(chunk, 'content', '')
+
                     # Handle chunk content directly
                     if hasattr(chunk, 'content') and chunk.content:
                         content_pieces.append(str(chunk.content))
@@ -503,7 +505,6 @@ class AgnoAgent(Agent):
 
             # Process the result
             if final_response or content_pieces:
-                result_content = "".join(content_pieces)
                 logger.info(f"Team execution completed with content length: {len(result_content)}")
                 
                 # Report completion with result
@@ -532,6 +533,7 @@ class AgnoAgent(Agent):
             if session_id in cls._clients:
                 team = cls._clients[session_id]
                 # Clean up team resources if needed
+                team.cancel_run(session_id)
                 del cls._clients[session_id]
                 logger.info(f"Closed Agno team for session_id: {session_id}")
                 return TaskStatus.SUCCESS
@@ -550,6 +552,7 @@ class AgnoAgent(Agent):
         for session_id, team in list(cls._clients.items()):
             try:
                 # Clean up team resources if needed
+                team.cancel_run(session_id)
                 logger.info(f"Closed Agno team for session_id: {session_id}")
             except Exception as e:
                 logger.exception(
