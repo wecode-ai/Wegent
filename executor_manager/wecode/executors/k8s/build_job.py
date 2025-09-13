@@ -21,6 +21,7 @@ def build_job_configuration(executor_name, namespace, task_str, image, task_id):
                 "krs.weibo.com/type": "online",
                 "kubus.weibo.com/qos-class": "dlc",
                 "aigc.weibo.com/executor": "wegent",
+                "aigc.weibo.com/executor-task-id": str(task_id),
             },
         },
         "spec": {
@@ -35,7 +36,7 @@ def build_job_configuration(executor_name, namespace, task_str, image, task_id):
                         "app": executor_name,
                         "aigc.weibo.com/devContainerType": "darkFactory",
                         "aigc.weibo.com/executor": "wegent",
-                        "aigc.weibo.com/executor-task-id": task_id,
+                        "aigc.weibo.com/executor-task-id": str(task_id),
                         "aigc.weibo.com/user": "wecoder",
                         "krs.weibo.com/managed-by": "krs",
                         "kubus.weibo.com/qos-class": "dlc",

@@ -242,10 +242,44 @@ class K8sExecutor(Executor):
     def get_current_task_ids(
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:
-        return {
-            "status": "success",
-            "task_ids": [],
-        }
+        try:
+            # 如果没有提供标签选择器，则使用默认的标签选择器
+            if label_selector is None:
+                label_selector = "aigc.weibo.com/executor=wegent"
+            
+            batch_v1 = client.BatchV1Api(self.api_client)
+            jobs = batch_v1.list_namespaced_job(
+                namespace=K8S_NAMESPACE, label_selector=label_selector
+            )
+            
+            task_ids = []
+            for job in jobs.items:
+                # 从 job 的标签中提取任务 ID，使用正确的标签名称
+                if job.metadata.labels and "aigc.weibo.com/executor-task-id" in job.metadata.labels:
+                    task_ids.append(job.metadata.labels["aigc.weibo.com/executor-task-id"])
+                # 如果没有明确的任务 ID 标签，可以尝试从 job 名称中提取
+                else:
+                    job_name = job.metadata.name
+                    # 假设任务 ID 可能包含在 job 名称中
+                    match = re.search(r"task-[^-]+-(\d+)-", job_name)
+                    if match:
+                        task_ids.append(match.group(1))
+            
+            logger.info(f"Found {len(task_ids)} task IDs with label selector '{label_selector}'")
+            return {
+                "status": "success",
+                "task_ids": task_ids,
+            }
+        except ApiException as e:
+            logger.error(f"Kubernetes API error listing jobs: {e}")
+            return {
+                "status": "failed",
+                "error_msg": f"Kubernetes API error: {e}",
+                "task_ids": [],
+            }
+        except Exception as e:
+            logger.error(f"Error listing Kubernetes jobs: {e}")
+            return {"status": "failed", "error_msg": f"Error: {e}", "task_ids": []}
 
     def get_executor_count(
         self, label_selector: Optional[str] = None
