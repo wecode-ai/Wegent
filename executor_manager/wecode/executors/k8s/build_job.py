@@ -1,4 +1,4 @@
-def build_job_configuration(executor_name,namespace,task_str,image):
+def build_job_configuration(executor_name, namespace, task_str, image, task_id):
     """
     Build Kubernetes job configuration
 
@@ -20,7 +20,7 @@ def build_job_configuration(executor_name,namespace,task_str,image):
                 "app": executor_name,
                 "krs.weibo.com/type": "online",
                 "kubus.weibo.com/qos-class": "dlc",
-                "aigc.weibo.com/executor":"background-agent",
+                "aigc.weibo.com/executor": "wegent",
             },
         },
         "spec": {
@@ -34,7 +34,8 @@ def build_job_configuration(executor_name,namespace,task_str,image):
                     "labels": {
                         "app": executor_name,
                         "aigc.weibo.com/devContainerType": "darkFactory",
-                        "aigc.weibo.com/executor":"background-agent",
+                        "aigc.weibo.com/executor": "wegent",
+                        "aigc.weibo.com/executor-task-id": task_id,
                         "aigc.weibo.com/user": "wecoder",
                         "krs.weibo.com/managed-by": "krs",
                         "kubus.weibo.com/qos-class": "dlc",
@@ -45,13 +46,6 @@ def build_job_configuration(executor_name,namespace,task_str,image):
                 "spec": {
                     "containers": [
                         {
-                            "args": [
-                                "--",
-                                "/bin/bash",
-                                "-c",
-                                "/usr/lib/code-server/bin/start.sh wecoder-darkfactory ephemeral /cloudide/workspace 443 true",
-                            ],
-                            "command": ["/usr/lib/code-server/bin/tini"],
                             "env": [
                                 {
                                     "name": "REGION",
@@ -62,11 +56,16 @@ def build_job_configuration(executor_name,namespace,task_str,image):
                                         }
                                     },
                                 },
-                                {"name":"TASK_INFO","value":task_str},
+                                {"name": "TASK_INFO", "value": task_str},
                                 {"name": "EXECUTOR_NAME", "value": executor_name},
                                 {"name": "EXECUTOR_NAMESPACE", "value": namespace},
                                 {"name": "TZ", "value": "Asia/Shanghai"},
                                 {"name": "LANG", "value": "en_US.UTF-8"},
+                                {"name": "PORT", "value": "8080"},
+                                {
+                                    "name": "CALLBACK_URL",
+                                    "value": "http://wecode-executor-manager-web.wb-plat-ide:9081/executor-manager/callback",
+                                },
                                 {
                                     "name": "ENABLE_CODE_REVIEW_PROCESSING",
                                     "value": "enable",
@@ -92,21 +91,10 @@ def build_job_configuration(executor_name,namespace,task_str,image):
                             ],
                             "image": image,
                             "imagePullPolicy": "Always",
-                            "lifecycle": {
-                                "postStart": {
-                                    "exec": {
-                                        "command": [
-                                            "/bin/bash",
-                                            "-c",
-                                            "mkdir -pv /cloudide/workspace && /usr/lib/code-server/bin/init.sh wecoder-darkfactory ephemeral /cloudide/workspace 443 true",
-                                        ]
-                                    }
-                                }
-                            },
                             "name": executor_name,
                             "ports": [
                                 {
-                                    "containerPort": 443,
+                                    "containerPort": 8080,
                                     "name": "https",
                                     "protocol": "TCP",
                                 }

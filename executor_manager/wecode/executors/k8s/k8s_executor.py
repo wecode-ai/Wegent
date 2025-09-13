@@ -4,6 +4,12 @@ import re
 import uuid
 from typing import Any, Dict, Optional
 
+import requests
+
+from executor_manager.executors.docker.constants import (
+    DEFAULT_API_ENDPOINT,
+    DEFAULT_PROGRESS_COMPLETE,
+)
 from executor_manager.wecode.config.config import EXECUTOR_DEFAULT_MAGE, K8S_NAMESPACE
 from executor_manager.wecode.executors.k8s.build_job import build_job_configuration
 from kubernetes import client, config
@@ -41,9 +47,9 @@ def _load_k8s_config() -> client.ApiClient:
             return None
 
 
-def _generate_executor_name(task_id, user_name):
+def _generate_executor_name(task_id, subtask_id, user_name):
     user_name = _sanitize_k8s_name(user_name)
-    return f"task-{user_name}-{task_id}"
+    return f"task-{user_name}-{task_id}-{subtask_id}"
 
 
 def _sanitize_k8s_name(user_name):
@@ -78,9 +84,13 @@ class K8sExecutor(Executor):
         """
 
         image = task.get("executor_image", EXECUTOR_DEFAULT_MAGE)
-        task_id = task.get("task_id", "unknown")
-        user_name = task.get("user_name", "")
-        executor_name = _generate_executor_name(task_id, user_name)
+        task_id = task.get("task_id", "-1")
+        subtask_id = task.get("subtask_id", "-1")
+
+        user_config = task.get("user") or {}
+        user_name = user_config.get("name", "unknown")
+
+        executor_name = _generate_executor_name(task_id, subtask_id, user_name)
         task_str = json.dumps(task)
 
         status = "success"
@@ -88,38 +98,62 @@ class K8sExecutor(Executor):
         error_msg = ""
         callback_status = TaskStatus.RUNNING.value
 
-        try:
-            job = build_job_configuration(executor_name, K8S_NAMESPACE, task_str, image)
-            job_result = self._submit_kubernetes_job(
-                job, K8S_NAMESPACE, executor_name, task_id
-            )
-            if not job_result or job_result.get("status") != "success":
+        if task.get("executor_name"):
+            pod_result = self.get_pods_by_job_name(task.get("executor_name"))
+            pod_list = pod_result.get("pods", [])
+            logger.info(pod_list)
+            if len(pod_list) > 0:
+                ip = pod_list[0].get("ip")
+                response = self._send_task_to_container(task=task, host=ip, port=8080)
+                if response.json()["status"] != "success":
+                    status = "failed"
+                    progress = 100
+                    error_msg = response.json().get("error_msg", "")
+                    callback_status = TaskStatus.FAILED.value
+            else:
+                status = "failed"
+                progress = 100
+                error_msg = "Pod not found"
+                callback_status = TaskStatus.FAILED.value
+        else:
+            # 根据executor_name 查询一下 是否有job存在, 如果存在则直接使用 http 接口发起任务
+            try:
+                job = build_job_configuration(
+                    executor_name, K8S_NAMESPACE, task_str, image,task_id
+                )
+                job_result = self._submit_kubernetes_job(
+                    job, K8S_NAMESPACE, executor_name, task_id
+                )
+                if not job_result or job_result.get("status") != "success":
+                    logger.error(
+                        f"Kubernetes job creation failed for task {task_id}: {job_result.get('error_msg', '')}"
+                    )
+                    status = "failed"
+                    progress = 100
+                    error_msg = job_result.get(
+                        "error_msg", "Kubernetes job creation failed"
+                    )
+                    callback_status = TaskStatus.FAILED.value
+            except ApiException as e:
                 logger.error(
-                    f"Kubernetes job creation failed for task {task_id}: {job_result.get('error_msg', '')}"
+                    f"Kubernetes API error creating job for task {task_id}: {e}"
                 )
                 status = "failed"
                 progress = 100
-                error_msg = job_result.get(
-                    "error_msg", "Kubernetes job creation failed"
-                )
+                error_msg = f"Kubernetes API error: {e}"
                 callback_status = TaskStatus.FAILED.value
-        except ApiException as e:
-            logger.error(f"Kubernetes API error creating job for task {task_id}: {e}")
-            status = "failed"
-            progress = 100
-            error_msg = f"Kubernetes API error: {e}"
-            callback_status = TaskStatus.FAILED.value
-        except Exception as e:
-            logger.error(f"Error creating Kubernetes job for task {task_id}: {e}")
-            status = "failed"
-            progress = 100
-            error_msg = f"Error: {e}"
-            callback_status = TaskStatus.FAILED.value
+            except Exception as e:
+                logger.error(f"Error creating Kubernetes job for task {task_id}: {e}")
+                status = "failed"
+                progress = 100
+                error_msg = f"Error: {e}"
+                callback_status = TaskStatus.FAILED.value
 
         if callback:
             try:
                 callback(
                     task_id=task_id,
+                    subtask_id=subtask_id,
                     executor_name=executor_name,
                     progress=progress,
                     executor_namespace=K8S_NAMESPACE,
@@ -136,6 +170,14 @@ class K8sExecutor(Executor):
                 "error_msg": error_msg,
                 "job_name": executor_name,
             }
+
+    def _send_task_to_container(
+        self, task: Dict[str, Any], host: str, port: int
+    ) -> requests.Response:
+        """发送任务到容器的API端点"""
+        endpoint = f"http://{host}:{port}{DEFAULT_API_ENDPOINT}"
+        logger.info(f"Sending task to {endpoint}")
+        return requests.post(endpoint, json=task)
 
     def _submit_kubernetes_job(self, job, namespace, job_name, task_id):
         """
@@ -204,6 +246,7 @@ class K8sExecutor(Executor):
             "status": "success",
             "task_ids": [],
         }
+
     def get_executor_count(
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -224,3 +267,49 @@ class K8sExecutor(Executor):
         except Exception as e:
             logger.error(f"Error listing Kubernetes jobs: {e}")
             return {"status": "failed", "error_msg": f"Error: {e}", "count": 0}
+
+    def get_pods_by_job_name(self, job_name: str) -> Dict[str, Any]:
+        """
+        根据Kubernetes job名称查询相关的Pod
+
+        Args:
+            job_name (str): Kubernetes job名称
+
+        Returns:
+            Dict[str, Any]: {
+                "status": "success" 或 "failed",
+                "pods": [pod信息列表] (如果成功),
+                "error_msg": 错误信息 (如果失败)
+            }
+        """
+        try:
+            core_v1 = client.CoreV1Api(self.api_client)
+            # 使用job-name标签选择器查询相关的Pod
+            label_selector = f"job-name={job_name}"
+            pods = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE, label_selector=label_selector
+            )
+
+            pod_list = []
+            for pod in pods.items:
+                pod_info = {
+                    "name": pod.metadata.name,
+                    "ip": pod.status.pod_ip,
+                    "status": pod.status.phase,
+                    "creation_timestamp": pod.metadata.creation_timestamp,
+                }
+                pod_list.append(pod_info)
+            logger.info(
+                f"Found {len(pod_list)} pods for job '{job_name}' in namespace {K8S_NAMESPACE}"
+            )
+            return {"status": "success", "pods": pod_list}
+        except ApiException as e:
+            logger.error(f"Kubernetes API error listing pods for job '{job_name}': {e}")
+            return {
+                "status": "failed",
+                "error_msg": f"Kubernetes API error: {e}",
+                "pods": [],
+            }
+        except Exception as e:
+            logger.error(f"Error listing pods for job '{job_name}': {e}")
+            return {"status": "failed", "error_msg": f"Error: {e}", "pods": []}
