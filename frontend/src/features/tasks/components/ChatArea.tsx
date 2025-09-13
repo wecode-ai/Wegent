@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline'
 import MessagesArea from './MessagesArea'
 import ChatInput from './ChatInput'
@@ -30,6 +30,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -60,86 +61,159 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
         refreshTasks();
         setSelectedTask({ id: newTask.task_id } as any); // 只传 id，详情组件会自动拉取
       }
+      // Manually trigger scroll to bottom after sending message
+      setTimeout(scrollToBottom, 0)
     }
     setIsLoading(false)
   }
+
+  const scrollToBottom = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight
+    }
+  }
+
+  useEffect(() => {
+    if (hasMessages) {
+      // Use timeout to ensure DOM is updated before scrolling
+      setTimeout(scrollToBottom, 0)
+    }
+  }, [selectedTaskDetail])
 
   // Style reference: TaskParamWrapper.tsx
   return (
     <div className={
       hasMessages
-        ? "flex-1 flex flex-col min-h-0 w-full items-center px-4"
+        ? "flex-1 flex flex-col min-h-0 w-full"
         : "flex w-full items-center justify-center h-full px-4"
     }>
-      <div className={
-        hasMessages
-          ? "w-full max-w-2xl flex-1 flex flex-col min-h-0"
-          : "w-full max-w-2xl flex flex-col justify-center h-full"
-      }>
-        {/* Error Message */}
-        {error && (
-          <div className="mb-4 bg-red-900/20 border border-red-800/50 rounded-md p-3">
-            <div className="text-sm text-red-300">{error}</div>
+      {hasMessages ? (
+        <>
+          {/* Messages Area */}
+          <div ref={scrollContainerRef} className="flex-1 overflow-y-auto custom-scrollbar">
+            <div className="w-full max-w-2xl mx-auto px-4">
+              <MessagesArea />
+            </div>
           </div>
-        )}
 
-        {/* Messages Area - Only shown when there are messages */}
-        {hasMessages && (
-          <div className="flex-1 overflow-y-auto min-h-0 custom-scrollbar">
-            <MessagesArea />
-          </div>
-        )}
+          {/* Input Area */}
+          <div className="w-full max-w-2xl mx-auto px-4">
+            {/* Error Message */}
+            {error && (
+              <div className="mb-4 bg-red-900/20 border border-red-800/50 rounded-md p-3">
+                <div className="text-sm text-red-300">{error}</div>
+              </div>
+            )}
+            {/* Chat Input */}
+            <div className="relative w-full flex flex-col rounded-xl border border-[#30363d] bg-[#161b22]">
+              <ChatInput
+                message={taskInputMessage}
+                setMessage={setTaskInputMessage}
+                handleSendMessage={handleSendMessage}
+                isLoading={isLoading}
+              />
+              {/* Team Selector and Send Button */}
+              <div className="flex items-end justify-between px-3 py-2">
+                <div>
+                  {teams.length > 0 && (
+                    <TeamSelector
+                      selectedTeam={selectedTeam}
+                      setSelectedTeam={setSelectedTeam}
+                      teams={teams}
+                      disabled={hasMessages}
+                      isLoading={isTeamsLoading}
+                    />
+                  )}
+                </div>
+                <button
+                  type="button"
+                  onClick={handleSendMessage}
+                  disabled={isLoading}
+                  className="relative top-1 text-gray-500 hover:text-white transition-colors duration-200 disabled:opacity-50"
+                >
+                  <ArrowTurnDownLeftIcon className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
 
-        {/* Chat Input */}
-        <div className="relative w-full flex flex-col rounded-xl border border-[#30363d] bg-[#161b22]">
-          <ChatInput
-            message={taskInputMessage}
-            setMessage={setTaskInputMessage}
-            handleSendMessage={handleSendMessage}
-            isLoading={isLoading}
-          />
-          {/* Team Selector and Send Button */}
-          <div className="flex items-end justify-between px-3 py-2">
-            <div>
-              {teams.length > 0 && (
-                <TeamSelector
-                  selectedTeam={selectedTeam}
-                  setSelectedTeam={setSelectedTeam}
-                  teams={teams}
+            {/* Bottom Controls */}
+            <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center">
+              <RepositorySelector
+                selectedRepo={selectedRepo}
+                handleRepoChange={setSelectedRepo}
+                disabled={hasMessages}
+              />
+
+              {selectedRepo && (
+                <BranchSelector
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  handleBranchChange={setSelectedBranch}
                   disabled={hasMessages}
-                  isLoading={isTeamsLoading}
                 />
               )}
             </div>
-            <button
-              type="button"
-              onClick={handleSendMessage}
-              disabled={isLoading}
-              className="relative top-1 text-gray-500 hover:text-white transition-colors duration-200 disabled:opacity-50"
-            >
-              <ArrowTurnDownLeftIcon className="w-4 h-4" />
-            </button>
           </div>
-        </div>
+        </>
+      ) : (
+        <div className="w-full max-w-2xl flex flex-col justify-center h-full">
+          {/* Error Message */}
+          {error && (
+            <div className="mb-4 bg-red-900/20 border border-red-800/50 rounded-md p-3">
+              <div className="text-sm text-red-300">{error}</div>
+            </div>
+          )}
+          {/* Chat Input */}
+          <div className="relative w-full flex flex-col rounded-xl border border-[#30363d] bg-[#161b22]">
+            <ChatInput
+              message={taskInputMessage}
+              setMessage={setTaskInputMessage}
+              handleSendMessage={handleSendMessage}
+              isLoading={isLoading}
+            />
+            {/* Team Selector and Send Button */}
+            <div className="flex items-end justify-between px-3 py-2">
+              <div>
+                {teams.length > 0 && (
+                  <TeamSelector
+                    selectedTeam={selectedTeam}
+                    setSelectedTeam={setSelectedTeam}
+                    teams={teams}
+                    disabled={hasMessages}
+                    isLoading={isTeamsLoading}
+                  />
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleSendMessage}
+                disabled={isLoading}
+                className="relative top-1 text-gray-500 hover:text-white transition-colors duration-200 disabled:opacity-50"
+              >
+                <ArrowTurnDownLeftIcon className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
 
-        {/* Bottom Controls */}
-        <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center">
-          <RepositorySelector
-            selectedRepo={selectedRepo}
-            handleRepoChange={setSelectedRepo}
-            disabled={hasMessages}
-          />
-
-          {selectedRepo && (
-            <BranchSelector
+          {/* Bottom Controls */}
+          <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center">
+            <RepositorySelector
               selectedRepo={selectedRepo}
-              selectedBranch={selectedBranch}
-              handleBranchChange={setSelectedBranch}
+              handleRepoChange={setSelectedRepo}
               disabled={hasMessages}
             />
-          )}
+
+            {selectedRepo && (
+              <BranchSelector
+                selectedRepo={selectedRepo}
+                selectedBranch={selectedBranch}
+                handleBranchChange={setSelectedBranch}
+                disabled={hasMessages}
+              />
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

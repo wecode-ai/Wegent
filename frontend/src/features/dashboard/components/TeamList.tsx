@@ -85,9 +85,9 @@ export default function TeamList() {
               {teams.length > 0 ? (
                 teams.map((team) => (
                   <div key={team.id}>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between py-2">
                       <div className="flex items-center space-x-3">
-                        <AiOutlineTeam className="w-5 h-5 flex-shrink-0" />
+                        <AiOutlineTeam className="w-4 h-4 flex-shrink-0" />
                         <div>
                           <div className="flex items-center space-x-2">
                             <h3 className="text-base font-medium text-white">{team.name}</h3>
@@ -120,10 +120,9 @@ export default function TeamList() {
                               <span className="text-xs text-gray-500">No bots</span>
                             )}
                           </div>
-                          <p className="text-xs text-gray-400 mt-1">{team.description}</p>
                         </div>
                       </div>
-                      <div className="flex items-center">
+                      <div className="flex items-center space-x-3">
                         <button
                           type="button"
                           className="p-1.5 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"

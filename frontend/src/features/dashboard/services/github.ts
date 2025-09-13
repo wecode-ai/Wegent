@@ -20,23 +20,16 @@ export async function fetchGitInfo(user: User): Promise<GitInfo[]> {
  * Save/Update git token
  * @param user Current user (from UserContext)
  */
-export async function saveGitToken(user: User, git_domain: string, git_token: string): Promise<boolean> {
-  try {
-    const isValid = await githubApis.validateToken(git_token)
-    if (!isValid) return false
-    let newGitInfo = Array.isArray(user.git_info) ? [...user.git_info] : []
-    const idx = newGitInfo.findIndex(info => info.git_domain === git_domain)
-    if (idx >= 0) {
-      newGitInfo[idx].git_token = git_token
-    } else {
-      const type = git_domain.includes('github') ? 'github' : 'gitlab'
-      newGitInfo.push({ git_domain, git_token, type })
-    }
-    await userApis.updateUser({ git_info: newGitInfo })
-    return true
-  } catch {
-    return false
+export async function saveGitToken(user: User, git_domain: string, git_token: string): Promise<void> {
+  let newGitInfo = Array.isArray(user.git_info) ? [...user.git_info] : []
+  const idx = newGitInfo.findIndex(info => info.git_domain === git_domain)
+  if (idx >= 0) {
+    newGitInfo[idx].git_token = git_token
+  } else {
+    const type = git_domain.includes('github') ? 'github' : 'gitlab'
+    newGitInfo.push({ git_domain, git_token, type })
   }
+  await userApis.updateUser({ git_info: newGitInfo })
 }
 
 /**

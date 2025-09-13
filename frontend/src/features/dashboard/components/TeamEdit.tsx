@@ -70,7 +70,7 @@ export default function TeamEdit({
       setSteps([{ bot_id: bots[0]?.id || 0, prompt: '' }])
       setMultiBotIds([])
     } else {
-      setSteps([{ bot_id: bots[0]?.id || 0, prompt: '' }])
+      setSteps([])
       setMultiBotIds([])
     }
   }
@@ -104,7 +104,7 @@ export default function TeamEdit({
       }))
     } else {
       if (multiBotIds.length === 0) {
-        setError('请选择至少一个Bot')
+        setError('At least one bot must be selected')
         return
       }
       botsData = multiBotIds.map(id => ({
@@ -172,7 +172,7 @@ export default function TeamEdit({
             optionType="button"
             buttonStyle="solid"
             options={['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => ({
-              label: <span className="capitalize">{opt}</span>,
+              label: opt.charAt(0).toUpperCase() + opt.slice(1),
               value: opt,
               style: { minWidth: 90, textAlign: 'center' }
             }))}
@@ -264,7 +264,7 @@ export default function TeamEdit({
               mode="multiple"
               allowClear
               style={{ width: '100%' }}
-              placeholder="请选择Bot"
+              placeholder="Choose bots"
               value={multiBotIds}
               onChange={handleMultiBotChange}
               options={bots.map(bot => ({

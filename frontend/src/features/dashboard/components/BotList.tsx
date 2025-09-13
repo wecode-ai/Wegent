@@ -28,6 +28,7 @@ export default function BotList() {
 
   const agentOptions = [
     { value: 'ClaudeCode', label: 'ClaudeCode' },
+    { value: 'Agno', label: 'Agno' },
     { value: 'GeminiCli', label: 'GeminiCli', disabled: true },
     { value: 'Codex', label: 'Codex', disabled: true }
   ]
@@ -134,7 +135,7 @@ export default function BotList() {
               {bots.length > 0 ? (
                 bots.map((bot) => (
                   <div key={bot.id}>
-                    <div className="flex items-center justify-between">
+                    <div className="flex items-center justify-between py-2">
                       <div className="flex items-center space-x-3">
                         <RiRobot2Line className="w-4 h-4 text-white" />
                         <div>
@@ -145,7 +146,7 @@ export default function BotList() {
                               <span className="text-xs text-gray-400">{bot.is_active ? 'Active' : 'Inactive'}</span>
                             </div>
                           </div>
-                          <p className="text-xs text-gray-400">{bot.agent_name}</p>
+                          <div className="text-xs text-gray-400">{bot.agent_name}</div>
                         </div>
                       </div>
                       <div className="flex items-center space-x-3">
@@ -282,7 +283,15 @@ export default function BotList() {
     "ANTHROPIC_BASE_URL": "xxxxxx"
   }
 }`
-                    : ''
+                    : agentName === 'Agno'
+                      ? `{
+  "env": {
+    "AGNO_MODEL": "xxxxx",
+    "AGNO_API_KEY": "xxxxxx",
+    "AGNO_BASE_URL": "xxxxxx"
+  }
+}`
+                      : ''
                 }
                 className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-sm"
               />
