@@ -17,8 +17,10 @@ COPY backend /app
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
+ENV PORT=8000
 # Expose port
-EXPOSE 8000
+EXPOSE ${PORT}
+
 
 # Start command
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "4"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 4"]

@@ -21,7 +21,7 @@ RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
 # 设置环境变量
 ENV PATH="/usr/local/bin:${PATH}"
 RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.6 && pip install -r /app/executor/requirements.txt -U
-
+ENV PORT=10001
 ENV PYTHONPATH=/app
 COPY executor /app/executor
 COPY shared /app/shared
