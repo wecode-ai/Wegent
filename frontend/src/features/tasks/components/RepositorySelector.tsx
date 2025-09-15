@@ -144,7 +144,7 @@ export default function RepositorySelector({
   // Git 图标独立于 Select，不再需要 renderLabel
   
   return (
-    <div className="w-36 flex items-center space-x-1">
+    <div className="flex items-center space-x-1 min-w-0">
       <FiGithub className="w-3 h-3 text-gray-500 flex-shrink-0" />
       <Select
         labelInValue
@@ -153,7 +153,10 @@ export default function RepositorySelector({
         placeholder={
           <span className="text-sx truncate h-2">Select Repository</span>
         }
-        className="w-full repository-selector"
+        className="repository-selector min-w-0 truncate"
+        style={{ width: 'auto', maxWidth: 200, display: 'inline-block', paddingRight: 8 }}
+        dropdownMatchSelectWidth={false}
+        dropdownStyle={{ maxWidth: 200 }}
         classNames={{ popup: { root: "repository-selector-dropdown custom-scrollbar" } }}
         disabled={disabled || loading}
         loading={loading}
@@ -167,11 +170,10 @@ export default function RepositorySelector({
             </div>
           ) : !loading ? (
             <div className="px-3 py-2 text-sm text-gray-400">
-              {repos.length === 0 ? '请点击下拉加载仓库' : 'No repositories found'}
+              {repos.length === 0 ? 'Select Repository<' : 'No repositories found'}
             </div>
           ) : null
         }
-        
         options={repoOptions}
         // 禁止下拉选择和搜索（无git_info时）
         open={hasGitInfo() ? undefined : false}
