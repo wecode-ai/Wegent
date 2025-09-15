@@ -17,7 +17,7 @@ from agno.models.openai import OpenAIChat
 from agno.models.anthropic import Claude
 from agno.team import Team
 from agno.tools.mcp import MCPTools
-from agno.tools.mcp import StreamableHTTPClientParams
+from agno.tools.mcp import StreamableHTTPClientParams,SSEClientParams,StdioServerParameters
 from executor.agents.base import Agent
 from shared.logger import setup_logger
 from shared.status import TaskStatus
@@ -195,12 +195,57 @@ class AgnoAgent(Agent):
                     if not isinstance(server_config, dict):
                         continue
 
-                    # Extract server parameters
-                    server_params = StreamableHTTPClientParams(
-                        url=server_config.get("url"),
-                        headers=server_config.get("headers", {})
-                    )
-                    mcp_tools = MCPTools(transport="streamable-http", server_params=server_params)
+                    mcpType = server_config.get("type")
+                    if not mcpType:
+                        mcpType = "streamable-http"
+
+                    if mcpType == "streamable-http":
+                        # Extract server parameters
+                        server_params = StreamableHTTPClientParams(
+                            url=server_config.get("url"),
+                            headers=server_config.get("headers", {})
+                        )
+                        mcp_tools = MCPTools(transport="streamable-http", server_params=server_params)
+                    elif mcpType == "sse":
+                        # Extract server parameters
+                        server_params = SSEClientParams(
+                            url=server_config.get("url"),
+                            headers=server_config.get("headers", {})
+                        )
+                        mcp_tools = MCPTools(transport="sse", server_params=server_params)
+                    elif mcpType == "stdio":
+                        # Extract server parameters
+
+                        # {
+                        #     "github": {
+                        #         "env": {
+                        #             "GITHUB_PERSONAL_ACCESS_TOKEN": "github_pat_xxxxxxx"
+                        #         },
+                        #         "args": [
+                        #             "run",
+                        #             "-i",
+                        #             "--rm",
+                        #             "-e",
+                        #             "GITHUB_PERSONAL_ACCESS_TOKEN",
+                        #             "-e",
+                        #             "GITHUB_TOOLSETS",
+                        #             "-e",
+                        #             "GITHUB_READ_ONLY",
+                        #             "ghcr.io/github/github-mcp-server"
+                        #         ],
+                        #         "command": "docker"
+                        #     }
+                        # }
+                        server_params = StdioServerParameters(
+                            env=server_config.get("env"),
+                            args=server_config.get("args", []),
+                            command=server_config.get("command"),
+                        )
+                        mcp_tools = MCPTools(transport="stdio", server_params=server_params)
+                    else:
+                        # Add support for other MCP types here
+                        raise ValueError(f"Unsupported MCP type: {mcpType}")
+
                     mcp_tools_list.append(mcp_tools)
 
             # Handle list format for backward compatibility
@@ -255,6 +300,7 @@ class AgnoAgent(Agent):
                         db=db,
                         add_history_to_context=True,
                         num_history_runs=3,
+                        telemetry=False
                     )
                     team_members.append(member)
             else:
@@ -272,6 +318,7 @@ class AgnoAgent(Agent):
                     db=db,
                     add_history_to_context=True,
                     num_history_runs=3,
+                    telemetry=False
                 )
                 team_members.append(member)
         else:
@@ -288,6 +335,7 @@ class AgnoAgent(Agent):
                 db=db,
                 add_history_to_context=True,
                 num_history_runs=3,
+                telemetry=False
             )
             team_members.append(member)
 
@@ -323,7 +371,8 @@ class AgnoAgent(Agent):
                 "determine_input_for_members": True,
             }
 
-        logger.info(f"start create team. team_members.size: {len(team_members)}, mode: {self.mode}, team_model_config: {team_model_config}")
+        logger.info(
+            f"start create team. team_members.size: {len(team_members)}, mode: {self.mode}, team_model_config: {team_model_config}")
 
         # Create team
         # agent session: https://docs.agno.com/concepts/agents/sessions
@@ -334,9 +383,10 @@ class AgnoAgent(Agent):
             description=self.options.get("team_description", "Agno team for task execution"),
             session_id=self.session_id,
             db=db,
+            telemetry=False,
             **mode_config
         )
-        
+
         return team
 
     def pre_execute(self) -> TaskStatus:
@@ -347,8 +397,11 @@ class AgnoAgent(Agent):
             TaskStatus: Pre-execution status
         """
         # Download code if git_url is provided
-        if "git_url" in self.task_data:
-            self.download_code()
+        try:
+            if "git_url" in self.task_data:
+                self.download_code()
+        except:
+            return TaskStatus.SUCCESS
 
         return TaskStatus.SUCCESS
 
@@ -451,10 +504,10 @@ class AgnoAgent(Agent):
                 prompt = prompt + "\nProject URL: " + self.task_data.get("git_url")
 
             logger.info(f"Executing Agno team with prompt: {prompt}")
-            
+
             # Execute the team run
             result = await self._run_team_async(prompt)
-            
+
             return result
 
         except Exception as e:
@@ -486,7 +539,7 @@ class AgnoAgent(Agent):
                                   session_id=self.session_id,
                                   user_id=self.session_id
                                   )
-            
+
             try:
                 async for chunk in agen:
                     # Process different event types
@@ -503,8 +556,6 @@ class AgnoAgent(Agent):
                     # if chunk.event in ["RunCompleted", "TeamRunCompleted", "ToolCallCompleted", "TeamToolCallCompleted"]:
                     #     logger.info(f"{chunk.to_dict()}")
 
-
-
                     if hasattr(chunk, 'event'):
                         if chunk.event in [TeamRunEvent.run_content]:
                             content = getattr(chunk, 'content', '')
@@ -514,11 +565,11 @@ class AgnoAgent(Agent):
                                 # self.report_progress(
                                 #     70, TaskStatus.RUNNING.value, f"Processing: {content[:100]}..."
                                 # )
-                        
+
                         elif hasattr(chunk, 'status') and chunk.status == RunStatus.completed:
                             final_response = chunk
                             logger.info("Team run completed successfully")
-                        
+
                         elif chunk.event in [TeamRunEvent.run_cancelled, RunEvent.run_cancelled]:
                             logger.warning("Team run was cancelled")
                             return TaskStatus.CANCELLED
@@ -540,7 +591,7 @@ class AgnoAgent(Agent):
             # Process the result
             if final_response or content_pieces:
                 logger.info(f"Team execution completed with content length: {len(result_content)}")
-                
+
                 # Report completion with result
                 self.report_progress(
                     100, TaskStatus.COMPLETED.value, "Agno team execution completed",
