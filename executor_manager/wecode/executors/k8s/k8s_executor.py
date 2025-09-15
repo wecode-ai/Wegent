@@ -105,7 +105,7 @@ class K8sExecutor(Executor):
             if len(pod_list) > 0:
                 ip = pod_list[0].get("ip")
                 response = self._send_task_to_container(task=task, host=ip, port=8080)
-                if response.json()["status"] != "success":
+                if response.json()["status"] == TaskStatus.FAILED.value:
                     status = "failed"
                     progress = 100
                     error_msg = response.json().get("error_msg", "")

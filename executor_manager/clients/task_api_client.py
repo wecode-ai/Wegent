@@ -114,7 +114,7 @@ class TaskApiClient:
         title = kwargs.get("title")
 
         logger.info(
-            f"Updating task status: ID={task_id}, executor_namespace={executor_namespace}, executor_name={executor_name}, Progress={progress}%"
+            f"Updating task status: ID={task_id}, executor_namespace={executor_namespace}, executor_name={executor_name}, Progress={progress}%, status={status}"
         )
 
         data = build_payload(
