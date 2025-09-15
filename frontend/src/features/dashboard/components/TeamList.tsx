@@ -111,9 +111,14 @@ export default function TeamList() {
                                     <span className="text-xs text-gray-400 mr-0.5">
                                       {bots.find(b => b.id === bot.bot_id)?.name || bot.bot_id}
                                     </span>
-                                    {idx < team.bots.length - 1 && (
-                                      <FiArrowRight className="w-4 h-4 text-gray-400 mx-2" />
-                                    )}
+                                    {team.workflow?.mode === 'pipeline'
+                                      ? (idx < team.bots.length - 1 && (
+                                          <FiArrowRight className="w-4 h-4 text-gray-400 mx-2" />
+                                        ))
+                                      : (idx < team.bots.length - 1 && (
+                                          <span className="text-gray-400 mx-1"> </span>
+                                        ))
+                                    }
                                   </span>
                                 ))}
                               </div>

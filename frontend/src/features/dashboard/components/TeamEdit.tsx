@@ -80,7 +80,20 @@ export default function TeamEdit({
   }
 
   const handleMultiBotChange = (selectedIds: number[]) => {
+    if (selectedIds.length === 0) {
+      setMultiBotIds([])
+      setError('')
+      return
+    }
+    // 获取所选bot的agent_name
+    const selectedBots = bots.filter(bot => selectedIds.includes(bot.id))
+    const agentNames = Array.from(new Set(selectedBots.map(bot => bot.agent_name)))
+    if (agentNames.length > 1) {
+      setError('只能选择 agent_name 相同的 Bot，请重新选择。')
+      return
+    }
     setMultiBotIds(selectedIds)
+    setError('')
   }
 
   const handleRemoveStep = (idx: number) => {
@@ -182,6 +195,12 @@ export default function TeamEdit({
           <label className="block text-sm font-medium text-white mb-2">
             {mode === 'pipeline' ? 'Steps' : 'Bots'}
           </label>
+          {/* 错误提示放在Bots label下方、Select上方 */}
+          {mode !== 'pipeline' && error && (
+            <p className="text-xs text-red-400 leading-none mb-1" style={{padding: 0, margin: 0}}>
+              {error}
+            </p>
+          )}
           {mode === 'pipeline' ? (
             <div className="space-y-4">
               {steps.length === 0 ? (
@@ -271,7 +290,9 @@ export default function TeamEdit({
                 label: (
                   <div className="flex items-center space-x-2">
                     <RiRobot2Line className="w-3.5 h-3.5 flex-shrink-0 text-gray-400" />
-                    <span className="font-medium text-xs truncate">{bot.name}</span>
+                    <span className="font-medium text-xs truncate">
+                      {bot.name} <span className="text-gray-400">({bot.agent_name})</span>
+                    </span>
                   </div>
                 ),
                 value: bot.id,
@@ -279,11 +300,6 @@ export default function TeamEdit({
             />
           )}
         </div>
-        {error && (
-          <div className="bg-red-900/20 border border-red-800/50 rounded-md p-3">
-            <p className="text-xs text-red-300">{error}</p>
-          </div>
-        )}
       </div>
       <div className="flex space-x-3 mt-6">
         <button

@@ -155,8 +155,8 @@ export default function RepositorySelector({
         }
         className="repository-selector min-w-0 truncate"
         style={{ width: 'auto', maxWidth: 200, display: 'inline-block', paddingRight: 8 }}
-        dropdownMatchSelectWidth={false}
-        dropdownStyle={{ maxWidth: 200 }}
+        popupMatchSelectWidth={false}
+        styles={{ popup: { root: { maxWidth: 200 } } }}
         classNames={{ popup: { root: "repository-selector-dropdown custom-scrollbar" } }}
         disabled={disabled || loading}
         loading={loading}
