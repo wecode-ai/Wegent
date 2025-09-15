@@ -9,19 +9,15 @@ from pydantic import BaseModel
 
 from app.api.dependencies import get_db
 from app.core.security import create_access_token, authenticate_user
-from app.schemas.user import Token
+from app.schemas.user import Token, LoginRequest, LoginResponse
 
 router = APIRouter()
-
-class LoginRequest(BaseModel):
-    user_name: str
-    password: str
 
 @router.post("/oauth2", response_model=Token, include_in_schema=False)
 def login_swagger(
     db: Session = Depends(get_db),
     form_data: OAuth2PasswordRequestForm = Depends()
-):
+) -> LoginResponse:
     """
     Swagger-style login interface (form format)
     Returns JWT token
@@ -57,4 +53,8 @@ def login(
     access_token = create_access_token(
         data={"sub": user.user_name}
     )
-    return {"access_token": access_token, "token_type": "bearer"}
+
+    return LoginResponse (
+        access_token=access_token,
+        token_type="bearer"
+    )
