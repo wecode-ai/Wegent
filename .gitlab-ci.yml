@@ -28,9 +28,10 @@ wegent-executor-manager:
     DOCKERFILE_PATH: wecode/docker/executor_manager
   script:
     - build_image
-  when: manual
   rules:
-    - when: manual
+    - changes:
+      - executor_manager/**/*
+      - wecode/docker/executor_manager/**/*
 
 wegent-executor:
   stage: package
@@ -40,9 +41,10 @@ wegent-executor:
     DOCKERFILE_PATH: wecode/docker/executor
   script:
     - build_image
-  when: manual
   rules:
-    - when: manual
+    - changes:
+      - executor/**/*
+      - wecode/docker/executor/**/*
 
 wegent-backend:
   stage: package
@@ -52,9 +54,10 @@ wegent-backend:
     DOCKERFILE_PATH: wecode/docker/backend
   script:
     - build_image
-  when: manual
   rules:
-    - when: manual
+    - changes:
+      - backend/**/*
+      - wecode/docker/backend/**/*
 
 wegent-web:
   stage: package
@@ -64,6 +67,7 @@ wegent-web:
     DOCKERFILE_PATH: wecode/docker/frontend
   script:
     - build_image
-  when: manual
   rules:
-    - when: manual
+    - changes:
+      - frontend/**/*
+      - wecode/docker/frontend/**/*
