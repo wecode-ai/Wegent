@@ -6,3 +6,5 @@ EXECUTOR_DEFAULT_MAGE = os.getenv(
     "EXECUTOR_IMAGE",
     "",
 )
+
+MAX_USER_TASKS = int(os.getenv("MAX_USER_TASKS", 10))
