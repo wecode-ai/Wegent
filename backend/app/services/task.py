@@ -19,6 +19,7 @@ from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB
 from app.services.base import BaseService
 from app.services.subtask import subtask_service
 from app.services.team import team_service
+from app.core.config import settings
 
 
 class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
@@ -34,6 +35,17 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         """
         task = None
         team = None
+
+        # Limit running tasks per user
+        running_count = db.query(Task).filter(
+            Task.user_id == user.id,
+            Task.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING])
+        ).count()
+        if running_count >= settings.MAX_RUNNING_TASKS_PER_USER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maximum number of running tasks per user ({settings.MAX_RUNNING_TASKS_PER_USER}) exceeded."
+            )
 
         # 设置任务ID
         if task_id is None:
@@ -57,6 +69,14 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                     detail="Task is still running, please wait for it to complete"
                 )
             
+            # Check if task is expired
+            expire_hours = settings.APPEND_TASK_EXPIRE_HOURS
+            if (datetime.utcnow() - existing_task.updated_at).total_seconds() > expire_hours * 3600:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Task has expired. You can only append tasks within {expire_hours} hours after last update."
+                )
+
             # 更新现有任务状态为PENDING
             existing_task.status = TaskStatus.PENDING
             existing_task.progress = 0
@@ -110,7 +130,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
             if not obj_in.branch_name:
                 obj_in.branch_name = ""
             if not obj_in.git_repo_id:
-                obj_in.git_repo_id = 0    
+                obj_in.git_repo_id = 0
 
             # If title is empty, extract first 50 characters from prompt as title
             title = obj_in.title

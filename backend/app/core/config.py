@@ -26,6 +26,12 @@ class Settings(BaseSettings):
 
     REPOSITORY_PROVIDER_TYPE: str = "github"
 
+    # Task limits
+    MAX_RUNNING_TASKS_PER_USER: int = 3
+
+    # Task append expiration (hours)
+    APPEND_TASK_EXPIRE_HOURS: int = 24
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
