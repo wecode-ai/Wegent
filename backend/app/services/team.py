@@ -28,6 +28,18 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
         """
         Create user Team
         """
+        # Check that the team name is unique for the user
+        exist_team = db.query(Team).filter(
+            Team.user_id == user_id,
+            Team.name == obj_in.name,
+            Team.is_active == True
+        ).first()
+        if exist_team:
+            raise HTTPException(
+                status_code=400,
+                detail="Team name already exists, please try another"
+            )
+
         # Validate bots
         self._validate_bots(db, obj_in.bots, user_id)
         bot_list = []
