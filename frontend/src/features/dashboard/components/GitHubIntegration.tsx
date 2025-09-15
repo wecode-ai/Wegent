@@ -5,6 +5,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import '@/features/common/scrollbar.css'
 import { Button } from '@headlessui/react'
 import { PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { FiGithub, FiGitlab } from 'react-icons/fi'
@@ -108,7 +109,7 @@ export default function GitHubIntegration() {
         <h2 className="text-xl font-semibold text-white mb-2">Integrations</h2>
         <p className="text-sm text-gray-400">Setting external services to enhance your workflow</p>
       </div>
-      <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3">
+      <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
         {isUserLoading || isLoading ? (
           <LoadingState fullScreen={false} message="Loading Git integrations..." />
         ) : (

@@ -5,6 +5,7 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
+import '@/features/common/scrollbar.css'
 import { RiRobot2Line } from 'react-icons/ri'
 import { FiArrowRight } from 'react-icons/fi'
 import { AiOutlineTeam } from 'react-icons/ai'
@@ -77,7 +78,7 @@ export default function TeamList() {
           <h2 className="text-xl font-semibold text-white mb-2">Team List</h2>
           <p className="text-sm text-gray-400">View all teams and their bots</p>
         </div>
-        <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3">
+        <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
           {isLoading ? (
             <LoadingState fullScreen={false} message="Loading teams..." />
           ) : (

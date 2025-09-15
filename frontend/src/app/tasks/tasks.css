@@ -14,33 +14,23 @@
 }
 
 /* Custom scrollbar styles (for ChatInput, main area, etc.) */
-.custom-scrollbar::-webkit-scrollbar,
 .auto-resize-textarea::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-track,
 .auto-resize-textarea::-webkit-scrollbar-track {
   background: #21262d;
   border-radius: 3px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb,
 .auto-resize-textarea::-webkit-scrollbar-thumb {
   background: #30363d;
   border-radius: 3px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover,
 .auto-resize-textarea::-webkit-scrollbar-thumb:hover {
   background: #3f444c;
-}
-
-/* Firefox support */
-.custom-scrollbar {
-  scrollbar-width: thin;
-  scrollbar-color: #30363d #21262d;
 }
 
 /* Bot selector styles */

@@ -15,6 +15,7 @@ import BeginnerGuideModal from '@/features/tasks/components/BeginnerGuideModal'
 import ChatArea from '@/features/tasks/components/ChatArea'
 import TaskParamSync from '@/features/tasks/components/TaskParamSync'
 import '@/app/tasks/tasks.css'
+import '@/features/common/scrollbar.css'
 
 export default function TasksPage() {
   // Team state from service

@@ -144,23 +144,3 @@ button:focus-visible {
   font-size: 12px;
   text-align: center;
 }
-
-/* Custom scrollbar for dropdown */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 8px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: #0d1117;
-  border-radius: 10px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #21262d;
-  border-radius: 10px;
-  border: 2px solid #0d1117;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #30363d;
-}

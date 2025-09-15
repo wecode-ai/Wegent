@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 'use client'
+import '@/features/common/scrollbar.css'
 
 import { useEffect, useState } from 'react'
 import { Button, Listbox } from '@headlessui/react'
@@ -127,7 +128,7 @@ export default function BotList() {
           <h2 className="text-xl font-semibold text-white mb-2">AI Assistant</h2>
           <p className="text-sm text-gray-400">Configure your AI-powered development assistant</p>
         </div>
-        <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3">
+        <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
           {isLoading ? (
             <LoadingState fullScreen={false} message="Loading bots..." />
           ) : (
