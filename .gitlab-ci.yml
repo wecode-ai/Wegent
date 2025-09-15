@@ -1,0 +1,69 @@
+image: registry.api.weibo.com/ci/ci-runner:extend
+
+variables:
+  K8S_NAMESPACE: ci-deploy-video
+  MAIL_TO: weibo_rd_video@staff.sina.com.cn
+  PAAS_NAMESPACE: wb-plat-ide
+  MASTER_BRANCH: master
+stages:
+  - package
+
+wegent-runtime:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-runtime
+    DOCKERFILE_PATH: wecode/docker/runtime
+  script:
+    - build_image
+  when: manual
+  rules:
+    - when: manual
+
+wegent-executor-manager:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-executor-manager
+    DOCKERFILE_PATH: wecode/docker/executor_manager
+  script:
+    - build_image
+  when: manual
+  rules:
+    - when: manual
+
+wegent-executor:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-executor
+    DOCKERFILE_PATH: wecode/docker/executor
+  script:
+    - build_image
+  when: manual
+  rules:
+    - when: manual
+
+wegent-backend:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-backend-web
+    DOCKERFILE_PATH: wecode/docker/backend
+  script:
+    - build_image
+  when: manual
+  rules:
+    - when: manual
+
+wegent-web:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-web
+    DOCKERFILE_PATH: wecode/docker/frontend
+  script:
+    - build_image
+  when: manual
+  rules:
+    - when: manual
