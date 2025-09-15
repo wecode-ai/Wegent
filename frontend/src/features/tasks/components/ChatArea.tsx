@@ -142,6 +142,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                 selectedRepo={selectedRepo}
                 handleRepoChange={setSelectedRepo}
                 disabled={hasMessages}
+                selectedTaskDetail={selectedTaskDetail}
               />
 
               {selectedRepo && (
@@ -201,6 +202,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
               selectedRepo={selectedRepo}
               handleRepoChange={setSelectedRepo}
               disabled={hasMessages}
+              selectedTaskDetail={selectedTaskDetail}
             />
 
             {selectedRepo && (

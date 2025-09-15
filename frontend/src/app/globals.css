@@ -84,3 +84,83 @@ button:focus-visible {
 .Toastify__progress-bar {
   display: none;
 }
+/* Custom styles for RepositorySelector antd Select */
+.repository-selector.ant-select .ant-select-selector {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.repository-selector.ant-select .ant-select-selection-placeholder,
+.repository-selector.ant-select .ant-select-selection-item {
+  color: #8b949e;
+  display: flex;
+  align-items: center;
+  flex-grow: 1;
+  min-width: 0; /* Important for truncate to work in a flex item */
+}
+
+.repository-selector.ant-select:hover .ant-select-selection-placeholder,
+.repository-selector.ant-select:hover .ant-select-selection-item {
+  color: #c9d1d9;
+.repository-selector.ant-select .ant-select-selection-item .truncate {
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+  max-width: 120px !important;
+  display: inline-block;
+}
+}
+
+.repository-selector.ant-select .ant-select-arrow {
+  color: #8b949e;
+}
+
+.repository-selector-dropdown.ant-select-dropdown {
+  background-color: #161b22 !important;
+  border: 1px solid #30363d !important;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5) !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+.repository-selector-dropdown .ant-select-item {
+  color: #e6edf3 !important;
+  font-size: 12px !important;
+  padding: 6px 10px !important;
+  border-radius: 4px;
+  margin: 0 4px;
+  width: calc(100% - 8px);
+}
+
+.repository-selector-dropdown .ant-select-item-option-active,
+.repository-selector-dropdown .ant-select-item-option-selected {
+  background-color: #21262d !important;
+}
+
+.repository-selector-dropdown .ant-select-item-empty {
+  color: #8b949e;
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Custom scrollbar for dropdown */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 8px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #0d1117;
+  border-radius: 10px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #21262d;
+  border-radius: 10px;
+  border: 2px solid #0d1117;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #30363d;
+}
