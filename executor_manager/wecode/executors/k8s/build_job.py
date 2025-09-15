@@ -1,4 +1,6 @@
-def build_job_configuration(executor_name, namespace, task_str, image, task_id):
+def build_job_configuration(
+    username, executor_name, namespace, task_str, image, task_id
+):
     """
     Build Kubernetes job configuration
 
@@ -37,7 +39,8 @@ def build_job_configuration(executor_name, namespace, task_str, image, task_id):
                         "aigc.weibo.com/devContainerType": "darkFactory",
                         "aigc.weibo.com/executor": "wegent",
                         "aigc.weibo.com/executor-task-id": str(task_id),
-                        "aigc.weibo.com/user": "wecoder",
+                        "aigc.weibo.com/user": username,
+                        "aigc.weibo.com/proxy-user": username,
                         "krs.weibo.com/managed-by": "krs",
                         "kubus.weibo.com/qos-class": "dlc",
                         "krs.weibo.com/type": "online",

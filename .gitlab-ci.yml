@@ -1,0 +1,141 @@
+image: registry.api.weibo.com/ci/ci-runner:extend
+
+variables:
+  K8S_NAMESPACE: ci-deploy-video
+  MAIL_TO: weibo_rd_video@staff.sina.com.cn
+  PAAS_NAMESPACE: wb-plat-ide
+  MASTER_BRANCH: master
+stages:
+  - package
+  - production
+
+wegent-runtime:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-runtime
+    DOCKERFILE_PATH: wecode/docker/runtime
+  script:
+    - build_image
+  when: manual
+  rules:
+    - when: manual
+
+wegent-executor-manager:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-executor-manager
+    DOCKERFILE_PATH: wecode/docker/executor_manager
+  script:
+    - build_image
+  rules:
+    - changes:
+      - executor_manager/**/*
+      - wecode/docker/executor_manager/**/*
+
+trigger_update_manifest_log:
+    stage: production
+    variables:
+        APP: wegent-executor-manager-web
+        SERVICE: wegent-executor-manager
+        IMAGE_NAME: wegent-executor-manager-web
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest/
+        branch: master
+        strategy: depend
+    only:
+    - wecode
+
+wegent-executor:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-executor
+    DOCKERFILE_PATH: wecode/docker/executor
+  script:
+    - build_image
+  rules:
+    - changes:
+      - executor/**/*
+      - wecode/docker/executor/**/*
+
+trigger_update_manifest_log:
+    stage: production
+    variables:
+        APP: wegent-executor-manager-web
+        SERVICE: wegent-executor
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest/
+        branch: master
+        strategy: depend
+    only:
+    - wecode
+
+wegent-backend:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-backend-web
+    DOCKERFILE_PATH: wecode/docker/backend
+  script:
+    - build_image
+  rules:
+    - changes:
+      - backend/**/*
+      - wecode/docker/backend/**/*
+
+trigger_update_manifest_log:
+    stage: production
+    variables:
+        APP: wegent-backend-web
+        SERVICE: wegent-backend-web
+        IMAGE_NAME: wegent-backend-web
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest/
+        branch: master
+        strategy: depend
+    only:
+    - wecode
+
+wegent-web:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-web
+    DOCKERFILE_PATH: wecode/docker/frontend
+  script:
+    - build_image
+  rules:
+    - changes:
+      - frontend/**/*
+      - wecode/docker/frontend/**/*
+
+trigger_update_manifest_log:
+    stage: production
+    variables:
+        APP: wegent-web
+        SERVICE: wegent-web
+        IMAGE_NAME: wegent-web
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest/
+        branch: master
+        strategy: depend
+    only:
+    - wecode
