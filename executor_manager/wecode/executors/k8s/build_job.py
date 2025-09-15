@@ -65,7 +65,7 @@ def build_job_configuration(executor_name, namespace, task_str, image, task_id):
                                 {"name": "PORT", "value": "8080"},
                                 {
                                     "name": "CALLBACK_URL",
-                                    "value": "http://wecode-executor-manager-web.wb-plat-ide:9081/executor-manager/callback",
+                                    "value": "http://wegent-executor-manager-web.wb-plat-ide:8080/executor-manager/callback",
                                 },
                                 {
                                     "name": "ENABLE_CODE_REVIEW_PROCESSING",
@@ -107,26 +107,6 @@ def build_job_configuration(executor_name, namespace, task_str, image, task_id):
                             "terminationMessagePolicy": "File",
                             "volumeMounts": [
                                 {
-                                    "mountPath": "/cloudide/workspace/.wecode/rules-CodeReview/1_workflow.xml",
-                                    "name": "wecode-agent-web-env",
-                                    "subPath": "rules-codereview-workflow",
-                                },
-                                {
-                                    "mountPath": "/cloudide/workspace/.wecode/rules-CodeReview/2_best_practices.xml",
-                                    "name": "wecode-agent-web-env",
-                                    "subPath": "rules-codereview-best-practices",
-                                },
-                                {
-                                    "mountPath": "/cloudide/workspace/.wecode/rules-CodeReview/3_common_mistakes_to_avoid.xml",
-                                    "name": "wecode-agent-web-env",
-                                    "subPath": "rules-codereview-mistakes",
-                                },
-                                {
-                                    "mountPath": "/wecode-agent/config/wecoder/config.yml",
-                                    "name": "wecode-agent-web-env",
-                                },
-                                {"mountPath": "/wecode-agent/logs", "name": "app-logs"},
-                                {
                                     "mountPath": "/root/.config/dev-container-type",
                                     "name": "dev-container-type",
                                     "readOnly": True,
@@ -163,17 +143,9 @@ def build_job_configuration(executor_name, namespace, task_str, image, task_id):
                         }
                     ],
                     "volumes": [
-                        {"emptyDir": {}, "name": "app-logs"},
                         {
                             "name": "wecode-ide",
                             "secret": {"defaultMode": 256, "secretName": "wecode-ide"},
-                        },
-                        {
-                            "name": "git-ssh",
-                            "secret": {
-                                "defaultMode": 256,
-                                "secretName": "wecode-secret-wecoder",
-                            },
                         },
                         {
                             "downwardAPI": {
@@ -219,14 +191,7 @@ def build_job_configuration(executor_name, namespace, task_str, image, task_id):
                                 ],
                             },
                             "name": "email",
-                        },
-                        {
-                            "configMap": {
-                                "defaultMode": 420,
-                                "name": "wecode-agent-web-env",
-                            },
-                            "name": "wecode-agent-web-env",
-                        },
+                        }
                     ],
                     "restartPolicy": "OnFailure",
                 },
