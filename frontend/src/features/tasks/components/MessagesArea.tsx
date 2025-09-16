@@ -24,16 +24,17 @@ export default function MessagesArea() {
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
 
-    if (selectedTaskDetail?.id) {
+    // 只有当任务存在且未完成时才进行定时刷新
+    if (selectedTaskDetail?.id && selectedTaskDetail.status !== 'COMPLETED' && selectedTaskDetail.status !== 'FAILED' && selectedTaskDetail.status !== 'CANCELLED') {
       intervalId = setInterval(() => {
-        refreshSelectedTaskDetail();
+        refreshSelectedTaskDetail(true); // 这是自动刷新
       }, 5000);
     }
 
     return () => {
       if (intervalId) clearInterval(intervalId);
     }
-  }, [selectedTaskDetail?.id, refreshSelectedTaskDetail])
+  }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail])
 
   // Calculate messages from taskDetail
   function generateTaskMessages(detail: TaskDetail | null): Message[] {

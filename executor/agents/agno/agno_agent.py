@@ -296,6 +296,7 @@ class AgnoAgent(Agent):
                         name=member_config.get("name", "TeamMember"),
                         model=self._get_model(agent_config),
                         add_name_to_context=True,
+                        add_datetime_to_context=True,
                         tools=mcp_tools if mcp_tools else [],
                         instructions=member_config.get("system_prompt", "Team member"),
                         db=db,
@@ -314,6 +315,7 @@ class AgnoAgent(Agent):
                     name=team_members_config.get("name", "TeamMember"),
                     model=self._get_model(agent_config),
                     add_name_to_context=True,
+                    add_datetime_to_context=True,
                     tools=mcp_tools if mcp_tools else [],
                     instructions=team_members_config.get("system_prompt", "Team member"),
                     db=db,
@@ -333,6 +335,7 @@ class AgnoAgent(Agent):
                 tools=mcp_tools if mcp_tools else [],
                 description="Default team member",
                 add_name_to_context=True,
+                add_datetime_to_context=True,
                 db=db,
                 add_history_to_context=True,
                 num_history_runs=3,
@@ -345,24 +348,19 @@ class AgnoAgent(Agent):
             mode_config = {
                 "delegate_task_to_all_members": False,
                 "respond_directly": False,
-                "determine_input_for_members": True,
+                "determine_input_for_members": False,
             }
 
         elif self.mode == "collaborate":
             # 协作：所有成员并行，队长汇总
             mode_config = {
                 "delegate_task_to_all_members": True,
-                "respond_directly": False,  # ⚠️ 与 delegate_all 同开时保持 False，避免“广播后不汇总”
-                "determine_input_for_members": False,  # 让每个成员收到相同原始输入
-                "show_members_responses": True
             }
 
         elif self.mode == "route":
             # 路由：只选最合适的一个成员
             mode_config = {
-                "delegate_task_to_all_members": False,
-                "respond_directly": False,  # 若想“被选成员原样直出”，这里可改 True
-                "determine_input_for_members": True,  # 队长可轻度改写/压缩输入再转发
+                "respond_directly": True
             }
 
         else:
@@ -370,7 +368,7 @@ class AgnoAgent(Agent):
             mode_config = {
                 "delegate_task_to_all_members": False,
                 "respond_directly": False,
-                "determine_input_for_members": True,
+                "determine_input_for_members": False,
             }
 
         logger.info(
@@ -387,6 +385,9 @@ class AgnoAgent(Agent):
             instructions=[
                 self.team_prompt
             ],
+            add_member_tools_to_context=False,
+            show_members_responses=True,
+            markdown=True,
             db=db,
             telemetry=False,
             **mode_config
@@ -533,80 +534,48 @@ class AgnoAgent(Agent):
             TaskStatus: Execution status
         """
         try:
-            content_pieces = []
-            final_response = None
+            # Run to completion (non-streaming) and gather final output
+            result = await self.team.arun(
+                prompt,
+                stream=False,
+                add_history_to_context=True,
+                session_id=self.session_id,
+                user_id=self.session_id,
+                debug_mode=True,
+            )
 
-            # Run the team with streaming
-            agen = self.team.arun(prompt,
-                                  stream=True,
-                                  stream_intermediate_steps=True,
-                                  add_history_to_context=True,
-                                  session_id=self.session_id,
-                                  user_id=self.session_id
-                                  )
-
+            # Normalize the result into a string
+            result_content: str = ""
             try:
-                async for chunk in agen:
-                    # Process different event types
-                    from agno.run.team import TeamRunEvent
-                    from agno.run.agent import RunEvent
-                    from agno.run.base import RunStatus
+                if result is None:
+                    result_content = ""
+                elif hasattr(result, "content") and getattr(result, "content") is not None:
+                    result_content = str(getattr(result, "content"))
+                elif hasattr(result, "to_dict"):
+                    result_content = json.dumps(result.to_dict(), ensure_ascii=False)
+                else:
+                    result_content = str(result)
+            except Exception:
+                # Fallback to string coercion
+                result_content = str(result)
 
-                    if chunk.event not in [TeamRunEvent.run_content, "RunContent"]:
-                        logger.debug(f"Team chunk: {chunk.to_dict()}")
-
-                    if chunk.event in ["RunStarted", "TeamRunStarted", "ToolCallStarted", "TeamToolCallStarted"]:
-                        logger.info(f"{chunk.to_dict()}")
-
-                    if chunk.event in ["RunCompleted", "TeamRunCompleted", "ToolCallCompleted", "TeamToolCallCompleted"]:
-                        logger.info(f"{chunk.to_dict()}")
-
-                    if hasattr(chunk, 'event'):
-                        if chunk.event in [TeamRunEvent.run_content]:
-                            content = getattr(chunk, 'content', '')
-                            if content:
-                                content_pieces.append(content)
-                                # Report progress
-                                # self.report_progress(
-                                #     70, TaskStatus.RUNNING.value, f"Processing: {content[:100]}..."
-                                # )
-
-                        elif hasattr(chunk, 'status') and chunk.status == RunStatus.completed:
-                            final_response = chunk
-                            logger.info("Team run completed successfully")
-
-                        elif chunk.event in [TeamRunEvent.run_cancelled, RunEvent.run_cancelled]:
-                            logger.warning("Team run was cancelled")
-                            return TaskStatus.CANCELLED
-
-                        elif chunk.event in [TeamRunEvent.run_completed]:
-                            logger.info("Team run completed")
-                            result_content = getattr(chunk, 'content', '')
-
-                    # Handle chunk content directly
-                    if hasattr(chunk, 'content') and chunk.content:
-                        content_pieces.append(str(chunk.content))
-
-            finally:
-                try:
-                    await agen.aclose()
-                except Exception as e:
-                    logger.error(f"Stream close error: {e}")
-
-            # Process the result
-            if final_response or content_pieces:
-                logger.info(f"Team execution completed with content length: {len(result_content)}")
-
-                # Report completion with result
+            if result_content:
+                logger.info(
+                    f"Team execution completed with content length: {len(result_content)}"
+                )
                 self.report_progress(
-                    100, TaskStatus.COMPLETED.value, "Agno team execution completed",
-                    result={"value": result_content}
+                    100,
+                    TaskStatus.COMPLETED.value,
+                    "Agno team execution completed",
+                    result={"value": result_content},
                 )
                 return TaskStatus.COMPLETED
             else:
                 logger.warning("No content received from team execution")
                 self.report_progress(
-                    100, TaskStatus.FAILED.value, "No content received from team execution"
+                    100,
+                    TaskStatus.FAILED.value,
+                    "No content received from team execution",
                 )
                 return TaskStatus.FAILED
 

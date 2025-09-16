@@ -38,7 +38,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
   const searchParams = useSearchParams()
 
   // New: Get selectedTask to determine if there are messages
-  const { selectedTaskDetail, refreshTasks, setSelectedTask } = useTaskContext()
+  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } = useTaskContext()
   const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id)
 
   const handleSendMessage = async () => {
@@ -63,6 +63,11 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
         // 主动刷新任务列表和任务详情
         refreshTasks();
         setSelectedTask({ id: newTask.task_id } as any); // 只传 id，详情组件会自动拉取
+      } else if (selectedTaskDetail?.id) {
+        // 如果是追加消息到现有任务，也刷新任务详情
+        refreshTasks();
+        // 主动刷新任务详情，确保能够获取最新的任务状态和消息
+        refreshSelectedTaskDetail(false); // false 表示这不是自动刷新，允许获取已完成任务的详情
       }
       // Manually trigger scroll to bottom after sending message
       setTimeout(scrollToBottom, 0)
