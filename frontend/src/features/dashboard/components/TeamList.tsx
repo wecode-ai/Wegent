@@ -73,12 +73,12 @@ export default function TeamList() {
 
   return (
     <>
-      <div className="space-y-6">
+      <div className="space-y-3">
         <div>
-          <h2 className="text-xl font-semibold text-white mb-2">Team List</h2>
-          <p className="text-sm text-gray-400">View all teams and their bots</p>
+          <h2 className="text-xl font-semibold text-white mb-1">Team List</h2>
+          <p className="text-sm text-gray-400 mb-1">View all teams and their bots</p>
         </div>
-        <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
+        <div className="bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar">
           {isLoading ? (
             <LoadingState fullScreen={false} message="Loading teams..." />
           ) : (
@@ -86,25 +86,28 @@ export default function TeamList() {
               {teams.length > 0 ? (
                 teams.map((team) => (
                   <div key={team.id}>
-                    <div className="flex items-center justify-between py-2">
-                      <div className="flex items-center space-x-3">
+                    <div className="flex items-center justify-between py-0.5">
+                      <div className="flex items-center space-x-2">
                         <AiOutlineTeam className="w-4 h-4 flex-shrink-0" />
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <h3 className="text-base font-medium text-white">{team.name}</h3>
-                            <div className="flex items-center space-x-1">
+                        <div className="flex flex-col justify-center">
+                          <div className="flex items-center space-x-1">
+                            <h3 className="text-base font-medium text-white mb-0">{team.name}</h3>
+                            <div className="flex items-center h-4 space-x-0.5">
                               <div className={`w-2 h-2 rounded-full ${team.is_active ? 'bg-green-400' : 'bg-gray-400'}`}></div>
-                              <span className="text-xs text-gray-400">{team.is_active ? 'Active' : 'Inactive'}</span>
+                              <span className="text-xs text-gray-400 flex items-center justify-center">{team.is_active ? 'Active' : 'Inactive'}</span>
                             </div>
                           </div>
-                          <div className="flex items-center space-x-2 mt-1">
+                          <div className="flex items-center space-x-1 mt-0">
                             {team.workflow?.mode && (
-                              <span className="px-2 py-0.5 text-xs rounded-full bg-gray-700 text-gray-300 capitalize">
-                                {team.workflow.mode}
-                              </span>
+                              <>
+                                <span className="px-2 py-0.5 text-xs rounded-full bg-gray-700 text-gray-300 capitalize">
+                                  {team.workflow.mode}
+                                </span>
+                                <span className="mx-2"></span>
+                              </>
                             )}
                             {team.bots.length > 0 ? (
-                              <div className="flex items-center overflow-x-auto max-w-[320px] whitespace-nowrap">
+                              <div className="flex items-center max-w-[60%] overflow-hidden whitespace-nowrap text-ellipsis ml-4">
                                 {team.bots.map((bot, idx) => (
                                   <span key={`${bot.bot_id}-${idx}`} className="flex items-center">
                                     <RiRobot2Line className="w-4 h-4 mr-0.5 text-gray-400" />
@@ -128,10 +131,10 @@ export default function TeamList() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex items-center space-x-3">
+                      <div className="flex items-center space-x-2">
                         <button
                           type="button"
-                          className="p-1.5 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
+                          className="p-1 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
                           title="Edit Team"
                           onClick={() => handleOpenEditModal(team)}
                         >
@@ -139,7 +142,7 @@ export default function TeamList() {
                         </button>
                         <button
                           type="button"
-                          className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
+                          className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
                           title="Delete Team"
                           disabled={deletingId === team.id}
                           onClick={() => handleDelete(team.id)}
@@ -149,7 +152,7 @@ export default function TeamList() {
                       </div>
                     </div>
                     {teams.length > 1 && team.id !== teams[teams.length - 1].id && (
-                      <div className="border-t border-[#30363d] mt-3 pt-3"></div>
+                      <div className="border-t border-[#30363d] mt-1 pt-1"></div>
                     )}
                   </div>
                 ))
@@ -162,7 +165,7 @@ export default function TeamList() {
               <div className="flex justify-center">
                 <button
                   onClick={handleOpenModal}
-                  className="flex items-center space-x-1 px-3 py-1 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
+                  className="flex items-center space-x-1 mt-2 mb-2 px-2 py-0.5 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
                   style={{ backgroundColor: 'rgb(112,167,215)' }}
                 >
                   <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">

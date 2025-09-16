@@ -104,12 +104,12 @@ export default function GitHubIntegration() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-2">Integrations</h2>
-        <p className="text-sm text-gray-400">Setting external services to enhance your workflow</p>
+        <h2 className="text-xl font-semibold text-white mb-1">Integrations</h2>
+        <p className="text-sm text-gray-400 mb-1">Setting external services to enhance your workflow</p>
       </div>
-      <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
+      <div className="bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar">
         {isUserLoading || isLoading ? (
           <LoadingState fullScreen={false} message="Loading Git integrations..." />
         ) : (
@@ -117,33 +117,33 @@ export default function GitHubIntegration() {
             {platforms.length > 0 ? (
               platforms.map((info) => (
                 <div key={info.git_domain}>
-                  <div className="flex items-center justify-between py-2">
-                    <div className="flex items-center space-x-3 w-0 flex-1 min-w-0">
+                  <div className="flex items-center justify-between py-0.5">
+                    <div className="flex items-center space-x-2 w-0 flex-1 min-w-0">
                       {info.type === 'gitlab' ? (
                         <FiGitlab className="w-4 h-4 text-orange-400" />
                       ) : (
                         <FiGithub className="w-4 h-4 text-white" />
                       )}
                       <div>
-                        <div className="flex items-center space-x-2">
-                          <h3 className="text-base font-medium text-white truncate">{info.git_domain}</h3>
+                        <div className="flex items-center space-x-1">
+                          <h3 className="text-base font-medium text-white truncate mb-0">{info.git_domain}</h3>
                         </div>
                         <div>
-                          <p className="text-xs text-gray-400 break-all font-mono">{getMaskedTokenDisplay(info.git_token)}</p>
+                          <p className="text-xs text-gray-400 break-all font-mono mt-0">{getMaskedTokenDisplay(info.git_token)}</p>
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-3">
+                    <div className="flex items-center space-x-2">
                       <button
                         onClick={() => handleEdit(info.git_domain)}
-                        className="p-1.5 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
+                        className="p-1 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
                         title="Edit Token"
                       >
                         <PencilIcon className="w-4 h-4" />
                       </button>
                       <button
                         onClick={() => handleDelete(info.git_domain)}
-                        className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
+                        className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
                         title="Delete"
                       >
                         <TrashIcon className="w-4 h-4" />
@@ -151,7 +151,7 @@ export default function GitHubIntegration() {
                     </div>
                   </div>
                   {platforms.length > 1 && info.git_domain !== platforms[platforms.length - 1].git_domain && (
-                    <div className="border-t border-[#30363d] mt-3 pt-3"></div>
+                    <div className="border-t border-[#30363d] mt-1 pt-1"></div>
                   )}
                 </div>
               ))
@@ -161,10 +161,10 @@ export default function GitHubIntegration() {
               </div>
             )}
             <div className="border-t border-[#30363d]"></div>
-            <div className="flex justify-center mt-4">
+            <div className="flex justify-center">
               <Button
                 onClick={() => handleEdit('')}
-                className="flex items-center space-x-1 px-3 py-1 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
+                className="flex items-center space-x-1 mt-2 mb-2 px-2 py-0.5 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
                 style={{ backgroundColor: 'rgb(112,167,215)' }}
               >
                 <PlusIcon className="w-3 h-3" />
