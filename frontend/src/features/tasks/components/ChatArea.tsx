@@ -15,6 +15,7 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import { sendMessage } from '../service/messageService'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useTaskContext } from '../contexts/taskContext'
+import { App } from 'antd'
 
 interface ChatAreaProps {
   teams: Team[]
@@ -22,12 +23,14 @@ interface ChatAreaProps {
 }
 
 export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
+  const { message } = App.useApp()
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
   const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
 
   const [taskInputMessage, setTaskInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [error, setError] = useState('')
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -49,7 +52,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
       task_id: selectedTaskDetail?.id,
     })
     if (error) {
-      setError(error)
+      message.error(error)
     } else {
       setTaskInputMessage('')
       // Redirect to task URL after successfully creating a task
@@ -99,11 +102,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
           {/* Input Area */}
           <div className="w-full max-w-2xl mx-auto px-4">
             {/* Error Message */}
-            {error && (
-              <div className="mb-4 bg-red-900/20 border border-red-800/50 rounded-md p-3">
-                <div className="text-sm text-red-300">{error}</div>
-              </div>
-            )}
+            {/* 错误提示已用 antd message 统一，不再本地渲染 */}
             {/* Chat Input */}
             <div className="relative w-full flex flex-col rounded-xl border border-[#30363d] bg-[#161b22]">
               <ChatInput
@@ -159,11 +158,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
       ) : (
         <div className="w-full max-w-2xl flex flex-col justify-center h-full">
           {/* Error Message */}
-          {error && (
-            <div className="mb-4 bg-red-900/20 border border-red-800/50 rounded-md p-3">
-              <div className="text-sm text-red-300">{error}</div>
-            </div>
-          )}
+          {/* 错误提示已用 antd message 统一，不再本地渲染 */}
           {/* Chat Input */}
           <div className="relative w-full flex flex-col rounded-xl border border-[#30363d] bg-[#161b22]">
             <ChatInput

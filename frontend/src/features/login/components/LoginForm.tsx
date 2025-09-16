@@ -10,15 +10,17 @@ import { Button } from '@headlessui/react'
 import { useRouter } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
+import { App } from 'antd'
 
 export default function LoginForm() {
+  const { message } = App.useApp()
   const router = useRouter()
   const [formData, setFormData] = useState({
     user_name: 'admin',
     password: 'admin'
   })
   const [showPassword, setShowPassword] = useState(false)
-  const [error, setError] = useState('')
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [isLoading, setIsLoading] = useState(false)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -27,7 +29,7 @@ export default function LoginForm() {
       ...prev,
       [name]: value
     }))
-    if (error) setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
   }
 
   const { user, refresh, isLoading: userLoading, login } = useUser()
@@ -38,7 +40,7 @@ export default function LoginForm() {
       return
     }
     setIsLoading(true)
-    setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
 
     try {
       await login({
@@ -47,7 +49,7 @@ export default function LoginForm() {
       })
       router.replace(paths.task.getHref())
     } catch (error: any) {
-      setError(error.message || 'Login failed, please check username and password')
+      message.error(error.message || 'Login failed, please check username and password')
     } finally {
       setIsLoading(false)
     }
@@ -104,11 +106,7 @@ export default function LoginForm() {
         </div>
       </div>
 
-      {error && (
-        <div className="rounded-md bg-red-900/20 border border-red-800/50 p-3">
-          <div className="text-sm text-red-300">{error}</div>
-        </div>
-      )}
+      {/* 错误提示已用 antd message 统一，不再本地渲染 */}
 
       <div>
         <Button

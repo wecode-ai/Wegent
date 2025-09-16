@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect, useRef } from 'react'
-import { Select } from 'antd'
+import { Select, App } from 'antd'
 import { FiGitBranch } from 'react-icons/fi'
 import { GitRepoInfo, GitBranch } from '@/types/api'
 import { githubApis } from '@/apis/github'
@@ -29,8 +29,10 @@ export default function BranchSelector({
   handleBranchChange,
   disabled
 }: BranchSelectorProps) {
+  const { message } = App.useApp()
   const [branches, setBranches] = useState<GitBranch[]>([])
   const [loading, setLoading] = useState<boolean>(false)
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [error, setError] = useState<string | null>(null)
   const { selectedTaskDetail } = useTaskContext()
 
@@ -55,7 +57,10 @@ export default function BranchSelector({
         }
       })
       .catch((err) => {
-        if (!ignore) setError('Failed to load branches')
+        if (!ignore) {
+          setError('Failed to load branches')
+          message.error('Failed to load branches')
+        }
       })
       .finally(() => {
         if (!ignore) setLoading(false)
@@ -143,6 +148,7 @@ export default function BranchSelector({
             <div className="px-3 py-2 text-sm text-red-400 flex items-center">
               <FiGitBranch className="w-4 h-4 mr-2" />
               {error}
+              {/* antd message.error 已全局提示 */}
             </div>
           ) : showNoBranch ? (
             <div className="px-3 py-2 text-sm text-gray-400">

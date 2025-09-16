@@ -13,8 +13,10 @@ import Modal from '@/features/common/Modal'
 import LoadingState from '@/features/common/LoadingState'
 import { Bot } from '@/types/api'
 import { fetchBotsList, createBot, updateBot, deleteBot } from '../services/bots'
+import { App } from 'antd'
 
 export default function BotList() {
+  const { message } = App.useApp()
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showBotModal, setShowBotModal] = useState(false)
@@ -24,7 +26,7 @@ export default function BotList() {
   const [prompt, setPrompt] = useState('')
   const [mcpConfig, setMcpConfig] = useState('')
   const [botSaving, setBotSaving] = useState(false)
-  const [botError, setBotError] = useState('')
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
 
   const agentOptions = [
@@ -41,7 +43,7 @@ export default function BotList() {
         const botsData = await fetchBotsList()
         setBots(botsData)
       } catch (e) {
-        setBotError('Failed to load bots')
+        message.error('Failed to load bots')
       } finally {
         setIsLoading(false)
       }
@@ -55,7 +57,6 @@ export default function BotList() {
     setAgentConfig('')
     setPrompt('')
     setMcpConfig('')
-    setBotError('')
     setEditingBotId(null)
     setShowBotModal(true)
   }
@@ -66,14 +67,13 @@ export default function BotList() {
     setAgentConfig(JSON.stringify(bot.agent_config, null, 2))
     setPrompt(bot.system_prompt || '')
     setMcpConfig(bot.mcp_servers ? JSON.stringify(bot.mcp_servers, null, 2) : '')
-    setBotError('')
     setEditingBotId(bot.id)
     setShowBotModal(true)
   }
 
   const handleSaveBot = async () => {
     if (!botName.trim() || !agentName.trim()) {
-      setBotError('Please fill in all required fields')
+      message.error('Please fill in all required fields')
       return
     }
     try {
@@ -82,11 +82,10 @@ export default function BotList() {
         JSON.parse(mcpConfig)
       }
     } catch (error) {
-      setBotError('Agent Config must be valid JSON format, MCP Config must be valid JSON if provided')
+      message.error('Agent Config must be valid JSON format, MCP Config must be valid JSON if provided')
       return
     }
     setBotSaving(true)
-    setBotError('')
     try {
       const botReq: any = {
         name: botName.trim(),
@@ -106,7 +105,7 @@ export default function BotList() {
       }
       setShowBotModal(false)
     } catch (error: any) {
-      setBotError(error.message || 'Failed to save bot')
+      message.error(error.message || 'Failed to save bot')
     } finally {
       setBotSaving(false)
     }
@@ -117,18 +116,18 @@ export default function BotList() {
       await deleteBot(botId)
       setBots(prev => prev.filter(b => b.id !== botId))
     } catch (e) {
-      setBotError('Failed to delete bot')
+      message.error('Failed to delete bot')
     }
   }
 
   return (
     <>
-      <div className="space-y-6">
+      <div className="space-y-3">
         <div>
-          <h2 className="text-xl font-semibold text-white mb-2">AI Assistant</h2>
-          <p className="text-sm text-gray-400">Configure your AI-powered development assistant</p>
+          <h2 className="text-xl font-semibold text-white mb-1">AI Assistant</h2>
+          <p className="text-sm text-gray-400 mb-1">Configure your AI-powered development assistant</p>
         </div>
-        <div className="bg-[#161b22] border border-[#30363d] rounded-md p-4 space-y-3 max-h-[70vh] overflow-y-auto custom-scrollbar">
+        <div className="bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar">
           {isLoading ? (
             <LoadingState fullScreen={false} message="Loading bots..." />
           ) : (
@@ -136,23 +135,23 @@ export default function BotList() {
               {bots.length > 0 ? (
                 bots.map((bot) => (
                   <div key={bot.id}>
-                    <div className="flex items-center justify-between py-2">
-                      <div className="flex items-center space-x-3">
+                    <div className="flex items-center justify-between py-0.5">
+                      <div className="flex items-center space-x-2">
                         <RiRobot2Line className="w-4 h-4 text-white" />
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <h3 className="text-base font-medium text-white">{bot.name}</h3>
-                            <div className="flex items-center space-x-1">
+                        <div className="flex flex-col justify-center">
+                          <div className="flex items-center space-x-1">
+                            <h3 className="text-base font-medium text-white mb-0">{bot.name}</h3>
+                            <div className="flex items-center h-4 space-x-0.5">
                               <div className={`w-2 h-2 rounded-full ${bot.is_active ? 'bg-green-400' : 'bg-gray-400'}`}></div>
-                              <span className="text-xs text-gray-400">{bot.is_active ? 'Active' : 'Inactive'}</span>
+                              <span className="text-xs text-gray-400 flex items-center justify-center">{bot.is_active ? 'Active' : 'Inactive'}</span>
                             </div>
                           </div>
-                          <div className="text-xs text-gray-400">{bot.agent_name}</div>
+                          <span className="inline-block px-1 py-0.5 text-xs rounded-full bg-gray-700 text-gray-300 capitalize self-start">{bot.agent_name}</span>
                         </div>
                       </div>
-                      <div className="flex items-center space-x-3">
+                      <div className="flex items-center space-x-2">
                         <button
-                          className="p-1.5 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
+                          className="p-1 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
                           title="Edit Bot"
                           onClick={() => handleEditBot(bot)}
                         >
@@ -160,7 +159,7 @@ export default function BotList() {
                         </button>
                         <button
                           onClick={() => handleDeleteBot(bot.id)}
-                          className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
+                          className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
                           title="Delete Bot"
                         >
                           <TrashIcon className="w-4 h-4" />
@@ -168,7 +167,7 @@ export default function BotList() {
                       </div>
                     </div>
                     {bots.length > 1 && bot.id !== bots[bots.length - 1].id && (
-                      <div className="border-t border-[#30363d] mt-3 pt-3"></div>
+                      <div className="border-t border-[#30363d] mt-1 pt-1"></div>
                     )}
                   </div>
                 ))
@@ -178,10 +177,10 @@ export default function BotList() {
                 </div>
               )}
               <div className="border-t border-[#30363d]"></div>
-              <div className="flex justify-center">
+              <div className="flex justify-center ">
                 <Button
                   onClick={handleCreateBot}
-                  className="flex items-center space-x-1 px-3 py-1 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
+                  className="flex items-center space-x-1 mt-2 mb-2 px-2 py-0.5 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
                   style={{ backgroundColor: 'rgb(112,167,215)' }}
                 >
                   <PlusIcon className="w-3 h-3" />
@@ -197,7 +196,6 @@ export default function BotList() {
         isOpen={showBotModal}
         onClose={() => {
           setShowBotModal(false)
-          setBotError('')
         }}
         title={editingBotId ? 'Update Bot' : 'Create New Bot'}
         maxWidth="3xl"
@@ -332,11 +330,6 @@ export default function BotList() {
               />
               <p className="text-xs text-gray-500 mt-1">JSON format required</p>
             </div>
-            {botError && (
-              <div className="bg-red-900/20 border border-red-800/50 rounded-md p-3">
-                <p className="text-xs text-red-300">{botError}</p>
-              </div>
-            )}
           </div>
           {/* Right Prompt */}
           <div className="basis-[65%] min-w-0 flex flex-col h-full">
@@ -355,7 +348,6 @@ export default function BotList() {
           <Button
             onClick={() => {
               setShowBotModal(false)
-              setBotError('')
             }}
             className="flex-1 px-2 py-1 text-xs bg-[#21262d] hover:bg-[#30363d] text-gray-300 border border-[#30363d] rounded transition-colors duration-200"
           >

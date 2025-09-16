@@ -6,11 +6,11 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { userApis } from '@/apis/user'
 import { User } from '@/types/api'
+import { App } from 'antd'
 
 interface UserContextType {
   user: User | null
   isLoading: boolean
-  error: string
   logout: () => void
   refresh: () => Promise<void>
   login: (data: any) => Promise<void>
@@ -18,20 +18,20 @@ interface UserContextType {
 const UserContext = createContext<UserContextType>({
   user: null,
   isLoading: true,
-  error: '',
-  logout: () => { },
-  refresh: async () => { },
-  login: async () => { },
-})
+  logout: () => {},
+  refresh: async () => {},
+  login: async () => {},
+});
 
 export const UserProvider = ({ children }: { children: ReactNode }) => {
+  const { message } = App.useApp()
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState('')
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
 
   const fetchUser = async () => {
     setIsLoading(true)
-    setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
     try {
       if (!userApis.isAuthenticated()) {
         setUser(null)
@@ -41,7 +41,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       const userData = await userApis.getCurrentUser()
       setUser(userData)
     } catch (e: any) {
-      setError('Failed to load user')
+      message.error('Failed to load user')
       setUser(null)
     } finally {
       setIsLoading(false)
@@ -60,12 +60,12 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   // Login method
   const login = async (data: any) => {
     setIsLoading(true)
-    setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
     try {
       const userData = await userApis.login(data)
       setUser(userData)
     } catch (e: any) {
-      setError(e?.message || 'Login failed')
+      message.error(e?.message || 'Login failed')
       setUser(null)
       throw e
     } finally {
@@ -74,7 +74,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   }
 
   return (
-    <UserContext.Provider value={{ user, isLoading, error, logout, refresh: fetchUser, login }}>
+    <UserContext.Provider value={{ user, isLoading, logout, refresh: fetchUser, login }}>
       {children}
     </UserContext.Provider>
   )

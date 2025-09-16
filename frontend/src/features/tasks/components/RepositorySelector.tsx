@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Select } from 'antd'
+import { Select, App } from 'antd'
 import { FiGithub } from 'react-icons/fi'
 import { GitRepoInfo, TaskDetail } from '@/types/api'
 import { useUser } from '@/features/common/UserContext'
@@ -28,10 +28,12 @@ export default function RepositorySelector({
   disabled,
   selectedTaskDetail
 }: RepositorySelectorProps) {
+  const { message } = App.useApp()
   const { user } = useUser()
   const router = useRouter()
   const [repos, setRepos] = useState<GitRepoInfo[]>([])
   const [loading, setLoading] = useState<boolean>(false)
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const searchTimeout = useRef<NodeJS.Timeout | null>(null)
@@ -58,6 +60,7 @@ export default function RepositorySelector({
       })
       .catch(() => {
         setError('Failed to load repositories')
+        message.error('Failed to load repositories')
       })
       .finally(() => {
         setLoading(false)
@@ -80,7 +83,10 @@ export default function RepositorySelector({
           setRepos(data)
           setError(null)
         })
-        .catch(() => setError('Failed to search repositories'))
+        .catch(() => {
+          setError('Failed to search repositories')
+          message.error('Failed to search repositories')
+        })
         .finally(() => setLoading(false))
     }, 300)
   }
@@ -167,6 +173,7 @@ export default function RepositorySelector({
           error ? (
             <div className="px-3 py-2 text-sm text-red-400">
               {error}
+              {/* antd message.error 已全局提示 */}
             </div>
           ) : !loading ? (
             <div className="px-3 py-2 text-sm text-gray-400">

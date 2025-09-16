@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useEffect, useState } from 'react'
-import { Select, Radio } from 'antd'
+import { Select, Radio, App } from 'antd'
 import { RiRobot2Line } from 'react-icons/ri'
 import { ChevronDownIcon } from '@heroicons/react/24/outline'
 import Modal from '@/features/common/Modal'
@@ -22,21 +22,23 @@ interface TeamEditProps {
   onTeamUpdated: (team: Team) => void
 }
 
-export default function TeamEdit({
-  isOpen,
-  onClose,
-  editingTeam,
-  bots,
-  onTeamCreated,
-  onTeamUpdated
-}: TeamEditProps) {
+export default function TeamEdit(props: TeamEditProps) {
+  const { message } = App.useApp()
+  const {
+    isOpen,
+    onClose,
+    editingTeam,
+    bots,
+    onTeamCreated,
+    onTeamUpdated
+  } = props
   const [name, setName] = useState('')
   const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [steps, setSteps] = useState([{ bot_id: 0, prompt: '' }])
   const [multiBotIds, setMultiBotIds] = useState<number[]>([])
   const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
 
   useEffect(() => {
     if (isOpen) {
@@ -59,7 +61,7 @@ export default function TeamEdit({
         setSteps([{ bot_id: bots[0]?.id || 0, prompt: '' }])
         setMultiBotIds([])
       }
-      setError('')
+      // 已用 antd message.error 统一错误提示，无需本地 error 状态
     }
   }, [isOpen, editingTeam, bots])
 
@@ -87,18 +89,18 @@ export default function TeamEdit({
   const handleMultiBotChange = (selectedIds: number[]) => {
     if (selectedIds.length === 0) {
       setMultiBotIds([])
-      setError('')
+      // 已用 antd message.error 统一错误提示，无需本地 error 状态
       return
     }
     // 获取所选bot的agent_name
     const selectedBots = bots.filter(bot => selectedIds.includes(bot.id))
     const agentNames = Array.from(new Set(selectedBots.map(bot => bot.agent_name)))
     if (agentNames.length > 1) {
-      setError('只能选择 agent_name 相同的 Bot，请重新选择。')
+      message.error('只能选择 agent_name 相同的 Bot，请重新选择。')
       return
     }
     setMultiBotIds(selectedIds)
-    setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
   }
 
   const handleRemoveStep = (idx: number) => {
@@ -107,13 +109,13 @@ export default function TeamEdit({
 
   const handleSave = async () => {
     if (!name.trim()) {
-      setError('Team name is required')
+      message.error('Team name is required')
       return
     }
     let botsData
     if (mode === 'pipeline') {
       if (steps.some(s => !s.bot_id)) {
-        setError('Each step must select a bot')
+        message.error('Each step must select a bot')
         return
       }
       botsData = steps.map(s => ({
@@ -122,7 +124,7 @@ export default function TeamEdit({
       }))
     } else {
       if (multiBotIds.length === 0) {
-        setError('At least one bot must be selected')
+        message.error('At least one bot must be selected')
         return
       }
       botsData = multiBotIds.map(id => ({
@@ -131,7 +133,7 @@ export default function TeamEdit({
       }))
     }
     setSaving(true)
-    setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
     try {
       const workflow = {
         mode,
@@ -154,7 +156,7 @@ export default function TeamEdit({
       }
       onClose()
     } catch (e: any) {
-      setError(e?.message || (editingTeam ? 'Failed to edit team' : 'Failed to create team'))
+      message.error(e?.message || (editingTeam ? 'Failed to edit team' : 'Failed to create team'))
     } finally {
       setSaving(false)
     }
@@ -164,7 +166,7 @@ export default function TeamEdit({
       isOpen={isOpen}
       onClose={() => {
         onClose()
-        setError('')
+        // 已用 antd message.error 统一错误提示，无需本地 error 状态
       }}
       title={editingTeam ? "Edit Team" : "Create New Team"}
       maxWidth="3xl"
@@ -217,11 +219,7 @@ export default function TeamEdit({
           {mode === 'pipeline' ? 'Steps' : 'Bots'}
         </label>
           {/* 错误提示放在Bots label下方、Select上方 */}
-          {mode !== 'pipeline' && error && (
-            <p className="text-xs text-red-400 leading-none mb-1" style={{padding: 0, margin: 0}}>
-              {error}
-            </p>
-          )}
+          {/* 错误提示已用 antd message 统一，不再本地渲染 */}
           {mode === 'pipeline' ? (
             <div className="space-y-4">
               {steps.length === 0 ? (
@@ -326,7 +324,7 @@ export default function TeamEdit({
         <button
           onClick={() => {
             onClose()
-            setError('')
+            // 已用 antd message.error 统一错误提示，无需本地 error 状态
           }}
           className="flex-1 px-2 py-1 text-xs bg-[#21262d] hover:bg-[#30363d] text-gray-300 border border-[#30363d] rounded transition-colors duration-200"
         >
