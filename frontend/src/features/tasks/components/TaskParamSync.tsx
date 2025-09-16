@@ -9,12 +9,13 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { Task } from '@/types/api'
 import { taskApis } from '@/apis/tasks'
-import { toast } from 'react-toastify'
+import { App } from 'antd'
 
 /**
  * Listen to the taskId parameter in the URL and automatically set selectedTask
  */
 export default function TaskParamSync() {
+  const { message } = App.useApp()
   const searchParams = useSearchParams()
   const { selectedTaskDetail, setSelectedTask } = useTaskContext()
 
@@ -44,7 +45,7 @@ export default function TaskParamSync() {
         // If it exists, set it. The context will handle fetching the full detail.
         setSelectedTask({ id: Number(taskId) } as Task)
       } catch (err) {
-        toast.error('Task not found')
+        message.error('Task not found')
         const url = new URL(window.location.href)
         url.searchParams.delete('taskId')
         router.replace(url.pathname + url.search)

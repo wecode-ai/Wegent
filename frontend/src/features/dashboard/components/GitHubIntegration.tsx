@@ -14,8 +14,10 @@ import LoadingState from '@/features/common/LoadingState'
 import { GitInfo } from '@/types/api'
 import { useUser } from '@/features/common/UserContext'
 import { fetchGitInfo, saveGitToken, deleteGitToken } from '../services/github'
+import { App } from 'antd'
 
 export default function GitHubIntegration() {
+  const { message } = App.useApp()
   const { user, isLoading: isUserLoading, refresh } = useUser()
   const [gitInfo, setGitInfo] = useState<GitInfo[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -24,6 +26,7 @@ export default function GitHubIntegration() {
   const [editToken, setEditToken] = useState('')
   const [editType, setEditType] = useState<'github' | 'gitlab'>('github')
   const [tokenSaving, setTokenSaving] = useState(false)
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [error, setError] = useState('')
 
   useEffect(() => {
@@ -35,7 +38,7 @@ export default function GitHubIntegration() {
           setGitInfo(info)
         }
       } catch (e) {
-        setError('Failed to load git info')
+        message.error('Failed to load git info')
       } finally {
         setIsLoading(false)
       }
@@ -65,7 +68,7 @@ export default function GitHubIntegration() {
       setEditType('github')
     }
     setShowModal(true)
-    setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
   }
 
   const handleSave = async () => {
@@ -74,7 +77,7 @@ export default function GitHubIntegration() {
     const tokenToSave = editToken.trim()
     if (!domainToSave || !tokenToSave) return
     setTokenSaving(true)
-    setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
     try {
       await saveGitToken(user, domainToSave, tokenToSave)
       setShowModal(false)
@@ -82,7 +85,7 @@ export default function GitHubIntegration() {
       setEditToken('')
       await refresh()
     } catch (e) {
-      setError('Failed to save token')
+      message.error('Failed to save token')
     } finally {
       setTokenSaving(false)
     }
@@ -91,13 +94,13 @@ export default function GitHubIntegration() {
   const handleDelete = async (domain: string) => {
     if (!user) return; // Fix type issue
     setTokenSaving(true)
-    setError('')
+    // 已用 antd message.error 统一错误提示，无需本地 error 状态
     try {
       const success = await deleteGitToken(user, domain)
-      if (!success) setError('Delete failed')
+      if (!success) message.error('Delete failed')
       await refresh()
     } catch (e) {
-      setError('Delete failed')
+      message.error('Delete failed')
     } finally {
       setTokenSaving(false)
     }
@@ -180,7 +183,7 @@ export default function GitHubIntegration() {
           setShowModal(false)
           setEditDomain('')
           setEditToken('')
-          setError('')
+          // 已用 antd message.error 统一错误提示，无需本地 error 状态
         }}
         title={editDomain ? `Edit Token for ${editDomain}` : 'Add Git Token'}
         maxWidth="md"
@@ -247,11 +250,7 @@ export default function GitHubIntegration() {
               className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent"
             />
           </div>
-          {error && (
-            <div className="bg-red-900/20 border border-red-800/50 rounded-md p-3">
-              <p className="text-xs text-red-300">{error}</p>
-            </div>
-          )}
+          {/* 错误提示已用 antd message 统一，不再本地渲染 */}
           {/* Token Acquisition Guide */}
           <div className="bg-[#0d1117] border border-[#30363d] rounded-md p-3">
             <p className="text-xs text-gray-400 mb-2">
@@ -312,7 +311,7 @@ export default function GitHubIntegration() {
               setShowModal(false)
               setEditDomain('')
               setEditToken('')
-              setError('')
+              // 已用 antd message.error 统一错误提示，无需本地 error 状态
             }}
             className="flex-1 px-2 py-1 text-xs bg-[#21262d] hover:bg-[#30363d] text-gray-300 border border-[#30363d] rounded transition-colors duration-200"
           >

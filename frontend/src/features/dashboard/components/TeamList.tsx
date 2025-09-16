@@ -15,13 +15,15 @@ import { Bot, Team } from '@/types/api'
 import { fetchTeamsList, deleteTeam } from '../services/teams'
 import { fetchBotsList } from '../services/bots'
 import TeamEdit from './TeamEdit'
+import { App } from 'antd'
 
 export default function TeamList() {
+  const { message } = App.useApp()
   const [teams, setTeams] = useState<Team[]>([])
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
-  const [error, setError] = useState('')
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [editingTeam, setEditingTeam] = useState<Team | null>(null)
 
@@ -33,7 +35,7 @@ export default function TeamList() {
         setTeams(teamsData)
         setBots(botsData)
       } catch (e) {
-        setError('Failed to load teams or bots')
+        message.error('Failed to load teams or bots')
       } finally {
         setIsLoading(false)
       }
@@ -65,7 +67,7 @@ export default function TeamList() {
       await deleteTeam(teamId)
       setTeams(prev => prev.filter(team => team.id !== teamId))
     } catch (e) {
-      setError('Failed to delete team')
+      message.error('Failed to delete team')
     } finally {
       setDeletingId(null)
     }
@@ -179,13 +181,14 @@ export default function TeamList() {
         </div>
       </div>
       <TeamEdit
-        isOpen={showModal}
-        onClose={() => setShowModal(false)}
-        editingTeam={editingTeam}
-        bots={bots}
-        onTeamCreated={handleTeamCreated}
-        onTeamUpdated={handleTeamUpdated}
-      />
+       isOpen={showModal}
+       onClose={() => setShowModal(false)}
+       editingTeam={editingTeam}
+       bots={bots}
+       onTeamCreated={handleTeamCreated}
+       onTeamUpdated={handleTeamUpdated}
+     />
+     {/* 错误提示已用 antd message 统一，不再本地渲染 */}
     </>
   )
 }

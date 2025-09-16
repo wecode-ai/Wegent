@@ -13,8 +13,10 @@ import Modal from '@/features/common/Modal'
 import LoadingState from '@/features/common/LoadingState'
 import { Bot } from '@/types/api'
 import { fetchBotsList, createBot, updateBot, deleteBot } from '../services/bots'
+import { App } from 'antd'
 
 export default function BotList() {
+  const { message } = App.useApp()
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [showBotModal, setShowBotModal] = useState(false)
@@ -24,7 +26,7 @@ export default function BotList() {
   const [prompt, setPrompt] = useState('')
   const [mcpConfig, setMcpConfig] = useState('')
   const [botSaving, setBotSaving] = useState(false)
-  const [botError, setBotError] = useState('')
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
 
   const agentOptions = [
@@ -41,7 +43,7 @@ export default function BotList() {
         const botsData = await fetchBotsList()
         setBots(botsData)
       } catch (e) {
-        setBotError('Failed to load bots')
+        message.error('Failed to load bots')
       } finally {
         setIsLoading(false)
       }
@@ -55,7 +57,6 @@ export default function BotList() {
     setAgentConfig('')
     setPrompt('')
     setMcpConfig('')
-    setBotError('')
     setEditingBotId(null)
     setShowBotModal(true)
   }
@@ -66,14 +67,13 @@ export default function BotList() {
     setAgentConfig(JSON.stringify(bot.agent_config, null, 2))
     setPrompt(bot.system_prompt || '')
     setMcpConfig(bot.mcp_servers ? JSON.stringify(bot.mcp_servers, null, 2) : '')
-    setBotError('')
     setEditingBotId(bot.id)
     setShowBotModal(true)
   }
 
   const handleSaveBot = async () => {
     if (!botName.trim() || !agentName.trim()) {
-      setBotError('Please fill in all required fields')
+      message.error('Please fill in all required fields')
       return
     }
     try {
@@ -82,11 +82,10 @@ export default function BotList() {
         JSON.parse(mcpConfig)
       }
     } catch (error) {
-      setBotError('Agent Config must be valid JSON format, MCP Config must be valid JSON if provided')
+      message.error('Agent Config must be valid JSON format, MCP Config must be valid JSON if provided')
       return
     }
     setBotSaving(true)
-    setBotError('')
     try {
       const botReq: any = {
         name: botName.trim(),
@@ -106,7 +105,7 @@ export default function BotList() {
       }
       setShowBotModal(false)
     } catch (error: any) {
-      setBotError(error.message || 'Failed to save bot')
+      message.error(error.message || 'Failed to save bot')
     } finally {
       setBotSaving(false)
     }
@@ -117,7 +116,7 @@ export default function BotList() {
       await deleteBot(botId)
       setBots(prev => prev.filter(b => b.id !== botId))
     } catch (e) {
-      setBotError('Failed to delete bot')
+      message.error('Failed to delete bot')
     }
   }
 
@@ -197,7 +196,6 @@ export default function BotList() {
         isOpen={showBotModal}
         onClose={() => {
           setShowBotModal(false)
-          setBotError('')
         }}
         title={editingBotId ? 'Update Bot' : 'Create New Bot'}
         maxWidth="3xl"
@@ -332,11 +330,6 @@ export default function BotList() {
               />
               <p className="text-xs text-gray-500 mt-1">JSON format required</p>
             </div>
-            {botError && (
-              <div className="bg-red-900/20 border border-red-800/50 rounded-md p-3">
-                <p className="text-xs text-red-300">{botError}</p>
-              </div>
-            )}
           </div>
           {/* Right Prompt */}
           <div className="basis-[65%] min-w-0 flex flex-col h-full">
@@ -355,7 +348,6 @@ export default function BotList() {
           <Button
             onClick={() => {
               setShowBotModal(false)
-              setBotError('')
             }}
             className="flex-1 px-2 py-1 text-xs bg-[#21262d] hover:bg-[#30363d] text-gray-300 border border-[#30363d] rounded transition-colors duration-200"
           >
