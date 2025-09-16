@@ -9,6 +9,7 @@ import MockInit from '@/features/mock/MockInit'
 import { ToastContainer, Slide } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
 import AntdProvider from './AntdProvider'
+import AuthGuard from '@/features/common/AuthGuard'
 
 export const metadata: Metadata = {
   title: 'WeCode AI Assistant',
@@ -25,7 +26,9 @@ export default function RootLayout({
       <body className="font-sans antialiased">
         <MockInit>
           <AntdProvider>
-            {children}
+            <AuthGuard>
+              {children}
+            </AuthGuard>
           </AntdProvider>
         </MockInit>
         <ToastContainer
