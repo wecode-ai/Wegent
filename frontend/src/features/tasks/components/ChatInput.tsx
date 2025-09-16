@@ -4,6 +4,7 @@
 
 'use client'
 
+import React from 'react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline'
 
@@ -22,8 +23,18 @@ export default function ChatInput({
   isLoading,
   disabled = false,
 }: ChatInputProps) {
+  const [isComposing, setIsComposing] = useState(false)
+
+  const handleCompositionStart = () => {
+    setIsComposing(true)
+  }
+
+  const handleCompositionEnd = () => {
+    setIsComposing(false)
+  }
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey && !disabled) {
+    if (e.key === 'Enter' && !e.shiftKey && !disabled && !isComposing) {
       e.preventDefault()
       handleSendMessage()
     }
@@ -37,6 +48,8 @@ export default function ChatInput({
           if (!disabled) setMessage(e.target.value)
         }}
         onKeyDown={handleKeyPress}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
         placeholder="Ask Team to build, fix bugs, explore"
         className={`w-full p-3 bg-transparent custom-scrollbar text-white text-base placeholder-gray-400 placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         disabled={disabled}
