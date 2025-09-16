@@ -17,7 +17,13 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   useEffect(() => {
     const loginPath = paths.auth.login.getHref()
-    if (pathname !== loginPath && pathname !== paths.internal.cas.getHref() && pathname !== paths.home.getHref()) {
+    const allowedPaths = [
+      loginPath,
+      paths.internal.cas.getHref(),
+      paths.home.getHref(),
+      paths.auth.password_login.getHref()
+    ]
+    if (!allowedPaths.includes(pathname)) {
       const token = getToken()
       if (!token) {
         router.replace(loginPath)

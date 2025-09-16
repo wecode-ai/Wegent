@@ -7,16 +7,19 @@ export const paths = {
         getHref: () => '/',
     },
     auth: {
+        password_login: {
+            getHref: () => '/login',
+        },
         login: {
             getHref: () => {
                 console.log(typeof window === 'undefined');
                 // SSR/Node 环境下始终返回本地登录页
-                if (typeof window === 'undefined') return '/login'
+                if (typeof window === 'undefined') return paths.auth.password_login.getHref()
                 const isInternal = process.env.NEXT_PUBLIC_ENV_INTERNAL_DEPLOYMENT === 'true'
                 if (isInternal) {
-                    return 'https://cas.erp.sina.com.cn/cas/login?service=' + encodeURIComponent(paths.internal.casService.getHref())
+                    return paths.internal.internal_login.getHref() + encodeURIComponent(paths.internal.casService.getHref())
                 }
-                return '/login'
+                return paths.auth.password_login.getHref()
             },
         },
     },
@@ -40,6 +43,9 @@ export const paths = {
     internal: {
         cas: {
             getHref: () => '/login/internal/cas',
+        },
+        internal_login: {
+            getHref: () => 'https://cas.erp.sina.com.cn/cas/login?service=',
         },
         casService: {
             getHref: () => {
