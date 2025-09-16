@@ -385,8 +385,10 @@ class AgnoAgent(Agent):
             instructions=[
                 self.team_prompt
             ],
-            add_member_tools_to_context=False,
+            add_member_tools_to_context=True,
             show_members_responses=True,
+            add_datetime_to_context=True,
+            add_history_to_context=True,
             markdown=True,
             db=db,
             telemetry=False,
