@@ -38,12 +38,18 @@ export interface Bot {
   updated_at: string
 }
 
+export interface TeamWorkflow {
+  mode?: 'pipeline' | 'route' | 'coordinate' | 'collaborate'
+  system_prompt?: string,
+  type?: string,
+}
+
 export interface Team {
   id: number
   name: string
   description: string
   bots: TeamBot[]
-  workflow: Record<string, any>
+  workflow: TeamWorkflow
   is_active: boolean
   user_id: number
   created_at: string

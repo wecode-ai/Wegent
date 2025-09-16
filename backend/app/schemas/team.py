@@ -4,11 +4,26 @@
 
 from datetime import datetime
 from typing import Any, Optional, List
+from enum import Enum
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.user import UserInDB
 from app.schemas.bot import BotInDB
+
+
+class TeamMode(str, Enum):
+    """Team workflow mode enumeration"""
+    pipeline = "pipeline"
+    route = "route"
+    coordinate = "coordinate"
+    collaborate = "collaborate"
+
+
+class TeamWorkflow(BaseModel):
+    """Team workflow configuration"""
+    mode: TeamMode = Field(default=TeamMode.pipeline, description="Workflow mode")
+    system_prompt: Optional[str] = Field(default=None, description="System prompt for the team")
 
 class BotInfo(BaseModel):
     """Bot information model"""
@@ -24,7 +39,7 @@ class TeamBase(BaseModel):
     """Team base model"""
     name: str
     bots: List[BotInfo]
-    workflow: Optional[dict[str, Any]] = None
+    workflow: Optional[TeamWorkflow] = None
     is_active: bool = True
 
 class TeamCreate(TeamBase):
@@ -35,7 +50,7 @@ class TeamUpdate(BaseModel):
     """Team update model"""
     name: Optional[str] = None
     bots: Optional[List[BotInfo]] = None
-    workflow: Optional[dict[str, Any]] = None
+    workflow: Optional[TeamWorkflow] = None
     is_active: Optional[bool] = None
 
 class TeamInDB(TeamBase):
@@ -55,7 +70,7 @@ class TeamDetail(BaseModel):
     id: int
     name: str
     bots: List[BotDetailInfo]
-    workflow: Optional[dict[str, Any]] = None
+    workflow: Optional[TeamWorkflow] = None
     is_active: bool = True
     created_at: datetime
     updated_at: datetime

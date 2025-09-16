@@ -32,6 +32,7 @@ export default function TeamEdit({
 }: TeamEditProps) {
   const [name, setName] = useState('')
   const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline')
+  const [systemPrompt, setSystemPrompt] = useState('')
   const [steps, setSteps] = useState([{ bot_id: 0, prompt: '' }])
   const [multiBotIds, setMultiBotIds] = useState<number[]>([])
   const [saving, setSaving] = useState(false)
@@ -41,9 +42,12 @@ export default function TeamEdit({
     if (isOpen) {
       if (editingTeam) {
         setName(editingTeam.name)
-        setMode(editingTeam.workflow?.mode || 'pipeline')
+        const apiMode = editingTeam.workflow?.mode as 'pipeline' | 'route' | 'coordinate' | 'collaborate' | undefined
+        setMode(apiMode || 'pipeline')
+        setSystemPrompt(editingTeam.workflow?.system_prompt || '')
         setSteps(editingTeam.bots.map(b => ({ bot_id: b.bot_id, prompt: b.bot_prompt })))
-        if (['route', 'coordinate', 'collaborate'].includes(editingTeam.workflow?.mode)) {
+
+        if (apiMode === 'route' || apiMode === 'coordinate' || apiMode === 'collaborate') {
           setMultiBotIds(editingTeam.bots.map(b => b.bot_id))
         } else {
           setMultiBotIds([])
@@ -51,6 +55,7 @@ export default function TeamEdit({
       } else {
         setName('')
         setMode('pipeline')
+        setSystemPrompt('')
         setSteps([{ bot_id: bots[0]?.id || 0, prompt: '' }])
         setMultiBotIds([])
       }
@@ -128,7 +133,10 @@ export default function TeamEdit({
     setSaving(true)
     setError('')
     try {
-      const workflow = { mode }
+      const workflow = {
+        mode,
+        ...(mode !== 'pipeline' && { system_prompt: systemPrompt.trim() || undefined })
+      }
       if (editingTeam) {
         const updated = await updateTeam(editingTeam.id, {
           name: name.trim(),
@@ -151,7 +159,6 @@ export default function TeamEdit({
       setSaving(false)
     }
   }
-
   return (
     <Modal
       isOpen={isOpen}
@@ -190,11 +197,25 @@ export default function TeamEdit({
               style: { minWidth: 90, textAlign: 'center' }
             }))}
           />
-        </div>
+      </div>
+      {mode !== 'pipeline' && (
         <div>
           <label className="block text-sm font-medium text-white mb-2">
-            {mode === 'pipeline' ? 'Steps' : 'Bots'}
+            System Prompt
           </label>
+          <textarea
+            value={systemPrompt}
+            onChange={e => setSystemPrompt(e.target.value)}
+            placeholder="Enter system prompt for the team..."
+            className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent"
+            rows={3}
+          />
+        </div>
+      )}
+      <div>
+        <label className="block text-sm font-medium text-white mb-2">
+          {mode === 'pipeline' ? 'Steps' : 'Bots'}
+        </label>
           {/* 错误提示放在Bots label下方、Select上方 */}
           {mode !== 'pipeline' && error && (
             <p className="text-xs text-red-400 leading-none mb-1" style={{padding: 0, margin: 0}}>

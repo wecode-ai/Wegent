@@ -54,11 +54,14 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
                     detail="Invalid bot format"
                 )
                 
+        # Convert workflow to dict if it's a TeamWorkflow object
+        workflow_dict = obj_in.workflow.model_dump() if obj_in.workflow else None
+        
         db_obj = Team(
             user_id=user_id,
             name=obj_in.name,
             bots=bot_list,
-            workflow=obj_in.workflow,
+            workflow=workflow_dict,
             is_active=True
         )
         db.add(db_obj)
@@ -182,7 +185,13 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
                             status_code=400,
                             detail="Invalid bot format"
                         )
-                setattr(team, field, value)
+                setattr(team, field, bot_list)
+            elif field == 'workflow' and value is not None:
+                # Convert workflow to dict if it's a TeamWorkflow object
+                if hasattr(value, 'model_dump'):
+                    setattr(team, field, value.model_dump())
+                else:
+                    setattr(team, field, value)
             else:
                 setattr(team, field, value)
         

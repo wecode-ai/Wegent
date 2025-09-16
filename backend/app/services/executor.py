@@ -240,6 +240,7 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 "bot": bots,
                 "team_id": subtask.team_id,
                 "mode": team.workflow.get('mode'),
+                "system_prompt": team.workflow.get('system_prompt'),
                 "git_domain": task.git_domain,
                 "git_repo": task.git_repo,
                 "git_repo_id": task.git_repo_id,

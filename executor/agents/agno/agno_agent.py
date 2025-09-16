@@ -53,6 +53,7 @@ class AgnoAgent(Agent):
         self.project_path = None
         self.team = None
         self.mode = task_data.get("mode", "")
+        self.team_prompt = task_data.get("system_prompt", "")
 
         # Extract Agno options from task_data
         self.options = self._extract_agno_options(task_data)
@@ -296,7 +297,7 @@ class AgnoAgent(Agent):
                         model=self._get_model(agent_config),
                         add_name_to_context=True,
                         tools=mcp_tools if mcp_tools else [],
-                        description=member_config.get("description", "Team member"),
+                        instructions=member_config.get("system_prompt", "Team member"),
                         db=db,
                         add_history_to_context=True,
                         num_history_runs=3,
@@ -314,7 +315,7 @@ class AgnoAgent(Agent):
                     model=self._get_model(agent_config),
                     add_name_to_context=True,
                     tools=mcp_tools if mcp_tools else [],
-                    description=team_members_config.get("description", "Team member"),
+                    instructions=team_members_config.get("system_prompt", "Team member"),
                     db=db,
                     add_history_to_context=True,
                     num_history_runs=3,
@@ -353,6 +354,7 @@ class AgnoAgent(Agent):
                 "delegate_task_to_all_members": True,
                 "respond_directly": False,  # ⚠️ 与 delegate_all 同开时保持 False，避免“广播后不汇总”
                 "determine_input_for_members": False,  # 让每个成员收到相同原始输入
+                "show_members_responses": True
             }
 
         elif self.mode == "route":
@@ -382,6 +384,9 @@ class AgnoAgent(Agent):
             model=self._get_model(team_model_config),
             description=self.options.get("team_description", "Agno team for task execution"),
             session_id=self.session_id,
+            instructions=[
+                self.team_prompt
+            ],
             db=db,
             telemetry=False,
             **mode_config
@@ -553,8 +558,8 @@ class AgnoAgent(Agent):
                     if chunk.event in ["RunStarted", "TeamRunStarted", "ToolCallStarted", "TeamToolCallStarted"]:
                         logger.info(f"{chunk.to_dict()}")
 
-                    # if chunk.event in ["RunCompleted", "TeamRunCompleted", "ToolCallCompleted", "TeamToolCallCompleted"]:
-                    #     logger.info(f"{chunk.to_dict()}")
+                    if chunk.event in ["RunCompleted", "TeamRunCompleted", "ToolCallCompleted", "TeamToolCallCompleted"]:
+                        logger.info(f"{chunk.to_dict()}")
 
                     if hasattr(chunk, 'event'):
                         if chunk.event in [TeamRunEvent.run_content]:
