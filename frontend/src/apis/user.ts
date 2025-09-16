@@ -31,7 +31,7 @@ export interface UpdateUserRequest {
 // Token management (internal use, not exposed to the outside)
 const TOKEN_KEY = 'auth_token'
 
-function setToken(token: string) {
+export function setToken(token: string) {
   if (typeof window !== 'undefined') {
     localStorage.setItem(TOKEN_KEY, token)
   }
@@ -69,7 +69,7 @@ export const userApis = {
   logout() {
     removeToken()
     if (typeof window !== 'undefined') {
-      window.location.href = paths.auth.login.getHref()
+      window.location.href = paths.home.getHref()
     }
   },
 
