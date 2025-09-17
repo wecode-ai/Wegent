@@ -10,7 +10,7 @@ import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { RiRobot2Line } from 'react-icons/ri'
 import { FiCopy, FiCheck } from 'react-icons/fi'
 
-import ReactMarkdown from 'react-markdown'
+import MarkdownEditor from '@uiw/react-markdown-editor'
 
 interface Message {
   type: 'user' | 'ai'
@@ -53,17 +53,20 @@ const CopyButton = ({ content }: { content: string }) => {
   };
 
   return (
-    <button
-      onClick={handleCopy}
-      className="absolute top-0 right-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-gray-400 hover:text-white bg-gray-800 rounded-md"
-      title="Copy markdown content"
-    >
-      {copied ? (
-        <FiCheck className="w-4 h-4 text-green-400" />
-      ) : (
-        <FiCopy className="w-4 h-4" />
-      )}
-    </button>
+    <>
+      {/* 坐下角复制按钮 */}
+      <button
+        onClick={handleCopy}
+        className="absolute bottom-0 left-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-gray-400 hover:text-white bg-gray-800 rounded-md"
+        title="Copy markdown content"
+      >
+        {copied ? (
+          <FiCheck className="w-4 h-4 text-green-400" />
+        ) : (
+          <FiCopy className="w-4 h-4" />
+        )}
+      </button>
+    </>
   );
 };
 
@@ -213,8 +216,10 @@ export default function MessagesArea() {
                           // Not a progress bar, normal markdown rendering
                           return (
                             <div className="relative group">
-                              <div className="text-sm markdown-body break-all pr-8">
-                                <ReactMarkdown>{result}</ReactMarkdown>
+                              <div className="text-sm break-all">
+                                <div className="w-full" style={{ background: 'transparent' }}>
+                                  <MarkdownEditor.Markdown source={result} style={{ background: 'transparent' }} />
+                                </div>
                               </div>
                               <CopyButton content={result} />
                             </div>
@@ -265,7 +270,7 @@ export default function MessagesArea() {
                     // Plain text
                     return (
                       <div key={idx} className="relative group">
-                        <div className="text-sm markdown-body break-all pr-8">
+                        <div className="text-sm break-all pr-8">
                           {line}
                         </div>
                         {line.trim() && <CopyButton content={line} />}
