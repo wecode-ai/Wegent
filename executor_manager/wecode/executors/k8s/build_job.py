@@ -32,7 +32,7 @@ def build_job_configuration(
                 "metadata": {
                     "annotations": {
                         "aigc.weibo.com/email": "weibo_ai_coding@staff.sina.com",
-                        "kubus.weibo.com/pod-resource": '{"cpu":"4","memory":"6Gi"}',
+                        "kubus.weibo.com/pod-resource": '{"cpu":"2","memory":"4Gi"}',
                     },
                     "labels": {
                         "app": executor_name,
@@ -103,9 +103,6 @@ def build_job_configuration(
                                     "protocol": "TCP",
                                 }
                             ],
-                            "resources": {
-                                "requests": {"cpu": "320m", "memory": "1900Mi"}
-                            },
                             "terminationMessagePath": "/dev/termination-log",
                             "terminationMessagePolicy": "File",
                             "volumeMounts": [
