@@ -34,11 +34,11 @@ logger = setup_logger("agno_agent")
 def _resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_spec: str) -> str:
     """
     Resolve value from specified data source using flexible notation
-    
+
     Args:
         data_sources: Dictionary containing all available data sources
         source_spec: Source specification in format "source_name.path" or just "path"
-    
+
     Returns:
         The resolved value or empty string if not found
     """
@@ -53,17 +53,17 @@ def _resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_s
             # Format: just "path", use default source
             source_name = "agent_config"
             path = source_spec
-        
+
         # Get the specified data source
         if source_name not in data_sources:
             return ""
-        
+
         data = data_sources[source_name]
-        
+
         # Navigate the path
         keys = path.split('.')
         current = data
-        
+
         for key in keys:
             if isinstance(current, dict) and key in current:
                 current = current[key]
@@ -71,7 +71,7 @@ def _resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_s
                 current = current[int(key)]
             else:
                 return ""
-        
+
         return str(current) if current is not None else ""
     except Exception:
         return ""
@@ -80,11 +80,11 @@ def _resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_s
 def _replace_placeholders_with_sources(template: str, data_sources: Dict[str, Dict[str, Any]]) -> str:
     """
     Replace placeholders in template with values from multiple data sources
-    
+
     Args:
         template: The template string with placeholders like ${agent_config.env.user} or ${env.user}
         data_sources: Dictionary containing all available data sources
-    
+
     Returns:
         The template with placeholders replaced with actual values
     """
@@ -124,7 +124,6 @@ class AgnoAgent(Agent):
         self.project_path = None
         self.team = None
         self.mode = task_data.get("mode", "")
-        self.team_prompt = task_data.get("system_prompt", "")
 
         # Extract Agno options from task_data
         self.options = self._extract_agno_options(task_data)
@@ -429,7 +428,7 @@ class AgnoAgent(Agent):
                         add_name_to_context=True,
                         add_datetime_to_context=True,
                         tools=mcp_tools if mcp_tools else [],
-                        instructions=member_config.get("system_prompt", "Team member"),
+                        description=member_config.get("description", "Team member"),
                         db=db,
                         add_history_to_context=True,
                         num_history_runs=3,
@@ -448,7 +447,7 @@ class AgnoAgent(Agent):
                     add_name_to_context=True,
                     add_datetime_to_context=True,
                     tools=mcp_tools if mcp_tools else [],
-                    instructions=team_members_config.get("system_prompt", "Team member"),
+                    description=team_members_config.get("description", "Team member"),
                     db=db,
                     add_history_to_context=True,
                     num_history_runs=3,

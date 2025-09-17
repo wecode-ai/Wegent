@@ -34,7 +34,6 @@ export default function TeamEdit(props: TeamEditProps) {
   } = props
   const [name, setName] = useState('')
   const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline')
-  const [systemPrompt, setSystemPrompt] = useState('')
   const [steps, setSteps] = useState([{ bot_id: 0, prompt: '' }])
   const [multiBotIds, setMultiBotIds] = useState<number[]>([])
   const [saving, setSaving] = useState(false)
@@ -44,12 +43,9 @@ export default function TeamEdit(props: TeamEditProps) {
     if (isOpen) {
       if (editingTeam) {
         setName(editingTeam.name)
-        const apiMode = editingTeam.workflow?.mode as 'pipeline' | 'route' | 'coordinate' | 'collaborate' | undefined
-        setMode(apiMode || 'pipeline')
-        setSystemPrompt(editingTeam.workflow?.system_prompt || '')
+        setMode(editingTeam.workflow?.mode || 'pipeline')
         setSteps(editingTeam.bots.map(b => ({ bot_id: b.bot_id, prompt: b.bot_prompt })))
-
-        if (apiMode === 'route' || apiMode === 'coordinate' || apiMode === 'collaborate') {
+        if (['route', 'coordinate', 'collaborate'].includes(editingTeam.workflow?.mode)) {
           setMultiBotIds(editingTeam.bots.map(b => b.bot_id))
         } else {
           setMultiBotIds([])
@@ -57,7 +53,6 @@ export default function TeamEdit(props: TeamEditProps) {
       } else {
         setName('')
         setMode('pipeline')
-        setSystemPrompt('')
         setSteps([{ bot_id: bots[0]?.id || 0, prompt: '' }])
         setMultiBotIds([])
       }
@@ -135,10 +130,7 @@ export default function TeamEdit(props: TeamEditProps) {
     setSaving(true)
     // 已用 antd message.error 统一错误提示，无需本地 error 状态
     try {
-      const workflow = {
-        mode,
-        ...(mode !== 'pipeline' && { system_prompt: systemPrompt.trim() || undefined })
-      }
+      const workflow = { mode }
       if (editingTeam) {
         const updated = await updateTeam(editingTeam.id, {
           name: name.trim(),
@@ -161,6 +153,7 @@ export default function TeamEdit(props: TeamEditProps) {
       setSaving(false)
     }
   }
+
   return (
     <Modal
       isOpen={isOpen}
@@ -199,25 +192,11 @@ export default function TeamEdit(props: TeamEditProps) {
               style: { minWidth: 90, textAlign: 'center' }
             }))}
           />
-      </div>
-      {mode !== 'pipeline' && (
+        </div>
         <div>
           <label className="block text-sm font-medium text-white mb-2">
-            System Prompt
+            {mode === 'pipeline' ? 'Steps' : 'Bots'}
           </label>
-          <textarea
-            value={systemPrompt}
-            onChange={e => setSystemPrompt(e.target.value)}
-            placeholder="Enter system prompt for the team..."
-            className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent"
-            rows={3}
-          />
-        </div>
-      )}
-      <div>
-        <label className="block text-sm font-medium text-white mb-2">
-          {mode === 'pipeline' ? 'Steps' : 'Bots'}
-        </label>
           {/* 错误提示放在Bots label下方、Select上方 */}
           {/* 错误提示已用 antd message 统一，不再本地渲染 */}
           {mode === 'pipeline' ? (
