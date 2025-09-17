@@ -62,11 +62,31 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         existing_task = db.query(Task).filter(Task.id == task_id).first()
         if existing_task:
             # 追加任务
-            # 如果任务正在运行，则不允许更新
-            if existing_task.status != TaskStatus.COMPLETED:
+            # 根据任务状态提供相应的错误提示
+            if existing_task.status == TaskStatus.RUNNING:
                 raise HTTPException(
                     status_code=400,
                     detail="Task is still running, please wait for it to complete"
+                )
+            elif existing_task.status == TaskStatus.FAILED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task has failed, please create a new task"
+                )
+            elif existing_task.status == TaskStatus.DELETE:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task has been deleted, please create a new task"
+                )
+            elif existing_task.status == TaskStatus.CANCELLED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task has been cancelled, please create a new task"
+                )
+            elif existing_task.status != TaskStatus.COMPLETED:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Task is in progress, please wait for it to complete"
                 )
             
             # Check if task is expired
@@ -651,29 +671,33 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         
         # Get all running subtasks
         running_subtasks = db.query(Subtask).filter(
-            Subtask.task_id == task_id,
-            Subtask.status.in_([SubtaskStatus.RUNNING, SubtaskStatus.PENDING])
+            Subtask.task_id == task_id
         ).all()
         
-        # Stop running subtasks on executor
+        # Collect unique executor names to avoid duplicate calls
+        unique_executor_names = set()
         for subtask in running_subtasks:
             if subtask.executor_name:
+                unique_executor_names.add(subtask.executor_name)
+        
+        # Stop running subtasks on executor (deduplicated)
+        for executor_name in unique_executor_names:
+            try:
+                import asyncio
+                from app.services.executor import executor_service
+                
+                # Run async delete_executor_task in sync context
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
                 try:
-                    import asyncio
-                    from app.services.executor import executor_service
-                    
-                    # Run async delete_executor_task in sync context
-                    loop = asyncio.new_event_loop()
-                    asyncio.set_event_loop(loop)
-                    try:
-                        loop.run_until_complete(
-                            executor_service.delete_executor_task(subtask.executor_name)
-                        )
-                    finally:
-                        loop.close()
-                except Exception as e:
-                    # Log error but continue with status update
-                    print(f"Warning: Failed to delete executor task {subtask.executor_name}: {str(e)}")
+                    loop.run_until_complete(
+                        executor_service.delete_executor_task(executor_name)
+                    )
+                finally:
+                    loop.close()
+            except Exception as e:
+                # Log error but continue with status update
+                print(f"Warning: Failed to delete executor task {executor_name}: {str(e)}")
         
         # Update all subtasks to DELETE status
         db.query(Subtask).filter(Subtask.task_id == task_id).update({
