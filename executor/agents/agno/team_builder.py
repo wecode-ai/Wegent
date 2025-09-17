@@ -62,7 +62,8 @@ class TeamBuilder:
 
         # Get mode configuration
         mode_config = self._get_mode_config(mode)
-        
+        if team_leader is None:
+            team_leader = all_team_members[0]
         logger.info(
             f"Creating team with {len(all_team_members)} members (leader: {'Yes' if team_leader else 'No'}, other_members: {len(team_members)}), mode: {mode}, "
         )
