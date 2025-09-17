@@ -24,12 +24,31 @@ const CopyButton = ({ content }: { content: string }) => {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = async () => {
+    // 检查是否在浏览器环境中且 Clipboard API 可用
+    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      try {
+        await navigator.clipboard.writeText(content);
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+        return;
+      } catch (err) {
+        console.error('Failed to copy text: ', err);
+      }
+    }
+    
+    // 降级方案：使用 document.execCommand
     try {
-      await navigator.clipboard.writeText(content);
+      const textarea = document.createElement('textarea');
+      textarea.value = content;
+      textarea.style.cssText = 'position:fixed;opacity:0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand('copy');
+      document.body.removeChild(textarea);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
-      console.error('Failed to copy text: ', err);
+      console.error('Fallback copy failed: ', err);
     }
   };
 
