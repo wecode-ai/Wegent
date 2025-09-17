@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional
 import requests
 from fastapi import HTTPException
 
-from app.core.interfaces.repository_provider import RepositoryProvider
+from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.models.user import User
 from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
