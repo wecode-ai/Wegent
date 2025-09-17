@@ -382,9 +382,7 @@ class AgnoAgent(Agent):
             model=self._get_model(team_model_config),
             description=self.options.get("team_description", "Agno team for task execution"),
             session_id=self.session_id,
-            instructions=[
-                self.team_prompt
-            ],
+            **({"instructions": [self.team_prompt]} if self.team_prompt else {}),
             add_member_tools_to_context=True,
             show_members_responses=True,
             add_datetime_to_context=True,
