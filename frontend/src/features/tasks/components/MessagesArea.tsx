@@ -218,7 +218,7 @@ export default function MessagesArea() {
                             <div className="relative group">
                               <div className="text-sm break-all">
                                 <div className="w-full" style={{ background: 'transparent' }}>
-                                  <MarkdownEditor.Markdown source={result} style={{ background: 'transparent' }} />
+                                  <MarkdownEditor.Markdown source={result} style={{ background: 'transparent' }} wrapperElement={{'data-color-mode' : 'dark'}}/>
                                 </div>
                               </div>
                               <CopyButton content={result} />
