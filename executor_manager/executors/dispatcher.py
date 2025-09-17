@@ -20,27 +20,17 @@ class ExecutorDispatcher:
 
     @staticmethod
     def _load_executors():
-        """
-        从环境变量加载执行器配置
-        
-        环境变量 EXECUTOR_CONFIG 格式为 JSON 字符串，例如：
-        {"docker":"executor_manager.executors.docker.executor.DockerExecutor", "k8s":"executor_manager.wecode.executors.k8s.k8s_executor.K8sExecutor"}
-        
-        如果环境变量未设置或格式不正确，则使用默认的执行器配置
-        """
+
         executors = {}
         
         try:
-            # 尝试从环境变量读取 JSON 配置
             logger.info(f"Loading executors from EXECUTOR_CONFIG: {EXECUTOR_CONFIG}")
             if EXECUTOR_CONFIG:
                 executor_config = json.loads(EXECUTOR_CONFIG)
-                logger.info(f"Parsed executor config: {executor_config}")
-                
-                # 动态导入并实例化执行器
+
                 for executor_type, executor_path in executor_config.items():
                     try:
-                        # 解析模块路径和类名
+
                         parts = executor_path.strip().split(".")
                         if len(parts) < 2:
                             raise ValueError(f"Invalid import path: {executor_path}")
@@ -49,22 +39,18 @@ class ExecutorDispatcher:
                         module_path = ".".join(parts[:-1])
                         logger.info(f"Parsed import path for '{executor_type}': module='{module_path}', class='{class_name}'")
                         
-                        # 动态导入模块
                         module = importlib.import_module(module_path)
                         logger.info(f"Successfully imported module '{module_path}'")
                         
-                        # 获取执行器类
                         executor_class = getattr(module, class_name)
                         logger.info(f"Successfully got class '{class_name}' from module '{module_path}'")
                         
-                        # 实例化执行器
                         executor_instance = executor_class()
                         logger.info(f"Successfully instantiated executor '{executor_type}': {executor_instance}")
                         executors[executor_type] = executor_instance
                         logger.info(f"Dynamically loaded executor '{executor_type}' from '{executor_path}'")
                     except (ImportError, AttributeError, ValueError) as e:
                         logger.error(f"Failed to load executor '{executor_type}' from '{executor_path}': {e}")
-                        # 在开发阶段，抛出异常以便更好地诊断问题
                         raise
             else:
                 from .docker import DockerExecutor
@@ -80,35 +66,13 @@ class ExecutorDispatcher:
             logger.error(error_msg)
             raise RuntimeError(error_msg)
         
-        # 如果没有成功加载任何执行器，直接抛出异常
         if not executors:
             error_msg = "No executors were loaded from configuration"
             logger.error(error_msg)
             raise RuntimeError(error_msg)
                 
         return executors
-    
-    @staticmethod
-    def _parse_import_path(import_path: str) -> tuple:
-        """
-        解析导入路径，返回模块路径和类名
-        
-        Args:
-            import_path: 完整的导入路径，例如 "executor_manager.executors.docker.executor.DockerExecutor"
-            
-        Returns:
-            tuple: (模块路径, 类名)，例如 ("executor_manager.executors.docker.executor", "DockerExecutor")
-        """
-        parts = import_path.strip().split(".")
-        if len(parts) < 2:
-            raise ValueError(f"Invalid import path: {import_path}")
-        
-        class_name = parts[-1]
-        module_path = ".".join(parts[:-1])
-        
-        return module_path, class_name
-    
-    # 使用类属性存储执行器实例，并通过 _load_executors 方法初始化
+
     _executors = _load_executors()
 
     @classmethod
