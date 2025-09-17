@@ -16,6 +16,8 @@ import os
 import subprocess
 from typing import Any, Dict, List, Optional, Tuple
 import requests
+
+from executor_manager.config.config import EXECUTOR_ENV
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from executor_manager.executors.base import Executor
@@ -226,6 +228,7 @@ class DockerExecutor(Executor):
             "-e", f"EXECUTOR_NAME={executor_name}",
             "-e", f"TZ={DEFAULT_TIMEZONE}",
             "-e", f"LANG={DEFAULT_LOCALE}",
+            "-e", f"EXECUTOR_ENV={EXECUTOR_ENV}",
             # 挂载
             "-v", f"{DOCKER_SOCKET_PATH}:{DOCKER_SOCKET_PATH}"
         ]

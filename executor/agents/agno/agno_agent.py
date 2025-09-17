@@ -11,21 +11,92 @@ import os
 import json
 from typing import Dict, Any, Optional, List, Union, Tuple
 from pathlib import Path
+import re
 
 from agno.agent import Agent as AgnoSdkAgent
 from agno.models.openai import OpenAIChat
 from agno.models.anthropic import Claude
 from agno.team import Team
 from agno.tools.mcp import MCPTools
-from agno.tools.mcp import StreamableHTTPClientParams,SSEClientParams,StdioServerParameters
+from agno.tools.mcp import StreamableHTTPClientParams, SSEClientParams, StdioServerParameters
 from executor.agents.base import Agent
+from executor.config.config import EXECUTOR_ENV
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from agno.db.sqlite import SqliteDb
+import json
 
 db = SqliteDb(db_file="/tmp/agno_data.db")
 
 logger = setup_logger("agno_agent")
+
+
+def _resolve_value_from_source(data_sources: Dict[str, Dict[str, Any]], source_spec: str) -> str:
+    """
+    Resolve value from specified data source using flexible notation
+    
+    Args:
+        data_sources: Dictionary containing all available data sources
+        source_spec: Source specification in format "source_name.path" or just "path"
+    
+    Returns:
+        The resolved value or empty string if not found
+    """
+    try:
+        # Parse source specification
+        if '.' in source_spec:
+            # Format: "source_name.path"
+            parts = source_spec.split('.', 1)
+            source_name = parts[0]
+            path = parts[1]
+        else:
+            # Format: just "path", use default source
+            source_name = "agent_config"
+            path = source_spec
+        
+        # Get the specified data source
+        if source_name not in data_sources:
+            return ""
+        
+        data = data_sources[source_name]
+        
+        # Navigate the path
+        keys = path.split('.')
+        current = data
+        
+        for key in keys:
+            if isinstance(current, dict) and key in current:
+                current = current[key]
+            elif isinstance(current, list) and key.isdigit() and int(key) < len(current):
+                current = current[int(key)]
+            else:
+                return ""
+        
+        return str(current) if current is not None else ""
+    except Exception:
+        return ""
+
+
+def _replace_placeholders_with_sources(template: str, data_sources: Dict[str, Dict[str, Any]]) -> str:
+    """
+    Replace placeholders in template with values from multiple data sources
+    
+    Args:
+        template: The template string with placeholders like ${agent_config.env.user} or ${env.user}
+        data_sources: Dictionary containing all available data sources
+    
+    Returns:
+        The template with placeholders replaced with actual values
+    """
+    # Find all placeholders in format ${source_spec}
+    pattern = r'\$\{([^}]+)\}'
+
+    def replace_match(match):
+        source_spec = match.group(1)
+        value = _resolve_value_from_source(data_sources, source_spec)
+        return value
+
+    return re.sub(pattern, replace_match, template)
 
 
 class AgnoAgent(Agent):
@@ -57,6 +128,48 @@ class AgnoAgent(Agent):
 
         # Extract Agno options from task_data
         self.options = self._extract_agno_options(task_data)
+        # --- robust parsing for EXECUTOR_ENV and DEFAULT_HEADERS ---
+        # Parse EXECUTOR_ENV which might be a JSON string or dict-like
+        try:
+            if isinstance(EXECUTOR_ENV, str):
+                env_raw = EXECUTOR_ENV.strip()
+            else:
+                # Fall back to JSON-dumping if it's already a dict-like
+                env_raw = json.dumps(EXECUTOR_ENV)
+            self.executor_env = json.loads(env_raw) if env_raw else {}
+        except Exception as e:
+            logger.warning(f"Failed to parse EXECUTOR_ENV; using empty dict. Error: {e}")
+            self.executor_env = {}
+
+        # Derive DEFAULT_HEADERS: prefer executor_env.DEFAULT_HEADERS, else OS env
+        self.default_headers = {}
+        self._default_headers_raw_str = None  # keep raw string for placeholder replacement later
+        try:
+            dh = None
+            logger.info(f"EXECUTOR_ENV: {self.executor_env}")
+            if isinstance(self.executor_env, dict):
+                dh = self.executor_env.get("DEFAULT_HEADERS")
+            if not dh:
+                dh = os.environ.get("DEFAULT_HEADERS")
+
+            logger.info(f"dh: {dh}")
+            if isinstance(dh, dict):
+                self.default_headers = dh
+            elif isinstance(dh, str):
+                raw = dh.strip()
+                self._default_headers_raw_str = raw or None
+                if raw:
+                    try:
+                        # try parsing as JSON string first
+                        self.default_headers = json.loads(raw)
+                    except Exception:
+                        # if it isn't JSON, we'll keep raw for later placeholder expansion
+                        self.default_headers = {}
+            # else: leave as empty dict
+        except Exception as e:
+            logger.warning(f"Failed to load DEFAULT_HEADERS; using empty headers. Error: {e}")
+            self.default_headers = {}
+        # --- end robust parsing ---
 
     def update_prompt(self, new_prompt: str) -> None:
         """
@@ -149,11 +262,29 @@ class AgnoAgent(Agent):
         """
         env = agent_config.get("env", {})
         model_config = env.get("model", "claude")
-        default_headers = {
-            "wecode-user": "wenbo17",
-            "wecode-action": "wecode-group-test",
-            "wecode-model-id": "gpt-4.1-mini",
-        }
+        # Build default headers robustly (use values parsed in __init__)
+        default_headers = {}
+        try:
+            # Prepare data sources for placeholder replacement
+            data_sources = {
+                "agent_config": agent_config,
+                "task_data": self.task_data,
+                "options": self.options,
+                "executor_env": getattr(self, "executor_env", {})
+            }
+
+            logger.info(f"data_sources: {data_sources}, self.default_headers: {self.default_headers}")
+            # Apply placeholder replacement on individual string values inside the dict
+            replaced = {}
+            for k, v in self.default_headers.items():
+                if isinstance(v, str):
+                    replaced[k] = _replace_placeholders_with_sources(v, data_sources)
+                else:
+                    replaced[k] = v
+            default_headers = replaced
+        except Exception as e:
+            logger.warning(f"Failed to build default headers; proceeding without. Error: {e}")
+            default_headers = {}
 
         logger.info(f"Model config: {agent_config}")
         if model_config == "claude":

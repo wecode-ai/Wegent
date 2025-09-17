@@ -1,3 +1,6 @@
+from executor_manager.config.config import EXECUTOR_ENV
+
+
 def build_job_configuration(
     username, executor_name, namespace, task_str, image, task_id
 ):
@@ -66,6 +69,7 @@ def build_job_configuration(
                                 {"name": "TZ", "value": "Asia/Shanghai"},
                                 {"name": "LANG", "value": "en_US.UTF-8"},
                                 {"name": "PORT", "value": "8080"},
+                                {"name": "EXECUTOR_ENV", "value": EXECUTOR_ENV},
                                 {
                                     "name": "CALLBACK_URL",
                                     "value": "http://wegent-executor-manager-web.wb-plat-ide:8080/executor-manager/callback",
