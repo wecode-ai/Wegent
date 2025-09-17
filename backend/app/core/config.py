@@ -22,9 +22,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     
     # Cache configuration
-    REPO_CACHE_EXPIRED_TIME: int = 3600  # 1 hour in seconds
-
-    REPOSITORY_PROVIDER_TYPE: str = "github"
+    REPO_CACHE_EXPIRED_TIME: int = 604800  # 7 days in seconds
 
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10

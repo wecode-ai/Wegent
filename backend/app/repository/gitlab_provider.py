@@ -285,14 +285,7 @@ class GitLabProvider(RepositoryProvider):
             )
 
         # Use custom domain if provided, otherwise use default
-        api_base_url = self.api_base_url
-        if git_domain and git_domain != self.domain:
-            # Handle both gitlab.com and custom GitLab domains
-            if git_domain == "gitlab.com":
-                api_base_url = "https://gitlab.com/api/v4"
-            else:
-                # For custom GitLab domains
-                api_base_url = f"https://{git_domain}/api/v4"
+        api_base_url = self._get_api_base_url(git_domain)
 
         try:
             headers = {

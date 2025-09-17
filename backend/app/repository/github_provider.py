@@ -281,14 +281,7 @@ class GitHubProvider(RepositoryProvider):
             )
 
         # Use custom domain if provided, otherwise use default
-        api_base_url = self.api_base_url
-        if git_domain and git_domain != self.domain:
-            # Handle both github.com and custom GitHub Enterprise domains
-            if git_domain == "github.com":
-                api_base_url = "https://api.github.com"
-            else:
-                # For custom GitHub Enterprise domains
-                api_base_url = f"https://{git_domain}/api/v3"
+        api_base_url = self._get_api_base_url(git_domain)
 
         try:
             headers = {

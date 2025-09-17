@@ -10,7 +10,6 @@ from app.models.user import User
 from app.schemas.user import UserUpdate, UserCreate
 from app.core import security
 from app.services.base import BaseService
-from app.core.factory import repository_provider
 from app.core.exceptions import ValidationException
 
 
