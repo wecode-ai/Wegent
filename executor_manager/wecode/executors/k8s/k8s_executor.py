@@ -113,7 +113,7 @@ class K8sExecutor(Executor):
             else:
                 status = "failed"
                 progress = 100
-                error_msg = "Pod not found"
+                error_msg = "Agent is deleted. Please new task and submit it again."
                 callback_status = TaskStatus.FAILED.value
         else:
             # 根据executor_name 查询一下 是否有job存在, 如果存在则直接使用 http 接口发起任务
