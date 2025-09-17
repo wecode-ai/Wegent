@@ -10,7 +10,6 @@ from app.models.user import User
 from app.schemas.user import UserUpdate, UserCreate
 from app.core import security
 from app.services.base import BaseService
-from app.core.factory import repository_provider
 from app.core.exceptions import ValidationException
 
 
@@ -21,6 +20,15 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
 
     def _validate_git_info(self, git_info: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Validate git info fields and tokens"""
+        from app.repository.github_provider import GitHubProvider
+        from app.repository.gitlab_provider import GitLabProvider
+        
+        # Provider mapping
+        providers = {
+            "github": GitHubProvider(),
+            "gitlab": GitLabProvider()
+        }
+        
         validated_git_info = []
         
         for git_item in git_info:
@@ -32,13 +40,20 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             if not git_item.get("type"):
                 raise ValidationException("type is required")
             
+            provider_type = git_item.get("type")
+            if provider_type not in providers:
+                raise ValidationException(f"Unsupported provider type: {provider_type}")
+            
+            provider = providers[provider_type]
+            
             try:
-                # Use repository_provider's validate_token method
-                validation_result = repository_provider.validate_token(git_item["git_token"])
+                # Use specific provider's validate_token method with custom domain
+                git_domain = git_item.get("git_domain")
+                validation_result = provider.validate_token(git_item["git_token"], git_domain=git_domain)
                 
                 if not validation_result.get("valid", False):
                     raise ValidationException(
-                        f"Invalid git token failed"
+                        f"Invalid {provider_type} token"
                     )
                 
                 user_data = validation_result.get("user", {})
@@ -47,8 +62,10 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 git_item["git_id"] = str(user_data.get("id", ""))
                 git_item["git_login"] = user_data.get("login", "")
                 
+            except ValidationException:
+                raise
             except Exception as e:
-                raise ValidationException(f"Git token validation failed")
+                raise ValidationException(f"{provider_type} token validation failed: {str(e)}")
             
             validated_git_info.append(git_item)
         

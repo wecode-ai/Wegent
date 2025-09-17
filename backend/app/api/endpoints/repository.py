@@ -8,9 +8,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.core.factory import repository_provider
+from app.services.repository_service import repository_service
 from app.models.user import User
-from app.schemas.github import RepositoryResult, Branch, TokenValidationResponse
+from app.schemas.github import RepositoryResult, Branch
 
 router = APIRouter()
 
@@ -21,15 +21,15 @@ async def get_repositories(
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get user's repository list"""
-    repositories = await repository_provider.get_repositories(current_user, page=page, limit=limit)
+    """Get user's repository list from all configured providers"""
+    repositories = await repository_service.get_repositories(current_user, page=page, limit=limit)
     return [
         RepositoryResult(
             git_repo_id=repo["id"],
             name=repo["name"],
             git_repo=repo["full_name"],
             git_url=repo["clone_url"],
-            git_domain="github.com",
+            git_domain=repo.get("git_domain", "unknown"),
             private=repo["private"]
         ) for repo in repositories
     ]
@@ -37,6 +37,7 @@ async def get_repositories(
 @router.get("/repositories/branches", response_model=List[Branch])
 async def get_branches(
     git_repo: Optional[str] = Query(None, description="owner/repository_name"),
+    provider_type: Optional[str] = Query(None, description="Repository provider type (github/gitlab)"),
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
@@ -46,17 +47,7 @@ async def get_branches(
             status_code=400,
             detail="Repository name is required"
         )
-    return await repository_provider.get_branches(current_user, git_repo)
-
-
-@router.get("/validate-token", response_model=TokenValidationResponse)
-def validate_token(
-    token: str = Query(..., description="Repository access token to validate"),
-    current_user: User = Depends(security.get_current_user),
-    db: AsyncSession = Depends(get_db)
-):
-    """Validate repository token and return user information"""
-    return repository_provider.validate_token(token)
+    return await repository_service.get_branches(current_user, git_repo, provider_type=provider_type)
 
 
 @router.get("/repositories/search", response_model=List[RepositoryResult])
@@ -66,16 +57,16 @@ async def search_repositories(
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Search repositories by name from user's repositories"""
+    """Search repositories by name from all user's repositories"""
 
-    repositories = await repository_provider.search_repositories(current_user, q, timeout)
+    repositories = await repository_service.search_repositories(current_user, q, timeout)
     return [
         RepositoryResult(
             git_repo_id=repo["id"],
             name=repo["name"],
             git_repo=repo["full_name"],
             git_url=repo["clone_url"],
-            git_domain="github.com",
+            git_domain=repo.get("git_domain", "unknown"),
             private=repo["private"]
         ) for repo in repositories
     ]
