@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-GitHub repository provider implementation
+GitLab repository provider implementation
 """
 import asyncio
 import logging
@@ -18,20 +18,20 @@ from app.core.cache import cache_manager
 from app.core.config import settings
 
 
-class GitHubProvider(RepositoryProvider):
+class GitLabProvider(RepositoryProvider):
     """
-    GitHub repository provider implementation
+    GitLab repository provider implementation
     """
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.api_base_url = "https://api.github.com"
-        self.domain = "github.com"
-        self.type = "github"
+        self.api_base_url = "https://gitlab.com/api/v4"
+        self.domain = "gitlab.com"
+        self.type = "gitlab"
     
     def _get_git_info(self, user: User) -> Dict[str, Any]:
         """
-        Get GitHub related information from user's git_info
+        Get GitLab related information from user's git_info
         
         Args:
             user: User object
@@ -40,7 +40,7 @@ class GitHubProvider(RepositoryProvider):
             Dictionary containing git_domain, git_token
             
         Raises:
-            HTTPException: Raised when GitHub information is not configured
+            HTTPException: Raised when GitLab information is not configured
         """
         if not user.git_info:
             raise HTTPException(
@@ -66,11 +66,11 @@ class GitHubProvider(RepositoryProvider):
         if not git_domain or git_domain == self.domain:
             return self.api_base_url
         
-        if git_domain == "github.com":
-            return "https://api.github.com"
+        if git_domain == "gitlab.com":
+            return "https://gitlab.com/api/v4"
         else:
-            # Custom GitHub Enterprise domain
-            return f"https://{git_domain}/api/v3"
+            # Custom GitLab domain
+            return f"https://{git_domain}/api/v4"
 
     async def get_repositories(
         self,
@@ -79,7 +79,7 @@ class GitHubProvider(RepositoryProvider):
         limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
-        Get user's GitHub repository list
+        Get user's GitLab repository list
         
         Args:
             user: User object
@@ -135,17 +135,18 @@ class GitHubProvider(RepositoryProvider):
 
         try:
             headers = {
-                "Authorization": f"token {git_token}",
-                "Accept": "application/vnd.github.v3+json"
+                "Authorization": f"Bearer {git_token}",
+                "Accept": "application/json"
             }
             
             response = requests.get(
-                f"{api_base_url}/user/repos",
+                f"{api_base_url}/projects",
                 headers=headers,
                 params={
                     "per_page": limit,
                     "page": page,
-                    "sort": "updated"
+                    "order_by": "last_activity_at",
+                    "membership": "true"
                 }
             )
             response.raise_for_status()
@@ -169,15 +170,15 @@ class GitHubProvider(RepositoryProvider):
                 Repository(
                     id=repo["id"],
                     name=repo["name"],
-                    full_name=repo["full_name"],
-                    clone_url=repo["clone_url"],
-                    private=repo["private"]
+                    full_name=repo["path_with_namespace"],
+                    clone_url=repo["http_url_to_repo"],
+                    private=repo["visibility"] == "private"
                 ).model_dump() for repo in repos
             ]
         except requests.exceptions.RequestException as e:
             raise HTTPException(
                 status_code=502,
-                detail=f"GitHub API error: {str(e)}"
+                detail=f"GitLab API error: {str(e)}"
             )
     
     async def get_branches(
@@ -213,9 +214,12 @@ class GitHubProvider(RepositoryProvider):
 
         try:
             headers = {
-                "Authorization": f"token {git_token}",
-                "Accept": "application/vnd.github.v3+json"
+                "Authorization": f"Bearer {git_token}",
+                "Accept": "application/json"
             }
+            
+            # First, get the project ID from the repo name
+            encoded_repo_name = repo_name.replace("/", "%2F")
             
             all_branches = []
             page = 1
@@ -223,7 +227,7 @@ class GitHubProvider(RepositoryProvider):
             
             while True:
                 response = requests.get(
-                    f"{api_base_url}/repos/{repo_name}/branches",
+                    f"{api_base_url}/projects/{encoded_repo_name}/repository/branches",
                     headers=headers,
                     params={
                         "per_page": per_page,
@@ -253,7 +257,7 @@ class GitHubProvider(RepositoryProvider):
         except requests.exceptions.RequestException as e:
             raise HTTPException(
                 status_code=502,
-                detail=f"GitHub API error: {str(e)}"
+                detail=f"GitLab API error: {str(e)}"
             )
     
     def validate_token(
@@ -262,11 +266,11 @@ class GitHubProvider(RepositoryProvider):
         git_domain: str = None
     ) -> Dict[str, Any]:
         """
-        Validate GitHub token
+        Validate GitLab token
         
         Args:
-            token: GitHub token
-            git_domain: Custom GitHub domain (e.g., github.com, git.example.com)
+            token: GitLab token
+            git_domain: Custom GitLab domain (e.g., gitlab.com, git.example.com)
             
         Returns:
             Validation result including validity, user information, etc.
@@ -283,17 +287,17 @@ class GitHubProvider(RepositoryProvider):
         # Use custom domain if provided, otherwise use default
         api_base_url = self.api_base_url
         if git_domain and git_domain != self.domain:
-            # Handle both github.com and custom GitHub Enterprise domains
-            if git_domain == "github.com":
-                api_base_url = "https://api.github.com"
+            # Handle both gitlab.com and custom GitLab domains
+            if git_domain == "gitlab.com":
+                api_base_url = "https://gitlab.com/api/v4"
             else:
-                # For custom GitHub Enterprise domains
-                api_base_url = f"https://{git_domain}/api/v3"
+                # For custom GitLab domains
+                api_base_url = f"https://{git_domain}/api/v4"
 
         try:
             headers = {
-                "Authorization": f"token {token}",
-                "Accept": "application/vnd.github.v3+json"
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json"
             }
             
             response = requests.get(
@@ -302,7 +306,7 @@ class GitHubProvider(RepositoryProvider):
             )
             
             if response.status_code == 401:
-                self.logger.warning(f"GitHub token validation failed: 401 Unauthorized")
+                self.logger.warning(f"GitLab token validation failed: 401 Unauthorized")
                 return {
                     "valid": False,
                 }
@@ -315,22 +319,22 @@ class GitHubProvider(RepositoryProvider):
                 "valid": True,
                 "user": {
                     "id": user_data["id"],
-                    "login": user_data["login"],
+                    "login": user_data["username"],
                     "name": user_data.get("name"),
                     "avatar_url": user_data.get("avatar_url")
                 }
             }
             
         except requests.exceptions.RequestException as e:
-            self.logger.error(f"GitHub API request failed: {str(e)}")
+            self.logger.error(f"GitLab API request failed: {str(e)}")
             if "401" in str(e):
                 raise HTTPException(
                     status_code=401,
-                    detail="Invalid GitHub token"
+                    detail="Invalid GitLab token"
                 )
             raise HTTPException(
                 status_code=502,
-                detail=f"GitHub API error: {str(e)}"
+                detail=f"GitLab API error: {str(e)}"
             )
         except Exception as e:
             self.logger.error(f"Unexpected error during token validation: {str(e)}")
@@ -346,7 +350,7 @@ class GitHubProvider(RepositoryProvider):
         timeout: int = 30
     ) -> List[Dict[str, Any]]:
         """
-        Search user's GitHub repositories
+        Search user's GitLab repositories
         
         Args:
             user: User object
@@ -456,7 +460,7 @@ class GitHubProvider(RepositoryProvider):
         git_domain: str = None
     ) -> None:
         """
-        Asynchronously fetch all user's GitHub repositories and cache them
+        Asynchronously fetch all user's GitLab repositories and cache them
         
         Args:
             user: User object
@@ -476,12 +480,17 @@ class GitHubProvider(RepositoryProvider):
         await cache_manager.set_building(user.id, git_domain, True)
         
         try:
+            headers = {
+                "Authorization": f"Bearer {git_token}",
+                "Accept": "application/json"
+            }
+            
             # Get API base URL based on git domain
             api_base_url = self._get_api_base_url(git_domain)
             
             headers = {
-                "Authorization": f"token {git_token}",
-                "Accept": "application/vnd.github.v3+json"
+                "Authorization": f"Bearer {git_token}",
+                "Accept": "application/json"
             }
             
             all_repos = []
@@ -492,12 +501,13 @@ class GitHubProvider(RepositoryProvider):
             
             while True:
                 response = requests.get(
-                    f"{api_base_url}/user/repos",
+                    f"{api_base_url}/projects",
                     headers=headers,
                     params={
                         "per_page": per_page,
                         "page": page,
-                        "sort": "updated"
+                        "order_by": "last_activity_at",
+                        "membership": "true"
                     }
                 )
                 response.raise_for_status()
@@ -506,13 +516,13 @@ class GitHubProvider(RepositoryProvider):
                 if not repos:
                     break
                     
-                # Map GitHub API response to standard format
+                # Map GitLab API response to standard format
                 mapped_repos = [{
                     "id": repo["id"],
                     "name": repo["name"],
-                    "full_name": repo["full_name"],
-                    "clone_url": repo["clone_url"],
-                    "private": repo["private"]
+                    "full_name": repo["path_with_namespace"],
+                    "clone_url": repo["http_url_to_repo"],
+                    "private": repo["visibility"] == "private"
                 } for repo in repos]
                 all_repos.extend(mapped_repos)
                 
@@ -595,12 +605,15 @@ class GitHubProvider(RepositoryProvider):
         
         try:
             headers = {
-                "Authorization": f"token {git_token}",
-                "Accept": "application/vnd.github.v3+json"
+                "Authorization": f"Bearer {git_token}",
+                "Accept": "application/json"
             }
             
+            # Encode the full name for URL
+            encoded_fullname = fullname.replace("/", "%2F")
+            
             response = requests.get(
-                f"{api_base_url}/repos/{fullname}",
+                f"{api_base_url}/projects/{encoded_fullname}",
                 headers=headers
             )
             
