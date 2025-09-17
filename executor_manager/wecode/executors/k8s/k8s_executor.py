@@ -128,7 +128,7 @@ class K8sExecutor(Executor):
                     callback_status = TaskStatus.FAILED.value
                 else:
                     job = build_job_configuration(
-                        user_name, executor_name, K8S_NAMESPACE, task_str, image, task_id
+                        user_name, executor_name, K8S_NAMESPACE, task_str, image, task_id, task.get("mode", "default")
                     )
                     job_result = self._submit_kubernetes_job(
                         job, K8S_NAMESPACE, executor_name, task_id
@@ -256,6 +256,8 @@ class K8sExecutor(Executor):
             # 如果没有提供标签选择器，则使用默认的标签选择器
             if label_selector is None:
                 label_selector = "aigc.weibo.com/executor=wegent"
+            else:
+                label_selector = f"{label_selector},aigc.weibo.com/executor=wegent"
 
             batch_v1 = client.BatchV1Api(self.api_client)
             jobs = batch_v1.list_namespaced_job(
