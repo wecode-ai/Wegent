@@ -9,7 +9,9 @@ from app.api.dependencies import get_db
 from app.core.security import create_access_token
 from app.core import security
 from app.models.user import User
-from app.schemas.user import LoginResponse
+from app.schemas.user import LoginResponse, UserUpdate
+from app.services.user import user_service
+from wecode.service.get_user_gitinfo import get_user_gitinfo
 from sqlalchemy import select
 
 
@@ -114,6 +116,34 @@ async def cas_login(
         if not user.is_active:
             logger.warning(f"用户未激活: user_id={user.id}, user_name={user.user_name}")
             raise HTTPException(status_code=400, detail="用户未激活")
+        
+        # 获取并验证git token信息
+        try:
+            # 获取新的gitlab信息
+            new_gitlab_info = await get_user_gitinfo.get_and_validate_git_info(user_name)
+            
+            # 合并现有git_info（保留github等非gitlab信息）
+            merged_git_info = []
+            
+            # 先添加现有的非gitlab信息
+            if user.git_info:
+                for existing_item in user.git_info:
+                    if existing_item.get("type") != "gitlab":
+                        merged_git_info.append(existing_item)
+            
+            # 再添加新的gitlab信息
+            if new_gitlab_info:
+                merged_git_info.extend(new_gitlab_info)
+            
+            # 更新用户信息（不验证token，因为我们已经验证过了）
+            if merged_git_info:
+                user_update = UserUpdate(git_info=merged_git_info)
+                user_service.update_current_user(db=db, user=user, obj_in=user_update, validate_git_info=False)
+                logger.info(f"更新用户git_info: user_id={user.id}, git_info_count={len(merged_git_info)}")
+                
+        except Exception as e:
+            logger.error(f"获取git token失败: {str(e)}")
+            # 继续登录流程，不中断
         
         # 创建访问令牌
         access_token = create_access_token(
