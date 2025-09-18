@@ -2,7 +2,7 @@ from executor_manager.config.config import EXECUTOR_ENV
 
 
 def build_job_configuration(
-    username, executor_name, namespace, task_str, image, task_id
+    username, executor_name, namespace, task_str, image, task_id, mode
 ):
     """
     Build Kubernetes job configuration
@@ -27,6 +27,7 @@ def build_job_configuration(
                 "kubus.weibo.com/qos-class": "dlc",
                 "aigc.weibo.com/executor": "wegent",
                 "aigc.weibo.com/executor-task-id": str(task_id),
+                "aigc.weibo.com/team-mode": mode,
             },
         },
         "spec": {

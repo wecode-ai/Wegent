@@ -222,6 +222,7 @@ class DockerExecutor(Executor):
             "--label", f"task_id={task_id}",
             "--label", f"subtask_id={subtask_id}",
             "--label", f"user={user_name}",
+            "--label", f"aigc.weibo.com/team-mode={task.get("mode","default")}",
             "--label", f"subtask_next_id={task.get('subtask_next_id', '')}",
             # 环境变量
             "-e", f"TASK_INFO={task_str}",
