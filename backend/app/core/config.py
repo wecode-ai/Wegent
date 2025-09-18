@@ -19,7 +19,11 @@ class Settings(BaseSettings):
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 24*60  # 24 hours in minutes
+
+    # OIDC state configuration
+    OIDC_STATE_SECRET_KEY: str = "3zPaaF8q9oc0pqh6QN4Kxe3Sby87CB"
+    OIDC_STATE_EXPIRE_SECONDS: int = 10*60  # 10分钟，单位：秒
     
     # Cache configuration
     REPO_CACHE_EXPIRED_TIME: int = 604800  # 7 days in seconds
@@ -29,6 +33,15 @@ class Settings(BaseSettings):
 
     # Task append expiration (hours)
     APPEND_TASK_EXPIRE_HOURS: int = 48
+
+    # Frontend URL configuration
+    FRONTEND_URL: str = "http://localhost:3000"
+
+    # OIDC configuration
+    OIDC_CLIENT_ID: str = "wegent"
+    OIDC_CLIENT_SECRET: str = "test"
+    OIDC_DISCOVERY_URL: str = "http://test.intra.weibo.com:5556/.well-known/openid-configuration"
+    OIDC_REDIRECT_URI: str = "http://localhost:8000/api/auth/oidc/callback"
 
     class Config:
         env_file = ".env"

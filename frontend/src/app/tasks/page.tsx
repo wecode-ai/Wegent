@@ -14,6 +14,7 @@ import TaskSidebar from '@/features/tasks/components/TaskSidebar'
 import BeginnerGuideModal from '@/features/tasks/components/BeginnerGuideModal'
 import ChatArea from '@/features/tasks/components/ChatArea'
 import TaskParamSync from '@/features/tasks/components/TaskParamSync'
+import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 
@@ -24,6 +25,8 @@ export default function TasksPage() {
   return (
     <UserProvider>
       <TaskContextProvider>
+        {/* Handle OIDC token from URL parameters */}
+        <OidcTokenHandler />
         <Suspense>
           <TaskParamSync />
         </Suspense>
