@@ -6,7 +6,7 @@
 Internal API endpoints
 """
 from fastapi import APIRouter
-from app.internal.api.auth import router as auth_router
+from wecode.api.auth import router as auth_router
 
 internal_router = APIRouter(prefix="/internal")
 
