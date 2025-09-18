@@ -10,6 +10,7 @@ from typing import Dict, Any, List, Optional, Union, Tuple
 from agno.agent import Agent as AgnoSdkAgent
 from agno.team import Team
 from agno.db.sqlite import SqliteDb
+from agno.tools.reasoning import ReasoningTools
 from shared.logger import setup_logger
 
 from .config_utils import ConfigManager
@@ -84,14 +85,15 @@ class TeamBuilder:
             members=all_team_members,
             model=team_leader.model,
             description=team_leader.description,
+            instructions=[team_leader.description],
             session_id=session_id,
             add_member_tools_to_context=True,
-            show_members_responses=True,
             add_datetime_to_context=True,
             add_history_to_context=True,
             markdown=True,
             db=self.db,
             telemetry=False,
+            show_members_responses=True,
             **mode_config
         )
 
@@ -183,14 +185,13 @@ class TeamBuilder:
         if mode == "coordinate":
             # 协调：队长拆分→选择性指派→汇总
             return {
-                "delegate_task_to_all_members": False,
-                "respond_directly": False,
-                "determine_input_for_members": False,
+                "reasoning": True,
             }
         elif mode == "collaborate":
             # 协作：所有成员并行，队长汇总
             return {
                 "delegate_task_to_all_members": True,
+                "reasoning": True,
             }
         elif mode == "route":
             # 路由：只选最合适的一个成员

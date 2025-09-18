@@ -73,6 +73,7 @@ class MemberBuilder:
             member = AgnoSdkAgent(
                 name=member_name,
                 model=member_model,
+                role=member_description,
                 add_name_to_context=True,
                 add_datetime_to_context=True,
                 tools=mcp_tools if mcp_tools else [],
