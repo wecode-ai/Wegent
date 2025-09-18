@@ -6,9 +6,8 @@
 ## 修改如下：
 ### 1. 修改 app/api/api.py 文件
 ```python
-# 分别删除以下行
-from wecode.api import internal_router
-api_router.include_router(internal_router)
+# 删除以下行
+import wecode.api
 ```
 
 ### 2. 删除wecode目录
