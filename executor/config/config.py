@@ -14,3 +14,4 @@ CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
 
 # Agno Agent default headers configuration
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
+DEBUG_RUN = os.environ.get("DEBUG_RUN", "")
