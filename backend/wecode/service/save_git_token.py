@@ -16,7 +16,7 @@ class SaveGitToken:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.save_token_api_url = "http://preview.paas.intra.weibo.com/2/appnest/api/code-server-new/secret/apply"
+        self.save_token_api_url = "http://paas.intra.weibo.com/2/appnest/api/code-server-new/secret/apply"
         self.auth_header = "Basic L3BhYXMvd2ItcGxhdC1wYWFzL3diLXBsYXQtcGFhcy1hZG1pbiN3ZWdlbnQ6b2JOd0dkS1J4ZUxRRHk4aGQ1Z3B3WGpvMG5nQ05xV3E="
     
     async def save_gitlab_tokens(self, username: str, email: str, git_info: List[Dict[str, Any]]) -> bool:

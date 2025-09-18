@@ -17,7 +17,7 @@ class GetUserGitInfo:
     
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        self.git_token_api_url = "http://preview.paas.intra.weibo.com/2/appnest/api/code-server-new/secret/get"
+        self.git_token_api_url = "http://paas.intra.weibo.com/2/appnest/api/code-server-new/secret/get"
         self.git_token_auth = "Basic L3BhYXMvd2ItcGxhdC1wYWFzL3diLXBsYXQtcGFhcy1hZG1pbiN3ZWdlbnQ6b2JOd0dkS1J4ZUxRRHk4aGQ1Z3B3WGpvMG5nQ05xV3E="
         self.target_keys = [
             "git.intra.weibo.com",

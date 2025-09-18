@@ -68,7 +68,10 @@ class RepositoryService:
         """
         user_providers = self._get_user_providers(user)
         if not user_providers:
-            return []
+            raise HTTPException(
+                status_code=400,
+                detail="No git token configured. Please add your git token."
+            )
         
         all_repos = []
         
@@ -86,7 +89,10 @@ class RepositoryService:
                 provider_type = user_providers[idx]
                 if isinstance(result, Exception):
                     self.logger.error(f"Error fetching repositories from {provider_type}: {result}")
-                    continue
+                    raise HTTPException(
+                        status_code=502,
+                        detail="Failed to fetch repositories. Please check if your token is correct or has expired."
+                    )
                 
                 # Add provider type to each repository
                 for repo in result:
