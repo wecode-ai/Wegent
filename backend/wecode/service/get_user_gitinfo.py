@@ -119,6 +119,61 @@ class GetUserGitInfo:
         self.logger.info(f"完成git token获取和验证: count={len(git_info)}")
         return git_info
 
+    async def get_real_git_tokens(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
+        """Get real git tokens for display purposes (without validation)"""
+        """This method fetches real tokens for display without storing them"""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    self.git_token_api_url,
+                    params={"user": username, "cluster": cluster},
+                    headers={"Authorization": self.git_token_auth},
+                    timeout=10
+                )
+                response.raise_for_status()
+                
+                data = response.json()
+                
+                if data.get("code") != 0 or not data.get("data", {}).get("data"):
+                    self.logger.warning("API返回数据格式无效")
+                    return []
+                
+                git_data = data["data"]["data"]
+                real_git_info = []
+                
+                for key in self.target_keys:
+                    if key not in git_data:
+                        continue
+                        
+                    token = git_data[key]
+                    if not token:
+                        continue
+                        
+                    try:
+                        # 解码真实token
+                        decoded_token = base64.b64decode(token).decode('utf-8')
+                        
+                        git_info_item = {
+                            "type": "gitlab",
+                            "git_domain": key,
+                            "git_token": decoded_token,  # 返回真实token
+                        }
+                        
+                        real_git_info.append(git_info_item)
+                            
+                    except Exception as e:
+                        self.logger.error(f"处理真实token失败 (key: {key}): {str(e)}")
+                        continue
+                
+                return real_git_info
+                
+        except httpx.RequestError as e:
+            self.logger.error(f"获取真实git token请求失败: {str(e)}")
+            return []
+        except Exception as e:
+            self.logger.error(f"获取真实git token时出错: {str(e)}")
+            return []
+
 
 # Global instance
 get_user_gitinfo = GetUserGitInfo()

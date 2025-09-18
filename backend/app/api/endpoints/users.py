@@ -10,10 +10,12 @@ from app.api.dependencies import get_db
 from app.models.user import User
 from app.schemas.user import UserCreate, UserUpdate, UserInDB
 from app.services.user import user_service
+from wecode.api.users_patch import patch_user_endpoint, patch_update_user_endpoint, patch_create_user_endpoint
 
 router = APIRouter()
 
 @router.get("/me", response_model=UserInDB)
+@patch_user_endpoint
 async def read_current_user(
     current_user: User = Depends(security.get_current_user)
 ):
@@ -21,6 +23,7 @@ async def read_current_user(
     return current_user
 
 @router.put("/me", response_model=UserInDB)
+@patch_update_user_endpoint
 async def update_current_user_endpoint(
     user_update: UserUpdate,
     db: Session = Depends(get_db),
@@ -41,6 +44,7 @@ async def update_current_user_endpoint(
         )
 
 @router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)
+@patch_create_user_endpoint
 def create_user(
     user_create: UserCreate,
     db: Session = Depends(get_db)
