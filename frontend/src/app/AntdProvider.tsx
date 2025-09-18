@@ -52,7 +52,14 @@ export default function AntdProvider({
           }
         }}
       >
-        <AntdApp>
+        <AntdApp
+          message={{
+            top: 100,
+            maxCount: 3,
+            duration: 3,
+            prefixCls: 'custom-message',
+          }}
+        >
           {children}
         </AntdApp>
       </ConfigProvider>
