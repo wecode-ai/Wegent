@@ -198,11 +198,8 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 aggregated_prompt = user_prompt
             # 上一次subtask结果
             team = db.query(Team).filter(Team.id == subtask.team_id).first()
-            if previous_subtask_results != "" and team.workflow.get('mode') == "pipeline":
+            if previous_subtask_results != "" :
                 aggregated_prompt += f"\nPrevious execution result: {previous_subtask_results}"
-            # team中串流程prompt
-            if subtask.prompt != "" and team.workflow.get('mode') == "pipeline":
-                aggregated_prompt += f"\n{subtask.prompt}"
 
             # Build user git information
             task = db.query(Task).filter(Task.id == subtask.task_id).first()
@@ -210,15 +207,29 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
 
             # Build bot information
             bots = []
-            for bot_id in subtask.bot_ids:
+            team = db.query(Team).filter(Team.id == subtask.team_id).first()
+            team_bots = team.bots if team and team.bots else []
+            
+            for index, bot_id in enumerate(subtask.bot_ids):
                 bot = db.query(Bot).filter(Bot.id == bot_id).first()
+                team_bot_info = team_bots[index] if index < len(team_bots) else {}
+                
+
+                bot_prompt = bot.system_prompt
+                if team.workflow.get('mode') == "pipeline":
+                     bot_prompt += f"\n{subtask.prompt}"
+                else :
+                    if team_bot_info.get('bot_prompt'):
+                        bot_prompt += f"\n{team_bot_info['bot_prompt']}"
+                
                 bots.append({
                     "id": bot.id,
                     "name": bot.name,
                     "agent_name": bot.agent_name,
                     "agent_config": bot.agent_config,
-                    "system_prompt": bot.system_prompt,
-                    "mcp_servers": bot.mcp_servers
+                    "system_prompt": bot_prompt,
+                    "mcp_servers": bot.mcp_servers,
+                    "role": team_bot_info.get('role', '')
                 })
 
             formatted_subtasks.append({
@@ -235,7 +246,8 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                     "git_domain": git_info.get("git_domain") if git_info else None,
                     "git_token": git_info.get("git_token") if git_info else None,
                     "git_id": git_info.get("git_id") if git_info else None,
-                    "git_login": git_info.get("git_login") if git_info else None
+                    "git_login": git_info.get("git_login") if git_info else None,
+                    "git_email": git_info.get("git_email") if git_info else None
                 },
                 "bot": bots,
                 "team_id": subtask.team_id,

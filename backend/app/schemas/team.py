@@ -14,11 +14,13 @@ class BotInfo(BaseModel):
     """Bot information model"""
     bot_id: int
     bot_prompt: Optional[str] = None
+    role: Optional[str] = None
 
 class BotDetailInfo(BaseModel):
     """Bot detail information model with bot object"""
     bot: BotInDB
     bot_prompt: Optional[str] = None
+    role: Optional[str] = None
 
 class TeamBase(BaseModel):
     """Team base model"""

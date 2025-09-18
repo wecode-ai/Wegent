@@ -124,7 +124,8 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
                 if bot_id in bot_map:
                     detailed_bots.append({
                         "bot": bot_map[bot_id],
-                        "bot_prompt": bot_info.get('bot_prompt')
+                        "bot_prompt": bot_info.get('bot_prompt'),
+                        "role": bot_info.get('role')
                     })
         except ValueError:
             detailed_bots = []

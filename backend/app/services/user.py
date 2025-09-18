@@ -61,6 +61,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 # Update git_info fields
                 git_item["git_id"] = str(user_data.get("id", ""))
                 git_item["git_login"] = user_data.get("login", "")
+                git_item["git_email"] = user_data.get("email", "")
                 
             except ValidationException:
                 raise

@@ -314,7 +314,8 @@ class GitLabProvider(RepositoryProvider):
                     "id": user_data["id"],
                     "login": user_data["username"],
                     "name": user_data.get("name"),
-                    "avatar_url": user_data.get("avatar_url")
+                    "avatar_url": user_data.get("avatar_url"),
+                    "email": user_data.get("email")
                 }
             }
             
