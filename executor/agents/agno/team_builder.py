@@ -38,7 +38,7 @@ class TeamBuilder:
         self.mcp_manager = MCPManager()
         self.member_builder = MemberBuilder(db, config_manager)
     
-    async def create_team(self, options: Dict[str, Any], mode: str, session_id: str, task_data: Dict[str, Any]) -> Team:
+    async def create_team(self, options: Dict[str, Any], mode: str, session_id: str, task_data: Dict[str, Any]) -> Optional[Team]:
         """
         Create a team with configured members
         
@@ -57,6 +57,11 @@ class TeamBuilder:
         team_data = await self._create_team_members(options, task_data)
         team_leader = team_data["leader"]
         team_members = team_data["members"]
+
+        # It is believed that the agent mode needs to be used for operation
+        if team_leader is None and len(team_members) == 1:
+            logger.info("create_team fail. team_leader is None and len(team_members) == 1")
+            return None
         
         # Combine leader and members for the team
         all_team_members = []
