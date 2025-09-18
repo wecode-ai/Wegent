@@ -255,6 +255,12 @@ class GitLabProvider(RepositoryProvider):
                 ).model_dump() for branch in all_branches
             ]
         except requests.exceptions.RequestException as e:
+            # If 404 Not Found, return empty list to simplify result
+            try:
+                if getattr(e, "response", None) is not None and e.response is not None and e.response.status_code == 404:
+                    return []
+            except Exception:
+                pass
             raise HTTPException(
                 status_code=502,
                 detail=f"GitLab API error: {str(e)}"

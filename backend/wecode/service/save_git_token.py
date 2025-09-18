@@ -38,16 +38,15 @@ class SaveGitToken:
                 if item.get("type") == "gitlab" and item.get("git_token") and item.get("git_token") != "***":
                     # Encode token to base64
                     token = item["git_token"]
-                    encoded_token = base64.b64encode(token.encode('utf-8')).decode('utf-8')
                     
                     # Map git domain to API parameter
                     domain = item.get("git_domain")
                     if domain == "git.intra.weibo.com":
-                        gitlab_tokens["gitIntraWeiboCom"] = encoded_token
+                        gitlab_tokens["gitIntraWeiboCom"] = token
                     elif domain == "git.staff.sina.com.cn":
-                        gitlab_tokens["gitStaffSinaComCn"] = encoded_token
+                        gitlab_tokens["gitStaffSinaComCn"] = token
                     elif domain == "gitlab.weibo.cn":
-                        gitlab_tokens["gitlabWeiboCn"] = encoded_token
+                        gitlab_tokens["gitlabWeiboCn"] = token
             
             if not gitlab_tokens:
                 self.logger.info("No gitlab tokens to save")
