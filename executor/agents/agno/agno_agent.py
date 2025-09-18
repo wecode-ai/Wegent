@@ -280,6 +280,7 @@ class AgnoAgent(Agent):
                 session_id=self.session_id,
                 user_id=self.session_id,
                 debug_mode=self.debug_mode,
+                debug_level=2
             )
 
             # Normalize the result into a string
@@ -336,6 +337,12 @@ class AgnoAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            ext_config = {}
+            if self.mode == "coordinate":
+                ext_config = {
+                    "show_full_reasoning": True,
+                }
+
             # Run to completion (non-streaming) and gather final output
             result = await self.team.arun(
                 prompt,
@@ -344,6 +351,10 @@ class AgnoAgent(Agent):
                 session_id=self.session_id,
                 user_id=self.session_id,
                 debug_mode=self.debug_mode,
+                debug_level=2,
+                show_members_responses=True,
+                stream_intermediate_steps=True,
+                **ext_config
             )
 
             # Normalize the result into a string
