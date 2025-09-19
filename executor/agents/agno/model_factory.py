@@ -58,6 +58,10 @@ class ModelFactory:
         Returns:
             Claude model instance
         """
+        base_url = env.get("base_url")
+        if base_url != "":
+            os.environ["ANTHROPIC_BASE_URL"] = base_url
+
         return Claude(
             id=env.get("model_id", os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")),
             api_key=env.get("api_key", os.environ.get("ANTHROPIC_API_KEY")),
