@@ -36,7 +36,7 @@ class TaskProcessor:
         Args:
             task_id: Task ID
             subtask_id: Subtask ID
-            executor_name: Kubernetes job name
+            executor_name: Kubernetes pod name
             progress: Processing progress percentage
         """ 
         success, result = self.api_client.update_task_status_by_fields(

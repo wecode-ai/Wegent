@@ -46,11 +46,11 @@ class TaskScheduler:
         executor_count_result = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_executor_count()
         
         if executor_count_result["status"] != "success":
-            logger.error(f"Failed to get job count: {executor_count_result.get('error_msg', 'Unknown error')}")
+            logger.error(f"Failed to get pod count: {executor_count_result.get('error_msg', 'Unknown error')}")
             return False
         
         running_executor_num = executor_count_result.get("running", 0)
-        logger.info(f"Current running jobs: {running_executor_num}, max concurrent tasks: {self.max_concurrent_tasks}")
+        logger.info(f"Current running pods: {running_executor_num}, max concurrent tasks: {self.max_concurrent_tasks}")
         
         available_slots = min(10, self.max_concurrent_tasks - running_executor_num)
         

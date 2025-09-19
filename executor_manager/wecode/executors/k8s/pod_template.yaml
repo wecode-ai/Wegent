@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ executor_name }}
+  namespace: {{ namespace }}
+  annotations:
+    aigc.weibo.com/email: "weibo_ai_coding@staff.sina.com"
+    kubus.weibo.com/pod-resource: '{"cpu":"2","memory":"4Gi"}'
+  labels:
+    aigc.weibo.com/team-mode: "{{ mode }}"
+    app: {{ executor_name }}
+    aigc.weibo.com/devContainerType: "darkFactory"
+    aigc.weibo.com/executor: "wegent"
+    aigc.weibo.com/executor-task-id: "{{ task_id }}"
+    aigc.weibo.com/user: "{{ username }}"
+    aigc.weibo.com/proxy-user: "{{ username }}"
+    krs.weibo.com/managed-by: "krs"
+    kubus.weibo.com/qos-class: "dlc"
+    krs.weibo.com/type: "online"
+    admission-webhook.kubus.weibo.com/pod-global-injector-v2: "enabled"
+spec:
+  containers:
+    - name: {{ executor_name }}
+      image: {{ image }}
+      imagePullPolicy: Always
+      ports:
+        - containerPort: 8080
+          name: https
+          protocol: TCP
+      env:
+        - name: REGION
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.labels['topology.weibo.com/region']
+        - name: TASK_INFO
+          value: |-
+            {{ task_str }}
+        - name: EXECUTOR_NAME
+          value: {{ executor_name }}
+        - name: EXECUTOR_NAMESPACE
+          value: {{ namespace }}
+        - name: TZ
+          value: Asia/Shanghai
+        - name: LANG
+          value: en_US.UTF-8
+        - name: PORT
+          value: "8080"
+        - name: EXECUTOR_ENV
+          value: |-
+            {{ executor_env }}
+        - name: CALLBACK_URL
+          value: http://wegent-executor-manager-web.wb-plat-ide:8080/executor-manager/callback
+        - name: ENABLE_CODE_REVIEW_PROCESSING
+          value: enable
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.name
+        - name: IP
+          valueFrom:
+            fieldRef:
+              apiVersion: v1
+              fieldPath: status.podIP
+      terminationMessagePath: /dev/termination-log
+      terminationMessagePolicy: File
+      volumeMounts:
+        - name: dev-container-type
+          mountPath: /root/.config/dev-container-type
+          readOnly: true
+        - name: user
+          mountPath: /root/.config/user
+          readOnly: true
+        - name: email
+          mountPath: /root/.config/email
+          readOnly: true
+        - name: wecode-ide
+          mountPath: /root/.local/share/code-server/cert
+          readOnly: true
+  dnsConfig:
+    options:
+      - name: ndots
+        value: "2"
+  dnsPolicy: ClusterFirst
+  priorityClassName: krs-high-priority
+  schedulerName: krs-scheduler
+  securityContext: {}
+  terminationGracePeriodSeconds: 60
+  tolerations:
+    - effect: NoSchedule
+      key: virtual-kubelet.io/provider
+      value: weibo
+  volumes:
+    - name: wecode-ide
+      secret:
+        defaultMode: 256
+        secretName: wecode-ide
+    - name: dev-container-type
+      downwardAPI:
+        defaultMode: 420
+        items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.labels['aigc.weibo.com/devContainerType']
+            path: data
+    - name: user
+      downwardAPI:
+        defaultMode: 420
+        items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.labels['aigc.weibo.com/proxy-user']
+            path: data
+    - name: email
+      downwardAPI:
+        defaultMode: 420
+        items:
+          - fieldRef:
+              apiVersion: v1
+              fieldPath: metadata.annotations['aigc.weibo.com/email']
+            path: data
+  restartPolicy: OnFailure
