@@ -305,7 +305,7 @@ class GitLabProvider(RepositoryProvider):
             )
             
             if response.status_code == 401:
-                self.logger.warning(f"GitLab token validation failed: 401 Unauthorized")
+                self.logger.warning(f"GitLab token validation failed: 401 Unauthorizedm, git_domain: {git_domain}, token: {token}")
                 return {
                     "valid": False,
                 }

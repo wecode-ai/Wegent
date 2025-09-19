@@ -5,6 +5,7 @@
 from datetime import datetime
 from typing import Dict, List, Optional
 import httpx
+import logging
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_, func
@@ -17,6 +18,7 @@ from app.models.team import Team
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.base import BaseService
 from app.core.config import settings
+logger = logging.getLogger(__name__)
 
 
 class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUpdate]):
@@ -263,11 +265,12 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 "created_at": subtask.created_at,
                 "updated_at": subtask.updated_at
             })
-        
+        # Log before returning the formatted response
+        subtask_ids = [item.get("subtask_id") for item in formatted_subtasks]
+        logger.info(f"dispatch subtasks response count={len(formatted_subtasks)} ids={subtask_ids}")
         return {
             "tasks": formatted_subtasks
         }
-
     async def update_subtask(
         self, db: Session, *, subtask_update: SubtaskExecutorUpdate
     ) -> Dict:
