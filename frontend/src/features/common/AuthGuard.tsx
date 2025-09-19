@@ -19,7 +19,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     const loginPath = paths.auth.login.getHref()
     const allowedPaths = [
       loginPath,
-      paths.internal.cas.getHref(),
+      '/login/oidc',
       paths.home.getHref(),
       paths.auth.password_login.getHref()
     ]

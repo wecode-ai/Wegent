@@ -1,0 +1,158 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+import httpx
+import logging
+from typing import Dict, Any, Optional
+from urllib.parse import urlencode, parse_qs, urlparse
+from authlib.integrations.httpx_client import AsyncOAuth2Client
+from authlib.oidc.core import CodeIDToken
+from authlib.jose import jwt
+from fastapi import HTTPException
+from ..core.config import settings
+
+logger = logging.getLogger(__name__)
+
+class OIDCService:
+    """OpenID Connect Authentication Service"""
+    
+    def __init__(self):
+        self.client_id = settings.OIDC_CLIENT_ID
+        self.client_secret = settings.OIDC_CLIENT_SECRET
+        self.discovery_url = settings.OIDC_DISCOVERY_URL
+        self.redirect_uri = settings.OIDC_REDIRECT_URI
+        
+        self._metadata: Optional[Dict[str, Any]] = None
+        self._jwks: Optional[Dict[str, Any]] = None
+    
+    async def get_metadata(self) -> Dict[str, Any]:
+        """Get OpenID Connect Provider Metadata"""
+        if self._metadata is None:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(self.discovery_url, timeout=10)
+                    response.raise_for_status()
+                    self._metadata = response.json()
+                    logger.info(f"Successfully retrieved OIDC metadata: {self.discovery_url}")
+            except Exception as e:
+                logger.error(f"Failed to retrieve OIDC metadata: {e}")
+                raise HTTPException(status_code=502, detail=f"Unable to retrieve OIDC metadata: {e}")
+        
+        return self._metadata
+    
+    async def get_jwks(self) -> Dict[str, Any]:
+        """Get JSON Web Key Set"""
+        if self._jwks is None:
+            metadata = await self.get_metadata()
+            jwks_uri = metadata.get('jwks_uri')
+            
+            if not jwks_uri:
+                raise HTTPException(status_code=502, detail="Missing jwks_uri in OIDC metadata")
+            
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(jwks_uri, timeout=10)
+                    response.raise_for_status()
+                    self._jwks = response.json()
+                    logger.info(f"Successfully retrieved JWKS: {jwks_uri}")
+            except Exception as e:
+                logger.error(f"Failed to retrieve JWKS: {e}")
+                raise HTTPException(status_code=502, detail=f"Unable to retrieve JWKS: {e}")
+        
+        return self._jwks
+    
+    async def get_authorization_url(self, state: str, nonce: str) -> str:
+        """Generate Authorization URL"""
+        metadata = await self.get_metadata()
+        authorization_endpoint = metadata.get('authorization_endpoint')
+        
+        if not authorization_endpoint:
+            raise HTTPException(status_code=502, detail="Missing authorization_endpoint in OIDC metadata")
+        
+        params = {
+            'response_type': 'code',
+            'client_id': self.client_id,
+            'redirect_uri': self.redirect_uri,
+            'scope': 'openid email profile',
+            'state': state,
+            'nonce': nonce
+        }
+        
+        auth_url = f"{authorization_endpoint}?{urlencode(params)}"
+        logger.info(f"Generated authorization URL: {auth_url}")
+        return auth_url
+    
+    async def exchange_code_for_tokens(self, code: str, state: str) -> Dict[str, Any]:
+        """Exchange Authorization Code for Tokens"""
+        metadata = await self.get_metadata()
+        token_endpoint = metadata.get('token_endpoint')
+        
+        if not token_endpoint:
+            raise HTTPException(status_code=502, detail="Missing token_endpoint in OIDC metadata")
+        
+        client = AsyncOAuth2Client(
+            client_id=self.client_id,
+            client_secret=self.client_secret
+        )
+        
+        try:
+            token = await client.fetch_token(
+                token_endpoint,
+                code=code,
+                redirect_uri=self.redirect_uri
+            )
+            logger.info("Successfully obtained access token")
+            return token
+        except Exception as e:
+            logger.error(f"Token exchange failed: {e}")
+            raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}")
+    
+    async def verify_id_token(self, id_token: str, nonce: str) -> Dict[str, Any]:
+        """Verify ID Token"""
+        try:
+            metadata = await self.get_metadata()
+            jwks = await self.get_jwks()
+            
+            claims = jwt.decode(
+                id_token,
+                jwks,
+                claims_options={
+                    'iss': {'essential': True, 'value': metadata['issuer']},
+                    'aud': {'essential': True, 'value': self.client_id},
+                    'nonce': {'essential': True, 'value': nonce}
+                }
+            )
+            
+            logger.info(f"ID Token verification successful: sub={claims.get('sub')}")
+            return claims
+            
+        except Exception as e:
+            logger.error(f"ID Token verification failed: {e}")
+            raise HTTPException(status_code=400, detail=f"ID Token verification failed: {e}")
+    
+    async def get_user_info(self, access_token: str) -> Dict[str, Any]:
+        """Get User Information"""
+        metadata = await self.get_metadata()
+        userinfo_endpoint = metadata.get('userinfo_endpoint')
+        
+        if not userinfo_endpoint:
+            logger.warning("Missing userinfo_endpoint in OIDC metadata, skipping user info retrieval")
+            return {}
+        
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    userinfo_endpoint,
+                    headers={'Authorization': f'Bearer {access_token}'},
+                    timeout=10
+                )
+                response.raise_for_status()
+                user_info = response.json()
+                logger.info("Successfully obtained user information")
+                return user_info
+        except Exception as e:
+            logger.warning(f"Failed to obtain user information: {e}")
+            return {}
+
+oidc_service = OIDCService()
