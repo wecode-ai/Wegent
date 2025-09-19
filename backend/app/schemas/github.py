@@ -12,6 +12,8 @@ class Repository(BaseModel):
     full_name: str
     clone_url: str
     private: bool
+    type: str
+    git_domain: str
 
 class RepositoryResult(BaseModel):
     """GitHub repository result model with renamed fields"""
@@ -20,6 +22,7 @@ class RepositoryResult(BaseModel):
     git_repo: str
     git_url: str
     git_domain: str
+    type: str
     private: bool
 
 class Branch(BaseModel):

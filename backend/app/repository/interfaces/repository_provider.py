@@ -42,7 +42,8 @@ class RepositoryProvider(ABC):
     async def get_branches(
         self,
         user: User,
-        repo_name: str
+        repo_name: str,
+        git_domain: str
     ) -> List[Dict[str, Any]]:
         """
         Get the branch list of the specified repository

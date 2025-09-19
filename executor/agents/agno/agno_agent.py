@@ -8,16 +8,19 @@
 
 import asyncio
 import json
+import os
 from typing import Dict, Any, Optional
 
 from agno.team import Team
+from agno.agent import Agent as AgnoSDKAgent
 from agno.db.sqlite import SqliteDb
 from executor.agents.base import Agent
-from executor.config.config import EXECUTOR_ENV
+from executor.config.config import EXECUTOR_ENV, DEBUG_RUN
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 
 from .config_utils import ConfigManager
+from .member_builder import MemberBuilder
 from .model_factory import ModelFactory
 from .mcp_manager import MCPManager
 from .team_builder import TeamBuilder
@@ -32,7 +35,7 @@ class AgnoAgent(Agent):
     """
 
     # Static dictionary for storing client connections to enable connection reuse
-    _clients: Dict[str, Team] = {}
+    _clients: Dict[str, Any] = {}
 
     def get_name(self) -> str:
         return "Agno"
@@ -49,7 +52,10 @@ class AgnoAgent(Agent):
         self.session_id = self.task_id
         self.prompt = task_data.get("prompt", "")
         self.project_path = None
-        self.team = None
+
+        self.team: Optional[Team] = None
+        self.single_agent: Optional[AgnoSDKAgent] = None
+
         self.mode = task_data.get("mode", "")
         self.task_data = task_data
 
@@ -61,6 +67,12 @@ class AgnoAgent(Agent):
         
         # Initialize team builder
         self.team_builder = TeamBuilder(db, self.config_manager)
+
+        # Initialize member builder
+        self.member_builder = MemberBuilder(db, self.config_manager)
+
+        # debug mode
+        self.debug_mode: bool = DEBUG_RUN != ""
 
     def update_prompt(self, new_prompt: str) -> None:
         """
@@ -87,7 +99,16 @@ class AgnoAgent(Agent):
             logger.error(f"Failed to initialize Agno Agent: {str(e)}")
             return TaskStatus.FAILED
 
-    async def _create_team(self) -> Team:
+    async def _create_agent(self) -> Optional[AgnoSDKAgent]:
+        """
+        Create a team with configured members
+        """
+        agents = await self.member_builder.create_members_from_config(self.options["team_members"], self.task_data)
+        if len(agents) < 0:
+            return None
+        return agents[0]
+
+    async def _create_team(self) -> Optional[Team]:
         """
         Create a team with configured members
         """
@@ -189,16 +210,24 @@ class AgnoAgent(Agent):
                 logger.info(
                     f"Reusing existing Agno team for session_id: {self.session_id}"
                 )
-                self.team = self._clients[self.session_id]
+                tmp = self._clients[self.session_id]
+                if isinstance(tmp, Team):
+                    self.team = tmp
+                elif isinstance(tmp, AgnoSDKAgent):
+                    self.single_agent = tmp
+
             else:
                 # Create new team
                 logger.info(
                     f"Creating new Agno team for session_id: {self.session_id}"
                 )
                 self.team = await self._create_team()
-
-                # Store team for reuse
-                self._clients[self.session_id] = self.team
+                if self.team is not None:
+                    # Store team for reuse
+                    self._clients[self.session_id] = self.team
+                else:
+                    self.single_agent = await self._create_agent()
+                    self._clients[self.session_id] = self.single_agent
 
             # Prepare prompt
             prompt = self.prompt
@@ -210,7 +239,7 @@ class AgnoAgent(Agent):
             logger.info(f"Executing Agno team with prompt: {prompt}")
 
             # Execute the team run
-            result = await self._run_team_async(prompt)
+            result = await self._run_async(prompt)
 
             return result
 
@@ -218,6 +247,82 @@ class AgnoAgent(Agent):
             logger.exception(f"Error in async execution: {str(e)}")
             self.report_progress(
                 100, TaskStatus.FAILED.value, f"Execution failed: {str(e)}"
+            )
+            return TaskStatus.FAILED
+
+    async def _run_async(self, prompt: str) -> TaskStatus:
+        if self.team:
+            logger.info("_run_team_async")
+            return await self._run_team_async(prompt)
+        elif self.single_agent:
+            logger.info("_run_agent_async")
+            return await self._run_agent_async(prompt)
+        else:
+            logger.error(f"The team and agent is None.")
+            return TaskStatus.FAILED
+
+    async def _run_agent_async(self, prompt: str) -> TaskStatus:
+        """
+        Run the agent asynchronously with the given prompt
+
+        Args:
+            prompt: The prompt to execute
+
+        Returns:
+            TaskStatus: Execution status
+        """
+        try:
+            # Run to completion (non-streaming) and gather final output
+            result = await self.single_agent.arun(
+                prompt,
+                stream=False,
+                add_history_to_context=True,
+                session_id=self.session_id,
+                user_id=self.session_id,
+                debug_mode=self.debug_mode,
+                debug_level=2
+            )
+
+            # Normalize the result into a string
+            result_content: str = ""
+            try:
+                logger.info(f"agent run success. result:{json.dumps(result.to_dict())}")
+                if result is None:
+                    result_content = ""
+                elif hasattr(result, "content") and getattr(result, "content") is not None:
+                    result_content = str(getattr(result, "content"))
+                elif hasattr(result, "to_dict"):
+                    result_content = json.dumps(result.to_dict(), ensure_ascii=False)
+                else:
+                    result_content = str(result)
+            except Exception:
+                # Fallback to string coercion
+                result_content = str(result)
+
+            if result_content:
+                logger.info(
+                    f"Agent execution completed with content length: {len(result_content)}"
+                )
+                self.report_progress(
+                    100,
+                    TaskStatus.COMPLETED.value,
+                    "Agno execution completed",
+                    result={"value": result_content},
+                )
+                return TaskStatus.COMPLETED
+            else:
+                logger.warning("No content received from team execution")
+                self.report_progress(
+                    100,
+                    TaskStatus.FAILED.value,
+                    "No content received from team execution",
+                )
+                return TaskStatus.FAILED
+
+        except Exception as e:
+            logger.exception(f"Error running agent: {str(e)}")
+            self.report_progress(
+                100, TaskStatus.FAILED.value, f"Agent execution failed: {str(e)}"
             )
             return TaskStatus.FAILED
 
@@ -232,6 +337,12 @@ class AgnoAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            ext_config = {}
+            if self.mode == "coordinate":
+                ext_config = {
+                    "show_full_reasoning": True,
+                }
+
             # Run to completion (non-streaming) and gather final output
             result = await self.team.arun(
                 prompt,
@@ -239,12 +350,17 @@ class AgnoAgent(Agent):
                 add_history_to_context=True,
                 session_id=self.session_id,
                 user_id=self.session_id,
-                debug_mode=True,
+                debug_mode=self.debug_mode,
+                debug_level=2,
+                show_members_responses=True,
+                stream_intermediate_steps=True,
+                **ext_config
             )
 
             # Normalize the result into a string
             result_content: str = ""
             try:
+                logger.info(f"team run success. result:{json.dumps(result.to_dict())}")
                 if result is None:
                     result_content = ""
                 elif hasattr(result, "content") and getattr(result, "content") is not None:

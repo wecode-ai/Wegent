@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from fastapi import HTTPException
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.user import User
@@ -61,6 +61,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 # Update git_info fields
                 git_item["git_id"] = str(user_data.get("id", ""))
                 git_item["git_login"] = user_data.get("login", "")
+                git_item["git_email"] = user_data.get("email", "")
                 
             except ValidationException:
                 raise
@@ -108,10 +109,16 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         return db_obj
     
     def update_current_user(
-        self, db: Session, *, user: User, obj_in: UserUpdate
+        self, db: Session, *, user: User, obj_in: UserUpdate, validate_git_info: bool = True
     ) -> User:
         """
         Update current user information with git token validation
+        
+        Args:
+            db: Database session
+            user: Current user object
+            obj_in: User update data
+            validate_git_info: Whether to validate git tokens, defaults to True
         """
         # Check if user already exists (excluding current user)
         if obj_in.user_name:
@@ -130,9 +137,10 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             user.email = obj_in.email
 
         if obj_in.git_info is not None:
-            # Validate and update git_info
+            # Validate git_info only if validation is enabled
             git_info = [git_item.model_dump() for git_item in obj_in.git_info]
-            git_info = self._validate_git_info(git_info)
+            if validate_git_info:
+                git_info = self._validate_git_info(git_info)
             user.git_info = git_info
         
         if obj_in.password:

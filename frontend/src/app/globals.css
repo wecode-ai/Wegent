@@ -104,13 +104,13 @@ button:focus-visible {
 .repository-selector.ant-select:hover .ant-select-selection-placeholder,
 .repository-selector.ant-select:hover .ant-select-selection-item {
   color: #c9d1d9;
+}
 .repository-selector.ant-select .ant-select-selection-item .truncate {
   overflow: hidden !important;
   white-space: nowrap !important;
   text-overflow: ellipsis !important;
   max-width: 120px !important;
   display: inline-block;
-}
 }
 
 .repository-selector.ant-select .ant-select-arrow {
@@ -143,4 +143,46 @@ button:focus-visible {
   color: #8b949e;
   font-size: 12px;
   text-align: center;
+}
+
+/* Custom antd message style for prefixCls="custom-message" */
+.custom-message {
+  display: flex;
+  justify-content: center;
+  pointer-events: none; /* keep default behavior for maskless portal */
+}
+
+/* make each notice take full row so content can center properly */
+.custom-message-notice {
+  width: 100%;
+}
+
+.custom-message-notice-content {
+  display: block;               /* ensure the background wraps multi-line text */
+  max-width: 640px;             /* enlarge max width for long error text */
+  min-width: 320px;             /* provide reasonable minimum */
+  width: auto;                  /* let width fit content within max */
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: left;             /* left align for multi-line readability */
+  word-break: break-word;       /* break long tokens/URLs */
+  overflow-wrap: anywhere;      /* force wrap if needed */
+  white-space: pre-wrap;        /* keep newlines from backend errors */
+  pointer-events: all;          /* clickable content if any */
+}
+
+/* icon + text vertical alignment on multi-line */
+.custom-message-notice-content .ant-message-custom-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.custom-message-notice-content .ant-message-custom-content .anticon {
+  line-height: 1.2;
+  margin-top: 2px;
+}
+.custom-message-notice-content .ant-message-custom-content > span {
+  flex: 1 1 auto;
 }
