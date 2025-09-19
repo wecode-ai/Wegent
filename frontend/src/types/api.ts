@@ -55,6 +55,7 @@ export interface Team {
 export interface TeamBot {
   bot_id: number
   bot_prompt: string
+  role?: string
 }
 
 /** TaskDetail structure (adapted to latest backend response) */
