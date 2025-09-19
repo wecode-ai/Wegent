@@ -94,11 +94,6 @@ class RepositoryService:
                         detail="Failed to fetch repositories. Please check if your token is correct or has expired."
                     )
                 
-                # Add provider type to each repository
-                for repo in result:
-                    repo["provider_type"] = provider_type
-                    repo["git_domain"] = self.providers[provider_type].domain
-                
                 all_repos.extend(result)
             
         except Exception as e:
@@ -121,7 +116,8 @@ class RepositoryService:
         self,
         user: User,
         repo_name: str,
-        provider_type: Optional[str] = None
+        type: str,
+        git_domain: str
     ) -> List[Dict[str, Any]]:
         """
         Get branches for a repository
@@ -134,29 +130,15 @@ class RepositoryService:
         Returns:
             Branch list
         """
-        user_providers = self._get_user_providers(user)
-        if not user_providers:
-            return []
-        
-        # If provider_type is specified, use only that provider
-        if provider_type and provider_type in user_providers:
-            provider = self.providers[provider_type]
-            return await provider.get_branches(user, repo_name)
-        
-        # Try all providers until we find the repository
-        for provider_type in user_providers:
-            provider = self.providers[provider_type]
-            try:
-                branches = await provider.get_branches(user, repo_name)
-                if branches:
-                    # Add provider info to branches
-                    for branch in branches:
-                        branch["provider_type"] = provider_type
-                    return branches
-            except Exception as e:
-                self.logger.warning(f"Error getting branches from {provider_type}: {e}")
-                continue
-        
+        for info in user.git_info:
+            if info.get("type") == type and info.get("git_domain") == git_domain:
+                provider = self.providers[type]
+                try:
+                    return await provider.get_branches(user, repo_name, git_domain)
+                except Exception as e:
+                    self.logger.warning(f"Error getting branches from {type}: {e}")
+                    raise HTTPException(status_code=500, detail=f"Error getting branches from {type}: {e}")
+
         return []
     
     async def validate_tokens(
@@ -240,11 +222,6 @@ class RepositoryService:
                     self.logger.error(f"Error searching repositories in {provider_type}: {result}")
                     continue
                 
-                # Add provider type to each repository
-                for repo in result:
-                    repo["provider_type"] = provider_type
-                    repo["git_domain"] = self.providers[provider_type].domain
-                
                 all_results.extend(result)
             
         except Exception as e:
@@ -265,48 +242,6 @@ class RepositoryService:
         
         return all_results
     
-    def get_repo_id_by_fullname(
-        self,
-        user: User,
-        fullname: str,
-        provider_type: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
-        """
-        Get repository ID and provider info by full name
-        
-        Args:
-            user: User object
-            fullname: Full name of the repository
-            provider_type: Specific provider type, if None try all providers
-            
-        Returns:
-            Dictionary with repo_id and provider_type, or None if not found
-        """
-        user_providers = self._get_user_providers(user)
-        if not user_providers:
-            return None
-        
-        # If provider_type is specified, use only that provider
-        if provider_type and provider_type in user_providers:
-            provider = self.providers[provider_type]
-            repo_id = provider.get_repo_id_by_fullname(user, fullname)
-            if repo_id:
-                return {"repo_id": repo_id, "provider_type": provider_type}
-            return None
-        
-        # Try all providers
-        for provider_type in user_providers:
-            provider = self.providers[provider_type]
-            try:
-                repo_id = provider.get_repo_id_by_fullname(user, fullname)
-                if repo_id:
-                    return {"repo_id": repo_id, "provider_type": provider_type}
-            except Exception as e:
-                self.logger.warning(f"Error getting repo ID from {provider_type}: {e}")
-                continue
-        
-        return None
-
 
 # Global service instance
 repository_service = RepositoryService()

@@ -15,11 +15,6 @@ class MemoryCache:
         self._cache: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
     
-    def generate_cache_key(self, user_id: int, git_domain: str, page: int, limit: int) -> str:
-        """Generate cache key for user repositories"""
-        key_data = f"github_repos:{user_id}:{git_domain}:{page}:{limit}"
-        return hashlib.md5(key_data.encode()).hexdigest()
-    
     def generate_full_cache_key(self, user_id: int, git_domain: str) -> str:
         """Generate cache key for full user repositories list"""
         key_data = f"github_repos_full:{user_id}:{git_domain}"

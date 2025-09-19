@@ -30,24 +30,21 @@ async def get_repositories(
             git_repo=repo["full_name"],
             git_url=repo["clone_url"],
             git_domain=repo.get("git_domain", "unknown"),
+            type=repo["type"],
             private=repo["private"]
         ) for repo in repositories
     ]
 
 @router.get("/repositories/branches", response_model=List[Branch])
 async def get_branches(
-    git_repo: Optional[str] = Query(None, description="owner/repository_name"),
-    provider_type: Optional[str] = Query(None, description="Repository provider type (github/gitlab)"),
+    git_repo: str = Query(..., description="owner/repository_name"),
+    type: str = Query(..., description="Repository provider type (github/gitlab)"),
+    git_domain: str = Query(..., description="Repository git domain, required (e.g., github.com, gitlab.weibo.cn)"),
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get branch list for specified repository"""
-    if not git_repo:
-        raise HTTPException(
-            status_code=400,
-            detail="Repository name is required"
-        )
-    return await repository_service.get_branches(current_user, git_repo, provider_type=provider_type)
+    return await repository_service.get_branches(current_user, git_repo, type=type, git_domain=git_domain)
 
 
 @router.get("/repositories/search", response_model=List[RepositoryResult])
@@ -67,6 +64,7 @@ async def search_repositories(
             git_repo=repo["full_name"],
             git_url=repo["clone_url"],
             git_domain=repo.get("git_domain", "unknown"),
+            type=repo["type"],
             private=repo["private"]
         ) for repo in repositories
     ]

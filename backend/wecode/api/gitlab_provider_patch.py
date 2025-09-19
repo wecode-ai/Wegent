@@ -104,10 +104,10 @@ def apply_patch() -> None:
         finally:
             _restore_tokens(restored)
 
-    async def patched_get_branches(self, user, repo_name: str):
+    async def patched_get_branches(self, user, repo_name: str, git_domain: str):
         restored = await _resolve_tokens_for_user(user)
         try:
-            return await _orig_get_branches(self, user, repo_name)
+            return await _orig_get_branches(self, user, repo_name, git_domain)
         finally:
             _restore_tokens(restored)
 
