@@ -59,7 +59,7 @@ async def callback_handler(request: CallbackRequest):
     Receive callback interface for executor task progress and completion.
 
     Args:
-        request: Request body containing task ID, job name, and progress.
+        request: Request body containing task ID, pod name, and progress.
 
     Returns:
         dict: Processing result

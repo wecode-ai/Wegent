@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 
 from executor_manager.config.config import EXECUTOR_ENV
+from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from executor_manager.executors.base import Executor
@@ -106,7 +107,8 @@ class DockerExecutor(Executor):
                 self._execute_in_existing_container(task, execution_status)
             else:
                 # 生成新的容器名称
-                execution_status["executor_name"] = f"task-{user_name}-{task_id}-{subtask_id}"
+                execution_status["executor_name"] = generate_executor_name(task_id, subtask_id, user_name)
+
                 self._create_new_container(task, task_info, execution_status)
         except Exception as e:
             # 统一异常处理
