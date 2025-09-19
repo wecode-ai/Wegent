@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 24*60  # 24 hours in minutes
 
     # OIDC state configuration
-    OIDC_STATE_SECRET_KEY: str = "3zPaaF8q9oc0pqh6QN4Kxe3Sby87CB"
+    OIDC_STATE_SECRET_KEY: str = "test"
     OIDC_STATE_EXPIRE_SECONDS: int = 10*60  # 10分钟，单位：秒
     
     # Cache configuration
