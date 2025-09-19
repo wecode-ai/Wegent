@@ -337,7 +337,7 @@ class K8sExecutor(Executor):
         try:
             core_v1 = client.CoreV1Api(self.api_client)
             # Query related pods directly using executor name
-            label_selector = f"aigc.weibo.com/executor-name={executor_name}"
+            label_selector = f"aigc.weibo.com/executor=wegent,app={executor_name}"
             pods = core_v1.list_namespaced_pod(
                 namespace=K8S_NAMESPACE, label_selector=label_selector
             )
