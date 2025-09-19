@@ -30,14 +30,14 @@ from executor_manager.executors.base import Executor
 logger = setup_logger(__name__)
 
 
-# 加载 Kubernetes 配置
+# Load Kubernetes configuration
 def _load_k8s_config() -> client.ApiClient:
     try:
         config.load_incluster_config()
         logger.info("Loaded in-cluster Kubernetes configuration")
 
         configuration = client.Configuration.get_default_copy()
-        configuration.verify_ssl = False  # ❗只建议调试或内部环境使用
+        configuration.verify_ssl = False  # ❗Only recommended for debugging or internal environments
         return client.ApiClient(configuration)
 
     except config.ConfigException:
@@ -106,7 +106,7 @@ class K8sExecutor(Executor):
                 error_msg = "Agent is deleted. Please new task and submit it again."
                 callback_status = TaskStatus.FAILED.value
         else:
-            # 根据executor_name 查询一下 是否有pod存在, 如果存在则直接使用 http 接口发起任务
+            # Check if pod exists by executor_name, if exists, send task directly via HTTP interface
             try:
                 executor_name = generate_executor_name(task_id, subtask_id, user_name)
 
@@ -184,7 +184,7 @@ class K8sExecutor(Executor):
     def _send_task_to_container(
         self, task: Dict[str, Any], host: str, port: int
     ) -> requests.Response:
-        """发送任务到容器的API端点"""
+        """Send task to container API endpoint"""
         endpoint = f"http://{host}:{port}{DEFAULT_API_ENDPOINT}"
         logger.info(f"Sending task to {endpoint}")
         return requests.post(endpoint, json=task)
@@ -253,7 +253,7 @@ class K8sExecutor(Executor):
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:
         try:
-            # 如果没有提供标签选择器，则使用默认的标签选择器
+            # If no label selector is provided, use the default label selector
             if label_selector is None:
                 label_selector = "aigc.weibo.com/executor=wegent"
             else:
@@ -264,23 +264,21 @@ class K8sExecutor(Executor):
                 namespace=K8S_NAMESPACE, label_selector=label_selector
             )
 
-            task_ids = []
+            task_ids = set()
             for pod in pods.items:
-                # 从 pod 的标签中提取任务 ID，使用正确的标签名称
+                # Extract task ID from pod labels using the correct label name
                 if (
                     pod.metadata.labels
                     and "aigc.weibo.com/executor-task-id" in pod.metadata.labels
                 ):
-                    task_ids.append(
+                    task_ids.add(
                         pod.metadata.labels["aigc.weibo.com/executor-task-id"]
                     )
-                # 如果没有明确的任务 ID 标签，可以尝试从 pod 名称中提取
+                # If no explicit task ID label exists, try to extract from pod name
                 else:
-                    pod_name = pod.metadata.name
-                    # 假设任务 ID 可能包含在 pod 名称中
-                    match = re.search(r"wegent-task-[^-]+-(\d+)-", pod_name)
-                    if match:
-                        task_ids.append(match.group(1))
+                    logger.warning(f"Pod {pod.metadata.name} has no task ID label.")
+  
+            task_ids = list(task_ids)
 
             logger.info(
                 f"Found {len(task_ids)} task IDs with label selector '{label_selector}'"
@@ -336,22 +334,9 @@ class K8sExecutor(Executor):
         return 0
 
     def get_pods_by_executor_name(self, executor_name: str) -> Dict[str, Any]:
-        """
-        根据Kubernetes executor名称查询相关的Pod
-
-        Args:
-            executor_name (str): Kubernetes executor名称
-
-        Returns:
-            Dict[str, Any]: {
-                "status": "success" 或 "failed",
-                "pods": [pod信息列表] (如果成功),
-                "error_msg": 错误信息 (如果失败)
-            }
-        """
         try:
             core_v1 = client.CoreV1Api(self.api_client)
-            # 使用executor名称直接查询相关的Pod
+            # Query related pods directly using executor name
             label_selector = f"aigc.weibo.com/executor-name={executor_name}"
             pods = core_v1.list_namespaced_pod(
                 namespace=K8S_NAMESPACE, label_selector=label_selector
