@@ -360,7 +360,7 @@ class AgnoAgent(Agent):
             # Normalize the result into a string
             result_content: str = ""
             try:
-                logger.info(f"team run success. result:{json.dumps(result.to_dict())}")
+                logger.info(f"team run success. result:{json.dumps(result.to_dict(), ensure_ascii=False)}")
                 if result is None:
                     result_content = ""
                 elif hasattr(result, "content") and getattr(result, "content") is not None:
