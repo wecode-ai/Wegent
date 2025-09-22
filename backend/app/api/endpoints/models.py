@@ -38,6 +38,7 @@ def list_models(
 
 @router.get("/names")
 def list_model_names(
+    agent_name: str = Query(..., description="Agent name (Agno、ClaudeCode)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -51,7 +52,7 @@ def list_model_names(
       ]
     }
     """
-    data = model_service.list_model_names(db=db, current_user=current_user)
+    data = model_service.list_model_names(db=db, current_user=current_user, agent_name=agent_name)
     return {"data": data}
 
 

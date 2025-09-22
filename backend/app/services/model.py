@@ -58,7 +58,7 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
         """
         return db.query(Model).filter(Model.is_active == True).count()  # noqa: E712
 
-    def list_model_names(self, db: Session, *, current_user: Optional[User] = None) -> List[Dict[str, str]]:
+    def list_model_names(self, db: Session, *, current_user: Optional[User] = None, agent_name: str) -> List[Dict[str, str]]:
         """
         List all active model names as [{'name': str}, ...]
         """
