@@ -1,0 +1,41 @@
+{
+  "title": "Chat",
+  "placeholder": {
+    "input": "Type your message here...",
+    "empty": "No messages yet. Start a conversation!"
+  },
+  "actions": {
+    "send": "Send",
+    "clear": "Clear Chat",
+    "copy": "Copy",
+    "regenerate": "Regenerate",
+    "stop": "Stop"
+  },
+  "status": {
+    "typing": "AI is typing...",
+    "thinking": "AI is thinking...",
+    "error": "Failed to send message",
+    "connecting": "Connecting...",
+    "disconnected": "Disconnected"
+  },
+  "messages": {
+    "user": "You",
+    "assistant": "AI Assistant",
+    "system": "System",
+    "copied": "Message copied to clipboard",
+    "failed_to_copy": "Failed to copy message"
+  },
+  "settings": {
+    "model": "Model",
+    "temperature": "Temperature",
+    "max_tokens": "Max Tokens",
+    "system_prompt": "System Prompt"
+  },
+  "history": {
+    "title": "Chat History",
+    "empty": "No chat history",
+    "clear_all": "Clear All History",
+    "delete_conversation": "Delete Conversation",
+    "confirm_delete": "Are you sure you want to delete this conversation?"
+  }
+}

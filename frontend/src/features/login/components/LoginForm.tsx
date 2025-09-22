@@ -11,8 +11,11 @@ import { useRouter } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
 import { App } from 'antd'
+import { useTranslation } from '@/hooks/useTranslation'
+import LanguageSwitcher from '@/components/LanguageSwitcher'
 
 export default function LoginForm() {
+  const { t } = useTranslation('common')
   const { message } = App.useApp()
   const router = useRouter()
   const [formData, setFormData] = useState({
@@ -65,6 +68,10 @@ export default function LoginForm() {
 
   return (
     <div className="space-y-6">
+      {/* 语言切换器 */}
+      <div className="absolute top-4 right-4">
+        <LanguageSwitcher />
+      </div>
       {/* 密码登录表单 */}
       {showPasswordLogin && (
         <form className="space-y-6" onSubmit={handleSubmit}>
@@ -135,7 +142,7 @@ export default function LoginForm() {
                   Logging in...
                 </div>
               ) : (
-                'Login'
+                t('navigation.login')
               )}
             </Button>
           </div>
