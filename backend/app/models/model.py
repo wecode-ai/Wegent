@@ -9,21 +9,19 @@ from app.db.base import Base
 
 
 class Model(Base):
-    """
-    ORM entity for 'models' table
-    """
     __tablename__ = "models"
 
-    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True, index=True)
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(100), nullable=False)
     config = Column(JSON, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, server_default=func.now(), nullable=False)
-    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     __table_args__ = (
         UniqueConstraint("name", name="idx_model_name"),
         {
+            "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",
             "mysql_charset": "utf8mb4",
             "mysql_collate": "utf8mb4_unicode_ci",

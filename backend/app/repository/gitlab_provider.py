@@ -596,6 +596,7 @@ class GitLabProvider(RepositoryProvider):
             # Cache complete repository list
             cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
             await cache_manager.set(cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
+            print(f"========Cache complete repository list for user {user.user_name}")
             
         except Exception:
             # Background task fails silently
