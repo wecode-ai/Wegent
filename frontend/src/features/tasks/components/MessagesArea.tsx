@@ -216,12 +216,55 @@ export default function MessagesArea() {
                           // Not a progress bar, normal markdown rendering
                           return (
                             <div className="relative group">
-                              <div className="text-sm break-all">
+                              <div className="text-sm">
                                 <div className="w-full" style={{ background: 'transparent' }}>
-                                  <MarkdownEditor.Markdown source={result} style={{ background: 'transparent' }} wrapperElement={{'data-color-mode' : 'dark'}}/>
+                                  {(() => {
+                                    // ★ 规范化：如果 result 是一个完整的 fenced code block，就解包
+                                    const normalizedResult = (() => {
+                                      const s = (result ?? '').trim();
+
+                                      // 只匹配“整串都是 fenced block”的情况：
+                                      // ```markdown\n...\n```  或 ```md\n...\n```  或 ```\n...\n```
+                                      const m = s.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/);
+                                      if (m) return m[1];
+
+                                      return s;
+                                    })();
+
+                                    // ★ 锚定进度条匹配，避免误伤正文里提到的标记
+                                    const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/);
+                                    if (progressMatch) {
+                                      const status = progressMatch[1];
+                                      const progress = parseInt(progressMatch[2], 10) || 0;
+                                      return (
+                                        <div className="mt-2">
+                                          <div className="flex justify-between items-center mb-1">
+                                            <span className="text-sm">Task Status: {status}</span>
+                                          </div>
+                                          <div className="w-full bg-gray-700 rounded-full h-2">
+                                            <div
+                                              className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-in-out"
+                                              style={{ width: `${progress}%` }}
+                                            />
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+
+                                    return (
+                                      <>
+                                        <MarkdownEditor.Markdown
+                                          source={normalizedResult}
+                                          style={{ background: 'transparent' }}
+                                          wrapperElement={{ 'data-color-mode': 'dark' }}
+                                        />
+                                        {/* ★ 复制按钮用解包后的内容 */}
+                                        <CopyButton content={result} />
+                                      </>
+                                    );
+                                  })()}
                                 </div>
                               </div>
-                              <CopyButton content={result} />
                             </div>
                           );
                         })()
