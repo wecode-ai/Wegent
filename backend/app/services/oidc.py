@@ -102,7 +102,7 @@ class OIDCService:
                 code=code,
                 redirect_uri=self.redirect_uri
             )
-            logger.info("Successfully obtained access token")
+            logger.info(f"Successfully obtained access token, token:{token}")
             return token
         except Exception as e:
             logger.error(f"Token exchange failed: {e}")
@@ -128,7 +128,7 @@ class OIDCService:
             return claims
             
         except Exception as e:
-            logger.error(f"ID Token verification failed: {e}")
+            logger.error(f"ID Token verification id_token: {id_token}, failed: {e}")
             raise HTTPException(status_code=400, detail=f"ID Token verification failed: {e}")
     
     async def get_user_info(self, access_token: str) -> Dict[str, Any]:

@@ -354,6 +354,7 @@ class AgnoAgent(Agent):
                 debug_level=2,
                 show_members_responses=True,
                 stream_intermediate_steps=True,
+                markdown=True,
                 **ext_config
             )
 
