@@ -539,7 +539,8 @@ class GitHubProvider(RepositoryProvider):
             self.logger.info(f"Fetching repositories for user {user.user_name}")
             
             while True:
-                response = requests.get(
+                response = await asyncio.to_thread(
+                    requests.get,
                     f"{api_base_url}/user/repos",
                     headers=headers,
                     params={
@@ -580,6 +581,8 @@ class GitHubProvider(RepositoryProvider):
             # Cache complete repository list
             cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
             await cache_manager.set(cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
+            self.logger.info(f"Cache complete repository list for user github {user.user_name}")
+            
             
         except Exception:
             # Background task fails silently

@@ -554,7 +554,8 @@ class GitLabProvider(RepositoryProvider):
             self.logger.info(f"Fetching repositories for user {user.user_name}")
             
             while True:
-                response = requests.get(
+                response = await asyncio.to_thread(
+                    requests.get,
                     f"{api_base_url}/projects",
                     headers=headers,
                     params={
@@ -596,7 +597,8 @@ class GitLabProvider(RepositoryProvider):
             # Cache complete repository list
             cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
             await cache_manager.set(cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
-            print(f"========Cache complete repository list for user {user.user_name}")
+            self.logger.info(f"Cache complete repository list for user gitlab {user.user_name}")
+            
             
         except Exception:
             # Background task fails silently
