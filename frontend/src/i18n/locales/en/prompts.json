@@ -1,0 +1,63 @@
+{
+  "title": "Prompts",
+  "categories": {
+    "coding": "Coding",
+    "writing": "Writing",
+    "analysis": "Analysis",
+    "creative": "Creative",
+    "business": "Business",
+    "education": "Education",
+    "custom": "Custom"
+  },
+  "actions": {
+    "use": "Use Prompt",
+    "edit": "Edit",
+    "duplicate": "Duplicate",
+    "delete": "Delete",
+    "create": "Create New",
+    "save": "Save Prompt",
+    "share": "Share",
+    "favorite": "Add to Favorites",
+    "unfavorite": "Remove from Favorites"
+  },
+  "fields": {
+    "title": "Title",
+    "description": "Description",
+    "content": "Prompt Content",
+    "category": "Category",
+    "tags": "Tags",
+    "variables": "Variables"
+  },
+  "placeholders": {
+    "title": "Enter prompt title...",
+    "description": "Describe what this prompt does...",
+    "content": "Write your prompt here...",
+    "search": "Search prompts...",
+    "tags": "Add tags (comma separated)"
+  },
+  "templates": {
+    "code_review": "Code Review",
+    "bug_fix": "Bug Fix",
+    "documentation": "Documentation",
+    "refactoring": "Refactoring",
+    "testing": "Testing",
+    "explanation": "Code Explanation"
+  },
+  "variables": {
+    "add": "Add Variable",
+    "name": "Variable Name",
+    "description": "Description",
+    "default_value": "Default Value",
+    "required": "Required"
+  },
+  "empty": {
+    "title": "No Prompts",
+    "description": "Create your first prompt to get started",
+    "action": "Create Prompt"
+  },
+  "validation": {
+    "title_required": "Title is required",
+    "content_required": "Prompt content is required",
+    "invalid_variable": "Invalid variable format"
+  }
+}

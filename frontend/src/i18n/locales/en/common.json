@@ -1,0 +1,50 @@
+{
+  "extension": {
+    "name": "WeCode AI Assistant",
+    "description": "A whole dev team of AI agents in your editor."
+  },
+  "welcome": "Welcome, {{name}}! You have {{count}} notifications.",
+  "items": {
+    "zero": "No items",
+    "one": "One item",
+    "other": "{{count}} items"
+  },
+  "navigation": {
+    "dashboard": "Dashboard",
+    "tasks": "Tasks",
+    "settings": "Settings",
+    "logout": "Logout",
+    "login": "Login"
+  },
+  "actions": {
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "confirm": "Confirm",
+    "close": "Close",
+    "submit": "Submit",
+    "reset": "Reset",
+    "search": "Search",
+    "filter": "Filter",
+    "refresh": "Refresh",
+    "loading": "Loading...",
+    "retry": "Retry"
+  },
+  "status": {
+    "success": "Success",
+    "error": "Error",
+    "warning": "Warning",
+    "info": "Information",
+    "pending": "Pending",
+    "completed": "Completed",
+    "failed": "Failed"
+  },
+  "validation": {
+    "required": "This field is required",
+    "invalid_email": "Please enter a valid email address",
+    "min_length": "Minimum length is {{min}} characters",
+    "max_length": "Maximum length is {{max}} characters"
+  }
+}

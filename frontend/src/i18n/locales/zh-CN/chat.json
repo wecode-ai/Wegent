@@ -1,0 +1,41 @@
+{
+  "title": "聊天",
+  "placeholder": {
+    "input": "在此输入您的消息...",
+    "empty": "还没有消息。开始对话吧！"
+  },
+  "actions": {
+    "send": "发送",
+    "clear": "清空聊天",
+    "copy": "复制",
+    "regenerate": "重新生成",
+    "stop": "停止"
+  },
+  "status": {
+    "typing": "AI 正在输入...",
+    "thinking": "AI 正在思考...",
+    "error": "发送消息失败",
+    "connecting": "连接中...",
+    "disconnected": "连接断开"
+  },
+  "messages": {
+    "user": "您",
+    "assistant": "AI 助手",
+    "system": "系统",
+    "copied": "消息已复制到剪贴板",
+    "failed_to_copy": "复制消息失败"
+  },
+  "settings": {
+    "model": "模型",
+    "temperature": "温度",
+    "max_tokens": "最大 Token 数",
+    "system_prompt": "系统提示"
+  },
+  "history": {
+    "title": "聊天历史",
+    "empty": "没有聊天历史",
+    "clear_all": "清空所有历史",
+    "delete_conversation": "删除对话",
+    "confirm_delete": "确定要删除这个对话吗？"
+  }
+}

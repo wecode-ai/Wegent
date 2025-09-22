@@ -1,0 +1,57 @@
+{
+  "title": "设置",
+  "sections": {
+    "general": "通用",
+    "appearance": "外观",
+    "language": "语言",
+    "account": "账户",
+    "privacy": "隐私",
+    "advanced": "高级"
+  },
+  "general": {
+    "auto_save": "自动保存",
+    "notifications": "通知",
+    "sound": "音效",
+    "keyboard_shortcuts": "键盘快捷键"
+  },
+  "appearance": {
+    "theme": "主题",
+    "dark_mode": "深色模式",
+    "light_mode": "浅色模式",
+    "auto_mode": "自动（跟随系统）",
+    "font_size": "字体大小",
+    "font_family": "字体"
+  },
+  "language": {
+    "current": "当前语言",
+    "select": "选择语言",
+    "auto_detect": "自动检测",
+    "restart_required": "需要重启应用以应用语言更改"
+  },
+  "account": {
+    "profile": "个人资料",
+    "email": "邮箱",
+    "password": "Password",
+    "change_password": "修改Password",
+    "logout": "退出登录",
+    "delete_account": "删除账户"
+  },
+  "privacy": {
+    "data_collection": "数据收集",
+    "analytics": "分析",
+    "crash_reports": "崩溃报告",
+    "usage_statistics": "使用统计"
+  },
+  "advanced": {
+    "developer_mode": "开发者模式",
+    "debug_logs": "调试日志",
+    "reset_settings": "重置设置",
+    "export_settings": "导出设置",
+    "import_settings": "导入设置"
+  },
+  "actions": {
+    "save_changes": "保存更改",
+    "discard_changes": "放弃更改",
+    "reset_to_default": "恢复默认"
+  }
+}
