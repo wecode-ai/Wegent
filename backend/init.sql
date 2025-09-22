@@ -128,6 +128,17 @@ CREATE TABLE IF NOT EXISTS kinds (
     INDEX `idx_kind` (`kind`)
 );
 
+-- Create models table
+CREATE TABLE IF NOT EXISTS models (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    config JSON NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY `idx_model_name` (`name`)
+);
+
 -- Initialize user data (admin/admin)
 INSERT INTO `users` (`user_name`, `password_hash`, `email`) VALUES ('admin', '$2b$12$G251OMpmvmxn5LcRjFYzOeg6fkavMKu/U3Xzxmu0VhiY.Lk5RqbT.', 'admin@example.com');
 INSERT INTO `kinds` (`id`, `user_id`, `kind`, `name`, `namespace`, `json`, `is_active`, `created_at`, `updated_at`)

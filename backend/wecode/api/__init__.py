@@ -7,6 +7,7 @@ Internal API endpoints
 """
 from fastapi import APIRouter
 from wecode.api.auth import router as auth_router
+from wecode.api.models import router as models_router
 import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is monkey-patched at import time
 import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
 import wecode.api.user_service_patch    # noqa: F401  patch app.services.user without modifying source
@@ -14,6 +15,8 @@ import wecode.api.user_service_patch    # noqa: F401  patch app.services.user wi
 internal_router = APIRouter(prefix="/internal")
 
 internal_router.include_router(auth_router, prefix="/auth", tags=["internal"])
+# models 路由已在模块内声明 prefix="/models"，此处直接挂载，完整路径为 /internal/models
+internal_router.include_router(models_router, prefix="/models", tags=["internal"])
 
 # Optional: auto-mount internal_router to the global api_router without modifying app/api/api.py
 # This keeps open-source files unchanged. If app.api.router.api_router is importable at this time,

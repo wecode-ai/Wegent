@@ -14,3 +14,8 @@ import wecode.api
 ```bash
 rm -rf wecode/
 ```
+
+### 3. 删除内部表
+```bash
+删除 init.sql 中models表
+```
