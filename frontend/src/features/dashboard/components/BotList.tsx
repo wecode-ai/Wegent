@@ -6,8 +6,8 @@
 import '@/features/common/scrollbar.css'
 
 import { useEffect, useState } from 'react'
-import { Button, Listbox } from '@headlessui/react'
-import { CheckIcon, PencilIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { Button } from '@headlessui/react'
+import { PencilIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { RiRobot2Line } from 'react-icons/ri'
 import LoadingState from '@/features/common/LoadingState'
 import { Bot } from '@/types/api'

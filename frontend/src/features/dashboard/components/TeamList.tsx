@@ -111,7 +111,7 @@ export default function TeamList() {
                                   </>
                                 )}
                                 {team.bots.length > 0 ? (
-                                  <div className="flex items-center max-w-[60%] overflow-hidden whitespace-nowrap text-ellipsis ml-4">
+                                  <div className="flex items-center max-w-[80%] overflow-hidden whitespace-nowrap text-ellipsis ml-4">
                                     {team.bots.map((bot, idx) => (
                                       <span key={`${bot.bot_id}-${idx}`} className="flex items-center">
                                         <RiRobot2Line className="w-4 h-4 mr-0.5 text-gray-400" />
