@@ -18,7 +18,7 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
     Model service class
     """
 
-    def create_model(self, db: Session, *, obj_in: ModelCreate, current_user: Optional[User] = None) -> Model:
+    def create_model(self, db: Session, *, obj_in: ModelCreate, current_user: User) -> Model:
         """
         Create a Model entry
         """
@@ -38,7 +38,7 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
         return db_obj
 
     def get_models(
-        self, db: Session, *, skip: int = 0, limit: int = 100, current_user: Optional[User] = None
+        self, db: Session, *, skip: int = 0, limit: int = 100, current_user: User
     ) -> List[Model]:
         """
         Get active models (paginated)
@@ -52,20 +52,20 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
             .all()
         )
 
-    def count_active_models(self, db: Session, *, current_user: Optional[User] = None) -> int:
+    def count_active_models(self, db: Session, *, current_user: User) -> int:
         """
         Count active models
         """
         return db.query(Model).filter(Model.is_active == True).count()  # noqa: E712
 
-    def list_model_names(self, db: Session, *, current_user: Optional[User] = None, agent_name: str) -> List[Dict[str, str]]:
+    def list_model_names(self, db: Session, *, current_user: User, agent_name: str) -> List[Dict[str, str]]:
         """
         List all active model names as [{'name': str}, ...]
         """
         rows = db.query(Model.name).filter(Model.is_active == True).all()  # noqa: E712
         return [{"name": r[0]} for r in rows]
 
-    def get_by_id(self, db: Session, *, model_id: int, current_user: Optional[User] = None) -> Optional[Model]:
+    def get_by_id(self, db: Session, *, model_id: int, current_user: User) -> Optional[Model]:
         """
         Get model by ID (only active)
         """
@@ -79,7 +79,7 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
         return model
 
     def update_model(
-        self, db: Session, *, model_id: int, obj_in: ModelUpdate, current_user: Optional[User] = None
+        self, db: Session, *, model_id: int, obj_in: ModelUpdate, current_user:User
     ) -> Model:
         """
         Update model by ID
@@ -102,13 +102,12 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
         db.refresh(model)
         return model
 
-    def delete_model(self, db: Session, *, model_id: int, current_user: Optional[User] = None) -> None:
+    def delete_model(self, db: Session, *, model_id: int, current_user: User) -> None:
         """
         Soft delete model by setting is_active to False
         """
         model = self.get_by_id(db, model_id=model_id)
-        model.is_active = False
-        db.add(model)
+        db.delete(model)
         db.commit()
 
 
