@@ -16,7 +16,7 @@ import { fetchTeamsList, deleteTeam } from '../services/teams'
 import { fetchBotsList } from '../services/bots'
 import TeamEdit from './TeamEdit'
 import { App } from 'antd'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 
 export default function TeamList() {
   const { message } = App.useApp()
@@ -136,23 +136,23 @@ export default function TeamList() {
                             </div>
                           </div>
                           <div className="flex items-center space-x-2">
-                            <button
-                              type="button"
-                              className="p-1 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
-                              title="Edit Team"
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<PencilIcon className="w-4 h-4 text-gray-400" />}
                               onClick={() => handleEditTeam(team)}
-                            >
-                              <PencilIcon className="w-4 h-4" />
-                            </button>
-                            <button
-                              type="button"
-                              className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
-                              title="Delete Team"
-                              disabled={deletingId === team.id}
+                              title="Edit Team"
+                              style={{ padding: '4px' }}
+                            />
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<TrashIcon className="w-4 h-4 text-gray-400" />}
                               onClick={() => handleDelete(team.id)}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </button>
+                              disabled={deletingId === team.id}
+                              title="Delete Team"
+                              style={{ padding: '4px' }}
+                            />
                           </div>
                         </div>
                         {teams.length > 1 && team.id !== teams[teams.length - 1].id && (
@@ -169,13 +169,16 @@ export default function TeamList() {
                   <div className="flex justify-center">
                     <Button
                       onClick={handleCreateTeam}
-                      className="flex items-center space-x-1 mt-2 mb-2 px-2 py-0.5 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
-                      style={{ backgroundColor: 'rgb(112,167,215)' }}
+                      type="primary"
+                      size="small"
+                      icon={
+                        <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                        </svg>
+                      }
+                      style={{ margin: '8px 0' }}
                     >
-                      <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                      </svg>
-                      <span>New Team</span>
+                      New Team
                     </Button>
                   </div>
                 </>

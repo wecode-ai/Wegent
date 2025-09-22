@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { Radio, Transfer, Select } from 'antd'
+import { Radio, Transfer, Select, Button } from 'antd'
 import type { TransferDirection } from 'antd/es/transfer'
 import type { MessageInstance } from 'antd/es/message/interface'
 import Image from 'next/image'
@@ -64,7 +64,7 @@ export default function TeamEdit(props: TeamEditProps) {
             title: 'Pipeline',
             desc: 'Agents are chained one after another, where each agent refines or transforms the result in turn.',
             bullets: [],
-            image: '/dashboard/sequential.png',
+            image: '/settings/sequential.png',
           },
         }
       case 'route':
@@ -73,7 +73,7 @@ export default function TeamEdit(props: TeamEditProps) {
             title: 'Route',
             desc: 'A central agent acts as a message router, directing communication between agents without them talking directiy.',
             bullets: [],
-            image: '/dashboard/router.png',
+            image: '/settings/router.png',
           }
         }
       case 'coordinate':
@@ -82,7 +82,7 @@ export default function TeamEdit(props: TeamEditProps) {
             title: 'Coordinate',
             desc: 'A network pattern is the structure that defines how agents connect, exchange information, and coordinate with each other.',
             bullets: [],
-            image: '/dashboard/network.png',
+            image: '/settings/network.png',
           }
         }
       case 'collaborate':
@@ -91,7 +91,7 @@ export default function TeamEdit(props: TeamEditProps) {
             title: 'Collaborate',
             desc: 'Multiple agents work simultaneously on tasks, often sharing results to speed up processing.',
             bullets: [],
-            image: '/dashboard/parallel.png',
+            image: '/settings/parallel.png',
           }
         }
       default:
@@ -306,24 +306,28 @@ export default function TeamEdit(props: TeamEditProps) {
     <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-[#161b22] rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
       {/* 顶部工具条：Back + Save */}
       <div className="w-full flex items-center justify-between mb-4 mt-4">
-        <button
+        <Button
+          type="text"
           onClick={() => setEditingTeamId(null)}
-          className="flex items-center text-gray-400 hover:text-white text-base"
+          className="flex items-center"
           title="Back"
+          icon={
+            <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
+          }
+          style={{ color: '#9ca3af', padding: '0', height: 'auto' }}
         >
-          <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
           Back
-        </button>
-        <button
+        </Button>
+        <Button
+          type="primary"
           onClick={handleSave}
           disabled={saving}
-          className="flex items-center space-x-1 px-4 py-1 text-sm font-medium text-gray-900 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ backgroundColor: !saving ? 'rgb(112,167,215)' : '#6b7280' }}
+          loading={saving}
         >
-          {saving ? (editingTeam ? 'Saving...' : 'Creating...') : 'save'}
-        </button>
+          {saving ? (editingTeam ? 'Saving...' : 'Creating...') : 'Save'}
+        </Button>
       </div>
 
       {/* 双栏布局：左（名称、模式、说明图片）、右（LeaderBot、Bots 穿梭框） */}

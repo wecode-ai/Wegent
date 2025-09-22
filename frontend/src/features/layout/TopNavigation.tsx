@@ -7,6 +7,7 @@
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { paths } from '@/config/paths'
+import { Button } from 'antd'
 
 type TopNavigationProps = {
   activePage: 'tasks' | 'dashboard'
@@ -22,7 +23,7 @@ export default function TopNavigation({ activePage, showLogo = false, children }
   }
 
   const navigateToDashboard = () => {
-    router.push(paths.dashboard.root.getHref())
+    router.push(paths.settings.root.getHref())
   }
 
   return (
@@ -43,18 +44,32 @@ export default function TopNavigation({ activePage, showLogo = false, children }
       
       {/* Navigation Links */}
       <div className="flex space-x-6">
-        <button
-          className={`text-lg font-medium ${activePage === 'tasks' ? 'text-white' : 'text-gray-400 hover:text-white'}`}
+        <Button
+          type="link"
           onClick={navigateToTasks}
+          style={{
+            fontSize: '1.125rem',
+            fontWeight: 500,
+            color: activePage === 'tasks' ? '#ffffff' : '#9ca3af',
+            padding: '0',
+            height: 'auto'
+          }}
         >
           Tasks
-        </button>
-        <button
-          className={`text-lg font-medium ${activePage === 'dashboard' ? 'text-white' : 'text-gray-400 hover:text-white'}`}
+        </Button>
+        <Button
+          type="link"
           onClick={navigateToDashboard}
+          style={{
+            fontSize: '1.125rem',
+            fontWeight: 500,
+            color: activePage === 'dashboard' ? '#ffffff' : '#9ca3af',
+            padding: '0',
+            height: 'auto'
+          }}
         >
-          Dashboard
-        </button>
+          Settings
+        </Button>
       </div>
       
       {/* Right side content (user avatar, etc.) */}

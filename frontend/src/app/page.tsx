@@ -5,7 +5,7 @@
 'use client'
 
 import { useRouter } from 'next/navigation'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -40,8 +40,8 @@ export default function Home() {
         </p>
         <Button
           onClick={handleGetStarted}
-          className="inline-flex items-center justify-center px-6 py-3 text-base font-medium text-white rounded-md focus:outline-none focus:outline-white/25 focus:border-transparent transition-colors duration-200 hover:opacity-90"
-          style={{ backgroundColor: 'rgb(112,167,215)' }}
+          type="primary"
+          size="middle"
         >
           {user ? t('navigation.dashboard') : t('actions.create')}
         </Button>

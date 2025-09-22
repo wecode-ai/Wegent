@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Button, Listbox } from '@headlessui/react'
+import { Button } from 'antd'
+import { Listbox } from '@headlessui/react'
 import { CheckIcon } from '@heroicons/react/24/outline'
 
 import { Bot } from '@/types/api'
@@ -110,11 +111,13 @@ const BotEdit: React.FC<BotEditProps> = ({
           </svg>
           Back
         </button>
+
         <Button
           onClick={handleSave}
           disabled={botSaving}
-          className="flex items-center space-x-1 px-4 py-1 text-sm font-medium text-gray-900 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ backgroundColor: !botSaving ? 'rgb(112,167,215)' : '#6b7280' }}
+          loading={botSaving}
+          type="primary"
+          size="small"
         >
           {botSaving ? 'saving...' : 'save'}
         </Button>

@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useRef, useEffect } from 'react'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
@@ -92,15 +92,15 @@ export default function TaskSidebar() {
         <div className="px-3 mb-3">
           <Button
             onClick={handleNewAgentClick}
-            className="w-full flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded transition-colors duration-200 text-gray-900"
-            style={{ backgroundColor: 'rgb(112,167,215)' }}
+            type="primary"
+            size="small"
+            icon={<PlusIcon className="h-3 w-3" />}
+            style={{ width: '100%' }}
           >
-            <PlusIcon className="h-3.5 w-3.5 mr-1.5" />
             New Task
           </Button>
         </div>
 
-        {/* Tasks Section */}
         {/* Tasks Section */}
         <div
           className="flex-1 px-3 overflow-y-auto custom-scrollbar"
@@ -134,11 +134,13 @@ export default function TaskSidebar() {
         {/* Settings */}
         <div className="p-3 border-t border-[#21262d]">
           <Button
-            onClick={() => router.push(paths.dashboard.root.getHref())}
-            className="flex items-center space-x-1.5 text-gray-400 hover:text-white text-xs"
+            onClick={() => router.push(paths.settings.root.getHref())}
+            type="link"
+            size="small"
+            icon={<Cog6ToothIcon className="h-3.5 w-3.5" />}
+            style={{ color: '#9ca3af' }}
           >
-            <Cog6ToothIcon className="h-3.5 w-3.5" />
-            <span>Settings</span>
+            Settings
           </Button>
         </div>
       </div>

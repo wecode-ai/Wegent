@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 import { useRouter } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
@@ -110,15 +110,15 @@ export default function LoginForm() {
                 className="appearance-none block w-full px-3 py-2 pr-10 border border-[#30363d] rounded-md shadow-sm bg-[#0d1117] text-white placeholder-gray-500 focus:outline-none focus:outline-white/25 focus:border-transparent sm:text-sm"
                 placeholder="Enter password"
               />
-              <button
+               <button
                 type="button"
                 className="absolute inset-y-0 right-0 pr-3 flex items-center"
                 onClick={() => setShowPassword(!showPassword)}
               >
                 {showPassword ? (
-                  <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
-                ) : (
                   <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
+                ) : (
+                  <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
                 )}
               </button>
             </div>
@@ -128,10 +128,11 @@ export default function LoginForm() {
 
           <div>
             <Button
-              type="submit"
+              type="primary"
+              htmlType="submit"
               disabled={isLoading}
-              className="w-full flex justify-center py-2 px-4 border border-transparent text-sm font-medium rounded-md text-white focus:outline-none focus:outline-white/25 focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed transition-colors duration-200"
-              style={{ backgroundColor: 'rgb(112,167,215)' }}
+              loading={isLoading}
+              style={{ width: '100%' }}
             >
               {isLoading ? (
                 <div className="flex items-center">
@@ -172,14 +173,14 @@ export default function LoginForm() {
       {showOidcLogin && (
         <div className={showPasswordLogin ? "mt-6" : ""}>
           <div className="grid grid-cols-1 gap-3">
-            <button
-              type="button"
+            <Button
+              type="default"
               onClick={() => window.location.href = '/api/auth/oidc/login'}
-              className="w-full inline-flex justify-center py-2 px-4 border border-[#30363d] rounded-md shadow-sm bg-[#0d1117] text-sm font-medium text-gray-300 hover:bg-[#21262d] focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-[#161b22] focus:ring-blue-500 transition-colors duration-200"
+              style={{ width: '100%', justifyContent: 'center', display: 'flex', alignItems: 'center' }}
+              icon={<img src="/ocid.png" alt="OIDC Login" className="w-5 h-5 mr-2" />}
             >
-              <img src="/ocid.png" alt="OIDC Login" className="w-5 h-5 mr-2" />
               {oidcLoginText}
-            </button>
+            </Button>
           </div>
         </div>
       )}

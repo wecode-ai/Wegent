@@ -15,7 +15,7 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 import { sendMessage } from '../service/messageService'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useTaskContext } from '../contexts/taskContext'
-import { App } from 'antd'
+import { App, Button } from 'antd'
 
 interface ChatAreaProps {
   teams: Team[]
@@ -129,14 +129,18 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                     />
                   )}
                 </div>
-                <button
-                  type="button"
+                <Button
+                  type="text"
                   onClick={handleSendMessage}
                   disabled={isLoading}
-                  className="relative top-1 text-gray-500 hover:text-white transition-colors duration-200 disabled:opacity-50"
-                >
-                  <ArrowTurnDownLeftIcon className="w-4 h-4" />
-                </button>
+                  icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
+                  style={{
+                    color: '#6b7280',
+                    padding: '0',
+                    marginBottom: '4px',
+                    height: 'auto'
+                  }}
+                />
               </div>
             </div>
 
@@ -185,14 +189,18 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                   />
                 )}
               </div>
-              <button
-                type="button"
+              <Button
+                type="text"
                 onClick={handleSendMessage}
                 disabled={isLoading}
-                className="relative top-1 text-gray-500 hover:text-white transition-colors duration-200 disabled:opacity-50"
-              >
-                <ArrowTurnDownLeftIcon className="w-4 h-4" />
-              </button>
+                icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
+                style={{
+                  color: '#6b7280',
+                  padding: '0',
+                  marginBottom: '4px',
+                  height: 'auto'
+                }}
+              />
             </div>
           </div>
 

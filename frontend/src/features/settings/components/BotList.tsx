@@ -6,7 +6,7 @@
 import '@/features/common/scrollbar.css'
 
 import { useEffect, useState } from 'react'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 import { PencilIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { RiRobot2Line } from 'react-icons/ri'
 import LoadingState from '@/features/common/LoadingState'
@@ -97,20 +97,22 @@ export default function BotList() {
                             </div>
                           </div>
                           <div className="flex items-center space-x-2">
-                            <button
-                              className="p-1 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
-                              title="Edit Bot"
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<PencilIcon className="w-4 h-4 text-gray-400" />}
                               onClick={() => handleEditBot(bot)}
-                            >
-                              <PencilIcon className="w-4 h-4" />
-                            </button>
-                            <button
+                              title="Edit Bot"
+                              style={{ padding: '4px' }}
+                            />
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<TrashIcon className="w-4 h-4 text-gray-400" />}
                               onClick={() => handleDeleteBot(bot.id)}
-                              className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
                               title="Delete Bot"
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </button>
+                              style={{ padding: '4px' }}
+                            />
                           </div>
                         </div>
                         {bots.length > 1 && bot.id !== bots[bots.length - 1].id && (
@@ -127,11 +129,12 @@ export default function BotList() {
                   <div className="flex justify-center ">
                     <Button
                       onClick={handleCreateBot}
-                      className="flex items-center space-x-1 mt-2 mb-2 px-2 py-0.5 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
-                      style={{ backgroundColor: 'rgb(112,167,215)' }}
+                      type="primary"
+                      size="small"
+                      icon={<PlusIcon className="w-3 h-3" />}
+                      style={{ margin: '8px 0' }}
                     >
-                      <PlusIcon className="w-3 h-3" />
-                      <span>New Bot</span>
+                      New Bot
                     </Button>
                   </div>
                 </>
