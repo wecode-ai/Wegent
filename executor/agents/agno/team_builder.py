@@ -94,6 +94,7 @@ class TeamBuilder:
             db=self.db,
             telemetry=False,
             show_members_responses=True,
+            share_member_interactions=True,
             **mode_config
         )
 

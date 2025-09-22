@@ -16,10 +16,12 @@ import BotList from '@/features/dashboard/components/BotList'
 import TabParamSync from '@/features/dashboard/components/TabParamSync'
 import TeamList from '@/features/dashboard/components/TeamList'
 import { UserProvider, useUser } from '@/features/common/UserContext'
+import { useTranslation } from '@/hooks/useTranslation'
 
 function DashboardContent() {
   const [tabIndex, setTabIndex] = useState(0)
   const router = useRouter()
+  const { t } = useTranslation('common')
 
   // Tab index to name mapping
   const tabIndexToName: Record<number, string> = {
