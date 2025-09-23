@@ -17,6 +17,7 @@ import { useUser } from '@/features/common/UserContext'
 import { fetchGitInfo, saveGitToken, deleteGitToken } from '../services/github'
 import { App } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
+import { primarySmallButtonWithMarginStyle } from '@/features/common/buttonStyles'
 
 export default function GitHubIntegration() {
   const { t } = useTranslation('common')
@@ -149,7 +150,7 @@ export default function GitHubIntegration() {
                 type="primary"
                 size="small"
                 icon={<PlusIcon className="w-3 h-3" />}
-                style={{ margin: '8px 0' }}
+                style={primarySmallButtonWithMarginStyle}
               >
                 {t('integrations.new_token')}
               </Button>

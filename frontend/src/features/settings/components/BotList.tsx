@@ -15,6 +15,7 @@ import { fetchBotsList, createBot, updateBot, deleteBot } from '../services/bots
 import { App } from 'antd'
 import BotEdit from './BotEdit'
 import { useTranslation } from '@/hooks/useTranslation'
+import { primarySmallButtonWithMarginStyle } from '@/features/common/buttonStyles'
 
 export default function BotList() {
   const { t } = useTranslation('common')
@@ -134,7 +135,7 @@ export default function BotList() {
                       type="primary"
                       size="small"
                       icon={<PlusIcon className="w-3 h-3" />}
-                      style={{ margin: '8px 0' }}
+                      style={primarySmallButtonWithMarginStyle}
                     >
                       {t('bots.new_bot')}
                     </Button>

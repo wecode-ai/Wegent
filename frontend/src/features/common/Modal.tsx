@@ -44,10 +44,10 @@ export default function Modal({
       
       {/* Full-screen container for centering */}
       <div className="fixed inset-0 flex items-center justify-center p-4">
-        <Dialog.Panel className={`bg-[#161b22] border border-[#30363d] rounded-lg p-6 w-full ${maxWidthClass}`}>
+        <Dialog.Panel className={`bg-theme-surface border border-theme rounded-lg p-6 w-full transition-colors ${maxWidthClass}`}>
           {/* Header with title and close button */}
           <div className="mb-4">
-            <Dialog.Title className="text-xl font-bold text-white text-center">
+            <Dialog.Title className="text-xl font-bold text-theme-primary text-center transition-colors">
               {title}
             </Dialog.Title>
           </div>

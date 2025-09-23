@@ -15,7 +15,7 @@
     "cancel": "Cancel",
     "delete": "Delete",
     "edit": "Edit",
-    "start": "Start",
+    "start": "Get Start!",
     "create": "Create",
     "creating": "Creating...",
     "confirm": "Confirm",
@@ -26,7 +26,8 @@
     "filter": "Filter",
     "refresh": "Refresh",
     "loading": "Loading...",
-    "retry": "Retry"
+    "retry": "Retry",
+    "switch_theme": "Switch Theme"
   },
   "status": {
     "success": "Success",
@@ -45,6 +46,7 @@
   },
   "login": {
     "username": "Username",
+    "password": "Password",
     "enter_username": "Enter username",
     "enter_password": "Enter password",
     "logging_in": "Logging in...",

@@ -76,7 +76,7 @@ export default function LoginForm() {
       {showPasswordLogin && (
         <form className="space-y-6" onSubmit={handleSubmit}>
           <div>
-            <label htmlFor="user_name" className="block text-sm font-medium text-gray-300">
+            <label htmlFor="user_name" className="block text-sm font-medium text-theme-secondary transition-colors">
               {t('login.username')}
             </label>
             <div className="mt-1">
@@ -88,15 +88,15 @@ export default function LoginForm() {
                 required
                 value={formData.user_name}
                 onChange={handleInputChange}
-                className="appearance-none block w-full px-3 py-2 border border-[#30363d] rounded-md shadow-sm bg-[#0d1117] text-white placeholder-gray-500 focus:outline-none focus:outline-white/25 focus:border-transparent sm:text-sm"
+                className="appearance-none block w-full px-3 py-2 border border-theme rounded-md shadow-sm bg-theme-input text-theme-primary placeholder-theme focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent sm:text-sm transition-colors"
                 placeholder={t('login.enter_username')}
               />
             </div>
           </div>
 
           <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-300">
-              password
+            <label htmlFor="password" className="block text-sm font-medium text-theme-secondary transition-colors">
+              {t('login.password')}
             </label>
             <div className="mt-1 relative">
               <input
@@ -107,7 +107,7 @@ export default function LoginForm() {
                 required
                 value={formData.password}
                 onChange={handleInputChange}
-                className="appearance-none block w-full px-3 py-2 pr-10 border border-[#30363d] rounded-md shadow-sm bg-[#0d1117] text-white placeholder-gray-500 focus:outline-none focus:outline-white/25 focus:border-transparent sm:text-sm"
+                className="appearance-none block w-full px-3 py-2 pr-10 border border-theme rounded-md shadow-sm bg-theme-input text-theme-primary placeholder-theme focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent sm:text-sm transition-colors"
                 placeholder={t('login.enter_password')}
               />
                <button
@@ -116,9 +116,9 @@ export default function LoginForm() {
                 onClick={() => setShowPassword(!showPassword)}
               >
                 {showPassword ? (
-                  <EyeIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
+                  <EyeIcon className="h-5 w-5 text-theme-muted hover:text-theme-secondary transition-colors" />
                 ) : (
-                  <EyeSlashIcon className="h-5 w-5 text-gray-400 hover:text-gray-300" />
+                  <EyeSlashIcon className="h-5 w-5 text-theme-muted hover:text-theme-secondary transition-colors" />
                 )}
               </button>
             </div>
@@ -136,7 +136,7 @@ export default function LoginForm() {
             >
               {isLoading ? (
                 <div className="flex items-center">
-                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-theme-contrast" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
@@ -149,7 +149,7 @@ export default function LoginForm() {
           </div>
 
           {/* 显示测试账号信息 */}
-          <div className="mt-6 text-center text-xs text-gray-500">
+          <div className="mt-6 text-center text-xs text-theme-muted">
             {t('login.test_account')}
           </div>
         </form>
@@ -160,10 +160,12 @@ export default function LoginForm() {
         <div className="mt-6">
           <div className="relative">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-600" />
+              <div className="w-full border-t border-theme" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-[#161b22] text-gray-400">{t('login.or_continue_with')}</span>
+              <span className="px-2 bg-theme-surface text-theme-secondary transition-colors">
+                {t('login.or_continue_with')}
+              </span>
             </div>
           </div>
         </div>
