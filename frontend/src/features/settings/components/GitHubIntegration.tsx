@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react'
 import '@/features/common/scrollbar.css'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 import { PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
 import { FiGithub, FiGitlab } from 'react-icons/fi'
 import Modal from '@/features/common/Modal'
@@ -112,20 +112,22 @@ export default function GitHubIntegration() {
                       </div>
                     </div>
                     <div className="flex items-center space-x-2">
-                      <button
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<PencilIcon className="w-4 h-4 text-gray-400" />}
                         onClick={() => handleEdit(info)}
-                        className="p-1 text-gray-400 hover:text-white hover:bg-[#21262d] rounded transition-colors duration-200"
                         title="Edit Token"
-                      >
-                        <PencilIcon className="w-4 h-4" />
-                      </button>
-                      <button
+                        style={{ padding: '4px' }}
+                      />
+                      <Button
+                        type="text"
+                        size="small"
+                        icon={<TrashIcon className="w-4 h-4 text-gray-400" />}
                         onClick={() => handleDelete(info.git_domain)}
-                        className="p-1 text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded transition-colors duration-200"
                         title="Delete"
-                      >
-                        <TrashIcon className="w-4 h-4" />
-                      </button>
+                        style={{ padding: '4px' }}
+                      />
                     </div>
                   </div>
                   {platforms.length > 1 && info.git_domain !== platforms[platforms.length - 1].git_domain && (
@@ -142,11 +144,12 @@ export default function GitHubIntegration() {
             <div className="flex justify-center">
               <Button
                 onClick={handleAdd}
-                className="flex items-center space-x-1 mt-2 mb-2 px-2 py-0.5 text-xs font-medium text-gray-900 rounded transition-colors duration-200"
-                style={{ backgroundColor: 'rgb(112,167,215)' }}
+                type="primary"
+                size="small"
+                icon={<PlusIcon className="w-3 h-3" />}
+                style={{ margin: '8px 0' }}
               >
-                <PlusIcon className="w-3 h-3" />
-                <span>New Token</span>
+                New Token
               </Button>
             </div>
           </>

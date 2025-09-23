@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react'
-import { Button, Listbox } from '@headlessui/react'
+import { Button } from 'antd'
+import { Listbox } from '@headlessui/react'
 import { CheckIcon } from '@heroicons/react/24/outline'
 
 import { Bot } from '@/types/api'
@@ -110,11 +111,13 @@ const BotEdit: React.FC<BotEditProps> = ({
           </svg>
           Back
         </button>
+
         <Button
           onClick={handleSave}
           disabled={botSaving}
-          className="flex items-center space-x-1 px-4 py-1 text-sm font-medium text-gray-900 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ backgroundColor: !botSaving ? 'rgb(112,167,215)' : '#6b7280' }}
+          loading={botSaving}
+          type="primary"
+          size="small"
         >
           {botSaving ? 'saving...' : 'save'}
         </Button>
@@ -204,7 +207,7 @@ const BotEdit: React.FC<BotEditProps> = ({
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="AI-powered code review and assistance"
-            className="w-full h-full flex-1 px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base min-h-[300px] max-h-none md:min-h-[440px] resize-none"
+            className="w-full h-full flex-1 px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base min-h-[300px] max-h-none md:min-h-[440px] resize-none custom-scrollbar"
           />
         </div>
         {/* 右侧 Agent Config + MCP Config */}
@@ -240,7 +243,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 }`
                     : ''
               }
-              className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-base h-full min-h-[100px] md:min-h-[200px] max-h-[450px] md:max-h-full"
+              className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-base h-full min-h-[100px] md:min-h-[200px] max-h-[450px] md:max-h-full custom-scrollbar"
             />
           </div>
           <div className="flex-1 flex flex-col">
@@ -254,7 +257,7 @@ const BotEdit: React.FC<BotEditProps> = ({
               value={mcpConfig}
               onChange={(e) => setMcpConfig(e.target.value)}
               rows={4}
-              className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-base h-full min-h-[100px] md:min-h-[200px] max-h-[450px] md:max-h-full"
+              className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-base h-full min-h-[100px] md:min-h-[200px] max-h-[450px] md:max-h-full custom-scrollbar"
               placeholder={`{
   "github": {
     "command": "docker",

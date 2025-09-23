@@ -49,7 +49,7 @@ export default function BranchSelector({
     }
     let ignore = false
     setLoading(true)
-    githubApis.getBranches(selectedRepo.git_repo)
+    githubApis.getBranches(selectedRepo)
       .then((data) => {
         if (!ignore) {
           setBranches(data)

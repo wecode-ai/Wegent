@@ -9,6 +9,7 @@ import { useTaskContext } from '../contexts/taskContext'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { RiRobot2Line } from 'react-icons/ri'
 import { FiCopy, FiCheck } from 'react-icons/fi'
+import { Button } from 'antd'
 
 import MarkdownEditor from '@uiw/react-markdown-editor'
 
@@ -55,17 +56,22 @@ const CopyButton = ({ content }: { content: string }) => {
   return (
     <>
       {/* 坐下角复制按钮 */}
-      <button
+      <Button
+        type="text"
         onClick={handleCopy}
-        className="absolute bottom-0 left-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-gray-400 hover:text-white bg-gray-800 rounded-md"
+        className="absolute bottom-0 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
         title="Copy markdown content"
-      >
-        {copied ? (
-          <FiCheck className="w-4 h-4 text-green-400" />
-        ) : (
-          <FiCopy className="w-4 h-4" />
-        )}
-      </button>
+        icon={copied ?
+          <FiCheck className="w-4 h-4 text-green-400" /> :
+          <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
+        }
+        style={{
+          padding: '4px',
+          background: '#1e2937',
+          height: 'auto',
+          minWidth: 'auto'
+        }}
+      />
     </>
   );
 };

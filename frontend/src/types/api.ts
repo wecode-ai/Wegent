@@ -145,6 +145,8 @@ export interface GitRepoInfo {
   git_url: string
   git_domain: string
   private: boolean
+  /** Type: "github" | "gitlab" */
+  type: 'github' | 'gitlab'
 }
 
 

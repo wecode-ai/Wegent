@@ -21,18 +21,18 @@ export const paths = {
     task: {
         getHref: () => '/tasks',
     },
-    dashboard: {
+    settings: {
         root: {
-            getHref: () => '/dashboard',
+            getHref: () => '/settings',
         },
         integrations: {
-            getHref: () => '/dashboard',
+            getHref: () => '/settings',
         },
         bot: {
-            getHref: () => '/dashboard?tab=bot',
+            getHref: () => '/settings?tab=bot',
         },
         team: {
-            getHref: () => '/dashboard?tab=team',
+            getHref: () => '/settings?tab=team',
         },
     },
 } as const;

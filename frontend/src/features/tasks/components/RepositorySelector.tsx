@@ -11,7 +11,8 @@ import { GitRepoInfo, TaskDetail } from '@/types/api'
 import { useUser } from '@/features/common/UserContext'
 import { useRouter } from 'next/navigation'
 import Modal from '@/features/common/Modal'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
+import { paths } from '@/config/paths'
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null
@@ -68,27 +69,16 @@ export default function RepositorySelector({
   }
 
   const handleSearch = (query: string) => {
-    if (searchTimeout.current) {
-      clearTimeout(searchTimeout.current)
-    }
-    if (!query) {
-      // 清空搜索时恢复全部仓库
-      handleLoadRepos()
-      return
-    }
-    searchTimeout.current = setTimeout(() => {
-      setLoading(true)
-      githubApis.searchRepositories(query)
-        .then((data) => {
-          setRepos(data)
-          setError(null)
-        })
-        .catch(() => {
-          setError('Failed to search repositories')
-          message.error('Failed to search repositories')
-        })
-        .finally(() => setLoading(false))
-    }, 300)
+    githubApis.searchRepositories(query)
+      .then((data) => {
+        setRepos(data)
+        setError(null)
+      })
+      .catch(() => {
+        setError('Failed to search repositories')
+        message.error('Failed to search repositories')
+      })
+      .finally(() => setLoading(false))
   }
 
   const handleChange = (value: { value: number; label: React.ReactNode } | undefined) => {
@@ -144,11 +134,11 @@ export default function RepositorySelector({
   // 提取 onClick 逻辑
   const handleModalClick = () => {
     setIsModalOpen(false)
-    router.push('/dashboard?tab=integrations')
+    router.push(paths.settings.integrations.getHref())
   }
 
   // Git 图标独立于 Select，不再需要 renderLabel
-  
+
   return (
     <div className="flex items-center space-x-1 min-w-0">
       <FiGithub className="w-3 h-3 text-gray-500 flex-shrink-0" />
@@ -197,9 +187,10 @@ export default function RepositorySelector({
             Before you can start using the app, please complete the setup below first!
           </p>
           <Button
-            className="flex-1 min-w-0 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors duration-200 text-gray-900 bg-[#70a7d7] hover:bg-[#5b8bb3] focus:outline-none"
-            style={{ boxShadow: 'none' }}
+            type="primary"
+            size="small"
             onClick={handleModalClick}
+            style={{ minWidth: '100px' }}
           >
             Set Token
           </Button>

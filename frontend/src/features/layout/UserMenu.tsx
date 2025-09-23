@@ -5,6 +5,7 @@
 'use client'
 
 import { Menu } from '@headlessui/react'
+import { Button } from 'antd'
 
 import { useUser } from '@/features/common/UserContext'
 
@@ -22,17 +23,24 @@ export default function UserMenu({ position = 'right-6' }: UserMenuProps) {
         <Menu.Button className="px-3 py-1 bg-[#21262d] border border-[#30363d] rounded-full flex items-center justify-center text-sm font-medium hover:bg-[#30363d] transition-colors duration-200">
           {userDisplayName}
         </Menu.Button>
-        <Menu.Items className="absolute top-full mt-2 right-0 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-30 min-w-[120px] py-1 focus:outline-none">
+        <Menu.Items className="absolute top-full mt-2 right-0 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-30 min-w-[100px] py-1 focus:outline-none">
           <Menu.Item>
             {({ active }) => (
-              <button
+              <Button
+                type="text"
                 onClick={logout}
-                className={`w-full px-3 py-2 text-xs text-left text-white transition-colors duration-150 ${
-                  active ? 'bg-[#21262d]' : ''
-                }`}
+                style={{
+                  width: '100%',
+                  textAlign: 'left',
+                  padding: '0px 4px',
+                  fontSize: '0.75rem',
+                  color: '#ffffff',
+                  background: active ? '#21262d' : 'transparent',
+                  height: 'auto'
+                }}
               >
                 Logout
-              </button>
+              </Button>
             )}
           </Menu.Item>
         </Menu.Items>

@@ -5,6 +5,7 @@
 import type { Metadata } from 'next'
 import './globals.css'
 import 'antd/dist/reset.css'
+import '@/features/common/scrollbar.css'
 import MockInit from '@/features/mock/MockInit'
 import AntdProvider from './AntdProvider'
 import AuthGuard from '@/features/common/AuthGuard'

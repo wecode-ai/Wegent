@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect } from 'react'
 import Modal from '@/features/common/Modal'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 import { useUser } from '@/features/common/UserContext'
 import { App } from 'antd'
 import { fetchGitInfo, saveGitToken } from '../services/github'
@@ -196,7 +196,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
       <div className="flex space-x-3 mt-6">
         <Button
           onClick={onClose}
-          className="flex-1 px-2 py-1 text-xs bg-[#21262d] hover:bg-[#30363d] text-gray-300 border border-[#30363d] rounded transition-colors duration-200"
+          type="default"
+          size="small"
+          style={{ flex: 1 }}
         >
           Cancel
         </Button>
@@ -207,15 +209,10 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
             !token.trim() ||
             tokenSaving
           }
-          className="flex-1 px-2 py-1 text-xs font-medium text-gray-900 rounded transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{
-            backgroundColor:
-              ((type === 'github' || domain.trim()) &&
-                token.trim() &&
-                !tokenSaving)
-                ? 'rgb(112,167,215)'
-                : '#6b7280'
-          }}
+          type="primary"
+          size="small"
+          loading={tokenSaving}
+          style={{ flex: 1 }}
         >
           {tokenSaving ? 'Saving...' : 'Save Token'}
         </Button>

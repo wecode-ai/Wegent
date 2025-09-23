@@ -5,7 +5,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 import { useRouter } from 'next/navigation'
 import Modal from '@/features/common/Modal'
 import { paths } from '@/config/paths'
@@ -61,11 +61,12 @@ export default function BeginnerGuideModal({
         {needSetTeam && (
           <div className="flex flex-row items-center justify-center gap-2 w-full mb-2">
             <Button
-              className="flex-1 min-w-0 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors duration-200 text-gray-900 bg-[#70a7d7] hover:bg-[#5b8bb3] focus:outline-none"
-              style={{ boxShadow: 'none' }}
+              type="primary"
+              size="small"
+              style={{ minWidth: '100px' }}
               onClick={() => {
                 handleClose()
-                router.push('/dashboard?tab=team')
+                router.push(paths.settings.team.getHref())
               }}
             >
               Create Team
