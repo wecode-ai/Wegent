@@ -306,20 +306,16 @@ export default function TeamEdit(props: TeamEditProps) {
     <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-[#161b22] rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
       {/* 顶部工具条：Back + Save */}
       <div className="w-full flex items-center justify-between mb-4 mt-4">
-        <Button
-          type="text"
+        <button
           onClick={() => setEditingTeamId(null)}
-          className="flex items-center"
+          className="flex items-center text-gray-400 hover:text-white text-base"
           title="Back"
-          icon={
-            <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-              <path d="M15 6l-6 6 6 6" />
-            </svg>
-          }
-          style={{ color: '#9ca3af', padding: '0', height: 'auto' }}
         >
+          <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+            <path d="M15 6l-6 6 6 6"/>
+          </svg>
           Back
-        </Button>
+        </button>
         <Button
           type="primary"
           onClick={handleSave}
@@ -448,7 +444,8 @@ export default function TeamEdit(props: TeamEditProps) {
                     <div className="flex items-center">
 
                       <EditOutlined
-                        className="ml-2 text-gray-400 hover:text-white cursor-pointer"
+                        className="ml-2 text-gray-700 hover:text-gray-200 cursor-pointer"
+                        // style={{ color: '#30363d' }}
                         onClick={(e) => {
                           e.stopPropagation(); // 阻止事件冒泡，避免触发选择
                           setEditingBotId(Number(item.key));
@@ -469,7 +466,7 @@ export default function TeamEdit(props: TeamEditProps) {
                 locale={{
                   itemUnit: 'item',
                   itemsUnit: 'items',
-                  notFoundContent: 'no data',
+                  notFoundContent: 'no bot',
                 }}
               />
             </div>
