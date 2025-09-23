@@ -21,6 +21,7 @@ from app.models.bot import Bot
 from app.models.task import Task
 from app.models.team import Team
 from app.models.subtask import Subtask
+from app.models.agent import Agent
 from app.models.model import Model
 
 __all__ = [
@@ -39,4 +40,5 @@ __all__ = [
     "Team",
     "Subtask",
     "Model",
+    "Agent",
 ]

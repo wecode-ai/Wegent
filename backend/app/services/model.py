@@ -2,13 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
+import json
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.model import Model
 from app.models.user import User
+from app.models.agent import Agent
 from app.schemas.model import ModelCreate, ModelUpdate
 from app.services.base import BaseService
 
@@ -60,10 +62,43 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
 
     def list_model_names(self, db: Session, *, current_user: User, agent_name: str) -> List[Dict[str, str]]:
         """
-        List all active model names as [{'name': str}, ...]
+        列出可用的模型名称 [{'name': str}, ...]
+        简化逻辑：
+        - 校验 agent_name 是否存在，不存在报 400
+        - 从 agent.config.mode_filter 读取白名单；缺失/空 => 允许全部
+        - 白名单匹配 Model.config.env.model
         """
-        rows = db.query(Model.name).filter(Model.is_active == True).all()  # noqa: E712
-        return [{"name": r[0]} for r in rows]
+        # 校验并取出 agent 配置
+        agent_row = db.query(Agent.id, Agent.config).filter(Agent.name == agent_name).first()
+        if not agent_row:
+            raise HTTPException(status_code=400, detail="Agent not found")
+        _, agent_cfg = agent_row
+
+        # 归一化 mode_filter 为 List[str] 或空（空代表允许全部）
+        mode_filter: List[str] = []
+        if isinstance(agent_cfg, dict):
+            mf = agent_cfg.get("mode_filter")
+            if isinstance(mf, list):
+                mode_filter = [str(x) for x in mf if x]
+
+        allow_all = len(mode_filter) == 0
+        models = db.query(Model).filter(Model.is_active == True).all()  # noqa: E712
+
+        if allow_all:
+            return [{"name": m.name} for m in models]
+
+        allowed = set(mode_filter)
+
+        def provider(m: Model) -> Optional[str]:
+            cfg = getattr(m, "config", None)
+            if not isinstance(cfg, dict):
+                return None
+            env = cfg.get("env")
+            if not isinstance(env, dict):
+                return None
+            return env.get("model")
+
+        return [{"name": m.name} for m in models if (provider(m) in allowed)]
 
     def get_by_id(self, db: Session, *, model_id: int, current_user: User) -> Optional[Model]:
         """
