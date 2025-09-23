@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Task Manager Backend"
     VERSION: str = "1.0.0"
     API_PREFIX: str = "/api"
+    # API docs toggle (from env ENABLE_API_DOCS, default True)
+    ENABLE_API_DOCS: bool = True
     
     # Database configuration
     DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"

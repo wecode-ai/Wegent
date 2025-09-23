@@ -24,13 +24,19 @@ from app.db.base import Base
 from app.models import *  # noqa: F401,F403
 
 def create_app():
+    # Toggle API docs/OpenAPI via environment (settings.ENABLE_API_DOCS, default True)
+    enable_docs = settings.ENABLE_API_DOCS
+    openapi_url = f"{settings.API_PREFIX}/openapi.json" if enable_docs else None
+    docs_url = f"{settings.API_PREFIX}/docs" if enable_docs else None
+    redoc_url = f"{settings.API_PREFIX}/redoc" if enable_docs else None
+
     app = FastAPI(
         title=settings.PROJECT_NAME,
         description="Task Management Backend System API",
         version=settings.VERSION,
-        openapi_url=f"{settings.API_PREFIX}/openapi.json",
-        docs_url=f"{settings.API_PREFIX}/docs",
-        redoc_url=f"{settings.API_PREFIX}/redoc",
+        openapi_url=openapi_url,
+        docs_url=docs_url,
+        redoc_url=redoc_url,
     )
     
     # Initialize logging
