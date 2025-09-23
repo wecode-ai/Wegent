@@ -2,8 +2,6 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import base64
-import json
 import httpx
 import logging
 from typing import Dict, Any, Optional
@@ -56,22 +54,12 @@ class OIDCService:
                 async with httpx.AsyncClient() as client:
                     response = await client.get(jwks_uri, timeout=10)
                     response.raise_for_status()
-                    jwks = response.json()
-
-                    if not jwks.get('keys'):
-                        logger.error(f"JWKS response missing non-empty 'keys' array: {jwks}")
-                        raise HTTPException(status_code=502, detail="OIDC JWKS payload invalid")
-
-                    self._jwks = jwks
-                    key_ids = [key.get('kid') for key in jwks['keys'] if key.get('kid')]
-                    logger.info(f"Successfully retrieved JWKS: {jwks_uri}; kids={key_ids}")
+                    self._jwks = response.json()
+                    logger.info(f"Successfully retrieved JWKS: {jwks_uri}")
             except Exception as e:
                 logger.error(f"Failed to retrieve JWKS: {e}")
                 raise HTTPException(status_code=502, detail=f"Unable to retrieve JWKS: {e}")
-        else:
-            key_ids = [key.get('kid') for key in self._jwks.get('keys', []) if key.get('kid')]
-            logger.debug(f"Using cached JWKS; kids={key_ids}")
-
+        
         return self._jwks
     
     async def get_authorization_url(self, state: str, nonce: str) -> str:
@@ -122,62 +110,26 @@ class OIDCService:
     
     async def verify_id_token(self, id_token: str, nonce: str) -> Dict[str, Any]:
         """Verify ID Token"""
-        metadata = await self.get_metadata()
-        last_error: Optional[Exception] = None
-        header = self._parse_jwt_header(id_token)
-        logger.debug(
-            "ID token header parsed: alg=%s, kid=%s",
-            header.get('alg'),
-            header.get('kid'),
-        )
-
-        for attempt in (1, 2):
-            try:
-                jwks = await self.get_jwks()
-                logger.debug(
-                    "Attempt %s verifying ID token with JWKS kids=%s",
-                    attempt,
-                    [key.get('kid') for key in jwks.get('keys', []) if key.get('kid')]
-                )
-                claims = jwt.decode(
-                    id_token,
-                    jwks,
-                    claims_options={
-                        'iss': {'essential': True, 'value': metadata['issuer']},
-                        'aud': {'essential': True, 'value': self.client_id},
-                        'nonce': {'essential': True, 'value': nonce}
-                    }
-                )
-                logger.info(f"ID Token verification successful: sub={claims.get('sub')}")
-                return claims
-            except Exception as e:
-                last_error = e
-
-                should_retry = (
-                    attempt == 1
-                    and 'Invalid JSON Web Key Set' in str(e)
-                )
-
-                if should_retry:
-                    logger.warning("Cached JWKS appears invalid, forcing refresh before retrying decode")
-                    self._jwks = None
-                    continue
-
-                break
-
-        logger.error(f"ID Token verification id_token: {id_token}, failed: {last_error}")
-        raise HTTPException(status_code=400, detail=f"ID Token verification failed: {last_error}")
-
-    @staticmethod
-    def _parse_jwt_header(token: str) -> Dict[str, Any]:
         try:
-            header_segment = token.split('.')[0]
-            padded_segment = header_segment + '=' * (-len(header_segment) % 4)
-            decoded = base64.urlsafe_b64decode(padded_segment.encode('utf-8'))
-            return json.loads(decoded)
-        except Exception as exc:
-            logger.debug(f"Failed to parse JWT header: {exc}")
-            return {}
+            metadata = await self.get_metadata()
+            jwks = await self.get_jwks()
+            
+            claims = jwt.decode(
+                id_token,
+                jwks,
+                claims_options={
+                    'iss': {'essential': True, 'value': metadata['issuer']},
+                    'aud': {'essential': True, 'value': self.client_id},
+                    'nonce': {'essential': True, 'value': nonce}
+                }
+            )
+            
+            logger.info(f"ID Token verification successful: sub={claims.get('sub')}")
+            return claims
+            
+        except Exception as e:
+            logger.error(f"ID Token verification id_token: {id_token}, failed: {e}")
+            raise HTTPException(status_code=400, detail=f"ID Token verification failed: {e}")
     
     async def get_user_info(self, access_token: str) -> Dict[str, Any]:
         """Get User Information"""

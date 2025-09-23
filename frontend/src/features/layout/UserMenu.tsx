@@ -11,21 +11,21 @@ import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
 
 type UserMenuProps = {
-  className?: string
+  position?: string
 }
 
-export default function UserMenu({ className = '' }: UserMenuProps) {
+export default function UserMenu({ position = 'right-6' }: UserMenuProps) {
   const { t } = useTranslation('common')
   const { user, logout } = useUser()
   const userDisplayName = user?.user_name || t('user.default_name')
 
   return (
-    <div className={className}>
+    <div className={`absolute ${position}`}>
       <Menu as="div" className="relative">
-        <Menu.Button className="px-3 py-1 bg-theme-interactive border border-theme rounded-full flex items-center justify-center text-sm font-medium text-theme-primary transition-colors duration-200 hover:bg-theme-interactive">
+        <Menu.Button className="px-3 py-1 bg-[#21262d] border border-[#30363d] rounded-full flex items-center justify-center text-sm font-medium hover:bg-[#30363d] transition-colors duration-200">
           {userDisplayName}
         </Menu.Button>
-        <Menu.Items className="absolute top-full mt-2 right-0 bg-theme-surface border border-theme rounded-lg shadow-xl z-30 min-w-[120px] py-1 focus:outline-none transition-colors">
+        <Menu.Items className="absolute top-full mt-2 right-0 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-30 min-w-[100px] py-1 focus:outline-none">
           <Menu.Item>
             {({ active }) => (
               <Button
@@ -35,9 +35,9 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
                   width: '100%',
                   textAlign: 'left',
                   padding: '0px 4px',
-                  fontSize: '0.8rem',
-                  color: 'var(--color-text-primary)',
-                  background: active ? 'var(--color-bg-interactive)' : 'transparent',
+                  fontSize: '0.75rem',
+                  color: '#ffffff',
+                  background: active ? '#21262d' : 'transparent',
                   height: 'auto'
                 }}
               >

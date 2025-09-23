@@ -25,17 +25,17 @@ export default function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-theme-app text-theme-primary transition-colors relative">
+    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-[#0d1117] relative">
       {/* 语言切换器 */}
       <div className="absolute top-4 right-4">
         <LanguageSwitcher />
       </div>
       
       <div className="w-full max-w-2xl text-center">
-        <h1 className="text-5xl font-medium text-theme-primary mb-4">
+        <h1 className="text-5xl font-medium text-white mb-4">
           {t('extension.name')}
         </h1>
-        <p className="text-xl text-theme-secondary mb-12 font-light">
+        <p className="text-xl text-gray-400 mb-12 font-light">
           {t('extension.description')}
         </p>
         <Button

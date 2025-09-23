@@ -26,8 +26,7 @@
     "filter": "Filter",
     "refresh": "Refresh",
     "loading": "Loading...",
-    "retry": "Retry",
-    "switch_theme": "Switch Theme"
+    "retry": "Retry"
   },
   "status": {
     "success": "Success",

@@ -26,8 +26,8 @@ const BotEdit: React.FC<BotEditProps> = ({
   const { t } = useTranslation()
   // 选项本地定义
   const agentOptions = [
-    { value: 'Agno', label: 'Agno' },
     { value: 'ClaudeCode', label: 'ClaudeCode' },
+    { value: 'Agno', label: 'Agno' },
     { value: 'GeminiCli', label: 'GeminiCli', disabled: true },
     { value: 'Codex', label: 'Codex', disabled: true }
   ]
@@ -39,7 +39,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     : bots.find(b => b.id === editingBotId) || null
 
   const [botName, setBotName] = useState(editingBot?.name || '')
-  const [agentName, setAgentName] = useState(editingBot?.agent_name || 'Agno')
+  const [agentName, setAgentName] = useState(editingBot?.agent_name || '')
   const [agentConfig, setAgentConfig] = useState(
     editingBot?.agent_config ? JSON.stringify(editingBot.agent_config, null, 2) : ''
   )
@@ -51,7 +51,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   // 切换编辑对象时重置表单
   useEffect(() => {
     setBotName(editingBot?.name || '')
-    setAgentName(editingBot?.agent_name || 'Agno')
+    setAgentName(editingBot?.agent_name || '')
     setAgentConfig(editingBot?.agent_config ? JSON.stringify(editingBot.agent_config, null, 2) : '')
     setPrompt(editingBot?.system_prompt || '')
     setMcpConfig(editingBot?.mcp_servers ? JSON.stringify(editingBot.mcp_servers, null, 2) : '')
@@ -101,11 +101,11 @@ const BotEdit: React.FC<BotEditProps> = ({
   }
 
   return (
-    <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-theme-surface text-theme-primary border border-theme rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh] transition-colors">
+    <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-[#161b22] rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
       <div className="w-full flex items-center justify-between mb-4 mt-4">
         <button
           onClick={() => setEditingBotId(null)}
-          className="flex items-center text-theme-secondary hover:text-theme-primary text-base font-medium transition-colors"
+          className="flex items-center text-gray-400 hover:text-white text-base"
           title={t('common.back')}
         >
           <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
@@ -119,7 +119,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           disabled={botSaving}
           loading={botSaving}
           type="primary"
-          size="middle"
+          size="small"
         >
           {botSaving ? t('actions.saving') : t('actions.save')}
         </Button>
@@ -128,7 +128,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         {/* Bot Name */}
         <div className="w-full md:basis-1/2 flex flex-col justify-end">
           <div className="flex items-center mb-1">
-            <label className="block text-lg font-semibold text-theme-primary">
+            <label className="block text-lg font-semibold text-white">
                 {t('bot.name')} <span className="text-red-400">*</span>
             </label>
           </div>
@@ -137,26 +137,26 @@ const BotEdit: React.FC<BotEditProps> = ({
             value={botName}
             onChange={(e) => setBotName(e.target.value)}
             placeholder="Code Assistant"
-            className="w-full px-4 py-2 bg-theme-input border border-theme rounded-md text-theme-primary placeholder-theme focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent text-base transition-colors"
+            className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base"
             style={{ marginTop: '0' }}
           />
         </div>
         {/* Agent */}
         <div className="w-full md:basis-1/2 flex flex-col">
           <div className="flex items-center mb-1">
-            <label className="block text-lg font-semibold text-theme-primary">
+            <label className="block text-lg font-semibold text-white">
               {t('bot.agent')} <span className="text-red-400">*</span>
             </label>
           </div>
           <Listbox value={agentName} onChange={setAgentName}>
             <div className="relative">
-              <Listbox.Button className="w-full px-4 py-2 bg-theme-input border border-theme rounded-md text-left text-theme-primary placeholder-theme focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent text-base transition-colors">
+              <Listbox.Button className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-left text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base">
                 {agentName
                   ? agentOptions.find(opt => opt.value === agentName)?.label
-                  : <span className="text-theme-secondary">{t('bot.agent_select')}</span>
+                  : <span className="text-gray-400">{t('bot.agent_select')}</span>
                 }
               </Listbox.Button>
-              <Listbox.Options className="absolute z-10 mt-1 w-full bg-theme-surface border border-theme rounded-md shadow-lg max-h-60 py-1 text-base focus:outline-none sm:text-sm transition-colors">
+              <Listbox.Options className="absolute z-10 mt-1 w-full bg-[#161b22] rounded-md shadow-lg max-h-60 py-1 text-base ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
                 {agentOptions.map((option) => (
                   <Listbox.Option
                     key={option.value}
@@ -165,25 +165,25 @@ const BotEdit: React.FC<BotEditProps> = ({
                     className={({ active, selected, disabled }) =>
                       `select-none relative py-2 pl-3 pr-4 ${
                         disabled
-                          ? 'text-theme-secondary cursor-not-allowed opacity-60'
+                          ? 'text-gray-500 bg-[#161b22] cursor-not-allowed opacity-60'
                           : active
-                            ? 'bg-theme-interactive text-theme-primary cursor-pointer'
-                            : 'text-theme-primary cursor-pointer'
+                            ? 'bg-[#21262d] text-white cursor-pointer'
+                            : 'text-gray-300 cursor-pointer'
                       } ${selected ? 'font-semibold' : ''}`
                     }
                   >
                     {({ selected, disabled }) => (
                       <>
                         <span
-                          className={`block truncate ${selected ? 'text-theme-primary' : ''} ${disabled ? 'opacity-70' : ''}`}
+                          className={`block truncate ${selected ? 'text-white' : ''} ${disabled ? 'opacity-70' : ''}`}
                         >
                           {option.label}
                           {option.disabled && (
-                            <span className="ml-2 text-xs text-theme-secondary">(Incoming)</span>
+                            <span className="ml-2 text-xs text-gray-500">(Incoming)</span>
                           )}
                         </span>
                         {selected && !disabled ? (
-                          <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-[var(--color-primary)]">
+                          <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-blue-400">
                             <CheckIcon className="w-4 h-4" aria-hidden="true" />
                           </span>
                         ) : null}
@@ -200,26 +200,26 @@ const BotEdit: React.FC<BotEditProps> = ({
         {/* 左侧 Prompt */}
         <div className="w-full md:w-3/5 min-w-0 flex flex-col flex-1 h-full relative">
           <div className="flex items-center mb-1">
-            <label className="block text-base font-medium text-theme-primary">
+            <label className="block text-base font-medium text-white">
               {t('bot.prompt')}
             </label>
-            <span className="text-xs text-theme-secondary ml-2">AI prompt</span>
+            <span className="text-xs text-gray-500 ml-2">AI prompt</span>
           </div>
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="AI-powered code review and assistance"
-            className="w-full h-full flex-1 px-4 py-2 bg-theme-input border border-theme rounded-md text-theme-primary placeholder-theme focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent text-base min-h-[300px] max-h-none md:min-h-[440px] resize-none custom-scrollbar transition-colors"
+            className="w-full h-full flex-1 px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base min-h-[300px] max-h-none md:min-h-[440px] resize-none custom-scrollbar"
           />
         </div>
         {/* 右侧 Agent Config + MCP Config */}
         <div className="w-full md:w-2/5 min-w-0 space-y-3 h-full flex flex-col flex-1">
           <div className="flex-1 flex flex-col">
             <div className="flex items-center mb-1">
-              <label className="block text-base font-medium text-theme-primary">
+              <label className="block text-base font-medium text-white">
                 {t('bot.agent_config')} <span className="text-red-400">*</span>
               </label>
-              <span className="text-xs text-theme-secondary ml-2">JSON format required</span>
+              <span className="text-xs text-gray-500 ml-2">JSON format required</span>
             </div>
             <textarea
               value={agentConfig}
@@ -245,21 +245,21 @@ const BotEdit: React.FC<BotEditProps> = ({
 }`
                     : ''
               }
-              className="w-full px-4 py-2 bg-theme-input border border-theme rounded-md text-theme-primary placeholder-theme focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent font-mono text-base h-full min-h-[100px] md:min-h-[200px] max-h-[450px] md:max-h-full custom-scrollbar transition-colors"
+              className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-base h-full min-h-[100px] md:min-h-[200px] max-h-[450px] md:max-h-full custom-scrollbar"
             />
           </div>
           <div className="flex-1 flex flex-col">
             <div className="flex items-center mb-1">
-              <label className="block text-base font-medium text-theme-primary">
+              <label className="block text-base font-medium text-white">
                 {t('bot.mcp_config')}
               </label>
-              <span className="text-xs text-theme-secondary ml-2">JSON format required</span>
+              <span className="text-xs text-gray-500 ml-2">JSON format required</span>
             </div>
             <textarea
               value={mcpConfig}
               onChange={(e) => setMcpConfig(e.target.value)}
               rows={4}
-              className="w-full px-4 py-2 bg-theme-input border border-theme rounded-md text-theme-primary placeholder-theme focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent font-mono text-base h-full min-h-[100px] md:min-h-[200px] max-h-[450px] md:max-h-full custom-scrollbar transition-colors"
+              className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-base h-full min-h-[100px] md:min-h-[200px] max-h-[450px] md:max-h-full custom-scrollbar"
               placeholder={`{
   "github": {
     "command": "docker",

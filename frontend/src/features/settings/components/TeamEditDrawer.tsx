@@ -53,13 +53,8 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
         }
       }}
       styles={{
-        header: {
-          display: 'none',
-          backgroundColor: 'var(--color-bg-surface)',
-          color: 'var(--color-text-primary)',
-          borderBottom: `1px solid var(--color-border)`,
-        },
-        body: { backgroundColor: 'var(--color-bg-app)', padding: 0 },
+        header: { display: "none", backgroundColor: '#161b22', color: 'white', borderBottom: '1px solid #30363d' },
+        body: { backgroundColor: '#0d1117', padding: 0 },
       }}
     >
       {editingBotId !== null && (
@@ -83,7 +78,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
             />
           </div>
           
-          <Divider style={{ margin: '24px 0', borderColor: 'var(--color-border)' }} />
+          <Divider style={{ margin: '24px 0', borderColor: '#30363d' }} />
           
           <div style={{ padding: '0 24px' }}>
             <div style={{
@@ -92,7 +87,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               alignItems: 'center',
               marginBottom: '16px'
             }}>
-              <Typography.Title level={4} style={{ color: 'var(--color-text-primary)', margin: 0 }}>
+              <Typography.Title level={4} style={{ color: 'white', margin: 0 }}>
                   {t("team.bot_prompt")}
               </Typography.Title>
               <Button
@@ -109,10 +104,10 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               rows={6}
               placeholder={t('team.input_bot_prompt')}
               style={{
-                backgroundColor: 'var(--color-bg-interactive)',
-                color: 'var(--color-text-primary)',
-                borderColor: 'var(--color-border)',
-                fontSize: '16px'
+                backgroundColor: '#161b22',
+                color: 'white',
+                borderColor: '#30363d',
+                fontSize: '16px' // 增大 placeholder 字体大小
               }}
             />
           </div>
