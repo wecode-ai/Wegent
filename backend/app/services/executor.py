@@ -213,17 +213,26 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
             team = db.query(Team).filter(Team.id == subtask.team_id).first()
             team_bots = team.bots if team and team.bots else []
             
+            pipeline_index = 0
+            if team.workflow.get('mode') == "pipeline":
+                for i, related in enumerate(related_subtasks):
+                    if related.role == SubtaskRole.USER:
+                        continue
+                    if related.id == subtask.id:
+                        break
+                    pipeline_index = pipeline_index + 1
+                
+
             for index, bot_id in enumerate(subtask.bot_ids):
                 bot = db.query(Bot).filter(Bot.id == bot_id).first()
                 team_bot_info = team_bots[index] if index < len(team_bots) else {}
                 
-
                 bot_prompt = bot.system_prompt
                 if team.workflow.get('mode') == "pipeline":
-                     bot_prompt += f"\n{subtask.prompt}"
-                else :
-                    if team_bot_info.get('bot_prompt'):
-                        bot_prompt += f"\n{team_bot_info['bot_prompt']}"
+                     team_bot_info = team_bots[pipeline_index] if pipeline_index < len(team_bots) else {}
+
+                if team_bot_info.get('bot_prompt'):
+                    bot_prompt += f"\n{team_bot_info['bot_prompt']}"
                 
                 # Resolve agent_config:
                 # If bot.agent_config has top-level {"private_model": "<model_name>"},
@@ -231,6 +240,7 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 agent_config_data = bot.agent_config
                 try:
                     if isinstance(bot.agent_config, dict):
+                        # 在不改变原有逻辑情况下，前后端约定使用private_model
                         private_model_name = bot.agent_config.get("private_model")
                         if isinstance(private_model_name, str) and private_model_name.strip():
                             model_row = db.query(Model).filter(Model.name == private_model_name.strip()).first()

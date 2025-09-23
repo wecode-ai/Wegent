@@ -430,7 +430,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                     title=f"{task.title} - {bot.name}",
                     bot_ids=[bot.id],
                     role=SubtaskRole.ASSISTANT,
-                    prompt=bot_info.get('bot_prompt'),
+                    prompt="",
                     status=SubtaskStatus.PENDING,
                     progress=0,
                     message_id=next_message_id,
