@@ -16,10 +16,12 @@ import {
 } from '@heroicons/react/24/outline'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import TaskListSection from './TaskListSection'
+import { useTranslation } from '@/hooks/useTranslation'
 
 
 
 export default function TaskSidebar() {
+  const { t } = useTranslation('common')
   const router = useRouter()
   const { tasks, setSelectedTask, loadMore, hasMore, loadingMore } = useTaskContext()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -82,7 +84,7 @@ export default function TaskSidebar() {
             <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
             <input
               type="text"
-              placeholder="Search task..."
+              placeholder={t('tasks.search_placeholder')}
               className="w-full pl-8 pr-2 py-1.5 bg-[#161b22] border border-[#30363d] rounded text-xs text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent"
             />
           </div>
@@ -97,7 +99,7 @@ export default function TaskSidebar() {
             icon={<PlusIcon className="h-3 w-3" />}
             style={{ width: '100%' }}
           >
-            New Task
+            {t('tasks.new_task')}
           </Button>
         </div>
 
@@ -107,28 +109,28 @@ export default function TaskSidebar() {
           ref={scrollRef}
         >
           {tasks.length === 0 ? (
-            <div className="text-center py-8 text-xs text-gray-400">No tasks</div>
+            <div className="text-center py-8 text-xs text-gray-400">{t('tasks.no_tasks')}</div>
           ) : (
             <>
               <TaskListSection
                 tasks={groupTasksByDate.today}
-                title="Today"
+                title={t('tasks.today')}
               />
               <TaskListSection
                 tasks={groupTasksByDate.thisWeek}
-                title="This Week"
+                title={t('tasks.this_week')}
               />
               <TaskListSection
                 tasks={groupTasksByDate.earlier}
-                title="Earlier"
+                title={t('tasks.earlier')}
               />
             </>
           )}
           {loadingMore && (
-            <div className="text-center py-2 text-xs text-gray-400">Loading...</div>
+            <div className="text-center py-2 text-xs text-gray-400">{t('tasks.loading')}</div>
           )}
           {!hasMore && tasks.length > 0 && (
-            <div className="text-center py-2 text-xs text-gray-400">No more tasks</div>
+            <div className="text-center py-2 text-xs text-gray-400">{t('tasks.no_more_tasks')}</div>
           )}
         </div>
         {/* Settings */}
@@ -140,7 +142,7 @@ export default function TaskSidebar() {
             icon={<Cog6ToothIcon className="h-3.5 w-3.5" />}
             style={{ color: '#9ca3af' }}
           >
-            Settings
+            {t('tasks.settings')}
           </Button>
         </div>
       </div>

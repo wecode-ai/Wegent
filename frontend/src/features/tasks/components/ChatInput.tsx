@@ -7,6 +7,7 @@
 import React, { useState } from 'react'
 import TextareaAutosize from 'react-textarea-autosize'
 import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface ChatInputProps {
   message: string
@@ -23,6 +24,7 @@ export default function ChatInput({
   isLoading,
   disabled = false,
 }: ChatInputProps) {
+  const { t } = useTranslation('common')
   const [isComposing, setIsComposing] = useState(false)
 
   const handleCompositionStart = () => {
@@ -50,7 +52,7 @@ export default function ChatInput({
         onKeyDown={handleKeyPress}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
-        placeholder="Ask Team to build, fix bugs, explore"
+        placeholder={t('chat.placeholder')}
         className={`w-full p-3 bg-transparent custom-scrollbar text-white text-base placeholder-gray-400 placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         disabled={disabled}
         minRows={3}

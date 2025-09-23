@@ -9,19 +9,15 @@
     "one": "1个项目",
     "other": "{{count}} 个项目"
   },
-  "navigation": {
-    "dashboard": "仪表板",
-    "tasks": "任务",
-    "settings": "设置",
-    "logout": "退出登录",
-    "login": "登录"
-  },
   "actions": {
     "save": "保存",
+    "saving": "保存中...",
     "cancel": "取消",
     "delete": "删除",
     "edit": "编辑",
     "create": "创建",
+    "creating": "创建中...",
+    "start": "开始",
     "confirm": "确认",
     "close": "关闭",
     "submit": "提交",
@@ -46,5 +42,140 @@
     "invalid_email": "请输入有效的邮箱地址",
     "min_length": "最少需要 {{min}} 个字符",
     "max_length": "最多允许 {{max}} 个字符"
+  },
+  "login": {
+    "username": "用户名",
+    "enter_username": "请输入用户名",
+    "enter_password": "请输入password",
+    "logging_in": "登录中...",
+    "test_account": "测试账号：admin / admin",
+    "or_continue_with": "或继续使用",
+    "oidc_login": "使用 OpenID Connect 登录"
+  },
+  "navigation": {
+    "tasks": "任务",
+    "settings": "设置"
+  },
+  "user": {
+    "default_name": "用户",
+    "logout": "退出登录",
+    "login": "登录"
+  },
+  "chat": {
+    "placeholder": "让团队构建、修复错误、探索"
+  },
+  "bots": {
+    "title": "AI 助手",
+    "description": "配置您的 AI 驱动开发助手",
+    "loading": "加载机器人中...",
+    "active": "活跃",
+    "inactive": "非活跃",
+    "edit": "编辑机器人",
+    "delete": "删除机器人",
+    "no_bots": "没有可用的机器人",
+    "new_bot": "新建机器人"
+  },
+  "bot": {
+    "name": "名称",
+    "agent": "智能体",
+    "agent_select": "选择智能体",
+    "prompt": "提示词",
+    "prompt_hint": "AI-powered assistant for development tasks",
+    "agent_config": "智能体配置",
+    "mcp_config": "MCP配置",
+    "save_prompt": "保存提示词"
+  },
+  "messages": {
+    "copy_markdown": "复制 Markdown 内容",
+    "task_status": "任务状态：",
+    "bot": "机器人",
+    "subtask_completed": "子任务已完成",
+    "subtask_failed": "子任务失败：",
+    "unknown_error": "未知错误"
+  },
+  "teams": {
+    "title": "团队列表",
+    "description": "查看所有团队及其机器人",
+    "loading": "加载团队中...",
+    "active": "活跃",
+    "inactive": "非活跃",
+    "no_bots": "没有机器人",
+    "edit": "编辑团队",
+    "delete": "删除团队",
+    "no_teams": "没有可用的团队",
+    "new_team": "新建团队"
+  },
+  "team": {
+    "name": "名称",
+    "name_placeholder": "团队名称",
+    "leader": "领导者",
+    "model": "模式",
+    "bots": "智能体列表",
+    "select_leader": "选择领导者",
+    "candidates": "候选人",
+    "in_team": "团队",
+    "no_data": "没有数据",
+    "bot_prompt": "追加提示词",
+    "input_bot_prompt": "追加提示词"
+  },
+  "team_model": {
+    "pipeline": "顺序",
+    "route": "路由",
+    "coordinate": "协作",
+    "collaborate": "并发"
+  },
+  "team_model_desc": {
+    "pipeline": "多个智能体按顺序串联，每一步在上一结果上继续加工或改写。",
+    "route": "由一个中枢智能体作为路由，根据上下文把消息分发给合适的智能体，彼此不直接通信。",
+    "coordinate": "网络式协作结构，定义智能体之间如何连接、交换信息并进行协调。",
+    "collaborate": "多个智能体并行处理任务，并共享中间结果以加速产出。"
+  },
+  "integrations": {
+    "title": "集成",
+    "description": "设置外部服务以增强您的工作流程",
+    "loading": "加载 Git 集成中...",
+    "edit_token": "编辑令牌",
+    "delete": "删除",
+    "no_tokens": "没有配置 Git 令牌",
+    "new_token": "新建令牌"
+  },
+  "auth": {
+    "login_title": "登录 WeCode AI",
+    "login_subtitle": "您的开发者 AI 助手",
+    "oidc_login_failed": "OIDC 登录失败：",
+    "login_success": "登录成功",
+    "loading": "加载中..."
+  },
+  "branches": {
+    "load_failed": "加载分支失败",
+    "select_repository": "选择仓库",
+    "select_branch": "选择分支",
+    "loading": "加载分支中...",
+    "no_branch": "未找到分支",
+    "default": "(默认)",
+    "set_token": "设置token"
+  },
+  "tasks": {
+    "search_placeholder": "搜索任务...",
+    "new_task": "新建任务",
+    "no_tasks": "没有任务",
+    "today": "今天",
+    "this_week": "本周",
+    "earlier": "更早",
+    "loading": "加载中...",
+    "no_more_tasks": "没有更多任务",
+    "settings": "设置"
+  },
+  "settings": {
+    "integrations": "集成",
+    "bot": "机器人",
+    "team": "团队"
+  },
+  "guide": {
+    "title": "欢迎",
+    "description": "在开始使用此应用之前，请先完成下面的设置！"
+  },
+  "common": {
+    "back": "返回"
   }
 }

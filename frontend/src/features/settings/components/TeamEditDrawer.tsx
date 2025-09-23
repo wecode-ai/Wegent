@@ -11,6 +11,8 @@ import type { MessageInstance } from 'antd/es/message/interface'
 import { Bot } from '@/types/api'
 import BotEdit from './BotEdit'
 
+import { useTranslation } from 'react-i18next'
+
 interface TeamEditDrawerProps {
   bots: Bot[]
   editingBotId: number | null
@@ -30,6 +32,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
     message,
   } = props
 
+  const { t } = useTranslation('common')
   const handleClose = () => {
     setVisible(false)
     setEditingBotId(null)
@@ -85,7 +88,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               marginBottom: '16px'
             }}>
               <Typography.Title level={4} style={{ color: 'white', margin: 0 }}>
-                Bot Prompt
+                  {t("team.bot_prompt")}
               </Typography.Title>
               <Button
                 type="primary"
@@ -94,12 +97,12 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
                   message.success('Bot Prompt saved!');
                 }}
               >
-                Save Prompt
+                {t('bot.save_prompt')}
               </Button>
             </div>
             <Input.TextArea
               rows={6}
-              placeholder="Enter your Bot Prompt in team"
+              placeholder={t('team.input_bot_prompt')}
               style={{
                 backgroundColor: '#161b22',
                 color: 'white',

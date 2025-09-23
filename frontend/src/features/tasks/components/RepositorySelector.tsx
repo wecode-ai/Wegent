@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation'
 import Modal from '@/features/common/Modal'
 import { Button } from 'antd'
 import { paths } from '@/config/paths'
+import { useTranslation } from 'react-i18next'
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null
@@ -137,6 +138,7 @@ export default function RepositorySelector({
     router.push(paths.settings.integrations.getHref())
   }
 
+  const { t } = useTranslation()
   // Git 图标独立于 Select，不再需要 renderLabel
 
   return (
@@ -147,7 +149,7 @@ export default function RepositorySelector({
         showSearch
         value={selectedRepo ? { value: selectedRepo.git_repo_id, label: selectedRepo.git_repo } : undefined}
         placeholder={
-          <span className="text-sx truncate h-2">Select Repository</span>
+          <span className="text-sx truncate h-2">{t('branches.select_repository')}</span>
         }
         className="repository-selector min-w-0 truncate"
         style={{ width: 'auto', maxWidth: 200, display: 'inline-block', paddingRight: 8 }}
@@ -179,12 +181,12 @@ export default function RepositorySelector({
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
-        title="Welcome!"
+        title={t('guide.title')}
         maxWidth="sm"
       >
         <div className="flex flex-col items-center">
           <p className="text-sm text-gray-300 mb-6 text-center leading-relaxed">
-            Before you can start using the app, please complete the setup below first!
+            {t('guide.description')}
           </p>
           <Button
             type="primary"
@@ -192,7 +194,7 @@ export default function RepositorySelector({
             onClick={handleModalClick}
             style={{ minWidth: '100px' }}
           >
-            Set Token
+            {t('branches.set_token')}
           </Button>
         </div>
       </Modal>

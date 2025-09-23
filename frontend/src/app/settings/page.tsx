@@ -69,8 +69,7 @@ function DashboardContent() {
                           : 'text-gray-400 hover:text-white hover:bg-[#21262d]'
                       }`
                     }>
-                      <PuzzlePieceIcon className="w-4 h-4" />
-                      <span>Integrations</span>
+                      <PuzzlePieceIcon className="w-4 h-4" /><span>{t('settings.integrations')}</span>
                     </Tab>
                     
                     <Tab className={({ selected }) =>
@@ -81,7 +80,7 @@ function DashboardContent() {
                       }`
                     }>
                       <RiRobot2Line className="w-4 h-4" />
-                      <span>Bot</span>
+                      <span>{t('settings.bot')}</span>
                     </Tab>
 
                     <Tab className={({ selected }) =>
@@ -92,7 +91,7 @@ function DashboardContent() {
                       }`
                     }>
                       <UsersIcon className="w-4 h-4" />
-                      <span>Team</span>
+                      <span>{t('settings.team')}</span>
                     </Tab>
                   </Tab.List>
                 </div>
