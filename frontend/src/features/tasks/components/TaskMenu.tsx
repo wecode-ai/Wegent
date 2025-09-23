@@ -26,11 +26,11 @@ export default function TaskMenu({
     <Menu as="div" className="relative">
       <Menu.Button
         onClick={(e) => e.stopPropagation()}
-        className="text-gray-500 hover:text-white p-1"
+        className="text-theme-secondary hover:text-theme-primary p-1 transition-colors"
       >
         <HiOutlineEllipsisVertical className="h-4 w-4" />
       </Menu.Button>
-      <Menu.Items className="absolute right-0 top-full mt-1 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-30 min-w-[120px] py-1">
+      <Menu.Items className="absolute right-0 top-full mt-1 bg-theme-surface border border-theme rounded-lg shadow-xl z-30 min-w-[140px] py-1 text-theme-primary transition-colors">
         <Menu.Item>
           {({ active }) => (
             <button
@@ -38,7 +38,7 @@ export default function TaskMenu({
                 e.stopPropagation()
                 handleCopyTaskId(taskId)
               }}
-              className={`w-full px-3 py-2 text-xs text-left text-white flex items-center ${active ? 'bg-[#21262d]' : ''}`}
+              className={`w-full px-3 py-2 text-xs text-left flex items-center transition-colors ${active ? 'bg-theme-interactive' : ''}`}
             >
               <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-2" />
               Copy TaskId
@@ -52,7 +52,7 @@ export default function TaskMenu({
                 e.stopPropagation()
                 handleDeleteTask(taskId)
               }}
-              className={`w-full px-3 py-2 text-xs text-left text-white flex items-center ${active ? 'bg-[#21262d]' : ''}`}
+              className={`w-full px-3 py-2 text-xs text-left flex items-center transition-colors ${active ? 'bg-theme-interactive' : ''}`}
             >
               <TrashIcon className="h-3.5 w-3.5 mr-2" />
               Delete Task

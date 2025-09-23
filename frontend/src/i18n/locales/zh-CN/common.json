@@ -26,7 +26,8 @@
     "filter": "筛选",
     "refresh": "刷新",
     "loading": "加载中...",
-    "retry": "重试"
+    "retry": "重试",
+    "switch_theme": "切换主题"
   },
   "status": {
     "success": "成功",

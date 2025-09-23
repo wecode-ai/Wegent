@@ -29,7 +29,7 @@ export default function TopNavigation({ activePage, showLogo = false, children }
   }
 
   return (
-    <div className="flex items-center justify-center px-6 py-10 relative">
+    <div className="flex items-center justify-center px-6 py-6 lg:py-8 relative text-theme-primary transition-colors">
       {/* Logo - only shown when showLogo is true */}
       {showLogo && (
         <div className="absolute left-16 top-1/2 -translate-y-1/2 flex items-center">
@@ -52,7 +52,7 @@ export default function TopNavigation({ activePage, showLogo = false, children }
           style={{
             fontSize: '1.125rem',
             fontWeight: 500,
-            color: activePage === 'tasks' ? '#ffffff' : '#9ca3af',
+            color: activePage === 'tasks' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
             padding: '0',
             height: 'auto'
           }}
@@ -65,7 +65,7 @@ export default function TopNavigation({ activePage, showLogo = false, children }
           style={{
             fontSize: '1.125rem',
             fontWeight: 500,
-            color: activePage === 'dashboard' ? '#ffffff' : '#9ca3af',
+            color: activePage === 'dashboard' ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
             padding: '0',
             height: 'auto'
           }}
@@ -75,7 +75,9 @@ export default function TopNavigation({ activePage, showLogo = false, children }
       </div>
       
       {/* Right side content (user avatar, etc.) */}
-      {children}
+      <div className="absolute right-6 top-1/2 -translate-y-1/2 flex items-center gap-3">
+        {children}
+      </div>
     </div>
   )
 }

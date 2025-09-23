@@ -16,7 +16,7 @@ export default function LogoHeader() {
         height={48}
         className="object-contain"
       />
-      <h2 className="text-3xl font-medium text-white">
+      <h2 className="text-3xl font-medium text-theme-primary transition-colors">
         {t('auth.login_title')}
       </h2>
     </div>
@@ -28,7 +28,7 @@ export default function LogoHeader() {
 export function LogoSubTitle() {
   const { t } = useTranslation('common')
   return (
-    <p className="mt-2 text-center text-sm text-gray-400 font-light">
+    <p className="mt-2 text-center text-sm text-theme-secondary transition-colors font-light">
       {t('auth.login_subtitle')}
     </p>
   )
