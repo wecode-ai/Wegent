@@ -43,7 +43,7 @@ export default function Home() {
           type="primary"
           size="middle"
         >
-          {user ? t('navigation.dashboard') : t('actions.create')}
+          {user ? t('navigation.dashboard') : t('actions.start')}
         </Button>
       </div>
     </main>

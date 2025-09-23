@@ -17,8 +17,10 @@ import { fetchBotsList } from '../services/bots'
 import TeamEdit from './TeamEdit'
 import { App } from 'antd'
 import { Button } from 'antd'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export default function TeamList() {
+  const { t } = useTranslation('common')
   const { message } = App.useApp()
   const [teams, setTeams] = useState<Team[]>([])
   const [bots, setBots] = useState<Bot[]>([])
@@ -35,7 +37,7 @@ export default function TeamList() {
         setTeams(teamsData)
         setBots(botsData)
       } catch (e) {
-        message.error('Failed to load teams or bots')
+        message.error(t('teams.loading'))
       } finally {
         setIsLoading(false)
       }
@@ -57,7 +59,7 @@ export default function TeamList() {
       await deleteTeam(teamId)
       setTeams(prev => prev.filter(team => team.id !== teamId))
     } catch (e) {
-      message.error('Failed to delete team')
+      message.error(t('teams.delete'))
     } finally {
       setDeletingId(null)
     }
@@ -67,12 +69,12 @@ export default function TeamList() {
     <>
       <div className="space-y-3">
         <div>
-          <h2 className="text-xl font-semibold text-white mb-1">Team List</h2>
-          <p className="text-sm text-gray-400 mb-1">View all teams and their bots</p>
+          <h2 className="text-xl font-semibold text-white mb-1">{t('teams.title')}</h2>
+          <p className="text-sm text-gray-400 mb-1">{t('teams.description')}</p>
         </div>
         <div className={`bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-w-5xl max-h-[70vh]'}`}>
           {isLoading ? (
-            <LoadingState fullScreen={false} message="Loading teams..." />
+            <LoadingState fullScreen={false} message={t('teams.loading')} />
           ) : (
             <>
               {/* 编辑/新建模式 */}
@@ -98,7 +100,7 @@ export default function TeamList() {
                                 <h3 className="text-base font-medium text-white mb-0">{team.name}</h3>
                                 <div className="flex items-center h-4 space-x-0.5">
                                   <div className={`w-2 h-2 rounded-full ${team.is_active ? 'bg-green-400' : 'bg-gray-400'}`}></div>
-                                  <span className="text-xs text-gray-400 flex items-center justify-center">{team.is_active ? 'Active' : 'Inactive'}</span>
+                                  <span className="text-xs text-gray-400 flex items-center justify-center">{team.is_active ? t('teams.active') : t('teams.inactive')}</span>
                                 </div>
                               </div>
                               <div className="flex items-center space-x-1 mt-0">
@@ -130,7 +132,7 @@ export default function TeamList() {
                                     ))}
                                   </div>
                                 ) : (
-                                  <span className="text-xs text-gray-500">No bots</span>
+                                  <span className="text-xs text-gray-500">{t('teams.no_bots')}</span>
                                 )}
                               </div>
                             </div>
@@ -141,7 +143,7 @@ export default function TeamList() {
                               size="small"
                               icon={<PencilIcon className="w-4 h-4 text-gray-400" />}
                               onClick={() => handleEditTeam(team)}
-                              title="Edit Team"
+                              title={t('teams.edit')}
                               style={{ padding: '4px' }}
                             />
                             <Button
@@ -150,7 +152,7 @@ export default function TeamList() {
                               icon={<TrashIcon className="w-4 h-4 text-gray-400" />}
                               onClick={() => handleDelete(team.id)}
                               disabled={deletingId === team.id}
-                              title="Delete Team"
+                              title={t('teams.delete')}
                               style={{ padding: '4px' }}
                             />
                           </div>
@@ -162,7 +164,7 @@ export default function TeamList() {
                     ))
                   ) : (
                     <div className="text-center text-gray-500 py-4">
-                      <p className="text-sm">No teams available</p>
+                      <p className="text-sm">{t('teams.no_teams')}</p>
                     </div>
                   )}
                   <div className="border-t border-[#30363d]"></div>
@@ -178,7 +180,7 @@ export default function TeamList() {
                       }
                       style={{ margin: '8px 0' }}
                     >
-                      New Team
+                      {t('teams.new_team')}
                     </Button>
                   </div>
                 </>

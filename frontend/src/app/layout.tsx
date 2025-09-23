@@ -10,6 +10,7 @@ import MockInit from '@/features/mock/MockInit'
 import AntdProvider from './AntdProvider'
 import AuthGuard from '@/features/common/AuthGuard'
 import I18nProvider from '@/components/I18nProvider'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export const metadata: Metadata = {
   title: 'WeCode AI Assistant',

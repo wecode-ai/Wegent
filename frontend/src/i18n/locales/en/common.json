@@ -9,19 +9,15 @@
     "one": "One item",
     "other": "{{count}} items"
   },
-  "navigation": {
-    "dashboard": "Dashboard",
-    "tasks": "Tasks",
-    "settings": "Settings",
-    "logout": "Logout",
-    "login": "Login"
-  },
   "actions": {
     "save": "Save",
+    "saving": "Saving...",
     "cancel": "Cancel",
     "delete": "Delete",
     "edit": "Edit",
+    "start": "Start",
     "create": "Create",
+    "creating": "Creating...",
     "confirm": "Confirm",
     "close": "Close",
     "submit": "Submit",
@@ -46,5 +42,134 @@
     "invalid_email": "Please enter a valid email address",
     "min_length": "Minimum length is {{min}} characters",
     "max_length": "Maximum length is {{max}} characters"
+  },
+  "login": {
+    "username": "Username",
+    "enter_username": "Enter username",
+    "enter_password": "Enter password",
+    "logging_in": "Logging in...",
+    "test_account": "Test account: admin / admin",
+    "or_continue_with": "Or continue with",
+    "oidc_login": "Login with OpenID Connect"
+  },
+  "navigation": {
+    "tasks": "Tasks",
+    "settings": "Settings"
+  },
+  "user": {
+    "default_name": "User",
+    "logout": "Logout",
+    "login": "Login"
+  },
+  "chat": {
+    "placeholder": "Ask Team to build, fix bugs, explore"
+  },
+  "bot": {
+    "name": "Name",
+    "agent": "Agent",
+    "agent_select": "choose an agent",
+    "prompt": "Prompt",
+    "prompt_hint": "AI-powered assistant for development tasks",
+    "agent_config": "Agent Config",
+    "mcp_config": "Mcp Config",
+    "save_prompt": "Save Prompt"
+  },
+  "bots": {
+    "title": "AI Assistant",
+    "description": "Configure your AI-powered development assistant",
+    "loading": "Loading bots...",
+    "active": "Active",
+    "inactive": "Inactive",
+    "edit": "Edit Bot",
+    "delete": "Delete Bot",
+    "no_bots": "No bots available",
+    "new_bot": "New Bot"
+  },
+  "messages": {
+    "copy_markdown": "Copy markdown content",
+    "task_status": "Task Status:",
+    "bot": "Bot",
+    "subtask_completed": "Subtask completed",
+    "subtask_failed": "Subtask failed:",
+    "unknown_error": "Unknown error"
+  },
+  "teams": {
+    "title": "Team List",
+    "description": "View all teams and their bots",
+    "loading": "Loading teams...",
+    "active": "Active",
+    "inactive": "Inactive",
+    "no_bots": "No bots",
+    "edit": "Edit Team",
+    "delete": "Delete Team",
+    "no_teams": "No teams available",
+    "new_team": "New Team"
+  },
+  "team": {
+    "name": "Name",
+    "name_placeholder": "Team Name",
+    "leader": "Leader",
+    "model": "Model",
+    "bots": "Bots",
+    "select_leader": "Select leader",
+    "candidates": "candidates",
+    "in_team": "in team",
+    "no_data": "no data",
+    "bot_prompt": "Bot Prompt",
+    "input_bot_prompt": "Input bot prompt"
+  },
+  "team_model": {
+    "pipeline": "Pipeline",
+    "route": "Route",
+    "coordinate": "Coordinate",
+    "collaborate": "Collaborate"
+  },
+  "integrations": {
+    "title": "Integrations",
+    "description": "Setting external services to enhance your workflow",
+    "loading": "Loading Git integrations...",
+    "edit_token": "Edit Token",
+    "delete": "Delete",
+    "no_tokens": "No git tokens configured",
+    "new_token": "New Token"
+  },
+  "auth": {
+    "login_title": "Login to WeCode AI",
+    "login_subtitle": "your AI assistant for developers",
+    "oidc_login_failed": "OIDC login failed:",
+    "login_success": "Login success",
+    "loading": "Loading..."
+  },
+  "branches": {
+    "load_failed": "Failed to load branches",
+    "select_repository": "Select Repository",
+    "select_branch": "Select Branch",
+    "loading": "loading branch...",
+    "no_branch": "No Branch Found",
+    "default": "(default)",
+    "set_token": "Set Token"
+  },
+  "tasks": {
+    "search_placeholder": "Search task...",
+    "new_task": "New Task",
+    "no_tasks": "No tasks",
+    "today": "Today",
+    "this_week": "This Week",
+    "earlier": "Earlier",
+    "loading": "Loading...",
+    "no_more_tasks": "No more tasks",
+    "settings": "Settings"
+  },
+  "settings": {
+    "integrations": "Integrations",
+    "bot": "Bot",
+    "team": "Team"
+  },
+  "guide": {
+    "title": "Welcome",
+    "setup": "Before you can start using the app, please complete the setup below first!"
+  },
+  "common": {
+    "back": "Back"
   }
 }

@@ -32,7 +32,7 @@ export default function LoginForm() {
   const showOidcLogin = loginMode === 'oidc' || loginMode === 'all'
 
   // 获取 OIDC 登录按钮文本
-  const oidcLoginText = process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || 'Login with OpenID Connect'
+  const oidcLoginText = process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || t('login.oidc_login')
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
@@ -60,7 +60,7 @@ export default function LoginForm() {
       })
       router.replace(paths.task.getHref())
     } catch (error: any) {
-      message.error(error.message || 'Login failed, please check username and password')
+      message.error(error.message || t('validation.required'))
     } finally {
       setIsLoading(false)
     }
@@ -77,7 +77,7 @@ export default function LoginForm() {
         <form className="space-y-6" onSubmit={handleSubmit}>
           <div>
             <label htmlFor="user_name" className="block text-sm font-medium text-gray-300">
-              Username
+              {t('login.username')}
             </label>
             <div className="mt-1">
               <input
@@ -89,7 +89,7 @@ export default function LoginForm() {
                 value={formData.user_name}
                 onChange={handleInputChange}
                 className="appearance-none block w-full px-3 py-2 border border-[#30363d] rounded-md shadow-sm bg-[#0d1117] text-white placeholder-gray-500 focus:outline-none focus:outline-white/25 focus:border-transparent sm:text-sm"
-                placeholder="Enter username"
+                placeholder={t('login.enter_username')}
               />
             </div>
           </div>
@@ -108,7 +108,7 @@ export default function LoginForm() {
                 value={formData.password}
                 onChange={handleInputChange}
                 className="appearance-none block w-full px-3 py-2 pr-10 border border-[#30363d] rounded-md shadow-sm bg-[#0d1117] text-white placeholder-gray-500 focus:outline-none focus:outline-white/25 focus:border-transparent sm:text-sm"
-                placeholder="Enter password"
+                placeholder={t('login.enter_password')}
               />
                <button
                 type="button"
@@ -140,17 +140,17 @@ export default function LoginForm() {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  Logging in...
+                  {t('login.logging_in')}
                 </div>
               ) : (
-                t('navigation.login')
+                t('user.login')
               )}
             </Button>
           </div>
 
           {/* 显示测试账号信息 */}
           <div className="mt-6 text-center text-xs text-gray-500">
-            Test account: admin / admin
+            {t('login.test_account')}
           </div>
         </form>
       )}
@@ -163,7 +163,7 @@ export default function LoginForm() {
               <div className="w-full border-t border-gray-600" />
             </div>
             <div className="relative flex justify-center text-sm">
-              <span className="px-2 bg-[#161b22] text-gray-400">Or continue with</span>
+              <span className="px-2 bg-[#161b22] text-gray-400">{t('login.or_continue_with')}</span>
             </div>
           </div>
         </div>
