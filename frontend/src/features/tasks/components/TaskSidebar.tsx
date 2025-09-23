@@ -64,7 +64,7 @@ export default function TaskSidebar() {
   }, [loadMore])
 
   return (
-      <div className="w-56 bg-[#161b22] border-r border-[#21262d] flex flex-col">
+      <div className="w-56 bg-theme-surface border-r border-theme flex flex-col transition-colors">
         {/* Logo */}
         <div className="p-3">
           <div className="flex justify-start pl-2">
@@ -81,11 +81,11 @@ export default function TaskSidebar() {
         {/* Search */}
         <div className="p-3">
           <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-theme-secondary" />
             <input
               type="text"
               placeholder={t('tasks.search_placeholder')}
-              className="w-full pl-8 pr-2 py-1.5 bg-[#161b22] border border-[#30363d] rounded text-xs text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent"
+              className="w-full pl-8 pr-2 py-1.5 bg-theme-input border border-theme rounded text-xs text-theme-primary placeholder-theme focus:outline-none focus:ring-2 focus:ring-[var(--color-primary)] focus:border-transparent transition-colors"
             />
           </div>
         </div>
@@ -109,7 +109,7 @@ export default function TaskSidebar() {
           ref={scrollRef}
         >
           {tasks.length === 0 ? (
-            <div className="text-center py-8 text-xs text-gray-400">{t('tasks.no_tasks')}</div>
+            <div className="text-center py-8 text-xs text-theme-secondary">{t('tasks.no_tasks')}</div>
           ) : (
             <>
               <TaskListSection
@@ -127,20 +127,20 @@ export default function TaskSidebar() {
             </>
           )}
           {loadingMore && (
-            <div className="text-center py-2 text-xs text-gray-400">{t('tasks.loading')}</div>
+            <div className="text-center py-2 text-xs text-theme-secondary">{t('tasks.loading')}</div>
           )}
           {!hasMore && tasks.length > 0 && (
-            <div className="text-center py-2 text-xs text-gray-400">{t('tasks.no_more_tasks')}</div>
+            <div className="text-center py-2 text-xs text-theme-secondary">{t('tasks.no_more_tasks')}</div>
           )}
         </div>
         {/* Settings */}
-        <div className="p-3 border-t border-[#21262d]">
+        <div className="p-3 border-t border-theme">
           <Button
             onClick={() => router.push(paths.settings.root.getHref())}
             type="link"
             size="small"
             icon={<Cog6ToothIcon className="h-3.5 w-3.5" />}
-            style={{ color: '#9ca3af' }}
+            style={{ color: 'var(--color-text-secondary)' }}
           >
             {t('tasks.settings')}
           </Button>

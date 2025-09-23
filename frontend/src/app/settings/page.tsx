@@ -8,6 +8,7 @@ import { Suspense, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import TopNavigation from '@/features/layout/TopNavigation'
 import UserMenu from '@/features/layout/UserMenu'
+import ThemeToggle from '@/features/theme/ThemeToggle'
 import { Tab } from '@headlessui/react'
 import { PuzzlePieceIcon, UsersIcon } from '@heroicons/react/24/outline'
 import { RiRobot2Line } from 'react-icons/ri'
@@ -38,7 +39,7 @@ function DashboardContent() {
   }
 
   return (
-    <div className="flex h-screen bg-[#0d1117] text-white">
+    <div className="flex h-screen bg-theme-app text-theme-primary transition-colors">
       {/* Wrap TabParamSync component with Suspense */}
       <Suspense fallback={null}>
         <TabParamSync tabIndex={tabIndex} setTabIndex={setTabIndex} />
@@ -50,8 +51,8 @@ function DashboardContent() {
           activePage="dashboard"
           showLogo={true}
         >
-          {/* User Avatar Menu */}
-          <UserMenu position="right-6" />
+          <ThemeToggle />
+          <UserMenu />
         </TopNavigation>
 
         {/* Dashboard Content with Tabs */}
@@ -60,13 +61,13 @@ function DashboardContent() {
             <Tab.Group selectedIndex={tabIndex} onChange={handleTabChange}>
               <div className="flex">
                 {/* Left Sidebar Menu - Tab List */}
-                <div className="w-64 bg-[#0d1117] px-8 py-4">
+                <div className="w-64 bg-theme-app px-8 py-4">
                   <Tab.List className="space-y-1 focus:outline-none">
                     <Tab className={({ selected }) =>
                       `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
                         selected
-                          ? 'bg-[#21262d] text-white'
-                          : 'text-gray-400 hover:text-white hover:bg-[#21262d]'
+                          ? 'bg-theme-interactive text-theme-primary'
+                          : 'text-theme-secondary hover:text-theme-primary hover:bg-theme-interactive'
                       }`
                     }>
                       <PuzzlePieceIcon className="w-4 h-4" /><span>{t('settings.integrations')}</span>
@@ -75,8 +76,8 @@ function DashboardContent() {
                     <Tab className={({ selected }) =>
                       `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
                         selected
-                          ? 'bg-[#21262d] text-white'
-                          : 'text-gray-400 hover:text-white hover:bg-[#21262d]'
+                          ? 'bg-theme-interactive text-theme-primary'
+                          : 'text-theme-secondary hover:text-theme-primary hover:bg-theme-interactive'
                       }`
                     }>
                       <RiRobot2Line className="w-4 h-4" />
@@ -86,8 +87,8 @@ function DashboardContent() {
                     <Tab className={({ selected }) =>
                       `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
                         selected
-                          ? 'bg-[#21262d] text-white'
-                          : 'text-gray-400 hover:text-white hover:bg-[#21262d]'
+                          ? 'bg-theme-interactive text-theme-primary'
+                          : 'text-theme-secondary hover:text-theme-primary hover:bg-theme-interactive'
                       }`
                     }>
                       <UsersIcon className="w-4 h-4" />

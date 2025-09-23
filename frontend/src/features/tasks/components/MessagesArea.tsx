@@ -60,15 +60,17 @@ const CopyButton = ({ content }: { content: string }) => {
       <Button
         type="text"
         onClick={handleCopy}
-        className="absolute bottom-0 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+        className="absolute bottom-2 left-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 text-theme-secondary hover:text-theme-primary"
         title={t('messages.copy_markdown')}
-        icon={copied ?
-          <FiCheck className="w-4 h-4 text-green-400" /> :
-          <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
-        }
+        icon={copied ? (
+          <FiCheck className="w-4 h-4" style={{ color: 'var(--color-success)' }} />
+        ) : (
+          <FiCopy className="w-4 h-4" />
+        )}
         style={{
           padding: '4px',
-          background: '#1e2937',
+          background: 'var(--color-bg-interactive)',
+          borderRadius: '6px',
           height: 'auto',
           minWidth: 'auto'
         }}
@@ -167,10 +169,13 @@ export default function MessagesArea() {
         <div className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar">
           {displayMessages.map((msg, index) => (
             <div key={index} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] p-3 rounded-lg ${msg.type === 'user'
-                  ? 'bg-[#161b22] border border-[#30363d] text-white'
-                  : 'bg-[#161b22] border border-[#30363d] text-gray-300'
-                }`}>
+              <div
+                className={`max-w-[80%] p-3 rounded-lg border transition-colors ${
+                  msg.type === 'user'
+                    ? 'bg-theme-interactive border-theme text-theme-primary'
+                    : 'bg-theme-surface border-theme text-theme-primary'
+                }`}
+              >
                 {/* Bot name and icon, only displayed for ai messages, and before the timestamp */}
                 {msg.type === 'ai' && (
                   <div className="flex items-center mb-1 text-xs opacity-80">

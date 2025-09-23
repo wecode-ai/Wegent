@@ -38,10 +38,10 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   if (checking) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[#0d1117]">
-        <div className="bg-[#161b22] rounded-xl px-8 py-8 flex flex-col items-center shadow-lg">
+      <div className="flex items-center justify-center min-h-screen bg-theme-app text-theme-primary transition-colors">
+        <div className="bg-theme-surface rounded-xl px-8 py-8 flex flex-col items-center shadow-lg border border-theme transition-colors">
           <Spin size="large" />
-          <div className="mt-4 text-gray-200 text-base font-medium tracking-wide">{t('auth.loading')}</div>
+          <div className="mt-4 text-theme-secondary text-base font-medium tracking-wide">{t('auth.loading')}</div>
         </div>
       </div>
     )
