@@ -70,7 +70,7 @@ export default function TeamList() {
           <h2 className="text-xl font-semibold text-white mb-1">Team List</h2>
           <p className="text-sm text-gray-400 mb-1">View all teams and their bots</p>
         </div>
-        <div className={`bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-h-[70vh]'}`}>
+        <div className={`bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-w-5xl max-h-[70vh]'}`}>
           {isLoading ? (
             <LoadingState fullScreen={false} message="Loading teams..." />
           ) : (

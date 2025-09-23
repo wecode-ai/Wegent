@@ -119,7 +119,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           type="primary"
           size="small"
         >
-          {botSaving ? 'saving...' : 'save'}
+          {botSaving ? 'saving...' : 'Save Bot'}
         </Button>
       </div>
       <div className="w-full flex flex-col md:flex-row gap-4 items-start mb-3 mt-3">

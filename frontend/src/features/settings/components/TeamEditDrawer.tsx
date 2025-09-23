@@ -88,29 +88,23 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
                 Bot Prompt
               </Typography.Title>
               <Button
+                type="primary"
+                size="small"
                 onClick={() => {
-                  message.success('Bot Prompt 已保存');
-                }}
-                style={{
-                  backgroundColor: 'rgb(112,167,215)',
-                  color: '#1f2937',
-                  fontSize: '0.875rem',
-                  fontWeight: 500,
-                  height: '28px',
-                  padding: '0 16px'
+                  message.success('Bot Prompt saved!');
                 }}
               >
-                保存 Prompt
+                Save Prompt
               </Button>
             </div>
             <Input.TextArea
               rows={6}
-              placeholder="输入 Bot Prompt"
+              placeholder="Enter your Bot Prompt in team"
               style={{
                 backgroundColor: '#161b22',
                 color: 'white',
                 borderColor: '#30363d',
-                marginBottom: '24px'
+                fontSize: '16px' // 增大 placeholder 字体大小
               }}
             />
           </div>
