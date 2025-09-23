@@ -17,6 +17,7 @@ import {
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import TaskListSection from './TaskListSection'
 import { useTranslation } from '@/hooks/useTranslation'
+import { primarySmallButtonStyle } from '@/features/common/buttonStyles'
 
 
 
@@ -97,7 +98,7 @@ export default function TaskSidebar() {
             type="primary"
             size="small"
             icon={<PlusIcon className="h-3 w-3" />}
-            style={{ width: '100%' }}
+            style={{ ...primarySmallButtonStyle, width: '100%' }}
           >
             {t('tasks.new_task')}
           </Button>
