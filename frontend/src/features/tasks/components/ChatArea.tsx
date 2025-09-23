@@ -109,7 +109,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
             {/* Error Message */}
             {/* 错误提示已用 antd message 统一，不再本地渲染 */}
             {/* Chat Input */}
-            <div className="relative w-full flex flex-col rounded-xl border border-theme bg-theme-surface transition-colors">
+            <div className="relative w-full flex flex-col rounded-xl border border-theme bg-theme-surface transition-colors overflow-hidden">
               <ChatInput
                 message={taskInputMessage}
                 setMessage={setTaskInputMessage}
@@ -169,7 +169,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
           {/* Error Message */}
           {/* 错误提示已用 antd message 统一，不再本地渲染 */}
           {/* Chat Input */}
-          <div className="relative w-full flex flex-col rounded-xl border border-theme bg-theme-surface transition-colors">
+          <div className="relative w-full flex flex-col rounded-xl border border-theme bg-theme-surface transition-colors overflow-hidden">
             <ChatInput
               message={taskInputMessage}
               setMessage={setTaskInputMessage}
