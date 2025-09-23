@@ -3,14 +3,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { botApis } from '@/apis/bots'
-import { Bot } from '@/types/api'
+import { Bot, PaginationParams } from '@/types/api'
 import { CreateBotRequest, UpdateBotRequest } from '@/apis/bots'
 
 /**
  * Get Bot list
  */
 export async function fetchBotsList(): Promise<Bot[]> {
-  const botsData = await botApis.getBots()
+  const params: PaginationParams = {}
+  const botsData = await botApis.getBots(params)
   return Array.isArray(botsData.items) ? botsData.items : []
 }
 

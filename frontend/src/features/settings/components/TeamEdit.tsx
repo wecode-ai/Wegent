@@ -23,6 +23,7 @@ interface TeamEditProps {
   editingTeamId: number
   setEditingTeamId: React.Dispatch<React.SetStateAction<number | null>>
   bots: Bot[]
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>> // 添加 setBots 属性
   message: MessageInstance
 }
 
@@ -33,6 +34,7 @@ export default function TeamEdit(props: TeamEditProps) {
     editingTeamId,
     setEditingTeamId,
     bots,
+    setBots,
     message,
   } = props
 
@@ -379,16 +381,26 @@ export default function TeamEdit(props: TeamEditProps) {
               onChange={onLeaderChange}
               placeholder={t('team.select_leader')}
               suffixIcon={<DownOutlined className="text-gray-300" />}
-              notFoundContent={<div className="text-sm text-gray-400">请先在右侧选择 Bots</div>}
+              notFoundContent={<div className="text-sm text-gray-400">Select Bots</div>}
               className="w-full"
               options={leaderOptions.map(b => ({
                 value: b.id,
                 label: (
-                  <div className="flex items-center space-x-2">
-                    <RiRobot2Line className="w-4 h-4 text-gray-400" />
-                    <span className="block truncate">
-                      {b.name} <span className="text-gray-500 text-xs">({b.agent_name})</span>
-                    </span>
+                  <div className="flex items-center justify-between w-full">
+                    <div className="flex items-center space-x-2">
+                      <RiRobot2Line className="w-4 h-4 text-gray-400" />
+                      <span className="block truncate">
+                        {b.name} <span className="text-gray-500 text-xs">({b.agent_name})</span>
+                      </span>
+                    </div>
+                    <EditOutlined
+                      className="ml-8 text-gray-700 hover:text-gray-200 cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation(); // 阻止事件冒泡，避免触发选择
+                        setEditingBotId(b.id);
+                        setEditingBotDrawerVisible(true);
+                      }}
+                    />
                   </div>
                 )
               }))}
@@ -396,6 +408,7 @@ export default function TeamEdit(props: TeamEditProps) {
               popupMatchSelectWidth={true}
               listHeight={250}
               menuItemSelectedIcon={null}
+              dropdownStyle={{ minWidth: '200px' }}
             />
           </div>
 
@@ -453,11 +466,14 @@ export default function TeamEdit(props: TeamEditProps) {
       {/* Bot编辑抽屉 */}
       <TeamEditDrawer
         bots={bots}
+        setBots={setBots}
         editingBotId={editingBotId}
         setEditingBotId={setEditingBotId}
         visible={editingBotDrawerVisible}
         setVisible={setEditingBotDrawerVisible}
         message={message}
+        team={editingTeam}
+        setTeams={setTeams}
       />
     </div>
   )

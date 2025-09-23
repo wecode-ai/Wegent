@@ -3,27 +3,29 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client'
-import type { TeamBot, Team } from '@/types/api'
+import type { TeamBot, Team, PaginationParams } from '@/types/api'
 
 // Team Request/Response Types
 export interface CreateTeamRequest {
- name: string
- description?: string
- bots?: TeamBot[]
- workflow?: Record<string, any>
- is_active?: boolean
+  name: string
+  description?: string
+  bots?: TeamBot[]
+  workflow?: Record<string, any>
+  is_active?: boolean
 }
 
 export interface TeamListResponse {
- total: number
- items: Team[]
+  total: number
+  items: Team[]
 }
 
 
 
 export const teamApis = {
-  async getTeams(): Promise<TeamListResponse> {
-    return apiClient.get('/teams')
+  async getTeams(params?: PaginationParams): Promise<TeamListResponse> {
+    const p = params ? params : { page: 1, limit: 100 }
+    const query = p ? `?page=${p.page || 1}&limit=${p.limit || 100}` : ''
+    return apiClient.get(`/teams${query}`)
   },
   async createTeam(data: CreateTeamRequest): Promise<Team> {
     return apiClient.post('/teams', data)

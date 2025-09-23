@@ -85,6 +85,7 @@ export default function TeamList() {
                   editingTeamId={editingTeamId}
                   setEditingTeamId={setEditingTeamId}
                   bots={bots}
+                  setBots={setBots}
                   message={message}
                 />
               ) : (

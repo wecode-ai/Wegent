@@ -65,7 +65,7 @@ export default function BotList() {
           <h2 className="text-xl font-semibold text-white mb-1">{t('bots.title')}</h2>
           <p className="text-sm text-gray-400 mb-1">{t('bots.description')}</p>
         </div>
-        <div className={`bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingBotId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : ''}`}>
+        <div className={`bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingBotId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-h-[70vh]'}`}>
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('bots.loading')} />
           ) : (
