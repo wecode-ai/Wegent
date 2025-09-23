@@ -13,6 +13,7 @@ from sqlalchemy import and_, func
 from app.models.task import Task, TaskStatus
 from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
 from app.models.bot import Bot
+from app.models.model import Model
 from app.models.user import User
 from app.models.team import Team
 from app.schemas.subtask import SubtaskExecutorUpdate
@@ -224,11 +225,26 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                     if team_bot_info.get('bot_prompt'):
                         bot_prompt += f"\n{team_bot_info['bot_prompt']}"
                 
+                # Resolve agent_config:
+                # If bot.agent_config has top-level {"private_model": "<model_name>"},
+                # fetch Model by name and use its config instead.
+                agent_config_data = bot.agent_config
+                try:
+                    if isinstance(bot.agent_config, dict):
+                        private_model_name = bot.agent_config.get("private_model")
+                        if isinstance(private_model_name, str) and private_model_name.strip():
+                            model_row = db.query(Model).filter(Model.name == private_model_name.strip()).first()
+                            if model_row and isinstance(model_row.config, dict):
+                                agent_config_data = model_row.config
+                except Exception:
+                    # On any error, fallback to original agent_config
+                    agent_config_data = bot.agent_config
+
                 bots.append({
                     "id": bot.id,
                     "name": bot.name,
                     "agent_name": bot.agent_name,
-                    "agent_config": bot.agent_config,
+                    "agent_config": agent_config_data,
                     "system_prompt": bot_prompt,
                     "mcp_servers": bot.mcp_servers,
                     "role": team_bot_info.get('role', '')
