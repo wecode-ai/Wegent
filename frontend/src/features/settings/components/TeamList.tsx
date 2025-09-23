@@ -18,7 +18,6 @@ import TeamEdit from './TeamEdit'
 import { App } from 'antd'
 import { Button } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
-import { primarySmallButtonWithMarginStyle } from '@/features/common/buttonStyles'
 
 export default function TeamList() {
   const { t } = useTranslation('common')
@@ -179,7 +178,7 @@ export default function TeamList() {
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                         </svg>
                       }
-                      style={primarySmallButtonWithMarginStyle}
+                      style={{ margin: '8px 0' }}
                     >
                       {t('teams.new_team')}
                     </Button>

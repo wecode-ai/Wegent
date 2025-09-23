@@ -10,7 +10,6 @@ import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import UserMenu from '@/features/layout/UserMenu'
-import ThemeToggle from '@/features/theme/ThemeToggle'
 import TaskSidebar from '@/features/tasks/components/TaskSidebar'
 import BeginnerGuideModal from '@/features/tasks/components/BeginnerGuideModal'
 import ChatArea from '@/features/tasks/components/ChatArea'
@@ -36,15 +35,14 @@ export default function TasksPage() {
             teams={teams}
             teamLoading={isTeamsLoading}
           />
-          <div className="flex h-screen bg-theme-app text-theme-primary transition-colors">
+          <div className="flex h-screen bg-[#0d1117] text-white">
             {/* Left sidebar */}
             <TaskSidebar />
             {/* Main content area */}
             <div className="flex-1 flex flex-col">
               {/* Top navigation */}
               <TopNavigation activePage="tasks" showLogo={false}>
-                <ThemeToggle />
-                <UserMenu />
+                <UserMenu position="right-10" />
               </TopNavigation>
               {/* Chat area */}
               <ChatArea teams={teams} isTeamsLoading={isTeamsLoading} />
