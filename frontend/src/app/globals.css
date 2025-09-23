@@ -325,3 +325,75 @@ button:focus-visible {
 .custom-message-notice-content .ant-message-custom-content > span {
   flex: 1 1 auto;
 }
+
+/* Transfer component theme alignment */
+.theme-transfer .ant-transfer-list,
+.ant-transfer-list {
+  background-color: var(--color-bg-surface);
+  border-color: var(--color-border);
+  color: var(--color-text-primary);
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+.theme-transfer .ant-transfer-list-header,
+.ant-transfer-list-header {
+  background-color: var(--color-bg-surface);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.theme-transfer .ant-transfer-list-search,
+.ant-transfer-list-search {
+  background-color: var(--color-bg-input);
+  border-color: var(--color-border);
+}
+
+.theme-transfer .ant-transfer-list-content,
+.ant-transfer-list-content {
+  background-color: var(--color-bg-surface);
+}
+
+.theme-transfer .ant-transfer-list-content-item {
+  background-color: transparent;
+  color: var(--color-text-primary);
+}
+
+.theme-transfer .ant-transfer-list-content-item:not(.ant-transfer-list-content-item-disabled):hover {
+  background-color: var(--color-bg-interactive);
+}
+
+.theme-transfer .ant-transfer-list-empty,
+.ant-transfer-list-empty {
+  color: var(--color-text-secondary);
+}
+
+/* Markdown content theming */
+.wmde-markdown {
+  background-color: transparent !important;
+  color: var(--color-text-primary) !important;
+}
+
+.wmde-markdown blockquote {
+  background-color: var(--color-bg-interactive);
+  border-left: 4px solid var(--color-border);
+  color: var(--color-text-secondary);
+}
+
+.wmde-markdown pre,
+.wmde-markdown code {
+  background-color: var(--color-bg-interactive) !important;
+  color: var(--color-text-primary);
+}
+
+.wmde-markdown a {
+  color: var(--color-link);
+}
+
+.wmde-markdown table {
+  background-color: var(--color-bg-surface);
+}
+
+.wmde-markdown th,
+.wmde-markdown td {
+  border-color: var(--color-border);
+}

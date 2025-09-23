@@ -12,6 +12,7 @@ import { FiCopy, FiCheck } from 'react-icons/fi'
 import { Button } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import MarkdownEditor from '@uiw/react-markdown-editor'
+import { useTheme } from '@/features/theme/ThemeContext'
 
 interface Message {
   type: 'user' | 'ai'
@@ -82,6 +83,7 @@ const CopyButton = ({ content }: { content: string }) => {
 export default function MessagesArea() {
   const { t } = useTranslation('common')
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext()
+  const { mode } = useTheme()
 
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
@@ -254,10 +256,16 @@ export default function MessagesArea() {
                                           <div className="flex justify-between items-center mb-1">
                                             <span className="text-sm">{t('messages.task_status')} {status}</span>
                                           </div>
-                                          <div className="w-full bg-gray-700 rounded-full h-2">
+                                          <div
+                                            className="w-full rounded-full h-2"
+                                            style={{ backgroundColor: 'var(--color-border)' }}
+                                          >
                                             <div
-                                              className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-in-out"
-                                              style={{ width: `${progress}%` }}
+                                              className="h-2 rounded-full transition-all duration-300 ease-in-out"
+                                              style={{
+                                                width: `${progress}%`,
+                                                backgroundColor: 'var(--color-primary)'
+                                              }}
                                             />
                                           </div>
                                         </div>
@@ -269,7 +277,7 @@ export default function MessagesArea() {
                                         <MarkdownEditor.Markdown
                                           source={normalizedResult}
                                           style={{ background: 'transparent' }}
-                                          wrapperElement={{ 'data-color-mode': 'dark' }}
+                                          wrapperElement={{ 'data-color-mode': mode }}
                                         />
                                         {/* ★ 复制按钮用解包后的内容 */}
                                         <CopyButton content={result} />
@@ -314,10 +322,16 @@ export default function MessagesArea() {
                           <div className="flex justify-between items-center mb-1">
                             <span className="text-sm">{t('messages.task_status')} {status}</span>
                           </div>
-                          <div className="w-full bg-gray-700 rounded-full h-2">
+                          <div
+                            className="w-full rounded-full h-2"
+                            style={{ backgroundColor: 'var(--color-border)' }}
+                          >
                             <div
-                              className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-in-out"
-                              style={{ width: `${progress}%` }}
+                              className="h-2 rounded-full transition-all duration-300 ease-in-out"
+                              style={{
+                                width: `${progress}%`,
+                                backgroundColor: 'var(--color-primary)'
+                              }}
                             ></div>
                           </div>
                         </div>
