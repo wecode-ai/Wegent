@@ -15,7 +15,7 @@
     "cancel": "Cancel",
     "delete": "Delete",
     "edit": "Edit",
-    "start": "Start",
+    "start": "Get Start!",
     "create": "Create",
     "creating": "Creating...",
     "confirm": "Confirm",
@@ -45,6 +45,7 @@
   },
   "login": {
     "username": "Username",
+    "password": "Password",
     "enter_username": "Enter username",
     "enter_password": "Enter password",
     "logging_in": "Logging in...",

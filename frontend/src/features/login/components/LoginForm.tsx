@@ -96,7 +96,7 @@ export default function LoginForm() {
 
           <div>
             <label htmlFor="password" className="block text-sm font-medium text-gray-300">
-              password
+              {t('login.password')}
             </label>
             <div className="mt-1 relative">
               <input
