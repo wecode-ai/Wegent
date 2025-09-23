@@ -9,6 +9,7 @@ import { Select, App } from 'antd'
 import { FiGitBranch } from 'react-icons/fi'
 import { GitRepoInfo, GitBranch } from '@/types/api'
 import { githubApis } from '@/apis/github'
+import { useTranslation } from '@/hooks/useTranslation'
 
 /**
  * BranchSelector component
@@ -29,6 +30,7 @@ export default function BranchSelector({
   handleBranchChange,
   disabled
 }: BranchSelectorProps) {
+  const { t } = useTranslation('common')
   const { message } = App.useApp()
   const [branches, setBranches] = useState<GitBranch[]>([])
   const [loading, setLoading] = useState<boolean>(false)
@@ -58,8 +60,8 @@ export default function BranchSelector({
       })
       .catch((err) => {
         if (!ignore) {
-          setError('Failed to load branches')
-          message.error('Failed to load branches')
+          setError(t('branches.load_failed'))
+          message.error(t('branches.load_failed'))
         }
       })
       .finally(() => {
@@ -104,7 +106,7 @@ export default function BranchSelector({
       <span>
         {branch.name}
         {branch.default && (
-          <span className="ml-2 text-green-400 text-[10px]">(default)</span>
+          <span className="ml-2 text-green-400 text-[10px]">{t('branches.default')}</span>
         )}
       </span>
     ),
@@ -127,7 +129,7 @@ export default function BranchSelector({
         labelInValue
         value={selectedBranch ? { value: selectedBranch.name, label: selectedBranch.name + (selectedBranch.default ? ' (default)' : '') } : undefined}
         placeholder={
-          <span className="text-sx truncate h-2">Select Branch</span>
+          <span className="text-sx truncate h-2">{t('branches.select_branch')}</span>
         }
         className="repository-selector min-w-0 truncate"
         style={{ width: 'auto', maxWidth: 200, display: 'inline-block', paddingRight: 8 }}
@@ -142,7 +144,7 @@ export default function BranchSelector({
           showLoading ? (
             <div className="px-3 py-2 text-sm text-gray-400 flex items-center">
               <FiGitBranch className="w-4 h-4 animate-pulse mr-2" />
-              loading branch...
+              {t('branches.loading')}
             </div>
           ) : showError ? (
             <div className="px-3 py-2 text-sm text-red-400 flex items-center">
@@ -152,7 +154,7 @@ export default function BranchSelector({
             </div>
           ) : showNoBranch ? (
             <div className="px-3 py-2 text-sm text-gray-400">
-              No Branch Found
+              {t('branches.no_branch')}
             </div>
           ) : null
         }

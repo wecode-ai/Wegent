@@ -3,6 +3,7 @@
 import { useEffect } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { message } from 'antd'
+import { useTranslation } from '@/hooks/useTranslation'
 
 /**
  * OIDC Token Handler Component
@@ -12,6 +13,7 @@ import { message } from 'antd'
  * This component is responsible for extracting these parameters and storing them in localStorage
  */
 export default function OidcTokenHandler() {
+    const { t } = useTranslation('common')
     const router = useRouter()
     const searchParams = useSearchParams()
     
@@ -24,7 +26,7 @@ export default function OidcTokenHandler() {
         
         if (error) {
             console.error('OIDC login failed:', error, errorMessage)
-            message.error(`OIDC login failed: ${errorMessage || error}`)
+            message.error(`${t('auth.oidc_login_failed')} ${errorMessage || error}`)
             
             const url = new URL(window.location.href)
             url.searchParams.delete('error')
@@ -40,7 +42,7 @@ export default function OidcTokenHandler() {
             
             const storedToken = localStorage.getItem('auth_token')
             
-            message.success('Login success')
+            message.success(t('auth.login_success'))
             
             const url = new URL(window.location.href)
             url.searchParams.delete('access_token')

@@ -16,8 +16,10 @@ import { GitInfo } from '@/types/api'
 import { useUser } from '@/features/common/UserContext'
 import { fetchGitInfo, saveGitToken, deleteGitToken } from '../services/github'
 import { App } from 'antd'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export default function GitHubIntegration() {
+  const { t } = useTranslation('common')
   const { message } = App.useApp()
   const { user, isLoading: isUserLoading, refresh } = useUser()
   const [gitInfo, setGitInfo] = useState<GitInfo[]>([])
@@ -35,7 +37,7 @@ export default function GitHubIntegration() {
           setGitInfo(info)
         }
       } catch (e) {
-        message.error('Failed to load git info')
+        message.error(t('integrations.loading'))
       } finally {
         setIsLoading(false)
       }
@@ -74,22 +76,22 @@ export default function GitHubIntegration() {
     // 已用 antd message.error 统一错误提示，无需本地 error 状态
     try {
       const success = await deleteGitToken(user, domain)
-      if (!success) message.error('Delete failed')
+      if (!success) message.error(t('integrations.delete'))
       await refresh()
     } catch (e) {
-      message.error('Delete failed')
+      message.error(t('integrations.delete'))
     }
   }
 
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">Integrations</h2>
-        <p className="text-sm text-gray-400 mb-1">Setting external services to enhance your workflow</p>
+        <h2 className="text-xl font-semibold text-white mb-1">{t('integrations.title')}</h2>
+        <p className="text-sm text-gray-400 mb-1">{t('integrations.description')}</p>
       </div>
       <div className="bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar">
         {isUserLoading || isLoading ? (
-          <LoadingState fullScreen={false} message="Loading Git integrations..." />
+          <LoadingState fullScreen={false} message={t('integrations.loading')} />
         ) : (
           <>
             {platforms.length > 0 ? (
@@ -117,7 +119,7 @@ export default function GitHubIntegration() {
                         size="small"
                         icon={<PencilIcon className="w-4 h-4 text-gray-400" />}
                         onClick={() => handleEdit(info)}
-                        title="Edit Token"
+                        title={t('integrations.edit_token')}
                         style={{ padding: '4px' }}
                       />
                       <Button
@@ -125,7 +127,7 @@ export default function GitHubIntegration() {
                         size="small"
                         icon={<TrashIcon className="w-4 h-4 text-gray-400" />}
                         onClick={() => handleDelete(info.git_domain)}
-                        title="Delete"
+                        title={t('integrations.delete')}
                         style={{ padding: '4px' }}
                       />
                     </div>
@@ -137,7 +139,7 @@ export default function GitHubIntegration() {
               ))
             ) : (
               <div className="text-center text-gray-500 py-4">
-                <p className="text-sm">No git tokens configured</p>
+                <p className="text-sm">{t('integrations.no_tokens')}</p>
               </div>
             )}
             <div className="border-t border-[#30363d]"></div>
@@ -149,7 +151,7 @@ export default function GitHubIntegration() {
                 icon={<PlusIcon className="w-3 h-3" />}
                 style={{ margin: '8px 0' }}
               >
-                New Token
+                {t('integrations.new_token')}
               </Button>
             </div>
           </>

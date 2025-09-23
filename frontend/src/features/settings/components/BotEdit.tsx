@@ -5,6 +5,7 @@ import { CheckIcon } from '@heroicons/react/24/outline'
 
 import { Bot } from '@/types/api'
 import { botApis } from '@/apis/bots'
+import { useTranslation } from 'react-i18next'
 
 import type { MessageInstance } from 'antd/es/message/interface'
 
@@ -22,6 +23,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   setEditingBotId,
   message,
 }) => {
+  const { t } = useTranslation()
   // 选项本地定义
   const agentOptions = [
     { value: 'ClaudeCode', label: 'ClaudeCode' },
@@ -104,12 +106,12 @@ const BotEdit: React.FC<BotEditProps> = ({
         <button
           onClick={() => setEditingBotId(null)}
           className="flex items-center text-gray-400 hover:text-white text-base"
-          title="Back"
+          title={t('common.back')}
         >
           <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
             <path d="M15 6l-6 6 6 6"/>
           </svg>
-          Back
+          {t('common.back')}
         </button>
 
         <Button
@@ -119,7 +121,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           type="primary"
           size="small"
         >
-          {botSaving ? 'saving...' : 'save'}
+          {botSaving ? t('actions.saving') : t('actions.save')}
         </Button>
       </div>
       <div className="w-full flex flex-col md:flex-row gap-4 items-start mb-3 mt-3">
@@ -127,7 +129,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         <div className="w-full md:basis-1/2 flex flex-col justify-end">
           <div className="flex items-center mb-1">
             <label className="block text-lg font-semibold text-white">
-              Name <span className="text-red-400">*</span>
+                {t('bot.name')} <span className="text-red-400">*</span>
             </label>
           </div>
           <input
@@ -143,7 +145,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         <div className="w-full md:basis-1/2 flex flex-col">
           <div className="flex items-center mb-1">
             <label className="block text-lg font-semibold text-white">
-              Agent <span className="text-red-400">*</span>
+              {t('bot.agent')} <span className="text-red-400">*</span>
             </label>
           </div>
           <Listbox value={agentName} onChange={setAgentName}>
@@ -151,7 +153,7 @@ const BotEdit: React.FC<BotEditProps> = ({
               <Listbox.Button className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-left text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base">
                 {agentName
                   ? agentOptions.find(opt => opt.value === agentName)?.label
-                  : <span className="text-gray-400">choose an agent</span>
+                  : <span className="text-gray-400">{t('bot.agent_select')}</span>
                 }
               </Listbox.Button>
               <Listbox.Options className="absolute z-10 mt-1 w-full bg-[#161b22] rounded-md shadow-lg max-h-60 py-1 text-base ring-1 ring-black ring-opacity-5 focus:outline-none sm:text-sm">
@@ -199,7 +201,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         <div className="w-full md:w-3/5 min-w-0 flex flex-col flex-1 h-full relative">
           <div className="flex items-center mb-1">
             <label className="block text-base font-medium text-white">
-              Prompt
+              {t('bot.prompt')}
             </label>
             <span className="text-xs text-gray-500 ml-2">AI prompt</span>
           </div>
@@ -215,7 +217,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           <div className="flex-1 flex flex-col">
             <div className="flex items-center mb-1">
               <label className="block text-base font-medium text-white">
-                Agent Config <span className="text-red-400">*</span>
+                {t('bot.agent_config')} <span className="text-red-400">*</span>
               </label>
               <span className="text-xs text-gray-500 ml-2">JSON format required</span>
             </div>
@@ -249,7 +251,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           <div className="flex-1 flex flex-col">
             <div className="flex items-center mb-1">
               <label className="block text-base font-medium text-white">
-                MCP Config
+                {t('bot.mcp_config')}
               </label>
               <span className="text-xs text-gray-500 ml-2">JSON format required</span>
             </div>

@@ -14,8 +14,10 @@ import { Bot } from '@/types/api'
 import { fetchBotsList, createBot, updateBot, deleteBot } from '../services/bots'
 import { App } from 'antd'
 import BotEdit from './BotEdit'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export default function BotList() {
+  const { t } = useTranslation('common')
   const { message } = App.useApp()
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -30,7 +32,7 @@ export default function BotList() {
         const botsData = await fetchBotsList()
         setBots(botsData)
       } catch (e) {
-        message.error('Failed to load bots')
+        message.error(t('bots.loading'))
       } finally {
         setIsLoading(false)
       }
@@ -52,7 +54,7 @@ export default function BotList() {
       await deleteBot(botId)
       setBots(prev => prev.filter(b => b.id !== botId))
     } catch (e) {
-      message.error('Failed to delete bot')
+      message.error(t('bots.delete'))
     }
   }
 
@@ -60,12 +62,12 @@ export default function BotList() {
     <>
       <div className="space-y-3">
         <div>
-          <h2 className="text-xl font-semibold text-white mb-1">AI Assistant</h2>
-          <p className="text-sm text-gray-400 mb-1">Configure your AI-powered development assistant</p>
+          <h2 className="text-xl font-semibold text-white mb-1">{t('bots.title')}</h2>
+          <p className="text-sm text-gray-400 mb-1">{t('bots.description')}</p>
         </div>
         <div className={`bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingBotId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : ''}`}>
           {isLoading ? (
-            <LoadingState fullScreen={false} message="Loading bots..." />
+            <LoadingState fullScreen={false} message={t('bots.loading')} />
           ) : (
             <>
               {/* 编辑/新建模式 */}
@@ -90,7 +92,7 @@ export default function BotList() {
                                 <h3 className="text-base font-medium text-white mb-0">{bot.name}</h3>
                                 <div className="flex items-center h-4 space-x-0.5">
                                   <div className={`w-2 h-2 rounded-full ${bot.is_active ? 'bg-green-400' : 'bg-gray-400'}`}></div>
-                                  <span className="text-xs text-gray-400 flex items-center justify-center">{bot.is_active ? 'Active' : 'Inactive'}</span>
+                                  <span className="text-xs text-gray-400 flex items-center justify-center">{bot.is_active ? t('bots.active') : t('bots.inactive')}</span>
                                 </div>
                               </div>
                               <span className="inline-block px-1 py-0.5 text-xs rounded-full bg-gray-700 text-gray-300 capitalize self-start">{bot.agent_name}</span>
@@ -102,7 +104,7 @@ export default function BotList() {
                               size="small"
                               icon={<PencilIcon className="w-4 h-4 text-gray-400" />}
                               onClick={() => handleEditBot(bot)}
-                              title="Edit Bot"
+                              title={t('bots.edit')}
                               style={{ padding: '4px' }}
                             />
                             <Button
@@ -110,7 +112,7 @@ export default function BotList() {
                               size="small"
                               icon={<TrashIcon className="w-4 h-4 text-gray-400" />}
                               onClick={() => handleDeleteBot(bot.id)}
-                              title="Delete Bot"
+                              title={t('bots.delete')}
                               style={{ padding: '4px' }}
                             />
                           </div>
@@ -122,7 +124,7 @@ export default function BotList() {
                     ))
                   ) : (
                     <div className="text-center text-gray-500 py-4">
-                      <p className="text-sm">No bots available</p>
+                      <p className="text-sm">{t('bots.no_bots')}</p>
                     </div>
                   )}
                   <div className="border-t border-[#30363d]"></div>
@@ -134,7 +136,7 @@ export default function BotList() {
                       icon={<PlusIcon className="w-3 h-3" />}
                       style={{ margin: '8px 0' }}
                     >
-                      New Bot
+                      {t('bots.new_bot')}
                     </Button>
                   </div>
                 </>

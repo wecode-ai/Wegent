@@ -3,8 +3,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import Image from 'next/image'
+import { useTranslation } from '@/hooks/useTranslation'
 
 export default function LogoHeader() {
+  const { t } = useTranslation('common')
   return (
     <div className="flex justify-center items-center space-x-3">
       <Image
@@ -15,7 +17,7 @@ export default function LogoHeader() {
         className="object-contain"
       />
       <h2 className="text-3xl font-medium text-white">
-        Login to WeCode AI
+        {t('auth.login_title')}
       </h2>
     </div>
     /* Subtitle */
@@ -24,9 +26,10 @@ export default function LogoHeader() {
 }
 
 export function LogoSubTitle() {
+  const { t } = useTranslation('common')
   return (
     <p className="mt-2 text-center text-sm text-gray-400 font-light">
-      your AI assistant for developers
+      {t('auth.login_subtitle')}
     </p>
   )
 }

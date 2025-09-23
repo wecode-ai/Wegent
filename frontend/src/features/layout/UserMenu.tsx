@@ -8,14 +8,16 @@ import { Menu } from '@headlessui/react'
 import { Button } from 'antd'
 
 import { useUser } from '@/features/common/UserContext'
+import { useTranslation } from '@/hooks/useTranslation'
 
 type UserMenuProps = {
   position?: string
 }
 
 export default function UserMenu({ position = 'right-6' }: UserMenuProps) {
+  const { t } = useTranslation('common')
   const { user, logout } = useUser()
-  const userDisplayName = user?.user_name || 'User'
+  const userDisplayName = user?.user_name || t('user.default_name')
 
   return (
     <div className={`absolute ${position}`}>
@@ -39,7 +41,7 @@ export default function UserMenu({ position = 'right-6' }: UserMenuProps) {
                   height: 'auto'
                 }}
               >
-                Logout
+                {t('user.logout')}
               </Button>
             )}
           </Menu.Item>

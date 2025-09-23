@@ -11,6 +11,7 @@ import Modal from '@/features/common/Modal'
 import { paths } from '@/config/paths'
 
 import { useUser } from '@/features/common/UserContext'
+import { useTranslation } from 'react-i18next'
 
 import type { Team } from '@/types/api';
 
@@ -26,7 +27,7 @@ export default function BeginnerGuideModal({
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const { user, isLoading: userLoading } = useUser()
-
+  const { t } = useTranslation()
   // Determine if team needs to be set based on teams length
   const needSetTeam = !teams || teams.length === 0;
 
@@ -51,12 +52,12 @@ export default function BeginnerGuideModal({
     <Modal
       isOpen={isOpen}
       onClose={handleClose}
-      title="Welcome!"
+      title={t('guide.title')}
       maxWidth="sm"
     >
       <div className="flex flex-col items-center">
         <p className="text-sm text-gray-300 mb-6 text-center leading-relaxed">
-          Before you can start using the app, please complete the setup below first!
+            {t('guide.description')}
         </p>
         {needSetTeam && (
           <div className="flex flex-row items-center justify-center gap-2 w-full mb-2">

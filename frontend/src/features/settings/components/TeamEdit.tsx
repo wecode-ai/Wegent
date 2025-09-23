@@ -15,6 +15,7 @@ import { EditOutlined, DownOutlined } from '@ant-design/icons'
 import { Bot, Team } from '@/types/api'
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface TeamEditProps {
   teams: Team[]
@@ -35,6 +36,7 @@ export default function TeamEdit(props: TeamEditProps) {
     message,
   } = props
 
+  const { t } = useTranslation('common')
   // 当前编辑对象（0 表示新建）
   const editingTeam: Team | null = editingTeamId === 0
     ? null
@@ -55,56 +57,29 @@ export default function TeamEdit(props: TeamEditProps) {
   const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
 
-  // 不同 Mode 的“说明”和“边界”，均包含文字与图片
+  // 不同 Mode 的“说明”和“边界”，均包含文字与图片（国际化）
   const MODE_INFO = useMemo(() => {
-    switch (mode) {
-      case 'pipeline':
-        return {
-          info: {
-            title: 'Pipeline',
-            desc: 'Agents are chained one after another, where each agent refines or transforms the result in turn.',
-            bullets: [],
-            image: '/settings/sequential.png',
-          },
-        }
-      case 'route':
-        return {
-          info: {
-            title: 'Route',
-            desc: 'A central agent acts as a message router, directing communication between agents without them talking directiy.',
-            bullets: [],
-            image: '/settings/router.png',
-          }
-        }
-      case 'coordinate':
-        return {
-          info: {
-            title: 'Coordinate',
-            desc: 'A network pattern is the structure that defines how agents connect, exchange information, and coordinate with each other.',
-            bullets: [],
-            image: '/settings/network.png',
-          }
-        }
-      case 'collaborate':
-        return {
-          info: {
-            title: 'Collaborate',
-            desc: 'Multiple agents work simultaneously on tasks, often sharing results to speed up processing.',
-            bullets: [],
-            image: '/settings/parallel.png',
-          }
-        }
-      default:
-        return {
-          info: {
-            title: '未知模式',
-            desc: '请在上方选择有效的 Mode。',
-            bullets: [],
-            image: '/1.png',
-          }
-        }
-    }
-  }, [mode])
+    // i18n keys
+    const titleKey = `team_model.${mode}`;
+    const descKey = `team_model_desc.${mode}`;
+
+    // 图片按模式固定映射
+    const imageMap: Record<typeof mode, string> = {
+      pipeline: '/settings/sequential.png',
+      route: '/settings/router.png',
+      coordinate: '/settings/network.png',
+      collaborate: '/settings/parallel.png',
+    };
+
+    return {
+      info: {
+        title: t(titleKey),
+        desc: t(descKey),
+        bullets: [],
+        image: imageMap[mode],
+      },
+    };
+  }, [mode, t]);
 
   // 初始化/切换编辑对象时重置表单
   useEffect(() => {
@@ -302,31 +277,28 @@ export default function TeamEdit(props: TeamEditProps) {
     [bots, mode, selectedBotKeys]
   )
 
+
   return (
     <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-[#161b22] rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
       {/* 顶部工具条：Back + Save */}
       <div className="w-full flex items-center justify-between mb-4 mt-4">
-        <Button
-          type="text"
+        <button
           onClick={() => setEditingTeamId(null)}
-          className="flex items-center"
-          title="Back"
-          icon={
-            <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-              <path d="M15 6l-6 6 6 6" />
-            </svg>
-          }
-          style={{ color: '#9ca3af', padding: '0', height: 'auto' }}
+          className="flex items-center text-gray-400 hover:text-white text-base"
+          title={t('common.back')}
         >
-          Back
-        </Button>
+          <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+            <path d="M15 6l-6 6 6 6"/>
+          </svg>
+            {t('common.back')}
+        </button>
         <Button
           type="primary"
           onClick={handleSave}
           disabled={saving}
           loading={saving}
         >
-          {saving ? (editingTeam ? 'Saving...' : 'Creating...') : 'Save'}
+          {saving ? (editingTeam ? t('actions.saving') : t('actions.creating')) : t('actions.save')}
         </Button>
       </div>
 
@@ -337,13 +309,13 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* Team Name */}
           <div className="flex flex-col">
             <label className="block text-lg font-semibold text-white mb-1">
-              Name <span className="text-red-400">*</span>
+                {t('team.name')} <span className="text-red-400">*</span>
             </label>
             <input
               type="text"
               value={name}
               onChange={e => setName(e.target.value)}
-              placeholder="Team Name"
+              placeholder={t('team.name_placeholder')}
               className="w-full px-4 py-1 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base"
             />
           </div>
@@ -351,7 +323,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* Mode 组件 */}
           <div className='min-h-[400px] flex flex-col'>
             <label className="block text-lg font-semibold text-white mb-1">
-              Model <span className="text-red-400">*</span>
+                {t('team.model')} <span className="text-red-400">*</span>
             </label>
 
             {/* 整合 Mode 选择和说明到一个统一容器 */}
@@ -364,8 +336,8 @@ export default function TeamEdit(props: TeamEditProps) {
                   optionType="button"
                   buttonStyle="solid"
                   options={['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => ({
-                    label: opt.charAt(0).toUpperCase() + opt.slice(1),
-                    value: opt,
+                    label: t(`team_model.${opt}`),
+                    value: opt as any,
                     style: { minWidth: 20, padding: '0 12px', textAlign: 'center' }
                   }))}
                   className="w-full"
@@ -388,7 +360,7 @@ export default function TeamEdit(props: TeamEditProps) {
                 )}
 
                 <div className="mt-auto pt-3 rounded-md overflow-hidden flex items-center justify-center">
-                  <Image src={MODE_INFO.info.image} alt="mode info" width={640} height={360} className="object-contain" />
+                  <Image src={MODE_INFO.info.image} alt={MODE_INFO.info.title} width={640} height={360} className="object-contain" />
                 </div>
               </div>
             </div>
@@ -400,12 +372,12 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* LeaderBot 单选 */}
           <div className="flex flex-col">
             <label className="block text-lg font-semibold text-white mb-1">
-              Leader <span className="text-red-400">*</span>
+              {t('team.leader')} <span className="text-red-400">*</span>
             </label>
             <Select
               value={leaderBotId ?? undefined}
               onChange={onLeaderChange}
-              placeholder="Select leader"
+              placeholder={t('team.select_leader')}
               suffixIcon={<DownOutlined className="text-gray-300" />}
               notFoundContent={<div className="text-sm text-gray-400">请先在右侧选择 Bots</div>}
               className="w-full"
@@ -430,7 +402,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* Bots 穿梭框 */}
           <div className="flex flex-col flex-1 min-h-[280px]">
             <label className="block text-lg font-semibold text-white mb-1">
-              Bots
+                {t('team.bots')}
             </label>
             <div className="relative flex-1 min-h-[260px] bg-transparent">
               <Transfer
@@ -448,7 +420,8 @@ export default function TeamEdit(props: TeamEditProps) {
                     <div className="flex items-center">
 
                       <EditOutlined
-                        className="ml-2 text-gray-400 hover:text-white cursor-pointer"
+                        className="ml-2 text-gray-700 hover:text-gray-200 cursor-pointer"
+                        // style={{ color: '#30363d' }}
                         onClick={(e) => {
                           e.stopPropagation(); // 阻止事件冒泡，避免触发选择
                           setEditingBotId(Number(item.key));
@@ -458,7 +431,7 @@ export default function TeamEdit(props: TeamEditProps) {
                     </div>
                   </div>
                 )}
-                titles={['candidates', 'in team']}
+                titles={[t("team.candidates"), t("team.in_team")]}
                 style={{}}
                 listStyle={{
                   minHeight: 400,
@@ -469,7 +442,7 @@ export default function TeamEdit(props: TeamEditProps) {
                 locale={{
                   itemUnit: 'item',
                   itemsUnit: 'items',
-                  notFoundContent: 'no data',
+                  notFoundContent: t("team.no_data"),
                 }}
               />
             </div>

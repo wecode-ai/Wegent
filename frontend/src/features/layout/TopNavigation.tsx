@@ -8,6 +8,7 @@ import { useRouter } from 'next/navigation'
 import Image from 'next/image'
 import { paths } from '@/config/paths'
 import { Button } from 'antd'
+import { useTranslation } from '@/hooks/useTranslation'
 
 type TopNavigationProps = {
   activePage: 'tasks' | 'dashboard'
@@ -16,6 +17,7 @@ type TopNavigationProps = {
 }
 
 export default function TopNavigation({ activePage, showLogo = false, children }: TopNavigationProps) {
+  const { t } = useTranslation('common')
   const router = useRouter()
 
   const navigateToTasks = () => {
@@ -55,7 +57,7 @@ export default function TopNavigation({ activePage, showLogo = false, children }
             height: 'auto'
           }}
         >
-          Tasks
+          {t('navigation.tasks')}
         </Button>
         <Button
           type="link"
@@ -68,7 +70,7 @@ export default function TopNavigation({ activePage, showLogo = false, children }
             height: 'auto'
           }}
         >
-          Settings
+          {t('navigation.settings')}
         </Button>
       </div>
       

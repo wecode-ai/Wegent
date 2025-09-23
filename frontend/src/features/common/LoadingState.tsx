@@ -9,9 +9,9 @@ type LoadingStateProps = {
   message?: string
 }
 
-export default function LoadingState({ 
-  fullScreen = true, 
-  message = "Loading..." 
+export default function LoadingState({
+  fullScreen = true,
+  message
 }: LoadingStateProps) {
   if (fullScreen) {
     return (

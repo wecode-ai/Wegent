@@ -10,7 +10,7 @@ import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { RiRobot2Line } from 'react-icons/ri'
 import { FiCopy, FiCheck } from 'react-icons/fi'
 import { Button } from 'antd'
-
+import { useTranslation } from '@/hooks/useTranslation'
 import MarkdownEditor from '@uiw/react-markdown-editor'
 
 interface Message {
@@ -23,6 +23,7 @@ interface Message {
 // CopyButton component for copying markdown content
 const CopyButton = ({ content }: { content: string }) => {
   const [copied, setCopied] = useState(false);
+  const { t } = useTranslation();
 
   const handleCopy = async () => {
     // 检查是否在浏览器环境中且 Clipboard API 可用
@@ -60,7 +61,7 @@ const CopyButton = ({ content }: { content: string }) => {
         type="text"
         onClick={handleCopy}
         className="absolute bottom-0 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-        title="Copy markdown content"
+        title={t('messages.copy_markdown')}
         icon={copied ?
           <FiCheck className="w-4 h-4 text-green-400" /> :
           <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
@@ -77,6 +78,7 @@ const CopyButton = ({ content }: { content: string }) => {
 };
 
 export default function MessagesArea() {
+  const { t } = useTranslation('common')
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext()
 
   useEffect(() => {
@@ -102,8 +104,8 @@ export default function MessagesArea() {
     if (Array.isArray(detail.subtasks) && detail.subtasks.length > 0) {
       detail.subtasks.forEach((sub: TaskDetailSubtask) => {
         const promptContent = sub.prompt || '';
-        let content = '';
-        let msgType: 'user' | 'ai' = 'ai';
+        let content;
+        let msgType: 'user' | 'ai';
 
         if (sub.role === 'USER') {
           msgType = 'user';
@@ -119,7 +121,7 @@ export default function MessagesArea() {
           }
 
           // Generate aiContent
-          let aiContent = '';
+          let aiContent;
           const result = sub.result;
           if (result) {
             if (typeof result === 'object') {
@@ -130,9 +132,9 @@ export default function MessagesArea() {
               aiContent = String(result);
             }
           } else if (sub.status === 'COMPLETED') {
-            aiContent = 'Subtask completed';
+            aiContent = t('messages.subtask_completed');
           } else if (sub.status === 'FAILED') {
-            aiContent = `Subtask failed: ${sub.error_message || 'Unknown error'}`;
+            aiContent = `${t('messages.subtask_failed')} ${sub.error_message || t('messages.unknown_error')}`;
           } else {
             aiContent = `__PROGRESS_BAR__:${sub.status}:${sub.progress}`;
           }
@@ -173,7 +175,7 @@ export default function MessagesArea() {
                 {msg.type === 'ai' && (
                   <div className="flex items-center mb-1 text-xs opacity-80">
                     <RiRobot2Line className="w-5 h-5 mr-1" />
-                    <span className="font-semibold mr-2">{msg.botName || 'Bot'}</span>
+                    <span className="font-semibold mr-2">{msg.botName || t('messages.bot')}</span>
                     <span>
                       {new Date(msg.timestamp ?? 0).toLocaleTimeString(navigator.language, {
                         hour: '2-digit',
@@ -208,7 +210,7 @@ export default function MessagesArea() {
                             return (
                               <div className="mt-2">
                                 <div className="flex justify-between items-center mb-1">
-                                  <span className="text-sm">Task Status: {status}</span>
+                                  <span className="text-sm">{t('messages.task_status')} {status}</span>
                                 </div>
                                 <div className="w-full bg-gray-700 rounded-full h-2">
                                   <div
@@ -245,7 +247,7 @@ export default function MessagesArea() {
                                       return (
                                         <div className="mt-2">
                                           <div className="flex justify-between items-center mb-1">
-                                            <span className="text-sm">Task Status: {status}</span>
+                                            <span className="text-sm">{t('messages.task_status')} {status}</span>
                                           </div>
                                           <div className="w-full bg-gray-700 rounded-full h-2">
                                             <div
@@ -305,7 +307,7 @@ export default function MessagesArea() {
                       return (
                         <div key={idx} className="mt-2">
                           <div className="flex justify-between items-center mb-1">
-                            <span className="text-sm">Task Status: {status}</span>
+                            <span className="text-sm">{t('messages.task_status')} {status}</span>
                           </div>
                           <div className="w-full bg-gray-700 rounded-full h-2">
                             <div
