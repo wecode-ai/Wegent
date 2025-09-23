@@ -26,8 +26,8 @@ const BotEdit: React.FC<BotEditProps> = ({
   const { t } = useTranslation()
   // 选项本地定义
   const agentOptions = [
-    { value: 'ClaudeCode', label: 'ClaudeCode' },
     { value: 'Agno', label: 'Agno' },
+    { value: 'ClaudeCode', label: 'ClaudeCode' },
     { value: 'GeminiCli', label: 'GeminiCli', disabled: true },
     { value: 'Codex', label: 'Codex', disabled: true }
   ]
@@ -39,7 +39,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     : bots.find(b => b.id === editingBotId) || null
 
   const [botName, setBotName] = useState(editingBot?.name || '')
-  const [agentName, setAgentName] = useState(editingBot?.agent_name || '')
+  const [agentName, setAgentName] = useState(editingBot?.agent_name || 'Agno')
   const [agentConfig, setAgentConfig] = useState(
     editingBot?.agent_config ? JSON.stringify(editingBot.agent_config, null, 2) : ''
   )
@@ -51,7 +51,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   // 切换编辑对象时重置表单
   useEffect(() => {
     setBotName(editingBot?.name || '')
-    setAgentName(editingBot?.agent_name || '')
+    setAgentName(editingBot?.agent_name || 'Agno')
     setAgentConfig(editingBot?.agent_config ? JSON.stringify(editingBot.agent_config, null, 2) : '')
     setPrompt(editingBot?.system_prompt || '')
     setMcpConfig(editingBot?.mcp_servers ? JSON.stringify(editingBot.mcp_servers, null, 2) : '')
