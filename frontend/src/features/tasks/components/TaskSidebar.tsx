@@ -98,6 +98,7 @@ export default function TaskSidebar() {
             size="small"
             icon={<PlusIcon className="h-3 w-3" />}
             style={{ width: '100%' }}
+            className="!text-base"
           >
             {t('tasks.new_task')}
           </Button>

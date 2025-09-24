@@ -152,6 +152,7 @@ export default function GitHubIntegration() {
                 size="small"
                 icon={<PlusIcon className="w-3 h-3" />}
                 style={{ margin: '8px 0' }}
+                className="!text-base"
               >
                 {t('integrations.new_token')}
               </Button>
