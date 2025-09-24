@@ -10,7 +10,7 @@ import type { TransferDirection } from 'antd/es/transfer'
 import type { MessageInstance } from 'antd/es/message/interface'
 import Image from 'next/image'
 import { RiRobot2Line } from 'react-icons/ri'
-import { EditOutlined, DownOutlined } from '@ant-design/icons'
+import { EditOutlined, DownOutlined, PlusOutlined } from '@ant-design/icons'
 
 import { Bot, Team } from '@/types/api'
 import { createTeam, updateTeam } from '../services/teams'
@@ -58,6 +58,7 @@ export default function TeamEdit(props: TeamEditProps) {
   // Bot编辑相关状态
   const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
+  const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit')
 
   // 不同 Mode 的“说明”和“边界”，均包含文字与图片（国际化）
   const MODE_INFO = useMemo(() => {
@@ -132,8 +133,8 @@ export default function TeamEdit(props: TeamEditProps) {
 
   // 供 Transfer 使用的数据源
   const transferData = useMemo(
-    () =>
-      bots.map(b => ({
+    () => {
+      return bots.map(b => ({
         key: String(b.id),
         title: b.name,
         description: b.agent_name,
@@ -142,7 +143,8 @@ export default function TeamEdit(props: TeamEditProps) {
           mode !== 'pipeline' &&
           selectedAgentName !== null &&
           b.agent_name !== selectedAgentName
-      })),
+      }))
+    },
     [bots, mode, selectedAgentName]
   )
 
@@ -198,7 +200,6 @@ export default function TeamEdit(props: TeamEditProps) {
       message.error('Leader bot is required')
       return
     }
-    console.log('Saving team selectedBotKeys', selectedBotKeys)
     const selectedIds = selectedBotKeys.map(k => Number(k))
 
     // 非 pipeline 模式要求 agent_name 一致
@@ -224,7 +225,6 @@ export default function TeamEdit(props: TeamEditProps) {
         allBotIds.push(id);
       }
     });
-    console.log('Saving team with allBotIds', allBotIds, 's:', selectedIds)
 
     // 创建 botsData，保持 allBotIds 的顺序
     const botsData = allBotIds.map(id => ({
@@ -232,7 +232,6 @@ export default function TeamEdit(props: TeamEditProps) {
       bot_prompt: '',
       role: id === leaderBotId ? 'leader' : undefined,
     }))
-    console.log('Saving team with bots:', botsData)
 
     const workflow = { mode, leader_bot_id: leaderBotId }
 
@@ -282,6 +281,10 @@ export default function TeamEdit(props: TeamEditProps) {
     },
     [bots, mode, selectedBotKeys]
   )
+
+  const handleTeamUpdate = (updatedTeam: Team) => {
+    setTeams(prev => prev.map(t => t.id === updatedTeam.id ? updatedTeam : t))
+  }
 
 
   return (
@@ -387,7 +390,7 @@ export default function TeamEdit(props: TeamEditProps) {
               suffixIcon={<DownOutlined className="text-text-secondary" />}
               notFoundContent={<div className="text-sm text-text-muted">Select Bots</div>}
               className="w-full"
-              options={leaderOptions.map(b => ({
+              options={leaderOptions.map((b: Bot) => ({
                 value: b.id,
                 label: (
                   <div className="flex items-center justify-between w-full">
@@ -401,6 +404,7 @@ export default function TeamEdit(props: TeamEditProps) {
                       className="ml-8 text-text-secondary hover:text-text-primary cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation(); // 阻止事件冒泡，避免触发选择
+                        setDrawerMode('edit')
                         setEditingBotId(b.id);
                         setEditingBotDrawerVisible(true);
                       }}
@@ -418,9 +422,26 @@ export default function TeamEdit(props: TeamEditProps) {
 
           {/* Bots 穿梭框 */}
           <div className="flex flex-col flex-1 min-h-[280px]">
-            <label className="block text-lg font-semibold text-text-primary mb-1">
-              {t('team.bots')}
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-lg font-semibold text-text-primary">
+                {t('team.bots')}
+              </label>
+              <Button
+                type="link"
+                size="small"
+                className="!text-text-muted hover:!text-text-primary"
+                onClick={() => {
+                  if (!editingTeam) {
+                    message.info('Please save the team before editing prompts.')
+                    return
+                  }
+                  setDrawerMode('prompt');
+                  setEditingBotDrawerVisible(true);
+                }}
+              >
+                Edit Team Prompts
+              </Button>
+            </div>
             <div className="relative flex-1 min-h-[260px] bg-transparent">
               <Transfer
                 oneWay
@@ -440,6 +461,7 @@ export default function TeamEdit(props: TeamEditProps) {
                         className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation(); // 阻止事件冒泡，避免触发选择
+                          setDrawerMode('edit')
                           setEditingBotId(Number(item.key));
                           setEditingBotDrawerVisible(true);
                         }}
@@ -460,6 +482,29 @@ export default function TeamEdit(props: TeamEditProps) {
                   itemsUnit: 'items',
                   notFoundContent: t("team.no_data"),
                 }}
+                footer={(_, info) => {
+                  if (info?.direction === 'left') {
+                    return (
+                      <div className="p-2 text-center">
+                        <Button
+                          type="primary"
+                          size="small"
+                          ghost
+                          className="w-70"
+                          icon={<PlusOutlined />}
+                          onClick={() => {
+                            setDrawerMode('edit');
+                            setEditingBotId(0);
+                            setEditingBotDrawerVisible(true);
+                          }}
+                        >
+                          New Bot
+                        </Button>
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
               />
             </div>
           </div>
@@ -475,6 +520,9 @@ export default function TeamEdit(props: TeamEditProps) {
         visible={editingBotDrawerVisible}
         setVisible={setEditingBotDrawerVisible}
         message={message}
+        mode={drawerMode}
+        editingTeam={editingTeam}
+        onTeamUpdate={handleTeamUpdate}
       />
     </div>
   )
