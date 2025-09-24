@@ -108,7 +108,7 @@ export default function TeamList() {
                                 {team.workflow?.mode && (
                                   <>
                                     <span className="px-2 py-0.5 text-xs rounded-full bg-gray-700 text-gray-300 capitalize">
-                                      {team.workflow.mode}
+                                      {t(`team_model.${team.workflow.mode}`)}
                                     </span>
                                     <span className="mx-2"></span>
                                   </>

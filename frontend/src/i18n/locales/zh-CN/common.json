@@ -84,7 +84,8 @@
     "prompt_hint": "AI-powered assistant for development tasks",
     "agent_config": "智能体配置",
     "mcp_config": "MCP配置",
-    "save_prompt": "保存提示词"
+    "save_prompt": "保存提示词",
+    "use_custom_model": "自定义配置"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
@@ -111,7 +112,7 @@
     "name_placeholder": "团队名称",
     "leader": "领导者",
     "model": "模式",
-    "bots": "智能体列表",
+    "bots": "候选人列表",
     "select_leader": "选择领导者",
     "candidates": "候选人",
     "in_team": "团队",
