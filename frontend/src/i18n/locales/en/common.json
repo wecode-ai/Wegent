@@ -179,6 +179,41 @@
     "setup": "Before you can start using the app, please complete the setup below first!"
   },
   "common": {
-    "back": "Back"
+    "back": "Back",
+    "cancel": "Cancel"
+  },
+  "github": {
+    "error": {
+      "required": "Please fill in all required fields",
+      "save_failed": "Save failed"
+    },
+    "modal": {
+      "title_edit": "Edit Token",
+      "title_add": "Add Git Token"
+    },
+    "platform": "Platform",
+    "platform_github": "GitHub",
+    "platform_gitlab": "GitLab",
+    "domain": "Platform Domain",
+    "token": {
+      "title": "Personal Access Token",
+      "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx"
+    },
+    "howto": {
+      "step1_visit": "1. Visit",
+      "github": {
+        "title": "How to get your GitHub token:",
+        "step2": "2. Click \"Generate new token (classic)\"",
+        "step3": "3. Select appropriate scopes and copy the generated token"
+      },
+      "gitlab": {
+        "title": "How to get your GitLab token:",
+        "step2": "2. Click \"Add new token\"",
+        "step3": "3. Select appropriate scopes and copy the generated token"
+      }
+    },
+    "saving": "Saving...",
+    "save_token": "Save Token"
   }
 }

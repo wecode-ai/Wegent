@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+from datetime import timedelta
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -63,6 +63,7 @@ class MCPManager:
                 logger.info("Setting up MCP tools")
                 # Connect all MCP tools in the list
                 for mcp_tool in mcp_tools_list:
+                    logger.info(f"Connecting to MCP server: {mcp_tool}")
                     await mcp_tool.connect()
                     self.connected_tools.append(mcp_tool)
 
@@ -86,7 +87,7 @@ class MCPManager:
         try:
             mcp_type = server_config.get("type")
             if not mcp_type:
-                mcp_type = "streamable-http"
+                return None
 
             if mcp_type == "streamable-http":
                 return self._create_streamable_http_tools(server_config)
@@ -113,7 +114,8 @@ class MCPManager:
         """
         server_params = StreamableHTTPClientParams(
             url=server_config.get("url"),
-            headers=server_config.get("headers", {})
+            headers=server_config.get("headers", {}),
+            timeout=timedelta(seconds=10)
         )
         return MCPTools(transport="streamable-http", server_params=server_params)
     
@@ -129,7 +131,8 @@ class MCPManager:
         """
         server_params = SSEClientParams(
             url=server_config.get("url"),
-            headers=server_config.get("headers", {})
+            headers=server_config.get("headers", {}),
+            timeout=2
         )
         return MCPTools(transport="sse", server_params=server_params)
     
