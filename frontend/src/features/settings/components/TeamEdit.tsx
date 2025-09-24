@@ -70,13 +70,8 @@ export default function TeamEdit(props: TeamEditProps) {
 
   useEffect(() => {
     const handleEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (event.key !== 'Escape') return
       if (editingBotDrawerVisible) return
-
-      const activeElement = document.activeElement as HTMLElement | null
-      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)) {
-        return
-      }
 
       handleBack()
     }

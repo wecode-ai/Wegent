@@ -148,15 +148,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   useEffect(() => {
     const handleEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
-
-      const activeElement = document.activeElement as HTMLElement | null
-      if (activeElement && (
-        activeElement.getAttribute('role') === 'combobox' ||
-        activeElement.closest('.ant-select-dropdown')
-      )) {
-        return
-      }
+      if (event.key !== 'Escape') return
 
       handleBack()
     }
