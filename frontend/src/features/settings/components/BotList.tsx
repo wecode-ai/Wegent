@@ -11,7 +11,7 @@ import { PencilIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
 import { RiRobot2Line } from 'react-icons/ri'
 import LoadingState from '@/features/common/LoadingState'
 import { Bot } from '@/types/api'
-import { fetchBotsList, createBot, updateBot, deleteBot } from '../services/bots'
+import { fetchBotsList, deleteBot, isPredefinedModel, getModelFromConfig } from '../services/bots'
 import { App } from 'antd'
 import BotEdit from './BotEdit'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -98,7 +98,14 @@ export default function BotList() {
                                   <span className="text-xs text-text-muted flex items-center justify-center">{bot.is_active ? t('bots.active') : t('bots.inactive')}</span>
                                 </div>
                               </div>
-                              <span className="inline-block px-1 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize self-start">{bot.agent_name}</span>
+                              <div className="flex items-center space-x-1 mt-1">
+                                <span className="inline-block px-1 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize self-start">{bot.agent_name}</span>
+                                <span className="inline-block px-1 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize self-start">
+                                  {isPredefinedModel(bot.agent_config)
+                                    ? getModelFromConfig(bot.agent_config)
+                                    : 'CustomModel'}
+                                </span>
+                              </div>
                             </div>
                           </div>
                           <div className="flex items-center space-x-2">

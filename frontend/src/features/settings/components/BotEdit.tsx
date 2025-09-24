@@ -3,6 +3,7 @@ import { Button, Select, Switch } from 'antd'
 
 import { Bot } from '@/types/api'
 import { botApis } from '@/apis/bots'
+import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots'
 import { agentApis, Agent } from '@/apis/agents'
 import { modelApis, Model } from '@/apis/models'
 import { useTranslation } from 'react-i18next'
@@ -50,18 +51,6 @@ const BotEdit: React.FC<BotEditProps> = ({
     editingBot?.agent_config ? JSON.stringify(editingBot.agent_config, null, 2) : ''
   )
 
-  // 检查是否为预定义模型（只有private_model字段）
-  const isPredefinedModel = (config: any): boolean => {
-    if (!config) return false;
-    const keys = Object.keys(config);
-    return keys.length === 1 && keys[0] === 'private_model';
-  }
-
-  // 从预定义模型配置中获取模型名称
-  const getModelFromConfig = (config: any): string => {
-    if (!config) return '';
-    return config.private_model || '';
-  }
   const [prompt, setPrompt] = useState(editingBot?.system_prompt || '')
   const [mcpConfig, setMcpConfig] = useState(
     editingBot?.mcp_servers ? JSON.stringify(editingBot.mcp_servers, null, 2) : ''
@@ -215,7 +204,6 @@ const BotEdit: React.FC<BotEditProps> = ({
           disabled={botSaving}
           loading={botSaving}
           type="primary"
-          size="small"
         >
           {botSaving ? t('actions.saving') : t('actions.save')}
         </Button>
