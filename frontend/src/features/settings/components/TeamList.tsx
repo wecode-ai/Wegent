@@ -183,6 +183,7 @@ export default function TeamList() {
                         </svg>
                       }
                       style={{ margin: '8px 0' }}
+                      className="!text-base"
                     >
                       {t('teams.new_team')}
                     </Button>

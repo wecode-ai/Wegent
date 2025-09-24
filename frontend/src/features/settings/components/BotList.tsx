@@ -147,6 +147,7 @@ export default function BotList() {
                       size="small"
                       icon={<PlusIcon className="w-3 h-3" />}
                       style={{ margin: '8px 0' }}
+                      className="!text-base"
                     >
                       {t('bots.new_bot')}
                     </Button>
