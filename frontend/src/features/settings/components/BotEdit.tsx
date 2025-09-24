@@ -272,7 +272,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                 </label>
               </div>
               <div className="flex items-center">
-                <span className="text-xs text-gray-400 mr-2">Use Custom Model</span>
+                <span className="text-xs text-gray-400 mr-2">{t("bot.use_custom_model")}</span>
                 <Switch
                   size="small"
                   checked={isCustomModel}
@@ -376,7 +376,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           <div className="mb-1">
             <div className="flex items-center">
               <label className="block text-base font-medium text-white">
-                Prompt
+                  {t("bot.prompt")}
               </label>
               <span className="text-xs text-gray-500 ml-2">AI prompt</span>
             </div>

@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react'
 import { useTaskContext } from '../contexts/taskContext'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { RiRobot2Line } from 'react-icons/ri'
-import { FiCopy, FiCheck } from 'react-icons/fi'
+import { FiCopy, FiCheck, FiTool, FiExternalLink, FiDownload } from 'react-icons/fi'
 import { Button } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import MarkdownEditor from '@uiw/react-markdown-editor'
@@ -21,12 +21,12 @@ interface Message {
 }
 
 // CopyButton component for copying markdown content
-const CopyButton = ({ content }: { content: string }) => {
+const CopyButton = ({ content, className }: { content: string, className?: string }) => {
   const [copied, setCopied] = useState(false);
   const { t } = useTranslation();
 
   const handleCopy = async () => {
-    // 检查是否在浏览器环境中且 Clipboard API 可用
+    // 优先使用 Clipboard API
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       try {
         await navigator.clipboard.writeText(content);
@@ -37,7 +37,7 @@ const CopyButton = ({ content }: { content: string }) => {
         console.error('Failed to copy text: ', err);
       }
     }
-    
+
     // 降级方案：使用 document.execCommand
     try {
       const textarea = document.createElement('textarea');
@@ -55,28 +55,61 @@ const CopyButton = ({ content }: { content: string }) => {
   };
 
   return (
-    <>
-      {/* 坐下角复制按钮 */}
-      <Button
-        type="text"
-        onClick={handleCopy}
-        className="absolute bottom-0 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-        title={t('messages.copy_markdown')}
-        icon={copied ?
-          <FiCheck className="w-4 h-4 text-green-400" /> :
-          <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
-        }
-        style={{
-          padding: '4px',
-          background: '#1e2937',
-          height: 'auto',
-          minWidth: 'auto'
-        }}
-      />
-    </>
+    <Button
+      type="text"
+      onClick={handleCopy}
+      className={className ?? ''}
+      title={t('messages.copy_markdown')}
+      icon={
+        copied
+          ? <FiCheck className="w-4 h-4 text-green-400" />
+          : <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
+      }
+      style={{
+        padding: '4px',
+        height: 'auto',
+        minWidth: 'auto',
+        borderRadius: '4px'
+      }}
+    />
   );
-};
+}
 
+// 气泡工具栏：支持复制按钮与可扩展的其它工具按钮
+const BubbleTools = ({
+  contentToCopy,
+  tools = [],
+}: {
+  contentToCopy: string,
+  tools?: Array<{
+    key: string,
+    title: string,
+    icon: React.ReactNode,
+    onClick: () => void
+  }>
+}) => {
+  return (
+    <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
+      <CopyButton content={contentToCopy} />
+      {tools.map(tool => (
+        <Button
+          key={tool.key}
+          type="text"
+          onClick={tool.onClick}
+          title={tool.title}
+          icon={tool.icon}
+          className=""
+          style={{
+            padding: '4px',
+            height: 'auto',
+            minWidth: 'auto',
+            borderRadius: '4px'
+          }}
+        />
+      ))}
+    </div>
+  );
+}
 export default function MessagesArea() {
   const { t } = useTranslation('common')
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext()
@@ -167,7 +200,7 @@ export default function MessagesArea() {
         <div className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar">
           {displayMessages.map((msg, index) => (
             <div key={index} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[80%] p-3 rounded-lg ${msg.type === 'user'
+              <div className={`relative group max-w-[80%] p-3 rounded-lg ${msg.type === 'user'
                   ? 'bg-[#161b22] border border-[#30363d] text-white'
                   : 'bg-[#161b22] border border-[#30363d] text-gray-300'
                 }`}>
@@ -223,7 +256,7 @@ export default function MessagesArea() {
                           }
                           // Not a progress bar, normal markdown rendering
                           return (
-                            <div className="relative group">
+                            <div className="group pb-8">
                               <div className="text-sm">
                                 <div className="w-full" style={{ background: 'transparent' }}>
                                   {(() => {
@@ -266,8 +299,27 @@ export default function MessagesArea() {
                                           style={{ background: 'transparent' }}
                                           wrapperElement={{ 'data-color-mode': 'dark' }}
                                         />
-                                        {/* ★ 复制按钮用解包后的内容 */}
-                                        <CopyButton content={result} />
+                                        {/* ★ 顶部悬浮工具栏：复制 + 可扩展工具 */}
+                                        <BubbleTools
+                                          contentToCopy={`${prompt ? (prompt + '\n\n') : ''}${normalizedResult}`}
+                                          tools={[
+                                            {
+                                              key: 'download',
+                                              title: t('messages.download') || 'Download',
+                                              icon: <FiDownload className="w-4 h-4 text-gray-400 hover:text-white" />,
+                                              onClick: () => {
+                                                // 简易下载：将内容作为文件下载
+                                                const blob = new Blob([`${normalizedResult}`], { type: 'text/plain;charset=utf-8' });
+                                                const url = URL.createObjectURL(blob);
+                                                const a = document.createElement('a');
+                                                a.href = url;
+                                                a.download = 'message.md';
+                                                a.click();
+                                                URL.revokeObjectURL(url);
+                                              }
+                                            }
+                                          ]}
+                                        />
                                       </>
                                     );
                                   })()}
@@ -300,10 +352,10 @@ export default function MessagesArea() {
                       }
                     }
                     // __PROGRESS_BAR__ handling
-                    const progressMatch = line.match(/__PROGRESS_BAR__:(.*?):(\d+)/);
-                    if (progressMatch) {
-                      const status = progressMatch[1];
-                      const progress = parseInt(progressMatch[2], 10) || 0;
+                    const progressMatch2 = line.match(/__PROGRESS_BAR__:(.*?):(\d+)/);
+                    if (progressMatch2) {
+                      const status = progressMatch2[1];
+                      const progress = parseInt(progressMatch2[2], 10) || 0;
                       return (
                         <div key={idx} className="mt-2">
                           <div className="flex justify-between items-center mb-1">
@@ -320,11 +372,17 @@ export default function MessagesArea() {
                     }
                     // Plain text
                     return (
-                      <div key={idx} className="relative group">
-                        <div className="text-sm break-all pr-8">
+                      <div key={idx} className="group pb-8">
+                        {/* 仅在首行渲染工具栏，复制整条消息 */}
+                        {idx === 0 && (
+                          <BubbleTools
+                            contentToCopy={msg.content}
+                            tools={[]}
+                          />
+                        )}
+                        <div className="text-sm break-all">
                           {line}
                         </div>
-                        {line.trim() && <CopyButton content={line} />}
                       </div>
                     );
                   })
