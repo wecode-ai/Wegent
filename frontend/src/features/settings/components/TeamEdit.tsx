@@ -89,10 +89,12 @@ export default function TeamEdit(props: TeamEditProps) {
       setName(editingTeam.name)
       const m = (editingTeam.workflow?.mode as any) || 'pipeline'
       setMode(m)
-      const ids = editingTeam.bots.map(b => String(b.bot_id))
+      const ids = editingTeam.bots
+        .filter(b => bots.some(bot => bot.id === b.bot_id))
+        .map(b => String(b.bot_id))
       setSelectedBotKeys(ids)
       // 查找role="leader"的bot作为leader，如果没有则默认使用第一个
-      const leaderBot = editingTeam.bots.find(b => b.role === 'leader')
+      const leaderBot = editingTeam.bots.find(b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id))
       setLeaderBotId(leaderBot?.bot_id ?? null)
     } else {
       setName('')
@@ -196,7 +198,7 @@ export default function TeamEdit(props: TeamEditProps) {
       message.error('Leader bot is required')
       return
     }
-
+    console.log('Saving team selectedBotKeys', selectedBotKeys)
     const selectedIds = selectedBotKeys.map(k => Number(k))
 
     // 非 pipeline 模式要求 agent_name 一致
@@ -222,6 +224,7 @@ export default function TeamEdit(props: TeamEditProps) {
         allBotIds.push(id);
       }
     });
+    console.log('Saving team with allBotIds', allBotIds, 's:', selectedIds)
 
     // 创建 botsData，保持 allBotIds 的顺序
     const botsData = allBotIds.map(id => ({
@@ -229,6 +232,7 @@ export default function TeamEdit(props: TeamEditProps) {
       bot_prompt: '',
       role: id === leaderBotId ? 'leader' : undefined,
     }))
+    console.log('Saving team with bots:', botsData)
 
     const workflow = { mode, leader_bot_id: leaderBotId }
 
@@ -290,9 +294,9 @@ export default function TeamEdit(props: TeamEditProps) {
           title={t('common.back')}
         >
           <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-            <path d="M15 6l-6 6 6 6"/>
+            <path d="M15 6l-6 6 6 6" />
           </svg>
-            {t('common.back')}
+          {t('common.back')}
         </button>
         <Button
           type="primary"
@@ -311,7 +315,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* Team Name */}
           <div className="flex flex-col">
             <label className="block text-lg font-semibold text-text-primary mb-1">
-                {t('team.name')} <span className="text-red-400">*</span>
+              {t('team.name')} <span className="text-red-400">*</span>
             </label>
             <input
               type="text"
@@ -325,7 +329,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* Mode 组件 */}
           <div className='min-h-[400px] flex flex-col'>
             <label className="block text-lg font-semibold text-text-primary mb-1">
-                {t('team.model')} <span className="text-red-400">*</span>
+              {t('team.model')} <span className="text-red-400">*</span>
             </label>
 
             {/* 整合 Mode 选择和说明到一个统一容器 */}
@@ -415,7 +419,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* Bots 穿梭框 */}
           <div className="flex flex-col flex-1 min-h-[280px]">
             <label className="block text-lg font-semibold text-text-primary mb-1">
-                {t('team.bots')}
+              {t('team.bots')}
             </label>
             <div className="relative flex-1 min-h-[260px] bg-transparent">
               <Transfer
