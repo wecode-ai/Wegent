@@ -45,6 +45,10 @@ function PromptEdit({
   const [form] = Form.useForm()
   const [loading, setLoading] = React.useState(false)
 
+  const handleBack = React.useCallback(() => {
+    onClose()
+  }, [onClose])
+
   const teamBotsWithDetails = React.useMemo(() => {
     if (!team) return []
     return team.bots
@@ -72,6 +76,25 @@ function PromptEdit({
       form.setFieldsValue(initialValues)
     }
   }, [teamBotsWithDetails, form])
+
+  React.useEffect(() => {
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+
+      const activeElement = document.activeElement as HTMLElement | null
+      if (activeElement && (
+        activeElement.getAttribute('role') === 'combobox' ||
+        activeElement.closest('.ant-select-dropdown')
+      )) {
+        return
+      }
+
+      handleBack()
+    }
+
+    window.addEventListener('keydown', handleEsc)
+    return () => window.removeEventListener('keydown', handleEsc)
+  }, [handleBack])
 
   const handleSave = async () => {
     try {
@@ -109,7 +132,7 @@ function PromptEdit({
     <div className="p-6 h-full flex flex-col">
       <div className="flex items-center justify-between mb-4">
         <button
-          onClick={onClose}
+          onClick={handleBack}
           className="flex items-center text-text-muted hover:text-text-primary text-base"
           title={t('common.back')}
         >
@@ -184,12 +207,10 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
             bots={bots}
             setBots={setBots}
             editingBotId={editingBotId}
-            setEditingBotId={(id) => {
-              console.log('Setting editing bot ID to:', id);
-              setEditingBotId(id);
-              if (id === null) {
-                setVisible(false);
-              }
+            cloningBot={null}
+            onClose={() => {
+              setEditingBotId(null)
+              setVisible(false)
             }}
             message={message}
           />

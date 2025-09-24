@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useCallback, useState, useEffect, useMemo } from 'react'
 import { Button, Select, Switch } from 'antd'
 
 import { Bot } from '@/types/api'
@@ -14,14 +14,16 @@ interface BotEditProps {
   bots: Bot[]
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>
   editingBotId: number
-  setEditingBotId: React.Dispatch<React.SetStateAction<number | null>>
+  cloningBot: Bot | null
+  onClose: () => void
   message: MessageInstance
 }
 const BotEdit: React.FC<BotEditProps> = ({
   bots,
   setBots,
   editingBotId,
-  setEditingBotId,
+  cloningBot,
+  onClose,
   message,
 }) => {
   const { t } = useTranslation()
@@ -41,19 +43,29 @@ const BotEdit: React.FC<BotEditProps> = ({
   }))
 
   // 当前编辑对象
-  const editingBot = editingBotId === 0
-    ? null
-    : bots.find(b => b.id === editingBotId) || null
+  const editingBot = editingBotId > 0
+    ? bots.find(b => b.id === editingBotId) || null
+    : null
 
-  const [botName, setBotName] = useState(editingBot?.name || '')
-  const [agentName, setAgentName] = useState(editingBot?.agent_name || '')
+  const baseBot = useMemo(() => {
+    if (editingBot) {
+      return editingBot
+    }
+    if (editingBotId === 0 && cloningBot) {
+      return cloningBot
+    }
+    return null
+  }, [editingBot, editingBotId, cloningBot])
+
+  const [botName, setBotName] = useState(baseBot?.name || '')
+  const [agentName, setAgentName] = useState(baseBot?.agent_name || '')
   const [agentConfig, setAgentConfig] = useState(
-    editingBot?.agent_config ? JSON.stringify(editingBot.agent_config, null, 2) : ''
+    baseBot?.agent_config ? JSON.stringify(baseBot.agent_config, null, 2) : ''
   )
 
-  const [prompt, setPrompt] = useState(editingBot?.system_prompt || '')
+  const [prompt, setPrompt] = useState(baseBot?.system_prompt || '')
   const [mcpConfig, setMcpConfig] = useState(
-    editingBot?.mcp_servers ? JSON.stringify(editingBot.mcp_servers, null, 2) : ''
+    baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   )
 
   // 获取agents列表
@@ -99,37 +111,59 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   // 切换编辑对象时重置基本表单
   useEffect(() => {
-    setBotName(editingBot?.name || '')
-    setAgentName(editingBot?.agent_name || '')
-    setPrompt(editingBot?.system_prompt || '')
-    setMcpConfig(editingBot?.mcp_servers ? JSON.stringify(editingBot.mcp_servers, null, 2) : '')
+    setBotName(baseBot?.name || '')
+    setAgentName(baseBot?.agent_name || '')
+    setPrompt(baseBot?.system_prompt || '')
+    setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '')
 
-    // 设置完整的agentConfig
-    if (editingBot?.agent_config) {
-      setAgentConfig(JSON.stringify(editingBot.agent_config, null, 2));
+    if (baseBot?.agent_config) {
+      setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2))
     } else {
-      setAgentConfig('');
+      setAgentConfig('')
     }
-  }, [editingBotId])
+  }, [editingBotId, baseBot])
 
   // 在agents和models加载完成后处理模型相关的初始化
   useEffect(() => {
-    if (!editingBot?.agent_config || loadingAgents || (agentName && loadingModels)) {
-      return; // 如果正在加载或没有配置，则不处理
+    if (!baseBot?.agent_config) {
+      setIsCustomModel(false)
+      setSelectedModel('')
+      return
     }
 
-    // 检查是否为预定义模型
-    const isPredefined = isPredefinedModel(editingBot.agent_config);
-    setIsCustomModel(!isPredefined);
+    const isPredefined = isPredefinedModel(baseBot.agent_config)
+    setIsCustomModel(!isPredefined)
 
     if (isPredefined) {
-      // 如果是预定义模型，设置selectedModel
-      const modelName = getModelFromConfig(editingBot.agent_config);
-      setSelectedModel(modelName);
+      const modelName = getModelFromConfig(baseBot.agent_config)
+      setSelectedModel(modelName)
     } else {
-      setSelectedModel('');
+      setSelectedModel('')
     }
-  }, [editingBot, loadingAgents, loadingModels, agentName])
+  }, [baseBot])
+
+  const handleBack = useCallback(() => {
+    onClose()
+  }, [onClose])
+
+  useEffect(() => {
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+
+      const activeElement = document.activeElement as HTMLElement | null
+      if (activeElement && (
+        activeElement.getAttribute('role') === 'combobox' ||
+        activeElement.closest('.ant-select-dropdown')
+      )) {
+        return
+      }
+
+      handleBack()
+    }
+
+    window.addEventListener('keydown', handleEsc)
+    return () => window.removeEventListener('keydown', handleEsc)
+  }, [handleBack])
 
   // 保存逻辑
   const handleSave = async () => {
@@ -178,7 +212,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         const created = await botApis.createBot(botReq)
         setBots(prev => [created, ...prev])
       }
-      setEditingBotId(null)
+      onClose()
     } catch (error: any) {
       message.error(error?.message || 'save failed')
     } finally {
@@ -191,7 +225,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         {/* 顶部导航栏 */}
         <div className="flex items-center justify-between mb-4">
           <button
-            onClick={() => setEditingBotId(null)}
+            onClick={handleBack}
             className="flex items-center text-text-muted hover:text-text-primary text-base"
             title={t('common.back')}
           >

@@ -86,7 +86,8 @@
     "edit": "Edit Bot",
     "delete": "Delete Bot",
     "no_bots": "No bots available",
-    "new_bot": "New Bot"
+    "new_bot": "New Bot",
+    "copy": "Copy Bot"
   },
   "messages": {
     "copy_markdown": "Copy markdown content",
@@ -105,6 +106,7 @@
     "no_bots": "No bots",
     "edit": "Edit Team",
     "delete": "Delete Team",
+    "copy": "Duplicate Team",
     "no_teams": "No teams available",
     "new_team": "New Team"
   },

@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { Radio, Transfer, Select, Button } from 'antd'
 import type { TransferDirection } from 'antd/es/transfer'
 import type { MessageInstance } from 'antd/es/message/interface'
@@ -22,6 +22,7 @@ interface TeamEditProps {
   setTeams: React.Dispatch<React.SetStateAction<Team[]>>
   editingTeamId: number
   setEditingTeamId: React.Dispatch<React.SetStateAction<number | null>>
+  initialTeam?: Team | null
   bots: Bot[]
   setBots: React.Dispatch<React.SetStateAction<Bot[]>> // 添加 setBots 属性
   message: MessageInstance
@@ -33,6 +34,7 @@ export default function TeamEdit(props: TeamEditProps) {
     setTeams,
     editingTeamId,
     setEditingTeamId,
+    initialTeam = null,
     bots,
     setBots,
     message,
@@ -43,6 +45,8 @@ export default function TeamEdit(props: TeamEditProps) {
   const editingTeam: Team | null = editingTeamId === 0
     ? null
     : (teams.find(t => t.id === editingTeamId) || null)
+
+  const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null
 
   // 左列：Team Name, Mode, 说明
   const [name, setName] = useState('')
@@ -59,6 +63,27 @@ export default function TeamEdit(props: TeamEditProps) {
   const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
   const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit')
+
+  const handleBack = useCallback(() => {
+    setEditingTeamId(null)
+  }, [setEditingTeamId])
+
+  useEffect(() => {
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (editingBotDrawerVisible) return
+
+      const activeElement = document.activeElement as HTMLElement | null
+      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)) {
+        return
+      }
+
+      handleBack()
+    }
+
+    window.addEventListener('keydown', handleEsc)
+    return () => window.removeEventListener('keydown', handleEsc)
+  }, [handleBack, editingBotDrawerVisible])
 
   // 不同 Mode 的“说明”和“边界”，均包含文字与图片（国际化）
   const MODE_INFO = useMemo(() => {
@@ -87,16 +112,13 @@ export default function TeamEdit(props: TeamEditProps) {
   // 初始化/切换编辑对象时重置表单
   // 初始化/切换编辑对象时重置表单
   useEffect(() => {
-    if (editingTeam) {
-      setName(editingTeam.name)
-      const m = (editingTeam.workflow?.mode as any) || 'pipeline'
+    if (formTeam) {
+      setName(formTeam.name)
+      const m = (formTeam.workflow?.mode as any) || 'pipeline'
       setMode(m)
-      const ids = editingTeam.bots
-        .filter(b => bots.some(bot => bot.id === b.bot_id))
-        .map(b => String(b.bot_id))
+      const ids = formTeam.bots.map(b => String(b.bot_id))
       setSelectedBotKeys(ids)
-      // 查找role="leader"的bot作为leader，如果没有则默认使用第一个
-      const leaderBot = editingTeam.bots.find(b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id))
+      const leaderBot = formTeam.bots.find(b => b.role === 'leader')
       setLeaderBotId(leaderBot?.bot_id ?? null)
     } else {
       setName('')
@@ -104,20 +126,19 @@ export default function TeamEdit(props: TeamEditProps) {
       setSelectedBotKeys([])
       setLeaderBotId(null)
     }
-  }, [editingTeamId])
+  }, [editingTeamId, formTeam])
   
   // 当bots变化时，只更新与bots相关的状态，不重置name和mode
   useEffect(() => {
-    if (editingTeam) {
-      const ids = editingTeam.bots
+    if (formTeam) {
+      const ids = formTeam.bots
         .filter(b => bots.some(bot => bot.id === b.bot_id))
         .map(b => String(b.bot_id))
       setSelectedBotKeys(ids)
-      // 查找role="leader"的bot作为leader，如果没有则默认使用第一个
-      const leaderBot = editingTeam.bots.find(b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id))
+      const leaderBot = formTeam.bots.find(b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id))
       setLeaderBotId(leaderBot?.bot_id ?? null)
     }
-  }, [bots, editingTeam])
+  }, [bots, formTeam])
   // 变更 Mode
   const handleModeChange = (newMode: 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
     setMode(newMode)
@@ -238,7 +259,7 @@ export default function TeamEdit(props: TeamEditProps) {
     // 创建 botsData，保持 allBotIds 的顺序，并保留原有的bot_prompt值
     const botsData = allBotIds.map(id => {
       // 如果是编辑现有团队，查找该bot_id是否已存在，如果存在则保留其bot_prompt
-      const existingBot = editingTeam?.bots.find(b => b.bot_id === id);
+      const existingBot = formTeam?.bots.find(b => b.bot_id === id);
       return {
         bot_id: id,
         bot_prompt: existingBot?.bot_prompt || '',
@@ -305,7 +326,7 @@ export default function TeamEdit(props: TeamEditProps) {
       {/* 顶部工具条：Back + Save */}
       <div className="w-full flex items-center justify-between mb-4 mt-4">
         <button
-          onClick={() => setEditingTeamId(null)}
+          onClick={handleBack}
           className="flex items-center text-text-muted hover:text-text-primary text-base"
           title={t('common.back')}
         >
