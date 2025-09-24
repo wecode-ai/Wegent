@@ -74,7 +74,8 @@
     "prompt_hint": "AI-powered assistant for development tasks",
     "agent_config": "Agent Config",
     "mcp_config": "Mcp Config",
-    "save_prompt": "Save Prompt"
+    "save_prompt": "Save Prompt",
+    "use_custom_model": "Use Custom Model"
   },
   "bots": {
     "title": "AI Assistant",
@@ -125,6 +126,12 @@
     "route": "Route",
     "coordinate": "Coordinate",
     "collaborate": "Collaborate"
+  },
+  "team_model_desc": {
+    "pipeline": "Agents are chained one after another, where each agent refines or transforms the result in turn.",
+    "route": "A central agent acts as a message router, directing communication between agents without them talking directiy.",
+    "coordinate": "A network pattern is the structure that defines how agents connect, exchange information, and coordinate with each other.",
+    "collaborate": "Multiple agents work simultaneously on tasks, often sharing results to speed up processing."
   },
   "integrations": {
     "title": "Integrations",
