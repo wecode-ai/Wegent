@@ -28,7 +28,7 @@ export default function LanguageSwitcher({
     <div className={`relative ${className}`}>
       <button
         onClick={() => setIsOpen(!isOpen)}
-        className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+        className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-text-primary bg-surface border border-border rounded-md hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
       >
         <LanguageIcon className="w-4 h-4" />
         {showLabel && (
@@ -46,21 +46,24 @@ export default function LanguageSwitcher({
           />
           
           {/* 下拉菜单 */}
-          <div className="absolute right-0 z-20 mt-2 w-48 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-y-auto">
+          <div
+            className="absolute right-0 z-20 mt-2 w-48 bg-surface border border-border rounded-md shadow-lg max-h-60 overflow-y-auto"
+            style={{ boxShadow: 'var(--shadow-popover)' }}
+          >
             <div className="py-1">
               {supportedLanguages.map((language) => (
                 <button
                   key={language}
                   onClick={() => handleLanguageChange(language)}
-                  className={`w-full text-left px-4 py-2 text-sm hover:bg-gray-100 ${
+                  className={`w-full text-left px-4 py-2 text-sm hover:bg-muted ${
                     currentLanguage === language 
-                      ? 'bg-indigo-50 text-indigo-700 font-medium' 
-                      : 'text-gray-700'
+                      ? 'bg-primary/10 text-primary font-medium' 
+                      : 'text-text-primary'
                   }`}
                 >
                   {languageNames[language] || language}
                   {currentLanguage === language && (
-                    <span className="ml-2 text-indigo-500">✓</span>
+                    <span className="ml-2 text-primary">✓</span>
                   )}
                 </button>
               ))}

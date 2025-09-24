@@ -53,7 +53,7 @@ export default function ChatInput({
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         placeholder={t('chat.placeholder')}
-        className={`w-full p-3 bg-transparent custom-scrollbar text-white text-base placeholder-gray-400 placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className={`w-full p-3 bg-transparent custom-scrollbar text-text-primary text-base placeholder:text-text-muted placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         disabled={disabled}
         minRows={3}
         maxRows={8}

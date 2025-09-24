@@ -86,10 +86,10 @@ export default function GitHubIntegration() {
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-xl font-semibold text-white mb-1">{t('integrations.title')}</h2>
-        <p className="text-sm text-gray-400 mb-1">{t('integrations.description')}</p>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('integrations.title')}</h2>
+        <p className="text-sm text-text-muted mb-1">{t('integrations.description')}</p>
       </div>
-      <div className="bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar">
+      <div className="bg-surface border border-border rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar">
         {isUserLoading || isLoading ? (
           <LoadingState fullScreen={false} message={t('integrations.loading')} />
         ) : (
@@ -100,16 +100,16 @@ export default function GitHubIntegration() {
                   <div className="flex items-center justify-between py-0.5">
                     <div className="flex items-center space-x-2 w-0 flex-1 min-w-0">
                       {info.type === 'gitlab' ? (
-                        <FiGitlab className="w-4 h-4 text-white" />
+                        <FiGitlab className="w-4 h-4 text-text-primary" />
                       ) : (
-                        <FiGithub className="w-4 h-4 text-white" />
+                        <FiGithub className="w-4 h-4 text-text-primary" />
                       )}
                       <div>
                         <div className="flex items-center space-x-1">
-                          <h3 className="text-base font-medium text-white truncate mb-0">{info.git_domain}</h3>
+                          <h3 className="text-base font-medium text-text-primary truncate mb-0">{info.git_domain}</h3>
                         </div>
                         <div>
-                          <p className="text-xs text-gray-400 break-all font-mono mt-0">{getMaskedTokenDisplay(info.git_token)}</p>
+                          <p className="text-xs text-text-muted break-all font-mono mt-0">{getMaskedTokenDisplay(info.git_token)}</p>
                         </div>
                       </div>
                     </div>
@@ -117,32 +117,34 @@ export default function GitHubIntegration() {
                       <Button
                         type="text"
                         size="small"
-                        icon={<PencilIcon className="w-4 h-4 text-gray-400" />}
+                        icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
                         onClick={() => handleEdit(info)}
                         title={t('integrations.edit_token')}
                         style={{ padding: '4px' }}
+                        className="!text-text-muted hover:!text-text-primary"
                       />
                       <Button
                         type="text"
                         size="small"
-                        icon={<TrashIcon className="w-4 h-4 text-gray-400" />}
+                        icon={<TrashIcon className="w-4 h-4 text-text-muted" />}
                         onClick={() => handleDelete(info.git_domain)}
                         title={t('integrations.delete')}
                         style={{ padding: '4px' }}
+                        className="!text-text-muted hover:!text-text-primary"
                       />
                     </div>
                   </div>
                   {platforms.length > 1 && info.git_domain !== platforms[platforms.length - 1].git_domain && (
-                    <div className="border-t border-[#30363d] mt-1 pt-1"></div>
+                    <div className="border-t border-border mt-1 pt-1"></div>
                   )}
                 </div>
               ))
             ) : (
-              <div className="text-center text-gray-500 py-4">
+              <div className="text-center text-text-muted py-4">
                 <p className="text-sm">{t('integrations.no_tokens')}</p>
               </div>
             )}
-            <div className="border-t border-[#30363d]"></div>
+            <div className="border-t border-border"></div>
             <div className="flex justify-center">
               <Button
                 onClick={handleAdd}

@@ -124,7 +124,7 @@ export default function BranchSelector({
 
   return (
     <div className="flex items-center space-x-1 min-w-0">
-      <FiGitBranch className={`w-3 h-3 text-gray-500 flex-shrink-0 ${showLoading ? 'animate-pulse' : ''}`} />
+      <FiGitBranch className={`w-3 h-3 text-text-muted flex-shrink-0 ${showLoading ? 'animate-pulse' : ''}`} />
       <Select
         labelInValue
         value={selectedBranch ? { value: selectedBranch.name, label: selectedBranch.name + (selectedBranch.default ? ' (default)' : '') } : undefined}
@@ -142,18 +142,18 @@ export default function BranchSelector({
         onChange={handleChange}
         notFoundContent={
           showLoading ? (
-            <div className="px-3 py-2 text-sm text-gray-400 flex items-center">
+            <div className="px-3 py-2 text-sm text-text-muted flex items-center">
               <FiGitBranch className="w-4 h-4 animate-pulse mr-2" />
               {t('branches.loading')}
             </div>
           ) : showError ? (
-            <div className="px-3 py-2 text-sm text-red-400 flex items-center">
+            <div className="px-3 py-2 text-sm" style={{ color: 'rgb(var(--color-error))' }}>
               <FiGitBranch className="w-4 h-4 mr-2" />
               {error}
               {/* antd message.error 已全局提示 */}
             </div>
           ) : showNoBranch ? (
-            <div className="px-3 py-2 text-sm text-gray-400">
+            <div className="px-3 py-2 text-sm text-text-muted">
               {t('branches.no_branch')}
             </div>
           ) : null

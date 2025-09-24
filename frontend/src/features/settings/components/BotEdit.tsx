@@ -196,12 +196,12 @@ const BotEdit: React.FC<BotEditProps> = ({
   }
 
   return (
-    <div className="flex flex-col w-full bg-[#161b22] rounded-lg px-2 py-4 relative h-full min-h-[600px]">
+    <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 relative h-full min-h-[600px]">
       {/* 顶部导航栏 */}
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={() => setEditingBotId(null)}
-          className="flex items-center text-gray-400 hover:text-white text-base"
+          className="flex items-center text-text-muted hover:text-text-primary text-base"
           title={t('common.back')}
         >
           <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
@@ -228,7 +228,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           {/* Bot Name */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
-              <label className="block text-lg font-semibold text-white">
+              <label className="block text-lg font-semibold text-text-primary">
                 {t('bot.name')} <span className="text-red-400">*</span>
               </label>
             </div>
@@ -237,14 +237,14 @@ const BotEdit: React.FC<BotEditProps> = ({
               value={botName}
               onChange={(e) => setBotName(e.target.value)}
               placeholder="Code Assistant"
-              className="w-full px-4 py-1 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base"
+              className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base"
             />
           </div>
 
           {/* Agent */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
-              <label className="block text-lg font-semibold text-white">
+              <label className="block text-lg font-semibold text-text-primary">
                 {t('bot.agent')} <span className="text-red-400">*</span>
               </label>
             </div>
@@ -267,12 +267,12 @@ const BotEdit: React.FC<BotEditProps> = ({
           <div className="flex flex-col">
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center">
-                <label className="block text-base font-medium text-white">
+                <label className="block text-base font-medium text-text-primary">
                   {t('bot.agent_config')} <span className="text-red-400">*</span>
                 </label>
               </div>
               <div className="flex items-center">
-                <span className="text-xs text-gray-400 mr-2">Use Custom Model</span>
+                <span className="text-xs text-text-muted mr-2">Use Custom Model</span>
                 <Switch
                   size="small"
                   checked={isCustomModel}
@@ -311,7 +311,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 }`
                       : ''
                 }
-                className="w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-base h-[150px] custom-scrollbar"
+                className="w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent font-mono text-base h-[150px] custom-scrollbar"
               />
             ) : (
               <Select
@@ -335,16 +335,16 @@ const BotEdit: React.FC<BotEditProps> = ({
           {/* MCP Config */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
-              <label className="block text-base font-medium text-white">
+              <label className="block text-base font-medium text-text-primary">
                 {t('bot.mcp_config')}
               </label>
-              <span className="text-xs text-gray-500 ml-2">JSON format required</span>
+              <span className="text-xs text-text-muted ml-2">JSON format required</span>
             </div>
             <textarea
               value={mcpConfig}
               onChange={(e) => setMcpConfig(e.target.value)}
               rows={4}
-              className={`w-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent font-mono text-base ${isCustomModel ? 'h-[150px]' : 'h-[250px]'} custom-scrollbar`}
+              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent font-mono text-base ${isCustomModel ? 'h-[150px]' : 'h-[250px]'} custom-scrollbar`}
               placeholder={`{
   "github": {
     "command": "docker",
@@ -375,10 +375,10 @@ const BotEdit: React.FC<BotEditProps> = ({
         <div className="md:col-span-4 grid grid-rows-[auto_1fr] h-full">
           <div className="mb-1">
             <div className="flex items-center">
-              <label className="block text-base font-medium text-white">
+              <label className="block text-base font-medium text-text-primary">
                 Prompt
               </label>
-              <span className="text-xs text-gray-500 ml-2">AI prompt</span>
+              <span className="text-xs text-text-muted ml-2">AI prompt</span>
             </div>
           </div>
 
@@ -387,7 +387,7 @@ const BotEdit: React.FC<BotEditProps> = ({
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             placeholder="AI-powered code review and assistance"
-            className="w-full h-full px-4 py-2 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base resize-none custom-scrollbar"
+            className="w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar"
           />
         </div>
       </div>

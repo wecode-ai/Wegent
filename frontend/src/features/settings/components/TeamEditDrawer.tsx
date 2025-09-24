@@ -112,8 +112,13 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
         }
       }}
       styles={{
-        header: { display: "none", backgroundColor: '#161b22', color: 'white', borderBottom: '1px solid #30363d' },
-        body: { backgroundColor: '#0d1117', padding: 0 },
+        header: {
+          display: "none",
+          backgroundColor: 'rgb(var(--color-bg-surface))',
+          color: 'rgb(var(--color-text-primary))',
+          borderBottom: '1px solid rgb(var(--color-border))'
+        },
+        body: { backgroundColor: 'rgb(var(--color-bg-base))', padding: 0 },
       }}
     >
       {editingBotId !== null && (
@@ -133,7 +138,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
             />
           </div>
           
-          <Divider style={{ margin: '24px 0', borderColor: '#30363d' }} />
+          <Divider style={{ margin: '24px 0', borderColor: 'rgb(var(--color-border))' }} />
           
           <div style={{ padding: '0 24px' }}>
             <div style={{
@@ -142,7 +147,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               alignItems: 'center',
               marginBottom: '16px'
             }}>
-              <Typography.Title level={4} style={{ color: 'white', margin: 0 }}>
+              <Typography.Title level={4} style={{ color: 'rgb(var(--color-text-primary))', margin: 0 }}>
                   {t("team.bot_prompt")}
               </Typography.Title>
               <Button
@@ -159,10 +164,10 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               value={botPrompt}
               onChange={(e) => setBotPrompt(e.target.value)}
               style={{
-                backgroundColor: '#161b22',
-                color: 'white',
-                borderColor: '#30363d',
-                fontSize: '16px' // 增大 placeholder 字体大小
+                backgroundColor: 'rgb(var(--color-bg-surface))',
+                color: 'rgb(var(--color-text-primary))',
+                borderColor: 'rgb(var(--color-border))',
+                fontSize: '16px'
               }}
             />
           </div>

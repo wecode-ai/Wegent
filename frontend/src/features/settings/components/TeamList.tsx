@@ -69,10 +69,10 @@ export default function TeamList() {
     <>
       <div className="space-y-3">
         <div>
-          <h2 className="text-xl font-semibold text-white mb-1">{t('teams.title')}</h2>
-          <p className="text-sm text-gray-400 mb-1">{t('teams.description')}</p>
+          <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
+          <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
-        <div className={`bg-[#161b22] border border-[#30363d] rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-w-5xl max-h-[70vh]'}`}>
+        <div className={`bg-surface border border-border rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-w-5xl max-h-[70vh]'}`}>
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('teams.loading')} />
           ) : (
@@ -98,16 +98,19 @@ export default function TeamList() {
                             <AiOutlineTeam className="w-4 h-4 flex-shrink-0" />
                             <div className="flex flex-col justify-center flex-1 overflow-hidden">
                               <div className="flex items-center space-x-1">
-                                <h3 className="text-base font-medium text-white mb-0">{team.name}</h3>
+                                <h3 className="text-base font-medium text-text-primary mb-0">{team.name}</h3>
                                 <div className="flex items-center h-4 space-x-0.5">
-                                  <div className={`w-2 h-2 rounded-full ${team.is_active ? 'bg-green-400' : 'bg-gray-400'}`}></div>
-                                  <span className="text-xs text-gray-400 flex items-center justify-center">{team.is_active ? t('teams.active') : t('teams.inactive')}</span>
+                                  <div
+                                    className="w-2 h-2 rounded-full"
+                                    style={{ backgroundColor: team.is_active ? 'rgb(var(--color-success))' : 'rgb(var(--color-border))' }}
+                                  ></div>
+                                  <span className="text-xs text-text-muted flex items-center justify-center">{team.is_active ? t('teams.active') : t('teams.inactive')}</span>
                                 </div>
                               </div>
                               <div className="flex items-center space-x-1 mt-0">
                                 {team.workflow?.mode && (
                                   <>
-                                    <span className="px-2 py-0.5 text-xs rounded-full bg-gray-700 text-gray-300 capitalize">
+                                    <span className="px-2 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize">
                                       {team.workflow.mode}
                                     </span>
                                     <span className="mx-2"></span>
@@ -117,23 +120,23 @@ export default function TeamList() {
                                   <div className="flex items-center max-w-[80%] overflow-hidden whitespace-nowrap text-ellipsis ml-4">
                                     {team.bots.map((bot, idx) => (
                                       <span key={`${bot.bot_id}-${idx}`} className="flex items-center">
-                                        <RiRobot2Line className="w-4 h-4 mr-0.5 text-gray-400" />
-                                        <span className="text-xs text-gray-400 mr-0.5">
+                                        <RiRobot2Line className="w-4 h-4 mr-0.5 text-text-muted" />
+                                        <span className="text-xs text-text-muted mr-0.5">
                                           {bots.find(b => b.id === bot.bot_id)?.name || bot.bot_id}
                                         </span>
                                         {team.workflow?.mode === 'pipeline'
                                           ? (idx < team.bots.length - 1 && (
-                                              <FiArrowRight className="w-4 h-4 text-gray-400 mx-2" />
+                                              <FiArrowRight className="w-4 h-4 text-text-muted mx-2" />
                                             ))
                                           : (idx < team.bots.length - 1 && (
-                                              <span className="text-gray-400 mx-1"> </span>
+                                              <span className="text-text-muted mx-1"> </span>
                                             ))
                                         }
                                       </span>
                                     ))}
                                   </div>
                                 ) : (
-                                  <span className="text-xs text-gray-500">{t('teams.no_bots')}</span>
+                                  <span className="text-xs text-text-muted">{t('teams.no_bots')}</span>
                                 )}
                               </div>
                             </div>
@@ -142,7 +145,7 @@ export default function TeamList() {
                             <Button
                               type="text"
                               size="small"
-                              icon={<PencilIcon className="w-4 h-4 text-gray-400" />}
+                              icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
                               onClick={() => handleEditTeam(team)}
                               title={t('teams.edit')}
                               style={{ padding: '4px' }}
@@ -150,7 +153,7 @@ export default function TeamList() {
                             <Button
                               type="text"
                               size="small"
-                              icon={<TrashIcon className="w-4 h-4 text-gray-400" />}
+                              icon={<TrashIcon className="w-4 h-4 text-text-muted" />}
                               onClick={() => handleDelete(team.id)}
                               disabled={deletingId === team.id}
                               title={t('teams.delete')}
@@ -159,16 +162,16 @@ export default function TeamList() {
                           </div>
                         </div>
                         {teams.length > 1 && team.id !== teams[teams.length - 1].id && (
-                          <div className="border-t border-[#30363d] mt-1 pt-1"></div>
+                          <div className="border-t border-border mt-1 pt-1"></div>
                         )}
                       </div>
                     ))
                   ) : (
-                    <div className="text-center text-gray-500 py-4">
+                    <div className="text-center text-text-muted py-4">
                       <p className="text-sm">{t('teams.no_teams')}</p>
                     </div>
                   )}
-                  <div className="border-t border-[#30363d]"></div>
+                  <div className="border-t border-border"></div>
                   <div className="flex justify-center">
                     <Button
                       onClick={handleCreateTeam}

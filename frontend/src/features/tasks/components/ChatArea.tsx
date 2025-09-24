@@ -109,7 +109,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
             {/* Error Message */}
             {/* 错误提示已用 antd message 统一，不再本地渲染 */}
             {/* Chat Input */}
-            <div className="relative w-full flex flex-col rounded-xl border border-[#30363d] bg-[#161b22]">
+            <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface">
               <ChatInput
                 message={taskInputMessage}
                 setMessage={setTaskInputMessage}
@@ -135,7 +135,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                   disabled={isLoading}
                   icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
                   style={{
-                    color: '#6b7280',
+                    color: 'rgb(var(--color-text-muted))',
                     padding: '0',
                     marginBottom: '4px',
                     height: 'auto'
@@ -169,7 +169,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
           {/* Error Message */}
           {/* 错误提示已用 antd message 统一，不再本地渲染 */}
           {/* Chat Input */}
-          <div className="relative w-full flex flex-col rounded-xl border border-[#30363d] bg-[#161b22]">
+          <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface">
             <ChatInput
               message={taskInputMessage}
               setMessage={setTaskInputMessage}
@@ -195,7 +195,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                 disabled={isLoading}
                 icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
                 style={{
-                  color: '#6b7280',
+                  color: 'rgb(var(--color-text-muted))',
                   padding: '0',
                   marginBottom: '4px',
                   height: 'auto'
