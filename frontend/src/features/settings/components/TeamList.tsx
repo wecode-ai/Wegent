@@ -72,7 +72,7 @@ export default function TeamList() {
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
           <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
-        <div className={`bg-surface border border-border rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-w-5xl max-h-[70vh]'}`}>
+        <div className={`bg-surface border border-border rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-h-[70vh]'}`}>
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('teams.loading')} />
           ) : (
@@ -117,7 +117,7 @@ export default function TeamList() {
                                   </>
                                 )}
                                 {team.bots.length > 0 ? (
-                                  <div className="flex items-center max-w-[80%] overflow-hidden whitespace-nowrap text-ellipsis ml-4">
+                                  <div className="flex items-center max-w-3xl overflow-hidden whitespace-nowrap text-ellipsis ml-4">
                                     {team.bots.map((bot, idx) => (
                                       <span key={`${bot.bot_id}-${idx}`} className="flex items-center">
                                         <RiRobot2Line className="w-4 h-4 mr-0.5 text-text-muted" />
