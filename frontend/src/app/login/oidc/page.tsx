@@ -9,24 +9,15 @@ import { loginWithOidcToken } from '@/apis/user'
 export default function OidcCallbackPage() {
     const router = useRouter()
     const searchParams = useSearchParams()
-    
-    console.log('OIDC callback page - searchParams:', searchParams.toString());
-    
+        
     useEffect(() => {
         // Check if token parameters already exist (redirected from backend)
         const accessToken = searchParams.get('access_token')
         const tokenType = searchParams.get('token_type')
         const loginSuccess = searchParams.get('login_success')
         
-        console.log('OIDC callback page - params:', {
-            accessToken: !!accessToken,
-            tokenType,
-            loginSuccess
-        });
-        
         if (accessToken && loginSuccess === 'true') {
             // Backend has completed OIDC authentication, processing token in the same way as CAS
-            console.log('OIDC callback page - processing token with loginWithOidcToken');
             
             loginWithOidcToken(accessToken)
                 .then(() => {
@@ -58,7 +49,6 @@ export default function OidcCallbackPage() {
         }
         
         // If code and state exist, redirect to backend to handle OIDC callback
-        console.log('OIDC callback page - redirecting to backend for OIDC callback processing');
         window.location.href = `/api/auth/oidc/callback?code=${encodeURIComponent(code)}&state=${encodeURIComponent(state)}`
         
     }, [router, searchParams])
