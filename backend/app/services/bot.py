@@ -29,7 +29,8 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
         # Check duplicate name under the same user (only active bots)
         existing = db.query(Bot).filter(
             Bot.user_id == user_id,
-            Bot.name == obj_in.name
+            Bot.name == obj_in.name,
+            Bot.is_active == True
         ).first()
         if existing:
             raise HTTPException(
@@ -134,7 +135,8 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
                     Bot.user_id == user_id,
                     Bot.name == new_name,
                     Bot.is_active == True,
-                    Bot.id != bot.id
+                    Bot.id != bot.id,
+                    Bot.is_active == True
                 ).first()
                 if conflict:
                     raise HTTPException(
@@ -168,26 +170,35 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
         # Get all active teams for user
         user_teams = db.query(Team).filter(
             Team.user_id == user_id,
-            Team.is_active == True
         ).all()
         
         # Check if bot is used in any team
-        teams_with_bot = []
+        active_teams_with_bot = []
+        disactive_teams_with_bot = []
         for team in user_teams:
             for bot_info in team.bots:
                 if bot_info.get('bot_id') == bot_id:
-                    teams_with_bot.append(team)
-                    break
+                    if team.is_active:
+                        active_teams_with_bot.append(team)
+                    else:
+                        disactive_teams_with_bot.append(team)
         
-        if teams_with_bot:
-            # Soft delete: set is_active to False
+        if active_teams_with_bot:
+            # Bot is referenced by active teams; do not delete
+            raise HTTPException(
+                status_code=400,
+                detail="Bot is used by active teams and cannot be deleted"
+            )
+        
+        if disactive_teams_with_bot:
             bot.is_active = False
             db.add(bot)
             db.commit()
+            return bot
         else:
-            # Physical delete: remove from database
             db.delete(bot)
             db.commit()
+            return bot
 
     def create_or_update_by_k_bot_id(
         self, db: Session, *, k_bot_id: int, user_id: int
@@ -266,7 +277,8 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
                     Bot.user_id == user_id,
                     Bot.name == candidate_name,
                     Bot.is_active == True,
-                    Bot.id != bot.id
+                    Bot.id != bot.id,
+                    Bot.is_active == True
                 ).first()
                 if conflict:
                     raise HTTPException(

@@ -12,6 +12,7 @@ from app.models.team import Team
 from app.models.bot import Bot
 from app.models.user import User
 from app.models.subtask import Subtask, SubtaskStatus
+from app.models.task import Task
 from app.models.kind import Kind
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInDB, TeamDetail, BotInfo
 from app.services.base import BaseService
@@ -192,7 +193,9 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
         self, db: Session, *, team_id: int, user_id: int
     ) -> None:
         """
-        Soft delete user Team (set is_active to False)
+        Delete user Team:
+        - If tasks exist for this team (in tasks table), perform soft delete (set is_active=False)
+        - If no tasks exist, perform hard delete (physical removal)
         """
         team = self.get_by_id_and_user(db, team_id=team_id, user_id=user_id)
         if not team:
@@ -200,10 +203,22 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
                 status_code=404,
                 detail="Team not found"
             )
-        
-        team.is_active = False
-        db.add(team)
-        db.commit()
+
+        # Check if there are any tasks associated with this team for the user
+        has_task = db.query(Task).filter(
+            Task.user_id == user_id,
+            Task.team_id == team.id
+        ).first() is not None
+
+        if has_task:
+            # Soft delete: mark inactive
+            team.is_active = False
+            db.add(team)
+            db.commit()
+        else:
+            # Hard delete: remove record
+            db.delete(team)
+            db.commit()
 
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """
