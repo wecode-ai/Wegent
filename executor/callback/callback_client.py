@@ -32,7 +32,7 @@ class CallbackClient:
         self,
         callback_url: str = None,
         timeout: int = 3,
-        max_retries: int = 3,
+        max_retries: int = 10,
         retry_delay: int = 1,
         retry_backoff: int = 2,
     ):
