@@ -105,7 +105,8 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
             # Validate team exists and belongs to user
             existing_team = db.query(Team).filter(
                 Team.id == existing_task.team_id,
-                Team.user_id == user.id
+                Team.user_id == user.id,
+                Team.is_active == True
             ).first()
             if not existing_team:
                 raise HTTPException(
@@ -125,7 +126,8 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
             # Validate team exists and belongs to user
             existing_team = db.query(Team).filter(
                 Team.id == obj_in.team_id,
-                Team.user_id == user.id
+                Team.user_id == user.id,
+                Team.is_active == True
             ).first()
             if not existing_team:
                 raise HTTPException(
@@ -519,7 +521,8 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         """
         task = db.query(Task).filter(
             Task.id == task_id,
-            Task.user_id == user_id
+            Task.user_id == user_id,
+            Task.status != SubtaskStatus.DELETE
         ).first()
         
         if not task:
