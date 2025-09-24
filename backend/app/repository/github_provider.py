@@ -11,7 +11,7 @@ from typing import List, Dict, Any, Optional
 import requests
 from fastapi import HTTPException
 
-from app.core.interfaces.repository_provider import RepositoryProvider
+from app.repository.interfaces.repository_provider import RepositoryProvider
 from app.models.user import User
 from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
@@ -29,15 +29,16 @@ class GitHubProvider(RepositoryProvider):
         self.domain = "github.com"
         self.type = "github"
     
-    def _get_git_info(self, user: User) -> Dict[str, Any]:
+    def _get_git_infos(self, user: User, git_domain: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Get GitHub related information from user's git_info
+        Collect GitHub related entries from user's git_info (may contain multiple entries)
         
         Args:
             user: User object
+            git_domain: Optional domain to filter a specific GitHub/GHE entry
             
         Returns:
-            Dictionary containing git_domain, git_token
+            List of dictionaries containing git_domain, git_token, type
             
         Raises:
             HTTPException: Raised when GitHub information is not configured
@@ -48,19 +49,49 @@ class GitHubProvider(RepositoryProvider):
                 detail="Git information not configured"
             )
         
+        entries: List[Dict[str, Any]] = []
         for info in user.git_info:
             if info.get("type") == self.type:
-                return {
+                entries.append({
                     "git_domain": info.get("git_domain", ""),
                     "git_token": info.get("git_token", ""),
                     "type": info.get("type", "")
-                }
-        
-        raise HTTPException(
-            status_code=400,
-            detail=f"Git information for {self.domain} not configured"
-        )
+                })
+
+        if git_domain:
+            filtered = [e for e in entries if e.get("git_domain") == git_domain]
+            if not filtered:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Git information for {git_domain} not configured"
+                )
+            return filtered
+
+        if not entries:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Git information for {self.domain} not configured"
+            )
+        return entries
+
+    def _pick_git_info(self, user: User, git_domain: str) -> Dict[str, Any]:
+        """
+        Pick a single git_info entry based on domain or default to the first
+        """
+        entries = self._get_git_infos(user, git_domain)
+        return entries[0]
     
+    def _get_api_base_url(self, git_domain: str = None) -> str:
+        """Get API base URL based on git domain"""
+        if not git_domain or git_domain == self.domain:
+            return self.api_base_url
+        
+        if git_domain == "github.com":
+            return "https://api.github.com"
+        else:
+            # Custom GitHub Enterprise domain
+            return f"https://{git_domain}/api/v3"
+
     async def get_repositories(
         self,
         user: User,
@@ -81,97 +112,87 @@ class GitHubProvider(RepositoryProvider):
         Raises:
             HTTPException: Raised when retrieval fails
         """
-        git_info = self._get_git_info(user)
-        git_token = git_info["git_token"]
-        
-        if not git_token:
-            raise HTTPException(
-                status_code=400,
-                detail="Git token not configured"
-            )
+        # iterate all github entries for this user (may be multiple domains)
+        entries = self._get_git_infos(user)
+        all_repos: List[Dict[str, Any]] = []
 
-        # Check if it's a default request (page=1, limit=100)
-        is_default_request = page == 1 and limit == 100
-        
-        # Get git_domain
-        git_domain = git_info["git_domain"]
-        
-        # For default requests, try to get from cache first
-        if is_default_request:
-            cache_key = cache_manager.generate_cache_key(user.id, git_domain, page, limit)
-            cached_result = await cache_manager.get(cache_key)
-            if cached_result:
-                return [Repository(**repo).model_dump() for repo in cached_result]
-        
-        # Check if there is complete cached data
-        full_cached = await self._get_all_repositories_from_cache(user, git_domain)
-        if full_cached:
-            # Paginate the cached data
-            start_idx = (page - 1) * limit
-            end_idx = start_idx + limit
-            paginated_repos = full_cached[start_idx:end_idx]
-            
-            return [
-                Repository(
-                    id=repo["id"],
-                    name=repo["name"],
-                    full_name=repo["full_name"],
-                    clone_url=repo["clone_url"],
-                    private=repo["private"]
-                ).model_dump() for repo in paginated_repos
-            ]
+        for entry in entries:
+            git_token = entry.get("git_token") or ""
+            git_domain = entry.get("git_domain") or ""
+            if not git_token:
+                # skip empty token entries
+                continue
 
-        try:
-            headers = {
-                "Authorization": f"token {git_token}",
-                "Accept": "application/vnd.github.v3+json"
-            }
-            
-            response = requests.get(
-                f"{self.api_base_url}/user/repos",
-                headers=headers,
-                params={
-                    "per_page": limit,
-                    "page": page,
-                    "sort": "updated"
+            # Get API base URL based on git domain
+            api_base_url = self._get_api_base_url(git_domain)
+
+            # Check domain-level full cache
+            full_cached = await self._get_all_repositories_from_cache(user, git_domain)
+            if full_cached:
+                start_idx = (page - 1) * limit
+                end_idx = start_idx + limit
+                paginated_repos = full_cached[start_idx:end_idx]
+                all_repos.extend([
+                    Repository(
+                        id=repo["id"],
+                        name=repo["name"],
+                        full_name=repo["full_name"],
+                        clone_url=repo["clone_url"],
+                        git_domain=git_domain,
+                        type="github",
+                        private=repo["private"]
+                    ).model_dump() for repo in paginated_repos
+                ])
+                continue
+
+            try:
+                headers = {
+                    "Authorization": f"token {git_token}",
+                    "Accept": "application/vnd.github.v3+json"
                 }
-            )
-            response.raise_for_status()
-            
-            repos = response.json()
-            
-            # If it's a default request and the number of retrieved repos is less than limit, cache the results
-            if is_default_request and len(repos) < limit:
-                cache_key = cache_manager.generate_cache_key(user.id, git_domain, page, limit)
-                await cache_manager.set(cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
 
-                cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
-                await cache_manager.set(cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
-            
-            # If it's a default request and the number of retrieved repos equals limit, start async full retrieval
-            if is_default_request and len(repos) == limit:
-                # Start async background task to fetch all repositories
-                asyncio.create_task(self._fetch_all_repositories_async(user, git_token, git_domain))
-            
-            return [
-                Repository(
-                    id=repo["id"],
-                    name=repo["name"],
-                    full_name=repo["full_name"],
-                    clone_url=repo["clone_url"],
-                    private=repo["private"]
-                ).model_dump() for repo in repos
-            ]
-        except requests.exceptions.RequestException as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"GitHub API error: {str(e)}"
-            )
+                response = requests.get(
+                    f"{api_base_url}/user/repos",
+                    headers=headers,
+                    params={
+                        "per_page": limit,
+                        "page": page,
+                        "sort": "updated"
+                    }
+                )
+                response.raise_for_status()
+
+                repos = response.json()
+
+                if len(repos) < limit:
+                    cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
+                    await cache_manager.set(cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
+                else :
+                    asyncio.create_task(self._fetch_all_repositories_async(user, git_token, git_domain))
+
+                all_repos.extend([
+                    Repository(
+                        id=repo["id"],
+                        name=repo["name"],
+                        full_name=repo["full_name"],
+                        clone_url=repo["clone_url"],
+                        git_domain=git_domain,
+                        type="github",
+                        private=repo["private"]
+
+                    ).model_dump() for repo in repos
+                ])
+            except requests.exceptions.RequestException:
+                # skip failed domain, continue others
+                continue
+
+        return all_repos
     
     async def get_branches(
         self,
         user: User,
-        repo_name: str
+        repo_name: str,
+        git_domain: str
     ) -> List[Dict[str, Any]]:
         """
         Get branch list for specified repository
@@ -186,14 +207,18 @@ class GitHubProvider(RepositoryProvider):
         Raises:
             HTTPException: Raised when retrieval fails
         """
-        git_info = self._get_git_info(user)
+        git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
+        git_domain = git_info["git_domain"]
         
         if not git_token:
             raise HTTPException(
                 status_code=400,
                 detail="Git token not configured"
             )
+
+        # Get API base URL based on git domain
+        api_base_url = self._get_api_base_url(git_domain)
 
         try:
             headers = {
@@ -207,7 +232,7 @@ class GitHubProvider(RepositoryProvider):
             
             while True:
                 response = requests.get(
-                    f"{self.api_base_url}/repos/{repo_name}/branches",
+                    f"{api_base_url}/repos/{repo_name}/branches",
                     headers=headers,
                     params={
                         "per_page": per_page,
@@ -242,13 +267,15 @@ class GitHubProvider(RepositoryProvider):
     
     def validate_token(
         self,
-        token: str
+        token: str,
+        git_domain: str = None
     ) -> Dict[str, Any]:
         """
         Validate GitHub token
         
         Args:
             token: GitHub token
+            git_domain: Custom GitHub domain (e.g., github.com, git.example.com)
             
         Returns:
             Validation result including validity, user information, etc.
@@ -262,6 +289,9 @@ class GitHubProvider(RepositoryProvider):
                 detail="Git token is required"
             )
 
+        # Use custom domain if provided, otherwise use default
+        api_base_url = self._get_api_base_url(git_domain)
+
         try:
             headers = {
                 "Authorization": f"token {token}",
@@ -269,12 +299,12 @@ class GitHubProvider(RepositoryProvider):
             }
             
             response = requests.get(
-                f"{self.api_base_url}/user",
+                f"{api_base_url}/user",
                 headers=headers
             )
             
             if response.status_code == 401:
-                self.logger.warning(f"GitHub token validation failed: 401 Unauthorized")
+                self.logger.warning(f"GitHub token validation failed: 401 Unauthorized, git_domain: {git_domain}, token: {token}")
                 return {
                     "valid": False,
                 }
@@ -289,7 +319,8 @@ class GitHubProvider(RepositoryProvider):
                     "id": user_data["id"],
                     "login": user_data["login"],
                     "name": user_data.get("name"),
-                    "avatar_url": user_data.get("avatar_url")
+                    "avatar_url": user_data.get("avatar_url"),
+                    "email": user_data.get("email")
                 }
             }
             
@@ -318,7 +349,7 @@ class GitHubProvider(RepositoryProvider):
         timeout: int = 30
     ) -> List[Dict[str, Any]]:
         """
-        Search user's GitHub repositories
+        Search user's GitHub repositories across all configured GitHub domains
         
         Args:
             user: User object
@@ -326,106 +357,156 @@ class GitHubProvider(RepositoryProvider):
             timeout: Timeout in seconds
             
         Returns:
-            Search results
+            Aggregated search results from all configured GitHub domains
             
         Raises:
             HTTPException: Raised when search fails
         """
-        git_info = self._get_git_info(user)
-        git_token = git_info["git_token"]
-        git_domain = git_info["git_domain"]
-        
-        if not git_token:
-            raise HTTPException(
-                status_code=400,
-                detail="Git token not configured"
-            )
-        
         # Normalize query, case-insensitive
         query_lower = query.lower()
-        
-        # Try to get from full cache first
-        full_cached = await self._get_all_repositories_from_cache(user, git_domain)
-        
-        if full_cached:
-            # Search in cached repositories
-            filtered_repos = [
-                repo for repo in full_cached
-                if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
-            ]
-            
-            return [
-                Repository(
-                    id=repo["id"],
-                    name=repo["name"],
-                    full_name=repo["full_name"],
-                    clone_url=repo["clone_url"],
-                    private=repo["private"]
-                ).model_dump() for repo in filtered_repos
-            ]
-        
-        # Check if cache is being built
-        is_building = await cache_manager.is_building(user.id, git_domain)
-        
-        if is_building:
-            # Wait for cache build to complete, set timeout
-            start_time = asyncio.get_event_loop().time()
-            while await cache_manager.is_building(user.id, git_domain):
-                if asyncio.get_event_loop().time() - start_time > timeout:
-                    raise HTTPException(
-                        status_code=408,
-                        detail="Timeout waiting for repository data to be ready"
-                    )
-                await asyncio.sleep(1)
-            
-            # Now try to get from cache again
+
+        # Iterate all github entries for this user (may be multiple domains)
+        entries = self._get_git_infos(user)
+        all_results: List[Dict[str, Any]] = []
+
+        for entry in entries:
+            git_token = entry.get("git_token") or ""
+            git_domain = entry.get("git_domain") or ""
+            if not git_token:
+                # skip empty token entries
+                continue
+
+            # 1) Try to get from full cache first (per domain)
             full_cached = await self._get_all_repositories_from_cache(user, git_domain)
             if full_cached:
                 filtered_repos = [
                     repo for repo in full_cached
                     if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
                 ]
-                
-                return [
+                all_results.extend([
                     Repository(
                         id=repo["id"],
                         name=repo["name"],
                         full_name=repo["full_name"],
                         clone_url=repo["clone_url"],
+                        git_domain=git_domain,
+                        type="github",
                         private=repo["private"]
                     ).model_dump() for repo in filtered_repos
+                ])
+                continue
+
+            # 2) If cache is being built for this domain, wait (with timeout)
+            is_building = await cache_manager.is_building(user.id, git_domain)
+            if is_building:
+                start_time = asyncio.get_event_loop().time()
+                while await cache_manager.is_building(user.id, git_domain):
+                    if asyncio.get_event_loop().time() - start_time > timeout:
+                        raise HTTPException(
+                            status_code=408,
+                            detail="Timeout waiting for repository data to be ready"
+                        )
+                    await asyncio.sleep(1)
+
+                # try cache again
+                full_cached = await self._get_all_repositories_from_cache(user, git_domain)
+                if full_cached:
+                    filtered_repos = [
+                        repo for repo in full_cached
+                        if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                    ]
+                    all_results.extend([
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo["full_name"],
+                            clone_url=repo["clone_url"],
+                            git_domain=git_domain,
+                            type="github",
+                            private=repo["private"]
+                        ).model_dump() for repo in filtered_repos
+                    ])
+                    continue
+
+            # 3) No cache and not building (or build finished but still no cache), trigger domain-level full retrieval
+            await self._fetch_all_repositories_async(user, git_token, git_domain)
+
+            # 4) Try cache after building
+            full_cached = await self._get_all_repositories_from_cache(user, git_domain)
+            if full_cached:
+                filtered_repos = [
+                    repo for repo in full_cached
+                    if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
                 ]
-        
-        # No cache and not building, trigger full retrieval
-        await self._fetch_all_repositories_async(user, git_token, git_domain)
-        
-        # Get again after cache is built
-        full_cached = await self._get_all_repositories_from_cache(user, git_domain)
-        if full_cached:
-            filtered_repos = [
-                repo for repo in full_cached
-                if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
-            ]
-            
-            return [
-                Repository(
-                    id=repo["id"],
-                    name=repo["name"],
-                    full_name=repo["full_name"],
-                    clone_url=repo["clone_url"],
-                    private=repo["private"]
-                ).model_dump() for repo in filtered_repos
-            ]
-        
-        # Fallback: get current page
-        repos = await self.get_repositories(user, page=1, limit=100)
-        return [repo for repo in repos if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()]
+                all_results.extend([
+                    Repository(
+                        id=repo["id"],
+                        name=repo["name"],
+                        full_name=repo["full_name"],
+                        clone_url=repo["clone_url"],
+                        git_domain=git_domain,
+                        type="github",
+                        private=repo["private"]
+                    ).model_dump() for repo in filtered_repos
+                ])
+                continue
+
+            # 5) Fallback: fetch first page for this domain only (avoid cross-domain aggregation)
+            try:
+                api_base_url = self._get_api_base_url(git_domain)
+                headers = {
+                    "Authorization": f"token {git_token}",
+                    "Accept": "application/vnd.github.v3+json"
+                }
+                response = requests.get(
+                    f"{api_base_url}/user/repos",
+                    headers=headers,
+                    params={
+                        "per_page": 100,
+                        "page": 1,
+                        "sort": "updated"
+                    }
+                )
+                response.raise_for_status()
+                repos = response.json()
+                mapped = [
+                    {
+                        "id": repo["id"],
+                        "name": repo["name"],
+                        "full_name": repo["full_name"],
+                        "clone_url": repo["clone_url"],
+                        "git_domain": git_domain,
+                        "type": "github",
+                        "private": repo["private"]
+                    }
+                    for repo in repos
+                ]
+                filtered_repos = [
+                    r for r in mapped
+                    if query_lower in r["name"].lower() or query_lower in r["full_name"].lower()
+                ]
+                all_results.extend([
+                    Repository(
+                        id=r["id"],
+                        name=r["name"],
+                        full_name=r["full_name"],
+                        clone_url=r["clone_url"],
+                        git_domain=git_domain,
+                        type="github",
+                        private=r["private"]
+                    ).model_dump() for r in filtered_repos
+                ])
+            except requests.exceptions.RequestException:
+                # skip this domain on error
+                continue
+
+        return all_results
     
     async def _fetch_all_repositories_async(
         self,
         user: User,
-        git_token: str = None,
-        git_domain: str = None
+        git_token: str,
+        git_domain: str
     ) -> None:
         """
         Asynchronously fetch all user's GitHub repositories and cache them
@@ -435,11 +516,6 @@ class GitHubProvider(RepositoryProvider):
             git_token: Git token, if None then get from user's git_info
             git_domain: Git domain, if None then get from user's git_info
         """
-        # If git_token or git_domain not provided, get from user's git_info
-        if git_token is None or git_domain is None:
-            git_info = self._get_git_info(user)
-            git_token = git_info["git_token"] if git_token is None else git_token
-            git_domain = git_info["git_domain"] if git_domain is None else git_domain
         
         # Check if already building
         if await cache_manager.is_building(user.id, git_domain):
@@ -448,6 +524,9 @@ class GitHubProvider(RepositoryProvider):
         await cache_manager.set_building(user.id, git_domain, True)
         
         try:
+            # Get API base URL based on git domain
+            api_base_url = self._get_api_base_url(git_domain)
+            
             headers = {
                 "Authorization": f"token {git_token}",
                 "Accept": "application/vnd.github.v3+json"
@@ -460,8 +539,9 @@ class GitHubProvider(RepositoryProvider):
             self.logger.info(f"Fetching repositories for user {user.user_name}")
             
             while True:
-                response = requests.get(
-                    f"{self.api_base_url}/user/repos",
+                response = await asyncio.to_thread(
+                    requests.get,
+                    f"{api_base_url}/user/repos",
                     headers=headers,
                     params={
                         "per_page": per_page,
@@ -475,7 +555,17 @@ class GitHubProvider(RepositoryProvider):
                 if not repos:
                     break
                     
-                all_repos.extend(repos)
+                # Map GitHub API response to standard format
+                mapped_repos = [{
+                    "id": repo["id"],
+                    "name": repo["name"],
+                    "full_name": repo["full_name"],
+                    "clone_url": repo["clone_url"],
+                    "git_domain": git_domain,
+                    "type": "github",
+                    "private": repo["private"]
+                } for repo in repos]
+                all_repos.extend(mapped_repos)
                 
                 # If the number of retrieved repos is less than per_page, we've reached the end
                 if len(repos) < per_page:
@@ -491,6 +581,8 @@ class GitHubProvider(RepositoryProvider):
             # Cache complete repository list
             cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
             await cache_manager.set(cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
+            self.logger.info(f"Cache complete repository list for user github {user.user_name}")
+            
             
         except Exception:
             # Background task fails silently
@@ -504,7 +596,7 @@ class GitHubProvider(RepositoryProvider):
     async def _get_all_repositories_from_cache(
         self,
         user: User,
-        git_domain: str = None
+        git_domain: str
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Get all repositories from cache
@@ -517,57 +609,8 @@ class GitHubProvider(RepositoryProvider):
             Cached repository list, returns None if no cache
         """
         if git_domain is None:
-            git_info = self._get_git_info(user)
+            git_info = self._pick_git_info(user, git_domain)
             git_domain = git_info["git_domain"]
             
         cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
         return await cache_manager.get(cache_key)
-    
-    def get_repo_id_by_fullname(
-        self,
-        user: User,
-        fullname: str
-    ) -> Optional[int]:
-        """
-        Get repository ID by its full name (e.g., 'username/repo')
-        
-        Args:
-            user: User object
-            fullname: Full name of the repository (username/repo)
-            
-        Returns:
-            Repository ID if found, None otherwise
-            
-        Raises:
-            HTTPException: Raised when API call fails
-        """
-        if not fullname:
-            return None
-            
-        git_info = self._get_git_info(user)
-        git_token = git_info["git_token"]
-        
-        if not git_token:
-            return None
-        
-        try:
-            headers = {
-                "Authorization": f"token {git_token}",
-                "Accept": "application/vnd.github.v3+json"
-            }
-            
-            response = requests.get(
-                f"{self.api_base_url}/repos/{fullname}",
-                headers=headers
-            )
-            
-            if response.status_code == 404:
-                return None
-                
-            response.raise_for_status()
-            
-            repo_data = response.json()
-            return repo_data.get("id")
-            
-        except requests.exceptions.RequestException:
-            return None

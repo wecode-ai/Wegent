@@ -9,18 +9,56 @@
 @tailwind utilities;
 
 :root {
-  --background: #0d1117;
-  --foreground: #f0f6fc;
+  color-scheme: light;
+  --color-bg-base: 255 255 255;
+  --color-bg-surface: 248 250 252;
+  --color-bg-muted: 241 245 249;
+  --color-border: 226 232 240;
+  --color-border-strong: 203 213 225;
+  --color-text-primary: 17 24 39;
+  --color-text-secondary: 71 85 105;
+  --color-text-muted: 100 116 139;
+  --color-text-inverted: 255 255 255;
+  --color-primary: 37 99 235;
+  --color-primary-contrast: 255 255 255;
+  --color-focus-ring: 96 165 250;
+  --color-scrollbar-track: 226 232 240;
+  --color-scrollbar-thumb: 148 163 184;
+  --color-success: 34 197 94;
+  --color-error: 239 68 68;
+  --shadow-popover: 0 12px 32px rgba(15, 23, 42, 0.12);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg-base: 13 17 23;
+  --color-bg-surface: 22 27 34;
+  --color-bg-muted: 33 38 45;
+  --color-border: 48 54 61;
+  --color-border-strong: 63 68 76;
+  --color-text-primary: 240 246 252;
+  --color-text-secondary: 201 209 217;
+  --color-text-muted: 156 163 175;
+  --color-text-inverted: 13 17 23;
+  --color-primary: 112 167 215;
+  --color-primary-contrast: 13 17 23;
+  --color-focus-ring: 112 167 215;
+  --color-scrollbar-track: 33 38 45;
+  --color-scrollbar-thumb: 48 54 61;
+  --color-success: 86 211 100;
+  --color-error: 248 81 73;
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
 }
 
 body {
-  color: rgb(var(--foreground));
-  background: linear-gradient(
+  color: rgb(var(--color-text-primary));
+  background-color: rgb(var(--color-bg-base));
+  background-image: linear-gradient(
       to bottom,
       transparent,
-      rgb(var(--background))
-    )
-    rgb(var(--background));
+      rgb(var(--color-bg-base))
+    );
+  background-attachment: fixed;
 }
 
 @layer utilities {
@@ -44,9 +82,9 @@ button:focus-visible {
 
 /* Custom toast styles */
 .Toastify__toast {
-  background-color: #161b22;
-  color: #f0f6fc;
-  border: 1px solid #30363d;
+  background-color: rgb(var(--color-bg-surface));
+  color: rgb(var(--color-text-primary));
+  border: 1px solid rgb(var(--color-border));
   border-radius: 6px;
   font-size: 14px;
   min-height: 40px;
@@ -54,15 +92,13 @@ button:focus-visible {
 }
 
 .Toastify__toast--success {
-  background-color: #161b22;
-  color: #56d364;
-  border-color: #30363d;
+  color: rgb(var(--color-success));
+  border-color: rgb(var(--color-border));
 }
 
 .Toastify__toast--error {
-  background-color: #161b22;
-  color: #f85149;
-  border-color: #30363d;
+  color: rgb(var(--color-error));
+  border-color: rgb(var(--color-border));
 }
 
 .Toastify__toast-body {
@@ -73,7 +109,7 @@ button:focus-visible {
 }
 
 .Toastify__close-button {
-  color: #f0f6fc;
+  color: rgb(var(--color-text-secondary));
   opacity: 0.7;
 }
 
@@ -83,4 +119,111 @@ button:focus-visible {
 
 .Toastify__progress-bar {
   display: none;
+}
+
+/* Custom styles for RepositorySelector antd Select */
+.repository-selector.ant-select .ant-select-selector {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.repository-selector.ant-select .ant-select-selection-placeholder,
+.repository-selector.ant-select .ant-select-selection-item {
+  color: rgb(var(--color-text-muted));
+  display: flex;
+  align-items: center;
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.repository-selector.ant-select:hover .ant-select-selection-placeholder,
+.repository-selector.ant-select:hover .ant-select-selection-item {
+  color: rgb(var(--color-text-secondary));
+}
+
+.repository-selector.ant-select .ant-select-selection-item .truncate {
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+  max-width: 120px !important;
+  display: inline-block;
+}
+
+.repository-selector.ant-select .ant-select-arrow {
+  color: rgb(var(--color-text-muted));
+}
+
+.repository-selector-dropdown.ant-select-dropdown {
+  background-color: rgb(var(--color-bg-surface)) !important;
+  border: 1px solid rgb(var(--color-border)) !important;
+  box-shadow: var(--shadow-popover) !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+.repository-selector-dropdown .ant-select-item {
+  color: rgb(var(--color-text-primary)) !important;
+  font-size: 12px !important;
+  padding: 6px 10px !important;
+  border-radius: 4px;
+  margin: 0 4px;
+  width: calc(100% - 8px);
+}
+
+.repository-selector-dropdown .ant-select-item-option-active,
+.repository-selector-dropdown .ant-select-item-option-selected {
+  background-color: rgb(var(--color-bg-muted)) !important;
+}
+
+.repository-selector-dropdown .ant-select-item-empty {
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Custom antd message style for prefixCls="custom-message" */
+.custom-message {
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.custom-message-notice {
+  width: 100%;
+}
+
+.custom-message-notice-content {
+  display: block;
+  max-width: 640px;
+  min-width: 320px;
+  width: auto;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: left;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  pointer-events: all;
+  background-color: rgb(var(--color-bg-surface));
+  border: 1px solid rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+.custom-message-notice-content .ant-message-custom-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.custom-message-notice-content .ant-message-custom-content .anticon {
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+.custom-message-notice-content .ant-message-custom-content > span {
+  flex: 1 1 auto;
 }

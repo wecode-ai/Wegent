@@ -6,14 +6,16 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { taskApis } from '@/apis/tasks'
-import { Task } from '@/types/api'
+import { Task, TaskDetail } from '@/types/api'
 
 type TaskContextType = {
   tasks: Task[]
   taskLoading: boolean
   selectedTask: Task | null
+  selectedTaskDetail: TaskDetail | null
   setSelectedTask: (task: Task | null) => void
   refreshTasks: () => void
+  refreshSelectedTaskDetail: (isAutoRefresh?: boolean) => void
   loadMore: () => void
   hasMore: boolean
   loadingMore: boolean
@@ -25,6 +27,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [tasks, setTasks] = useState<Task[]>([])
   const [taskLoading, setTaskLoading] = useState<boolean>(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
+  const [selectedTaskDetail, setSelectedTaskDetail] = useState<TaskDetail | null>(null)
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true)
@@ -79,14 +82,52 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   }, [])
 
   // Automatically refresh all loaded pages every 30 seconds
+  // 只有当存在未完成的任务时才进行定时刷新
   useEffect(() => {
-    const interval = setInterval(() => {
-      refreshTasks()
-    }, 30000)
-    return () => {
-      clearInterval(interval)
+    const hasIncompleteTasks = tasks.some(task =>
+      task.status !== 'COMPLETED' && task.status !== 'FAILED' && task.status !== 'CANCELLED'
+    );
+    
+    let interval: NodeJS.Timeout | null = null;
+    
+    if (hasIncompleteTasks) {
+      interval = setInterval(() => {
+        refreshTasks()
+      }, 30000)
     }
-  }, [loadedPages])
+    
+    return () => {
+      if (interval) clearInterval(interval)
+    }
+  }, [loadedPages, tasks])
+
+  const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
+    if (!selectedTask) return
+    
+    // 只有在自动刷新时才检查任务状态，手动触发时允许查看已完成的任务
+    if (isAutoRefresh && selectedTaskDetail &&
+        (selectedTaskDetail.status === 'COMPLETED' ||
+         selectedTaskDetail.status === 'FAILED' ||
+         selectedTaskDetail.status === 'CANCELLED')) {
+      return
+    }
+    
+    try {
+      const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id)
+      setSelectedTaskDetail(updatedTaskDetail)
+    } catch (error) {
+      console.error('Failed to refresh selected task detail:', error)
+    }
+  }
+
+  useEffect(() => {
+    if (selectedTask) {
+      refreshSelectedTaskDetail(false) // 手动选择任务，不是自动刷新
+    } else {
+      setSelectedTaskDetail(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTask])
 
   return (
     <TaskContext.Provider
@@ -94,8 +135,10 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         tasks,
         taskLoading,
         selectedTask,
+        selectedTaskDetail,
         setSelectedTask,
         refreshTasks,
+        refreshSelectedTaskDetail,
         loadMore,
         hasMore,
         loadingMore,
@@ -105,7 +148,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     </TaskContext.Provider>
   )
 }
-
 /**
  * useTaskContext must be used within a TaskContextProvider.
  */

@@ -1,0 +1,57 @@
+{
+  "title": "Settings",
+  "sections": {
+    "general": "General",
+    "appearance": "Appearance",
+    "language": "Language",
+    "account": "Account",
+    "privacy": "Privacy",
+    "advanced": "Advanced"
+  },
+  "general": {
+    "auto_save": "Auto Save",
+    "notifications": "Notifications",
+    "sound": "Sound Effects",
+    "keyboard_shortcuts": "Keyboard Shortcuts"
+  },
+  "appearance": {
+    "theme": "Theme",
+    "dark_mode": "Dark Mode",
+    "light_mode": "Light Mode",
+    "auto_mode": "Auto (System)",
+    "font_size": "Font Size",
+    "font_family": "Font Family"
+  },
+  "language": {
+    "current": "Current Language",
+    "select": "Select Language",
+    "auto_detect": "Auto Detect",
+    "restart_required": "Restart required to apply language changes"
+  },
+  "account": {
+    "profile": "Profile",
+    "email": "Email",
+    "password": "Password",
+    "change_password": "Change Password",
+    "logout": "Logout",
+    "delete_account": "Delete Account"
+  },
+  "privacy": {
+    "data_collection": "Data Collection",
+    "analytics": "Analytics",
+    "crash_reports": "Crash Reports",
+    "usage_statistics": "Usage Statistics"
+  },
+  "advanced": {
+    "developer_mode": "Developer Mode",
+    "debug_logs": "Debug Logs",
+    "reset_settings": "Reset Settings",
+    "export_settings": "Export Settings",
+    "import_settings": "Import Settings"
+  },
+  "actions": {
+    "save_changes": "Save Changes",
+    "discard_changes": "Discard Changes",
+    "reset_to_default": "Reset to Default"
+  }
+}

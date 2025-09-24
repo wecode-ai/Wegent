@@ -1,0 +1,63 @@
+{
+  "title": "提示词",
+  "categories": {
+    "coding": "编程",
+    "writing": "写作",
+    "analysis": "分析",
+    "creative": "创意",
+    "business": "商务",
+    "education": "教育",
+    "custom": "自定义"
+  },
+  "actions": {
+    "use": "使用提示词",
+    "edit": "编辑",
+    "duplicate": "复制",
+    "delete": "删除",
+    "create": "新建",
+    "save": "保存提示词",
+    "share": "分享",
+    "favorite": "添加到收藏",
+    "unfavorite": "从收藏中移除"
+  },
+  "fields": {
+    "title": "标题",
+    "description": "描述",
+    "content": "提示词内容",
+    "category": "分类",
+    "tags": "标签",
+    "variables": "变量"
+  },
+  "placeholders": {
+    "title": "输入提示词标题...",
+    "description": "描述这个提示词的作用...",
+    "content": "在此编写您的提示词...",
+    "search": "搜索提示词...",
+    "tags": "添加标签（用逗号分隔）"
+  },
+  "templates": {
+    "code_review": "代码审查",
+    "bug_fix": "Bug 修复",
+    "documentation": "文档编写",
+    "refactoring": "代码重构",
+    "testing": "测试",
+    "explanation": "代码解释"
+  },
+  "variables": {
+    "add": "添加变量",
+    "name": "变量名",
+    "description": "描述",
+    "default_value": "默认值",
+    "required": "必填"
+  },
+  "empty": {
+    "title": "没有提示词",
+    "description": "创建您的第一个提示词开始使用",
+    "action": "创建提示词"
+  },
+  "validation": {
+    "title_required": "标题为必填项",
+    "content_required": "提示词内容为必填项",
+    "invalid_variable": "变量格式无效"
+  }
+}

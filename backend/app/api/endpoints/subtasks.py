@@ -44,7 +44,7 @@ def get_subtask(
     db: Session = Depends(get_db)
 ):
     """Get specified subtask details"""
-    return subtask_service.get_by_id_and_user(db=db, subtask_id=subtask_id, user_id=current_user.id)
+    return subtask_service.get_subtask_by_id(db=db, subtask_id=subtask_id, user_id=current_user.id)
 
 @router.put("/{subtask_id}", response_model=SubtaskInDB)
 def update_subtask(
@@ -54,7 +54,7 @@ def update_subtask(
     db: Session = Depends(get_db)
 ):
     """Update subtask information"""
-    return subtask_service.update_with_user(
+    return subtask_service.update_subtask(
         db=db,
         subtask_id=subtask_id,
         obj_in=subtask_update,
@@ -68,5 +68,5 @@ def delete_subtask(
     db: Session = Depends(get_db)
 ):
     """Delete subtask"""
-    subtask_service.delete_with_user(db=db, subtask_id=subtask_id, user_id=current_user.id)
+    subtask_service.delete_subtask(db=db, subtask_id=subtask_id, user_id=current_user.id)
     return {"message": "Subtask deleted successfully"}

@@ -21,6 +21,9 @@ class GitInfo(BaseModel):
     git_domain: str
     git_token: str
     type: str
+    git_id: Optional[str] = None
+    git_login: Optional[str] = None
+    git_email: Optional[str] = None
 
 class UserBase(BaseModel):
     """User base model"""
@@ -49,3 +52,12 @@ class UserInDB(UserBase):
 
     class Config:
         from_attributes = True
+
+
+class LoginRequest(BaseModel):
+    user_name: str
+    password: str
+
+class LoginResponse(BaseModel):
+    access_token: str
+    token_type: str

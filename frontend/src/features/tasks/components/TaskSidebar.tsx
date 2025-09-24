@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useRef, useEffect } from 'react'
-import { Button, Listbox } from '@headlessui/react'
+import { Button } from 'antd'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
 import { paths } from '@/config/paths'
@@ -16,10 +16,12 @@ import {
 } from '@heroicons/react/24/outline'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import TaskListSection from './TaskListSection'
+import { useTranslation } from '@/hooks/useTranslation'
 
 
 
 export default function TaskSidebar() {
+  const { t } = useTranslation('common')
   const router = useRouter()
   const { tasks, setSelectedTask, loadMore, hasMore, loadingMore } = useTaskContext()
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -62,7 +64,7 @@ export default function TaskSidebar() {
   }, [loadMore])
 
   return (
-      <div className="w-56 bg-[#161b22] border-r border-[#21262d] flex flex-col">
+      <div className="w-56 bg-surface border-r border-border flex flex-col">
         {/* Logo */}
         <div className="p-3">
           <div className="flex justify-start pl-2">
@@ -79,11 +81,11 @@ export default function TaskSidebar() {
         {/* Search */}
         <div className="p-3">
           <div className="relative">
-            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+            <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
             <input
               type="text"
-              placeholder="Search task..."
-              className="w-full pl-8 pr-2 py-1.5 bg-[#161b22] border border-[#30363d] rounded text-xs text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent"
+              placeholder={t('tasks.search_placeholder')}
+              className="w-full pl-8 pr-2 py-1.5 bg-surface border border-border rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
           </div>
         </div>
@@ -92,53 +94,55 @@ export default function TaskSidebar() {
         <div className="px-3 mb-3">
           <Button
             onClick={handleNewAgentClick}
-            className="w-full flex items-center justify-center px-2.5 py-1.5 text-xs font-medium rounded transition-colors duration-200 text-gray-900"
-            style={{ backgroundColor: 'rgb(112,167,215)' }}
+            type="primary"
+            size="small"
+            icon={<PlusIcon className="h-3 w-3" />}
+            style={{ width: '100%' }}
           >
-            <PlusIcon className="h-3.5 w-3.5 mr-1.5" />
-            New Task
+            {t('tasks.new_task')}
           </Button>
         </div>
 
-        {/* Tasks Section */}
         {/* Tasks Section */}
         <div
           className="flex-1 px-3 overflow-y-auto custom-scrollbar"
           ref={scrollRef}
         >
           {tasks.length === 0 ? (
-            <div className="text-center py-8 text-xs text-gray-400">No tasks</div>
+            <div className="text-center py-8 text-xs text-text-muted">{t('tasks.no_tasks')}</div>
           ) : (
             <>
               <TaskListSection
                 tasks={groupTasksByDate.today}
-                title="Today"
+                title={t('tasks.today')}
               />
               <TaskListSection
                 tasks={groupTasksByDate.thisWeek}
-                title="This Week"
+                title={t('tasks.this_week')}
               />
               <TaskListSection
                 tasks={groupTasksByDate.earlier}
-                title="Earlier"
+                title={t('tasks.earlier')}
               />
             </>
           )}
           {loadingMore && (
-            <div className="text-center py-2 text-xs text-gray-400">Loading...</div>
+            <div className="text-center py-2 text-xs text-text-muted">{t('tasks.loading')}</div>
           )}
           {!hasMore && tasks.length > 0 && (
-            <div className="text-center py-2 text-xs text-gray-400">No more tasks</div>
+            <div className="text-center py-2 text-xs text-text-muted">{t('tasks.no_more_tasks')}</div>
           )}
         </div>
         {/* Settings */}
-        <div className="p-3 border-t border-[#21262d]">
+        <div className="p-3 border-t border-border">
           <Button
-            onClick={() => router.push(paths.dashboard.root.getHref())}
-            className="flex items-center space-x-1.5 text-gray-400 hover:text-white text-xs"
+            onClick={() => router.push(paths.settings.root.getHref())}
+            type="link"
+            size="small"
+            icon={<Cog6ToothIcon className="h-3.5 w-3.5" />}
+            className="!text-text-muted hover:!text-text-primary"
           >
-            <Cog6ToothIcon className="h-3.5 w-3.5" />
-            <span>Settings</span>
+            {t('tasks.settings')}
           </Button>
         </div>
       </div>

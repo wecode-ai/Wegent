@@ -5,12 +5,13 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { Button } from '@headlessui/react'
+import { Button } from 'antd'
 import { useRouter } from 'next/navigation'
 import Modal from '@/features/common/Modal'
 import { paths } from '@/config/paths'
 
 import { useUser } from '@/features/common/UserContext'
+import { useTranslation } from 'react-i18next'
 
 import type { Team } from '@/types/api';
 
@@ -26,27 +27,22 @@ export default function BeginnerGuideModal({
   const router = useRouter()
   const [isOpen, setIsOpen] = useState(false)
   const { user, isLoading: userLoading } = useUser()
-
-  // Determine if token needs to be set
-  const needSetToken = !user || !user.git_info || !user.git_info.some(
-    (info) => !!info.git_token
-  )
-
+  const { t } = useTranslation()
   // Determine if team needs to be set based on teams length
   const needSetTeam = !teams || teams.length === 0;
 
-  // Decide whether to show modal based on needSetToken and needSetTeam
+  // Decide whether to show modal based on needSetTeam only
   useEffect(() => {
     // Only process isOpen when both userLoading and teamLoading are false
     if (userLoading || teamLoading) {
       return
     }
-    if (needSetToken || needSetTeam) {
+    if (needSetTeam) {
       setIsOpen(true)
     } else {
       setIsOpen(false)
     }
-  }, [needSetToken, needSetTeam, userLoading, teamLoading])
+  }, [needSetTeam, userLoading, teamLoading])
 
   const handleClose = () => {
     setIsOpen(false)
@@ -56,39 +52,26 @@ export default function BeginnerGuideModal({
     <Modal
       isOpen={isOpen}
       onClose={handleClose}
-      title="Welcome!"
+      title={t('guide.title')}
       maxWidth="sm"
     >
       <div className="flex flex-col items-center">
-        <p className="text-sm text-gray-300 mb-6 text-center leading-relaxed">
-          Before you can start using the app, please complete the setup below first!
+        <p className="text-sm text-text-secondary mb-6 text-center leading-relaxed">
+            {t('guide.description')}
         </p>
-        {(needSetToken || needSetTeam) && (
+        {needSetTeam && (
           <div className="flex flex-row items-center justify-center gap-2 w-full mb-2">
-            {needSetToken && (
-              <Button
-                className="flex-1 min-w-0 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors duration-200 text-gray-900 bg-[#70a7d7] hover:bg-[#5b8bb3] focus:outline-none"
-                style={{ boxShadow: 'none' }}
-                onClick={() => {
-                  handleClose()
-                  router.push(paths.dashboard.bot.getHref())
-                }}
-              >
-                Set Git Token
-              </Button>
-            )}
-            {needSetTeam && (
-              <Button
-                className="flex-1 min-w-0 px-3 py-1.5 text-xs font-medium rounded-lg transition-colors duration-200 text-gray-900 bg-[#70a7d7] hover:bg-[#5b8bb3] focus:outline-none"
-                style={{ boxShadow: 'none' }}
-                onClick={() => {
-                  handleClose()
-                  router.push('/dashboard?tab=team')
-                }}
-              >
-                Create Team
-              </Button>
-            )}
+            <Button
+              type="primary"
+              size="small"
+              style={{ minWidth: '100px' }}
+              onClick={() => {
+                handleClose()
+                router.push(paths.settings.team.getHref())
+              }}
+            >
+              Create Team
+            </Button>
           </div>
         )}
       </div>

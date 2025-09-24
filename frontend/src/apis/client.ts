@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
+import { paths } from '../config/paths'
+
 // API Configuration and Client
 const API_BASE_URL = '/api'
 
@@ -38,7 +40,7 @@ class APIClient {
       if (response.status === 401) {
         removeToken()
         if (typeof window !== 'undefined') {
-          window.location.href = '/login'
+          window.location.href = paths.auth.login.getHref()
         }
         throw new Error('Authentication failed')
       }

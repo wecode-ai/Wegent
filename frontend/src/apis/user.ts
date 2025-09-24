@@ -28,12 +28,27 @@ export interface UpdateUserRequest {
 }
 
 
-// Token management (internal use, not exposed to the outside)
 const TOKEN_KEY = 'auth_token'
+const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 
-function setToken(token: string) {
+function getJwtExp(token: string): number | null {
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1]))
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null // 转为毫秒
+  } catch {
+    return null
+  }
+}
+
+export function setToken(token: string) {
   if (typeof window !== 'undefined') {
     localStorage.setItem(TOKEN_KEY, token)
+    const exp = getJwtExp(token)
+    if (exp) {
+      localStorage.setItem(TOKEN_EXPIRE_KEY, String(exp))
+    } else {
+      localStorage.removeItem(TOKEN_EXPIRE_KEY)
+    }
   }
 }
 
@@ -44,14 +59,29 @@ export function getToken(): string | null {
   return null
 }
 
+export function getTokenExpire(): number | null {
+  if (typeof window !== 'undefined') {
+    const exp = localStorage.getItem(TOKEN_EXPIRE_KEY)
+    return exp ? Number(exp) : null
+  }
+  return null
+}
+
 export function removeToken() {
   if (typeof window !== 'undefined') {
     localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(TOKEN_EXPIRE_KEY)
   }
 }
 
+/**
+ * 判断 token 是否存在且未过期
+ */
 function isAuthenticated(): boolean {
-  return !!getToken()
+  const token = getToken()
+  const exp = getTokenExpire()
+  if (!token || !exp) return false
+  return Date.now() < exp
 }
 
 // API Client
@@ -69,7 +99,7 @@ export const userApis = {
   logout() {
     removeToken()
     if (typeof window !== 'undefined') {
-      window.location.href = paths.auth.login.getHref()
+      window.location.href = paths.home.getHref()
     }
   },
 
@@ -84,4 +114,8 @@ export const userApis = {
   isAuthenticated(): boolean {
     return isAuthenticated()
   }
+}
+
+export async function loginWithOidcToken(accessToken: string): Promise<void> {
+  setToken(accessToken)
 }

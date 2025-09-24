@@ -35,7 +35,7 @@ export interface BotListResponse {
 // Bot Services
 export const botApis = {
   async getBots(params?: PaginationParams): Promise<BotListResponse> {
-    const query = params ? `?page=${params.page || 1}` : ''
+    const query = params ? `?page=${params.page || 1}&limit=${params.limit || 100}` : ''
     return apiClient.get(`/bots${query}`)
   },
 

@@ -5,34 +5,41 @@
 'use client'
 
 import { Menu } from '@headlessui/react'
+import { Button } from 'antd'
 
 import { useUser } from '@/features/common/UserContext'
+import { useTranslation } from '@/hooks/useTranslation'
 
 type UserMenuProps = {
-  position?: string
+  className?: string
 }
 
-export default function UserMenu({ position = 'right-6' }: UserMenuProps) {
+export default function UserMenu({ className = '' }: UserMenuProps) {
+  const { t } = useTranslation('common')
   const { user, logout } = useUser()
-  const userInitial = user?.user_name?.[0]?.toUpperCase() || 'M'
+  const userDisplayName = user?.user_name || t('user.default_name')
 
   return (
-    <div className={`absolute ${position}`}>
+    <div className={className}>
       <Menu as="div" className="relative">
-        <Menu.Button className="w-8 h-8 bg-[#21262d] border border-[#30363d] rounded-full flex items-center justify-center text-sm font-medium hover:bg-[#30363d] transition-colors duration-200">
-          {userInitial}
+        <Menu.Button className="px-3 py-1 bg-muted border border-border rounded-full flex items-center justify-center text-sm font-medium text-text-primary hover:bg-border/40 transition-colors duration-200">
+          {userDisplayName}
         </Menu.Button>
-        <Menu.Items className="absolute top-full mt-2 right-0 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-30 min-w-[120px] py-1 focus:outline-none">
+        <Menu.Items
+          className="absolute top-full right-0 mt-2 min-w-[120px] rounded-lg border border-border bg-surface py-1 z-30 focus:outline-none"
+          style={{ boxShadow: 'var(--shadow-popover)' }}
+        >
           <Menu.Item>
             {({ active }) => (
-              <button
+              <Button
+                type="text"
                 onClick={logout}
-                className={`w-full px-3 py-2 text-xs text-left text-white transition-colors duration-150 ${
-                  active ? 'bg-[#21262d]' : ''
+                className={`!w-full !text-left !px-2 !py-1.5 !text-xs !text-text-primary ${
+                  active ? '!bg-muted' : '!bg-transparent'
                 }`}
               >
-                Logout
-              </button>
+                {t('user.logout')}
+              </Button>
             )}
           </Menu.Item>
         </Menu.Items>

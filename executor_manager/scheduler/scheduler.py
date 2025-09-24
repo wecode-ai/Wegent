@@ -17,7 +17,7 @@ import os
 import schedule
 import time
 from datetime import datetime
-from executor_manager.config.config import TASK_FETCH_INTERVAL, TIME_LOG_INTERVAL, SCHEDULER_SLEEP_TIME
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE, TASK_FETCH_INTERVAL, TIME_LOG_INTERVAL, SCHEDULER_SLEEP_TIME
 from executor_manager.clients.task_api_client import TaskApiClient
 from executor_manager.tasks.task_processor import TaskProcessor
 
@@ -43,16 +43,16 @@ class TaskScheduler:
     def fetch_and_process_tasks(self):
         """Fetch and process tasks"""
         
-        executor_count_result = ExecutorDispatcher.get_executor("docker").get_executor_count()
+        executor_count_result = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_executor_count()
         
         if executor_count_result["status"] != "success":
-            logger.error(f"Failed to get job count: {executor_count_result.get('error_msg', 'Unknown error')}")
+            logger.error(f"Failed to get pod count: {executor_count_result.get('error_msg', 'Unknown error')}")
             return False
         
         running_executor_num = executor_count_result.get("running", 0)
-        logger.info(f"Current running jobs: {running_executor_num}, max concurrent tasks: {self.max_concurrent_tasks}")
+        logger.info(f"Current running pods: {running_executor_num}, max concurrent tasks: {self.max_concurrent_tasks}")
         
-        available_slots = max(0, self.max_concurrent_tasks - running_executor_num)
+        available_slots = min(10, self.max_concurrent_tasks - running_executor_num)
         
         if available_slots <= 0:
             logger.info("No available slots for new tasks, skipping fetch")
@@ -68,12 +68,21 @@ class TaskScheduler:
         return success
     
     def fetch_subtasks(self):
-        current_tasks = ExecutorDispatcher.get_executor("docker").get_current_task_ids()
+        current_tasks = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_current_task_ids("aigc.weibo.com/team-mode=pipeline")
         logger.info(f"Current task ids: {current_tasks}")
         if current_tasks.get("task_ids") and len(current_tasks.get("task_ids")) > 0:
-            success, result = self.api_client.fetch_subtasks(",".join(current_tasks.get("task_ids")))
-            if success:
-                self.task_processor.process_tasks(result["tasks"])
+            task_ids = current_tasks.get("task_ids")
+            batch_size = 10
+            
+            for i in range(0, len(task_ids), batch_size):
+                batch_task_ids = task_ids[i:i+batch_size]
+                logger.info(f"Fetching subtasks batch {i//batch_size + 1}, task_ids: {batch_task_ids}")
+                
+                success, result = self.api_client.fetch_subtasks(",".join(batch_task_ids))
+                if success:
+                    self.task_processor.process_tasks(result["tasks"])
+                else:
+                    logger.error(f"Failed to fetch subtasks batch {i//batch_size + 1}: {result}")
 
     def setup_schedule(self):
         """Setup schedule plan"""

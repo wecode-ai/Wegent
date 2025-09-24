@@ -4,12 +4,12 @@
 
 'use client'
 
-import { useState, useEffect, useMemo, useRef } from 'react'
-import { Listbox } from '@headlessui/react'
-import { ChevronDownIcon } from '@heroicons/react/24/outline'
+import { useState, useEffect, useRef } from 'react'
+import { Select, App } from 'antd'
 import { FiGitBranch } from 'react-icons/fi'
 import { GitRepoInfo, GitBranch } from '@/types/api'
 import { githubApis } from '@/apis/github'
+import { useTranslation } from '@/hooks/useTranslation'
 
 /**
  * BranchSelector component
@@ -30,27 +30,16 @@ export default function BranchSelector({
   handleBranchChange,
   disabled
 }: BranchSelectorProps) {
+  const { t } = useTranslation('common')
+  const { message } = App.useApp()
   const [branches, setBranches] = useState<GitBranch[]>([])
   const [loading, setLoading] = useState<boolean>(false)
+  // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [error, setError] = useState<string | null>(null)
-  const { selectedTask } = useTaskContext()
+  const { selectedTaskDetail } = useTaskContext()
 
-  // Dropdown expansion direction
-  const [dropdownDirection, setDropdownDirection] = useState<'up' | 'down'>('down')
-  const buttonRef = useRef<HTMLButtonElement>(null)
-
-  // Calculate dropdown expansion direction
-  const handleDropdownClick = () => {
-    if (!buttonRef.current) return
-    const rect = buttonRef.current.getBoundingClientRect()
-    const spaceBelow = window.innerHeight - rect.bottom
-    const spaceAbove = rect.top
-    if (spaceBelow < 100 && spaceAbove > spaceBelow) {
-      setDropdownDirection('up')
-    } else {
-      setDropdownDirection('down')
-    }
-  }
+  // antd Select 不需要 dropdownDirection
+  const selectRef = useRef(null)
 
   // Fetch branch list
   useEffect(() => {
@@ -62,7 +51,7 @@ export default function BranchSelector({
     }
     let ignore = false
     setLoading(true)
-    githubApis.getBranches(selectedRepo.git_repo)
+    githubApis.getBranches(selectedRepo)
       .then((data) => {
         if (!ignore) {
           setBranches(data)
@@ -70,7 +59,10 @@ export default function BranchSelector({
         }
       })
       .catch((err) => {
-        if (!ignore) setError('Failed to load branches')
+        if (!ignore) {
+          setError(t('branches.load_failed'))
+          message.error(t('branches.load_failed'))
+        }
       })
       .finally(() => {
         if (!ignore) setLoading(false)
@@ -83,11 +75,11 @@ export default function BranchSelector({
   useEffect(() => {
     if (!branches || branches.length === 0) return
     if (
-      selectedTask &&
-      'branch_name' in selectedTask &&
-      selectedTask.branch_name
+      selectedTaskDetail &&
+      'branch_name' in selectedTaskDetail &&
+      selectedTaskDetail.branch_name
     ) {
-      const foundBranch = branches.find(b => b.name === selectedTask.branch_name) || null
+      const foundBranch = branches.find(b => b.name === selectedTaskDetail.branch_name) || null
       if (foundBranch) {
         handleBranchChange(foundBranch)
         return
@@ -98,78 +90,76 @@ export default function BranchSelector({
       handleBranchChange(branches[0])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask, branches])
+  }, [selectedTaskDetail, branches])
 
-  // Merge states
+  // 状态合并
   const showLoading = loading
   const showError = !!error
   const showNoBranch = !showLoading && !showError && branches.length === 0
 
-  // Do not render when no item is selected and there are no branches
+  // 不渲染（无分支且无选中且无loading/error）
   if (!selectedBranch && branches.length === 0 && !showLoading && !showError) return null
 
+  // 构造分支选项
+  const branchOptions = branches.map(branch => ({
+    label: (
+      <span>
+        {branch.name}
+        {branch.default && (
+          <span className="ml-2 text-green-400 text-[10px]">{t('branches.default')}</span>
+        )}
+      </span>
+    ),
+    value: branch.name,
+  }))
+
+  // antd Select onChange
+  const handleChange = (value: { value: string; label: React.ReactNode } | undefined) => {
+    if (!value) return
+    const branch = branches.find(b => b.name === value.value)
+    if (branch) {
+      handleBranchChange(branch)
+    }
+  }
+
   return (
-    <Listbox
-      value={selectedBranch}
-      onChange={handleBranchChange}
-      disabled={disabled || showLoading || showError || showNoBranch}
-    >
-      <div className="relative">
-        <Listbox.Button
-          ref={buttonRef}
-          className={`flex items-center space-x-1 text-gray-500 hover:text-gray-400 w-full ${disabled || showLoading || showError || showNoBranch ? 'opacity-50 cursor-not-allowed' : ''}`}
-          onClick={handleDropdownClick}
-        >
-          <FiGitBranch className={`w-3 h-3 flex-shrink-0 ${showLoading ? 'animate-pulse' : ''}`} />
-          <span className="text-sm truncate max-w-[100px]" title={selectedBranch?.name || ''}>
-            {showLoading
-              ? 'Loading...'
-              : showError
-                ? 'Load failed'
-                : showNoBranch
-                  ? 'No branches'
-                  : selectedBranch?.name}
-          </span>
-          <ChevronDownIcon className="w-4 h-4 flex-shrink-0" />
-        </Listbox.Button>
-        <Listbox.Options
-          className={`absolute ${dropdownDirection === 'up' ? 'bottom-full mb-1' : 'top-full mt-1'} left-0 bg-[#161b22] border border-[#30363d] rounded-lg shadow-xl z-20 min-w-full w-auto max-w-[220px] py-1 max-h-[300px] overflow-y-auto custom-scrollbar`}
-        >
-          {/* Status and branch list */}
-          {showLoading && (
-            <div className="px-3 py-2 text-sm text-gray-400 flex items-center">
+    <div className="flex items-center space-x-1 min-w-0">
+      <FiGitBranch className={`w-3 h-3 text-text-muted flex-shrink-0 ${showLoading ? 'animate-pulse' : ''}`} />
+      <Select
+        labelInValue
+        value={selectedBranch ? { value: selectedBranch.name, label: selectedBranch.name + (selectedBranch.default ? ' (default)' : '') } : undefined}
+        placeholder={
+          <span className="text-sx truncate h-2">{t('branches.select_branch')}</span>
+        }
+        className="repository-selector min-w-0 truncate"
+        style={{ width: 'auto', maxWidth: 200, display: 'inline-block', paddingRight: 8 }}
+        popupMatchSelectWidth={false}
+        styles={{ popup: { root: { maxWidth: 200 } } }}
+        classNames={{ popup: { root: "repository-selector-dropdown custom-scrollbar" } }}
+        disabled={disabled || showLoading || showError || showNoBranch}
+        loading={showLoading}
+        filterOption={false}
+        onChange={handleChange}
+        notFoundContent={
+          showLoading ? (
+            <div className="px-3 py-2 text-sm text-text-muted flex items-center">
               <FiGitBranch className="w-4 h-4 animate-pulse mr-2" />
-              Loading branches...
+              {t('branches.loading')}
             </div>
-          )}
-          {showError && (
-            <div className="px-3 py-2 text-sm text-red-400 flex items-center">
+          ) : showError ? (
+            <div className="px-3 py-2 text-sm" style={{ color: 'rgb(var(--color-error))' }}>
               <FiGitBranch className="w-4 h-4 mr-2" />
               {error}
+              {/* antd message.error 已全局提示 */}
             </div>
-          )}
-          {showNoBranch && (
-            <div className="px-3 py-2 text-sm text-gray-400">
-              No branches found
+          ) : showNoBranch ? (
+            <div className="px-3 py-2 text-sm text-text-muted">
+              {t('branches.no_branch')}
             </div>
-          )}
-          {!showLoading && !showError && branches.length > 0 && (
-            branches.map((branch) => (
-              <Listbox.Option
-                key={branch.name}
-                value={branch}
-                className="px-2.5 py-1.5 text-xs text-white hover:bg-[#21262d] cursor-pointer block truncate"
-                title={branch.name}
-              >
-                {branch.name}
-                {branch.default && (
-                  <span className="ml-2 text-green-400 text-[10px]">(default)</span>
-                )}
-              </Listbox.Option>
-            ))
-          )}
-        </Listbox.Options>
-      </div>
-    </Listbox>
+          ) : null
+        }
+        options={branchOptions}
+      />
+    </div>
   )
 }

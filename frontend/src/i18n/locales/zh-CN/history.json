@@ -1,0 +1,43 @@
+{
+  "title": "历史记录",
+  "sections": {
+    "recent": "最近",
+    "today": "今天",
+    "yesterday": "昨天",
+    "this_week": "本周",
+    "this_month": "本月",
+    "older": "更早"
+  },
+  "actions": {
+    "view": "查看",
+    "delete": "删除",
+    "restore": "恢复",
+    "clear_all": "清空全部",
+    "export": "导出",
+    "search": "搜索历史"
+  },
+  "filters": {
+    "all": "全部",
+    "conversations": "对话",
+    "tasks": "任务",
+    "files": "文件",
+    "searches": "搜索"
+  },
+  "empty": {
+    "title": "没有历史记录",
+    "description": "您的活动历史将显示在这里",
+    "action": "开始使用应用以查看历史记录"
+  },
+  "confirm": {
+    "delete_item": "确定要删除此项目吗？",
+    "clear_all": "确定要清空所有历史记录吗？此操作无法撤销。",
+    "delete_selected": "删除 {{count}} 个选中的项目？"
+  },
+  "status": {
+    "loading": "加载历史记录中...",
+    "error": "加载历史记录失败",
+    "deleted": "项目已删除",
+    "restored": "项目已恢复",
+    "cleared": "历史记录已清空"
+  }
+}

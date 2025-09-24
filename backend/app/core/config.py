@@ -9,6 +9,8 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "Task Manager Backend"
     VERSION: str = "1.0.0"
     API_PREFIX: str = "/api"
+    # API docs toggle (from env ENABLE_API_DOCS, default True)
+    ENABLE_API_DOCS: bool = True
     
     # Database configuration
     DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"
@@ -19,12 +21,29 @@ class Settings(BaseSettings):
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 24*60  # 24 hours in minutes
+
+    # OIDC state configuration
+    OIDC_STATE_SECRET_KEY: str = "test"
+    OIDC_STATE_EXPIRE_SECONDS: int = 10*60  # 10分钟，单位：秒
     
     # Cache configuration
-    REPO_CACHE_EXPIRED_TIME: int = 3600  # 1 hour in seconds
+    REPO_CACHE_EXPIRED_TIME: int = 300  # 5 minutes in seconds
 
-    REPOSITORY_PROVIDER_TYPE: str = "github"
+    # Task limits
+    MAX_RUNNING_TASKS_PER_USER: int = 10
+
+    # Task append expiration (hours)
+    APPEND_TASK_EXPIRE_HOURS: int = 48
+
+    # Frontend URL configuration
+    FRONTEND_URL: str = "http://localhost:3000"
+
+    # OIDC configuration
+    OIDC_CLIENT_ID: str = "wegent"
+    OIDC_CLIENT_SECRET: str = "test"
+    OIDC_DISCOVERY_URL: str = "http://test.intra.weibo.com:5556/.well-known/openid-configuration"
+    OIDC_REDIRECT_URI: str = "http://localhost:8000/api/auth/oidc/callback"
 
     class Config:
         env_file = ".env"

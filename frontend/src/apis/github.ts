@@ -19,7 +19,7 @@ interface GitHubTokenValidationResponse {
 export const githubApis = {
   async validateToken(token: string): Promise<boolean> {
     try {
-      const response = await apiClient.get<GitHubTokenValidationResponse>(`/github/validate-token?token=${encodeURIComponent(token)}`)
+      const response = await apiClient.get<GitHubTokenValidationResponse>(`/git/validate-token?token=${encodeURIComponent(token)}`)
       return (response as GitHubTokenValidationResponse).valid === true
     } catch (error) {
       console.error('Token validation failed:', error)
@@ -28,15 +28,15 @@ export const githubApis = {
   },
 
   async getRepositories(): Promise<GitHubRepositoriesResponse> {
-    return await apiClient.get('/github/repositories')
+    return await apiClient.get('/git/repositories')
   },
 
   async searchRepositories(query: string): Promise<GitRepoInfo[]> {
     // Add timeout=30 parameter to be compatible with backend interface
-    return await apiClient.get(`/github/repositories/search?q=${encodeURIComponent(query)}&timeout=30`);
+    return await apiClient.get(`/git/repositories/search?q=${encodeURIComponent(query)}&timeout=30`);
   },
 
-  async getBranches(repoName: string): Promise<GitBranchesResponse> {
-    return apiClient.get(`/github/repositories/branches?git_repo=${encodeURIComponent(repoName)}`)
+  async getBranches(repo: GitRepoInfo): Promise<GitBranchesResponse> {
+    return apiClient.get(`/git/repositories/branches?git_repo=${encodeURIComponent(repo.git_repo)}&type=${repo.type}&git_domain=${encodeURIComponent(repo.git_domain)}`)
   }
 }

@@ -4,9 +4,14 @@
 
 import type { Metadata } from 'next'
 import './globals.css'
+import 'antd/dist/reset.css'
+import '@/features/common/scrollbar.css'
 import MockInit from '@/features/mock/MockInit'
-import { ToastContainer, Slide } from 'react-toastify'
-import 'react-toastify/dist/ReactToastify.css'
+import AntdProvider from './AntdProvider'
+import AuthGuard from '@/features/common/AuthGuard'
+import I18nProvider from '@/components/I18nProvider'
+import { ThemeProvider } from '@/features/theme/ThemeProvider'
+import { ThemeScript } from '@/features/theme/ThemeScript'
 
 export const metadata: Metadata = {
   title: 'WeCode AI Assistant',
@@ -19,24 +24,22 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className="font-sans antialiased">
-        <MockInit>
-          {children}
-        </MockInit>
-        <ToastContainer
-          position="top-center"
-          autoClose={2000}
-          hideProgressBar
-          newestOnTop={false}
-          closeOnClick
-          rtl={false}
-          pauseOnFocusLoss
-          draggable
-          pauseOnHover
-          theme="dark"
-          transition={Slide}
-        />
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
+      <body className="font-sans antialiased bg-base text-text-primary" suppressHydrationWarning>
+        <ThemeProvider>
+          <MockInit>
+            <I18nProvider>
+              <AntdProvider>
+                <AuthGuard>
+                  {children}
+                </AuthGuard>
+              </AntdProvider>
+            </I18nProvider>
+          </MockInit>
+        </ThemeProvider>
       </body>
     </html>
   )

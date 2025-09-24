@@ -28,6 +28,18 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
         """
         Create user Team
         """
+        # Check that the team name is unique for the user
+        exist_team = db.query(Team).filter(
+            Team.user_id == user_id,
+            Team.name == obj_in.name,
+            Team.is_active == True
+        ).first()
+        if exist_team:
+            raise HTTPException(
+                status_code=400,
+                detail="Team name already exists, please try another"
+            )
+
         # Validate bots
         self._validate_bots(db, obj_in.bots, user_id)
         bot_list = []
@@ -46,6 +58,7 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
             user_id=user_id,
             name=obj_in.name,
             bots=bot_list,
+            workflow=obj_in.workflow,
             is_active=True
         )
         db.add(db_obj)
@@ -111,7 +124,8 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
                 if bot_id in bot_map:
                     detailed_bots.append({
                         "bot": bot_map[bot_id],
-                        "bot_prompt": bot_info.get('bot_prompt')
+                        "bot_prompt": bot_info.get('bot_prompt'),
+                        "role": bot_info.get('role')
                     })
         except ValueError:
             detailed_bots = []
@@ -151,11 +165,6 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
         if 'bots' in update_data:
             self._validate_bots(db, update_data['bots'], user_id)
         
-        # Store old bots for comparison if we're updating bots
-        old_bots = None
-        if 'bots' in update_data:
-            old_bots = {bot['bot_id']: bot for bot in team.bots} if team.bots else {}
-        
         for field, value in update_data.items():
             if field == 'bots':
                 bot_list = []
@@ -174,26 +183,6 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
                 setattr(team, field, value)
         
         db.add(team)
-        
-        # Update related subtasks if bots were modified
-        if old_bots is not None:
-            new_bots = {bot['bot_id']: bot for bot in team.bots} if team.bots else {}
-            
-            # For each bot that was updated
-            for bot_id, new_bot in new_bots.items():
-                # If this is an existing bot and the prompt changed
-                if bot_id in old_bots and 'bot_prompt' in new_bot and old_bots[bot_id].get('bot_prompt') != new_bot['bot_prompt']:
-                    # Update pending subtasks with the new prompt
-                    pending_subtasks = db.query(Subtask).filter(
-                        Subtask.user_id == user_id,
-                        Subtask.team_id == team.id,
-                        Subtask.bot_id == bot_id,
-                        Subtask.status == SubtaskStatus.PENDING
-                    ).all()
-                    
-                    for subtask in pending_subtasks:
-                        subtask.prompt = new_bot['bot_prompt']
-                        db.add(subtask)
         
         db.commit()
         db.refresh(team)

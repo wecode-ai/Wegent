@@ -30,7 +30,7 @@ class Executor(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def delete_executor(self, job_name: str) -> Dict[str, Any]:
+    def delete_executor(self, pod_name: str) -> Dict[str, Any]:
         pass
 
     @abc.abstractmethod

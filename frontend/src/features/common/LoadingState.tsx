@@ -9,21 +9,21 @@ type LoadingStateProps = {
   message?: string
 }
 
-export default function LoadingState({ 
-  fullScreen = true, 
-  message = "Loading..." 
+export default function LoadingState({
+  fullScreen = true,
+  message
 }: LoadingStateProps) {
   if (fullScreen) {
     return (
-      <div className="flex h-screen bg-[#0d1117] items-center justify-center">
-        <div className="text-white">{message}</div>
+      <div className="flex h-screen bg-base items-center justify-center">
+        <div className="text-text-primary">{message}</div>
       </div>
     )
   }
   
   return (
     <div className="flex items-center justify-center p-4">
-      <div className="text-white">{message}</div>
+      <div className="text-text-primary">{message}</div>
     </div>
   )
 }

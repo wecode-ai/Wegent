@@ -55,6 +55,7 @@ export interface Team {
 export interface TeamBot {
   bot_id: number
   bot_prompt: string
+  role?: string
 }
 
 /** TaskDetail structure (adapted to latest backend response) */
@@ -75,8 +76,8 @@ export interface TaskDetail {
   result: Record<string, any>
   error_message: string
   created_at: string
-  updated_at: string
-  completed_at: string
+  // updated_at: string
+  // completed_at: string
   user: User
   team: Team
   subtasks: TaskDetailSubtask[]
@@ -87,11 +88,17 @@ export interface TaskDetailSubtask {
   task_id: number
   team_id: number
   title: string
-  bot_id: number
+  /** 多bot支持 */
+  bot_ids: number[]
+  /** 角色 */
+  role: string
+  /** 消息ID */
+  message_id: number
+  /** 父任务ID */
+  parent_id: number
   prompt: string
   executor_namespace: string
   executor_name: string
-  sort_order: number
   status: TaskStatus
   progress: number
   batch: number
@@ -102,7 +109,7 @@ export interface TaskDetailSubtask {
   created_at: string
   updated_at: string
   completed_at: string
-  bot: Bot
+  bots: Bot[]
 }
 
 export interface Task {
@@ -138,6 +145,8 @@ export interface GitRepoInfo {
   git_url: string
   git_domain: string
   private: boolean
+  /** Type: "github" | "gitlab" */
+  type: 'github' | 'gitlab'
 }
 
 

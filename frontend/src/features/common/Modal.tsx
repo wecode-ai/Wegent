@@ -44,10 +44,13 @@ export default function Modal({
       
       {/* Full-screen container for centering */}
       <div className="fixed inset-0 flex items-center justify-center p-4">
-        <Dialog.Panel className={`bg-[#161b22] border border-[#30363d] rounded-lg p-6 w-full ${maxWidthClass}`}>
+        <Dialog.Panel
+          className={`bg-surface border border-border rounded-lg p-6 w-full ${maxWidthClass}`}
+          style={{ boxShadow: 'var(--shadow-popover)' }}
+        >
           {/* Header with title and close button */}
           <div className="mb-4">
-            <Dialog.Title className="text-xl font-bold text-white text-center">
+            <Dialog.Title className="text-xl font-bold text-text-primary text-center">
               {title}
             </Dialog.Title>
           </div>

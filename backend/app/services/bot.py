@@ -26,6 +26,17 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
         """
         Create user Bot
         """
+        # Check duplicate name under the same user (only active bots)
+        existing = db.query(Bot).filter(
+            Bot.user_id == user_id,
+            Bot.name == obj_in.name
+        ).first()
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail="Bot name already exists for this user"
+            )
+
         db_obj = Bot(
             user_id=user_id,
             name=obj_in.name,
@@ -114,6 +125,22 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
             )
         
         update_data = obj_in.model_dump(exclude_unset=True)
+
+        # If updating name, ensure uniqueness under the same user (only active bots), excluding current bot
+        if "name" in update_data:
+            new_name = update_data["name"]
+            if new_name != bot.name:
+                conflict = db.query(Bot).filter(
+                    Bot.user_id == user_id,
+                    Bot.name == new_name,
+                    Bot.is_active == True,
+                    Bot.id != bot.id
+                ).first()
+                if conflict:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Bot name already exists for this user"
+                    )
         
         for field, value in update_data.items():
             setattr(bot, field, value)
@@ -229,21 +256,49 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
             Bot.user_id == user_id,
             Bot.is_active == True
         ).first()
+
+        candidate_name = k_bot.name
         
         if bot:
+            # If name changes, ensure uniqueness under same user (only active bots), excluding current bot
+            if candidate_name != bot.name:
+                conflict = db.query(Bot).filter(
+                    Bot.user_id == user_id,
+                    Bot.name == candidate_name,
+                    Bot.is_active == True,
+                    Bot.id != bot.id
+                ).first()
+                if conflict:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Bot name already exists for this user"
+                    )
+
             # Update existing bot
-            bot.name = k_bot.name
+            bot.name = candidate_name
             bot.agent_name = shell.runtime
             bot.agent_config = model.model_config
             bot.system_prompt = ghost.system_prompt
             bot.mcp_servers = ghost.mcp_servers
             bot.updated_at = datetime.utcnow()
         else:
+            # Before creating, ensure name uniqueness under same user (only active bots)
+            conflict = db.query(Bot).filter(
+                Bot.user_id == user_id,
+                Bot.name == candidate_name,
+                Bot.is_active == True
+            ).first()
+            if conflict:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bot name already exists for this user"
+                )
+
             # Create new bot
             bot = Bot(
                 user_id=user_id,
                 k_id=k_bot_id,
-                name=k_bot.name,
+                name=candidate_name,
                 agent_name=shell.runtime,
                 agent_config=model.model_config,
                 system_prompt=ghost.system_prompt,

@@ -7,25 +7,32 @@ export const paths = {
         getHref: () => '/',
     },
     auth: {
-        login: {
+        password_login: {
             getHref: () => '/login',
+        },
+        login: {
+            getHref: () => {
+                console.log(typeof window === 'undefined');
+                // SSR/Node 环境下始终返回本地登录页
+                return paths.auth.password_login.getHref()
+            },
         },
     },
     task: {
         getHref: () => '/tasks',
     },
-    dashboard: {
+    settings: {
         root: {
-            getHref: () => '/dashboard',
+            getHref: () => '/settings',
         },
         integrations: {
-            getHref: () => '/dashboard',
+            getHref: () => '/settings',
         },
         bot: {
-            getHref: () => '/dashboard?tab=bot',
+            getHref: () => '/settings?tab=bot',
         },
         team: {
-            getHref: () => '/dashboard?tab=team',
+            getHref: () => '/settings?tab=team',
         },
-    }
+    },
 } as const;

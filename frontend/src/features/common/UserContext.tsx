@@ -6,11 +6,12 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react'
 import { userApis } from '@/apis/user'
 import { User } from '@/types/api'
+import { App } from 'antd'
+import { useRouter } from 'next/navigation'
 
 interface UserContextType {
   user: User | null
   isLoading: boolean
-  error: string
   logout: () => void
   refresh: () => Promise<void>
   login: (data: any) => Promise<void>
@@ -18,31 +19,40 @@ interface UserContextType {
 const UserContext = createContext<UserContextType>({
   user: null,
   isLoading: true,
-  error: '',
-  logout: () => { },
-  refresh: async () => { },
-  login: async () => { },
-})
-
+  logout: () => {},
+  refresh: async () => {},
+  login: async () => {},
+});
 export const UserProvider = ({ children }: { children: ReactNode }) => {
+  const { message } = App.useApp()
+  const router = useRouter()
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
-  const [error, setError] = useState('')
+  // Using antd message.error for unified error handling, no local error state needed
 
   const fetchUser = async () => {
     setIsLoading(true)
-    setError('')
+    console.log('UserContext: Starting to fetch user information')
+
     try {
-      if (!userApis.isAuthenticated()) {
+      const isAuth = userApis.isAuthenticated()
+      console.log('UserContext: Authentication status check:', isAuth)
+
+      if (!isAuth) {
+        console.log('UserContext: User not authenticated, clearing user state and redirecting to login')
         setUser(null)
         setIsLoading(false)
+        router.replace('/login')
         return
       }
+
       const userData = await userApis.getCurrentUser()
       setUser(userData)
     } catch (e: any) {
-      setError('Failed to load user')
+      console.error('UserContext: Failed to fetch user information:', e)
+      message.error('Failed to load user')
       setUser(null)
+      router.replace('/login')
     } finally {
       setIsLoading(false)
     }
@@ -50,22 +60,46 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     fetchUser()
+
+    // Listen for OIDC login success event
+    const handleOidcLoginSuccess = () => {
+      console.log('Received OIDC login success event, refreshing user information')
+      fetchUser()
+    }
+
+    window.addEventListener('oidc-login-success', handleOidcLoginSuccess)
+
+    // Periodically check if token is expired (check every 10 seconds)
+    const tokenCheckInterval = setInterval(() => {
+      const isAuth = userApis.isAuthenticated()
+      if (!isAuth && user) {
+        console.log('Token expired, auto logout')
+        setUser(null)
+        router.replace('/login')
+      }
+    }, 10000)
+
+    return () => {
+      window.removeEventListener('oidc-login-success', handleOidcLoginSuccess)
+      clearInterval(tokenCheckInterval)
+    }
     // eslint-disable-next-line
   }, [])
 
   const logout = () => {
+    console.log('Executing logout operation')
     userApis.logout()
+    setUser(null)
+    router.replace('/login')
   }
 
-  // Login method
   const login = async (data: any) => {
     setIsLoading(true)
-    setError('')
     try {
       const userData = await userApis.login(data)
       setUser(userData)
     } catch (e: any) {
-      setError(e?.message || 'Login failed')
+      message.error(e?.message || 'Login failed')
       setUser(null)
       throw e
     } finally {
@@ -74,7 +108,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   }
 
   return (
-    <UserContext.Provider value={{ user, isLoading, error, logout, refresh: fetchUser, login }}>
+    <UserContext.Provider value={{ user, isLoading, logout, refresh: fetchUser, login }}>
       {children}
     </UserContext.Provider>
   )
