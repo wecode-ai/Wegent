@@ -67,6 +67,46 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [mcpConfig, setMcpConfig] = useState(
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   )
+  const [agentConfigError, setAgentConfigError] = useState(false)
+  const [mcpConfigError, setMcpConfigError] = useState(false)
+
+  const prettifyAgentConfig = useCallback(() => {
+    setAgentConfig(prev => {
+      const trimmed = prev.trim()
+      if (!trimmed) {
+        setAgentConfigError(false)
+        return ''
+      }
+      try {
+        const parsed = JSON.parse(trimmed)
+        setAgentConfigError(false)
+        return JSON.stringify(parsed, null, 2)
+      } catch {
+        message.error('模型配置必须是合法 JSON 格式')
+        setAgentConfigError(true)
+        return prev
+      }
+    })
+  }, [message])
+
+  const prettifyMcpConfig = useCallback(() => {
+    setMcpConfig(prev => {
+      const trimmed = prev.trim()
+      if (!trimmed) {
+        setMcpConfigError(false)
+        return ''
+      }
+      try {
+        const parsed = JSON.parse(trimmed)
+        setMcpConfigError(false)
+        return JSON.stringify(parsed, null, 2)
+      } catch {
+        message.error('MCP 配置必须是合法 JSON 格式')
+        setMcpConfigError(true)
+        return prev
+      }
+    })
+  }, [message])
 
   // 获取agents列表
   useEffect(() => {
@@ -115,6 +155,8 @@ const BotEdit: React.FC<BotEditProps> = ({
     setAgentName(baseBot?.agent_name || '')
     setPrompt(baseBot?.system_prompt || '')
     setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '')
+    setAgentConfigError(false)
+    setMcpConfigError(false)
 
     if (baseBot?.agent_config) {
       setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2))
@@ -163,37 +205,49 @@ const BotEdit: React.FC<BotEditProps> = ({
       message.error('请填写所有必填项')
       return
     }
-    try {
-      if (agentConfig.trim()) {
-        JSON.parse(agentConfig)
+    let parsedAgentConfig: any = undefined
+    if (isCustomModel) {
+      const trimmedConfig = agentConfig.trim()
+      if (!trimmedConfig) {
+        setAgentConfigError(true)
+        message.error('模型配置必须是合法 JSON 格式')
+        return
       }
-      if (mcpConfig.trim()) {
-        JSON.parse(mcpConfig)
+      try {
+        parsedAgentConfig = JSON.parse(trimmedConfig)
+        setAgentConfigError(false)
+      } catch (error) {
+        setAgentConfigError(true)
+        message.error('模型配置必须是合法 JSON 格式')
+        return
       }
-    } catch (error) {
-      message.error('Agent Config 必须为合法 JSON，MCP Config（如填写）也需合法 JSON')
-      return
+    } else {
+      parsedAgentConfig = { private_model: selectedModel }
+    }
+
+    let parsedMcpConfig: any = undefined
+    if (mcpConfig.trim()) {
+      try {
+        parsedMcpConfig = JSON.parse(mcpConfig)
+        setMcpConfigError(false)
+      } catch (error) {
+        setMcpConfigError(true)
+        message.error('MCP 配置必须是合法 JSON 格式')
+        return
+      }
+    } else {
+      setMcpConfigError(false)
     }
     setBotSaving(true)
     try {
-      let parsedAgentConfig;
-
-      if (isCustomModel) {
-        // 自定义模型，使用完整的配置
-        parsedAgentConfig = JSON.parse(agentConfig);
-      } else {
-        // 预定义模型，只使用private_model字段
-        parsedAgentConfig = { private_model: selectedModel };
-      }
-
       const botReq: any = {
         name: botName.trim(),
         agent_name: agentName.trim(),
         agent_config: parsedAgentConfig,
         system_prompt: prompt.trim() || ''
       }
-      if (mcpConfig.trim()) {
-        botReq.mcp_servers = JSON.parse(mcpConfig)
+      if (parsedMcpConfig !== undefined) {
+        botReq.mcp_servers = parsedMcpConfig
       }
       if (editingBotId && editingBotId > 0) {
         // 编辑
@@ -295,6 +349,10 @@ const BotEdit: React.FC<BotEditProps> = ({
                     setIsCustomModel(checked);
                     if (checked) {
                       setAgentConfig('');
+                      setAgentConfigError(false);
+                    }
+                    if (!checked) {
+                      setAgentConfigError(false);
                     }
                   }}
                 />
@@ -304,7 +362,14 @@ const BotEdit: React.FC<BotEditProps> = ({
             {isCustomModel ? (
               <textarea
                 value={agentConfig}
-                onChange={(e) => setAgentConfig(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setAgentConfig(value)
+                  if (!value.trim()) {
+                    setAgentConfigError(false)
+                  }
+                }}
+                onBlur={prettifyAgentConfig}
                 rows={4}
                 placeholder={
                   agentName === 'ClaudeCode'
@@ -326,7 +391,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 }`
                       : ''
                 }
-                className="w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent font-mono text-base h-[150px] custom-scrollbar"
+                className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
               />
             ) : (
               <Select
@@ -355,8 +420,15 @@ const BotEdit: React.FC<BotEditProps> = ({
             </div>
             <textarea
               value={mcpConfig}
-              onChange={(e) => setMcpConfig(e.target.value)}
-              className="w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent font-mono text-base flex-grow resize-none custom-scrollbar"
+              onChange={(e) => {
+                const value = e.target.value
+                setMcpConfig(value)
+                if (!value.trim()) {
+                  setMcpConfigError(false)
+                }
+              }}
+              onBlur={prettifyMcpConfig}
+              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
               placeholder={`{
   "github": {
     "command": "docker",
