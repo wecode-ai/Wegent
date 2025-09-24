@@ -59,17 +59,19 @@ const CopyButton = ({ content, className }: { content: string, className?: strin
     <Button
       type="text"
       onClick={handleCopy}
-      className="absolute bottom-0 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+      className={className ?? ''}
+      // className="absolute bottom-0 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
       title={t('messages.copy_markdown')}
-      icon={copied ?
-          <FiCheck className="w-4 h-4" style={{ color: 'rgb(var(--color-success))' }} /> :
-          <FiCopy className="w-4 h-4 text-text-muted hover:text-text-primary" />
+      icon={
+        copied
+          ? <FiCheck className="w-4 h-4 text-green-400" />
+          : <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
       }
       style={{
           padding: '4px',
-          background: 'rgb(var(--color-bg-muted))',
           height: 'auto',
-          minWidth: 'auto'
+          minWidth: 'auto',
+          borderRadius: '4px'
       }}
     />
   );
@@ -257,7 +259,7 @@ export default function MessagesArea() {
                           }
                           // Not a progress bar, normal markdown rendering
                           return (
-                            <div className="relative group pb-8">
+                            <div className="group pb-8">
                               <div className="text-sm">
                                 <div className="w-full" style={{ background: 'transparent' }}>
                                   {(() => {
