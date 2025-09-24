@@ -71,13 +71,13 @@ export default function TeamSelector({
             onClick={handleDropdownClick}
           >
             <FaUsers className={`w-3 h-3 flex-shrink-0 ${isLoading ? 'animate-pulse' : ''}`} />
-            <span className="text-sm truncate max-w-[100px]" title={selectedTeam.name}>
+            <span className="text-sm truncate max-w-[200px]" title={selectedTeam.name}>
               {isLoading ? 'Loading...' : selectedTeam.name}
             </span>
             <ChevronDownIcon className="w-4 h-4 flex-shrink-0" />
           </Listbox.Button>
           <Listbox.Options
-            className={`absolute ${dropdownDirection === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} left-0 bg-surface border border-border rounded-lg z-20 w-auto max-w-[220px] py-1`}
+            className={`absolute ${dropdownDirection === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} left-0 bg-surface border border-border rounded-lg z-20 w-auto max-w-[220px] max-h-[200px] overflow-y-auto py-1`}
             style={{ boxShadow: 'var(--shadow-popover)' }}
           >
             {teams.map((team) => (
