@@ -129,7 +129,7 @@ def apply_patch() -> None:
 
         try:
             # Public: /names
-            if path == "/" and ("GET" in methods):
+            if path == "" and ("GET" in methods):
                 continue
 
             wrapped = _wrap_admin_endpoint(endpoint)
