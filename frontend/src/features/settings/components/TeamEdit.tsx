@@ -475,8 +475,6 @@ export default function TeamEdit(props: TeamEditProps) {
         visible={editingBotDrawerVisible}
         setVisible={setEditingBotDrawerVisible}
         message={message}
-        team={editingTeam}
-        setTeams={setTeams}
       />
     </div>
   )

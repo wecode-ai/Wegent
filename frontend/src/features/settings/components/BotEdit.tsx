@@ -187,34 +187,33 @@ const BotEdit: React.FC<BotEditProps> = ({
   }
 
   return (
-    <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 relative h-full min-h-[600px]">
-      {/* 顶部导航栏 */}
-      <div className="flex items-center justify-between mb-4">
-        <button
-          onClick={() => setEditingBotId(null)}
-          className="flex items-center text-text-muted hover:text-text-primary text-base"
-          title={t('common.back')}
-        >
-          <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
-          {t('common.back')}
-        </button>
-
-        <Button
-          onClick={handleSave}
-          disabled={botSaving}
-          loading={botSaving}
-          type="primary"
-        >
-          {botSaving ? t('actions.saving') : t('actions.save')}
-        </Button>
-      </div>
-
-      {/* 主要内容区域 - 使用grid布局 */}
-      <div className="grid grid-cols-1 md:grid-cols-6 gap-4 h-full mx-2">
-        {/* 左侧表单区域 - 占2列 */}
-        <div className="md:col-span-2 flex flex-col space-y-3 overflow-y-auto h-full">
+    <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 relative h-full min-h-[650px]">
+        {/* 顶部导航栏 */}
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={() => setEditingBotId(null)}
+            className="flex items-center text-text-muted hover:text-text-primary text-base"
+            title={t('common.back')}
+          >
+            <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
+            {t('common.back')}
+          </button>
+  
+          <Button
+            onClick={handleSave}
+            disabled={botSaving}
+            loading={botSaving}
+            type="primary"
+          >
+            {botSaving ? t('actions.saving') : t('actions.save')}
+          </Button>
+        </div>
+  
+        {/* 主要内容区域 - 使用grid布局 */}
+        <div className="grid grid-cols-1 md:grid-cols-6 gap-4 flex-grow mx-2" style={{ minHeight: 0 }}>
+        <div className="md:col-span-2 flex flex-col space-y-3 overflow-y-auto">
           {/* Bot Name */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
@@ -321,7 +320,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           </div>
 
           {/* MCP Config */}
-          <div className="flex flex-col">
+          <div className="flex flex-col flex-grow">
             <div className="flex items-center mb-1">
               <label className="block text-base font-medium text-text-primary">
                 {t('bot.mcp_config')}
@@ -331,8 +330,7 @@ const BotEdit: React.FC<BotEditProps> = ({
             <textarea
               value={mcpConfig}
               onChange={(e) => setMcpConfig(e.target.value)}
-              rows={4}
-              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent font-mono text-base ${isCustomModel ? 'h-[150px]' : 'h-[250px]'} custom-scrollbar`}
+              className="w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent font-mono text-base flex-grow resize-none custom-scrollbar"
               placeholder={`{
   "github": {
     "command": "docker",
@@ -360,7 +358,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         </div>
 
         {/* 右侧 Prompt 区域 - 使用grid布局占3列 */}
-        <div className="md:col-span-4 grid grid-rows-[auto_1fr] h-full">
+        <div className="md:col-span-4 grid grid-rows-[auto_1fr]">
           <div className="mb-1">
             <div className="flex items-center">
               <label className="block text-base font-medium text-text-primary">
