@@ -10,7 +10,7 @@ type ThemeContextValue = {
   toggleTheme: () => void
 }
 
-const DEFAULT_THEME: ThemeMode = 'dark'
+const DEFAULT_THEME: ThemeMode = 'light'
 const STORAGE_KEY = 'wegent.theme'
 
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined)
