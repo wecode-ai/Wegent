@@ -67,7 +67,7 @@
     "placeholder": "让团队构建、修复错误、探索"
   },
   "bots": {
-    "title": "AI 助手",
+    "title": "机器人",
     "description": "配置您的 AI 驱动开发助手",
     "loading": "加载机器人中...",
     "active": "活跃",
@@ -79,8 +79,8 @@
   },
   "bot": {
     "name": "名称",
-    "agent": "智能体",
-    "agent_select": "选择智能体",
+    "agent": "执行引擎",
+    "agent_select": "选择执行引擎",
     "prompt": "提示词",
     "prompt_hint": "AI-powered assistant for development tasks",
     "agent_config": "智能体配置",
@@ -116,7 +116,7 @@
     "bots": "候选人列表",
     "select_leader": "选择领导者",
     "candidates": "候选人",
-    "in_team": "团队",
+    "in_team": "团队成员",
     "no_data": "没有数据",
     "bot_prompt": "追加提示词",
     "input_bot_prompt": "追加提示词"
@@ -179,6 +179,41 @@
     "description": "在开始使用此应用之前，请先完成下面的设置！"
   },
   "common": {
-    "back": "返回"
+    "back": "返回",
+    "cancel": "取消"
+  },
+  "github": {
+    "error": {
+      "required": "请填写所有必填项",
+      "save_failed": "保存失败"
+    },
+    "modal": {
+      "title_edit": "编辑令牌",
+      "title_add": "新增 Git 令牌"
+    },
+    "platform": "平台",
+    "platform_github": "GitHub",
+    "platform_gitlab": "GitLab",
+    "domain": "平台域名",
+    "token": {
+      "title": "个人访问令牌",
+      "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx"
+    },
+    "howto": {
+      "step1_visit": "1. 访问",
+      "github": {
+        "title": "如何获取 GitHub 令牌：",
+        "step2": "2. 点击“Generate new token (classic)”",
+        "step3": "3. 选择合适的权限范围并复制生成的令牌"
+      },
+      "gitlab": {
+        "title": "如何获取 GitLab 令牌：",
+        "step2": "2. 点击“Add new token”",
+        "step3": "3. 选择合适的权限范围并复制生成的令牌"
+      }
+    },
+    "saving": "保存中...",
+    "save_token": "保存令牌"
   }
 }

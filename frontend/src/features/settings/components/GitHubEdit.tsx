@@ -7,6 +7,7 @@ import { useUser } from '@/features/common/UserContext'
 import { App } from 'antd'
 import { fetchGitInfo, saveGitToken } from '../services/github'
 import { GitInfo } from '@/types/api'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface GitHubEditProps {
   isOpen: boolean
@@ -22,6 +23,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
   editInfo,
 }) => {
   const { user, refresh } = useUser()
+  const { t } = useTranslation('common')
   const { message } = App.useApp()
   const [platforms, setPlatforms] = useState<GitInfo[]>([])
   const [domain, setDomain] = useState('')
@@ -51,7 +53,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
     const domainToSave = type === 'github' ? 'github.com' : domain.trim()
     const tokenToSave = token.trim()
     if (!domainToSave || !tokenToSave) {
-      message.error('Please fill in all required fields')
+      message.error(t('github.error.required'))
       return
     }
     setTokenSaving(true)
@@ -60,7 +62,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
       onClose()
       await refresh()
     } catch (e: any) {
-        message.error(e?.message || 'Save failed')
+        message.error(e?.message || t('github.error.save_failed'))
       } finally {
         setTokenSaving(false)
       }
@@ -70,14 +72,14 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={mode === 'edit' && domain ? `Edit Token` : 'Add Git Token'}
+      title={mode === 'edit' && domain ? t('github.modal.title_edit') : t('github.modal.title_add')}
       maxWidth="md"
     >
       <div className="space-y-4">
         {/* 平台选择 */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            Platform
+            {t('github.platform')}
           </label>
           <div className="flex gap-4">
             <label className="flex items-center gap-1 text-sm text-text-primary">
@@ -91,9 +93,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
                 }}
                 disabled={!!domain && !!platforms.find(info => info.git_domain === domain)}
               />
-              GitHub
+              {t('github.platform_github')}
             </label>
-            <label className="flex items-center gap-1 text-sm text-text-primary" title="GitLab">
+            <label className="flex items-center gap-1 text-sm text-text-primary" title={t('github.platform_gitlab')}>
               <input
                 type="radio"
                 value="gitlab"
@@ -103,14 +105,14 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
                   setDomain('')
                 }}
               />
-              GitLab
+              {t('github.platform_gitlab')}
             </label>
           </div>
         </div>
         {/* 域名输入 */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            Platform Domain
+            {t('github.domain')}
           </label>
           <input
             type="text"
@@ -124,13 +126,13 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
         {/* Token 输入 */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            Personal Access Token
+            {t('github.token.title')}
           </label>
           <input
             type="password"
             value={token}
             onChange={(e) => setToken(e.target.value)}
-            placeholder={type === 'github' ? 'ghp_xxxxxxxxxxxxxxxxxxxx' : 'glpat-xxxxxxxxxxxxxxxxxxxx'}
+            placeholder={type === 'github' ? t('github.token.placeholder_github') : t('github.token.placeholder_gitlab')}
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
         </div>
@@ -139,14 +141,14 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
           <p className="text-xs text-text-muted mb-2">
             <strong>
               {type === 'github'
-                ? 'How to get your GitHub token:'
-                : 'How to get your GitLab token:'}
+                ? t('github.howto.github.title')
+                : t('github.howto.gitlab.title')}
             </strong>
           </p>
           {type === 'github' ? (
             <>
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
-                1. Visit
+                {t('github.howto.step1_visit')}
                 <a
                   href="https://github.com/settings/tokens"
                   target="_blank"
@@ -158,16 +160,16 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
                 </a>
               </p>
               <p className="text-xs text-text-muted mb-2">
-                2. Click "Generate new token (classic)"
+                {t('github.howto.github.step2')}
               </p>
               <p className="text-xs text-text-muted">
-                3. Select appropriate scopes and copy the generated token
+                {t('github.howto.github.step3')}
               </p>
             </>
           ) : (
             <>
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
-                1. Visit
+                {t('github.howto.step1_visit')}
                 <a
                   href={type === 'gitlab' && domain.trim() ? `https://${domain.trim()}/-/profile/personal_access_tokens` : '#'}
                   target="_blank"
@@ -183,10 +185,10 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
                 </a>
               </p>
               <p className="text-xs text-text-muted mb-2">
-                2. Click "Add new token"
+                {t('github.howto.gitlab.step2')}
               </p>
               <p className="text-xs text-text-muted">
-                3. Select appropriate scopes and copy the generated token
+                {t('github.howto.gitlab.step3')}
               </p>
             </>
           )}
@@ -200,7 +202,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
           size="small"
           style={{ flex: 1 }}
         >
-          Cancel
+          {t('common.cancel')}
         </Button>
         <Button
           onClick={handleSave}
@@ -214,7 +216,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
           loading={tokenSaving}
           style={{ flex: 1 }}
         >
-          {tokenSaving ? 'Saving...' : 'Save Token'}
+          {tokenSaving ? t('github.saving') : t('github.save_token')}
         </Button>
       </div>
     </Modal>
