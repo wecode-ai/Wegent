@@ -89,14 +89,14 @@ export default function TaskListSection({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'COMPLETED':
-        return <FaRegCircleCheck className="w-4 h-4 text-gray-500" />
+        return <FaRegCircleCheck className="w-4 h-4 text-text-muted" />
       case 'FAILED':
       case 'CANCELLED':
-        return <FaRegCircleXmark className="w-4 h-4 text-gray-500" />
+        return <FaRegCircleXmark className="w-4 h-4 text-text-muted" />
       case 'RUNNING':
-        return <FaRegCircleStop className="w-4 h-4 text-gray-500" />
+        return <FaRegCircleStop className="w-4 h-4 text-text-muted" />
       default:
-        return <FaRegCircleStop className="w-4 h-4 text-gray-500" />
+        return <FaRegCircleStop className="w-4 h-4 text-text-muted" />
     }
   }
 
@@ -120,13 +120,13 @@ export default function TaskListSection({
 
   return (
     <div className="mb-2">
-      <h3 className="text-xs font-medium text-gray-500 tracking-wide mb-1" style={{ fontSize: '10px' }}>{title}</h3>
+      <h3 className="text-xs font-medium text-text-muted tracking-wide mb-1" style={{ fontSize: '10px' }}>{title}</h3>
       <div className="space-y-0">
         {tasks.map(task => {
           return (
             <div
               key={task.id}
-              className={`flex items-center justify-between py-1 rounded hover:bg-[#21262d] cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-[#21262d]' : ''}`}
+              className={`flex items-center justify-between py-1 rounded hover:bg-muted cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-muted' : ''}`}
               onClick={() => handleTaskClick(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
               onMouseLeave={() => setHoveredTaskId(null)}
@@ -136,8 +136,8 @@ export default function TaskListSection({
                   {getStatusIcon(task.status)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-gray-400 leading-tight truncate m-0">{task.title}</p>
-                  <p className="text-xs text-gray-600 m-0">{formatTimeAgo(task.created_at)}</p>
+                  <p className="text-xs text-text-muted leading-tight truncate m-0">{task.title}</p>
+                  <p className="text-xs text-text-secondary m-0">{formatTimeAgo(task.created_at)}</p>
                 </div>
               </div>
 

@@ -11,21 +11,21 @@
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: #21262d;
+  background: rgb(var(--color-scrollbar-track));
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: rgb(var(--color-scrollbar-thumb));
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #3f444c;
+  background: rgb(var(--color-border-strong));
 }
 
 /* Firefox support */
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: #30363d #21262d;
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) rgb(var(--color-scrollbar-track));
 }

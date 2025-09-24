@@ -10,6 +10,7 @@ import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import LanguageSwitcher from '@/components/LanguageSwitcher'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
 
 export default function Home() {
   const router = useRouter()
@@ -25,17 +26,18 @@ export default function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-[#0d1117] relative">
+    <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-base relative">
       {/* 语言切换器 */}
-      <div className="absolute top-4 right-4">
+      <div className="absolute top-4 right-4 flex items-center gap-3">
+        <ThemeToggle />
         <LanguageSwitcher />
       </div>
       
       <div className="w-full max-w-2xl text-center">
-        <h1 className="text-5xl font-medium text-white mb-4">
+        <h1 className="text-5xl font-medium text-text-primary mb-4">
           {t('extension.name')}
         </h1>
-        <p className="text-xl text-gray-400 mb-12 font-light">
+        <p className="text-xl text-text-secondary mb-12 font-light">
           {t('extension.description')}
         </p>
         <Button

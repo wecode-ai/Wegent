@@ -20,17 +20,17 @@
 }
 
 .auto-resize-textarea::-webkit-scrollbar-track {
-  background: #21262d;
+  background: rgb(var(--color-scrollbar-track));
   border-radius: 3px;
 }
 
 .auto-resize-textarea::-webkit-scrollbar-thumb {
-  background: #30363d;
+  background: rgb(var(--color-scrollbar-thumb));
   border-radius: 3px;
 }
 
 .auto-resize-textarea::-webkit-scrollbar-thumb:hover {
-  background: #3f444c;
+  background: rgb(var(--color-border-strong));
 }
 
 /* Bot selector styles */
@@ -41,8 +41,8 @@
 
 /* Message area scrollbar styles */
 .messages-container {
-  scrollbar-width: thin; /* Firefox */
-  scrollbar-color: #30363d #21262d; /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) rgb(var(--color-scrollbar-track));
 }
 /* Fix markdown code/pre overflow issue */
 .markdown-body pre, .markdown-body code {

@@ -10,7 +10,8 @@ import MockInit from '@/features/mock/MockInit'
 import AntdProvider from './AntdProvider'
 import AuthGuard from '@/features/common/AuthGuard'
 import I18nProvider from '@/components/I18nProvider'
-import { useTranslation } from '@/hooks/useTranslation'
+import { ThemeProvider } from '@/features/theme/ThemeProvider'
+import { ThemeScript } from '@/features/theme/ThemeScript'
 
 export const metadata: Metadata = {
   title: 'WeCode AI Assistant',
@@ -23,17 +24,22 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className="font-sans antialiased">
-        <MockInit>
-          <I18nProvider>
-            <AntdProvider>
-              <AuthGuard>
-                {children}
-              </AuthGuard>
-            </AntdProvider>
-          </I18nProvider>
-        </MockInit>
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <ThemeScript />
+      </head>
+      <body className="font-sans antialiased bg-base text-text-primary" suppressHydrationWarning>
+        <ThemeProvider>
+          <MockInit>
+            <I18nProvider>
+              <AntdProvider>
+                <AuthGuard>
+                  {children}
+                </AuthGuard>
+              </AntdProvider>
+            </I18nProvider>
+          </MockInit>
+        </ThemeProvider>
       </body>
     </html>
   )

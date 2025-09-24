@@ -143,7 +143,7 @@ export default function RepositorySelector({
 
   return (
     <div className="flex items-center space-x-1 min-w-0">
-      <FiGithub className="w-3 h-3 text-gray-500 flex-shrink-0" />
+      <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0" />
       <Select
         labelInValue
         showSearch
@@ -163,12 +163,12 @@ export default function RepositorySelector({
         onChange={handleChange}
         notFoundContent={
           error ? (
-            <div className="px-3 py-2 text-sm text-red-400">
+            <div className="px-3 py-2 text-sm" style={{ color: 'rgb(var(--color-error))' }}>
               {error}
               {/* antd message.error 已全局提示 */}
             </div>
           ) : !loading ? (
-            <div className="px-3 py-2 text-sm text-gray-400">
+            <div className="px-3 py-2 text-sm text-text-muted">
               {repos.length === 0 ? 'Select Repository<' : 'No repositories found'}
             </div>
           ) : null
@@ -185,7 +185,7 @@ export default function RepositorySelector({
         maxWidth="sm"
       >
         <div className="flex flex-col items-center">
-          <p className="text-sm text-gray-300 mb-6 text-center leading-relaxed">
+          <p className="text-sm text-text-secondary mb-6 text-center leading-relaxed">
             {t('guide.description')}
           </p>
           <Button

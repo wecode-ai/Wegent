@@ -281,12 +281,12 @@ export default function TeamEdit(props: TeamEditProps) {
 
 
   return (
-    <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-[#161b22] rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
+    <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-surface rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
       {/* 顶部工具条：Back + Save */}
       <div className="w-full flex items-center justify-between mb-4 mt-4">
         <button
           onClick={() => setEditingTeamId(null)}
-          className="flex items-center text-gray-400 hover:text-white text-base"
+          className="flex items-center text-text-muted hover:text-text-primary text-base"
           title={t('common.back')}
         >
           <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
@@ -310,7 +310,7 @@ export default function TeamEdit(props: TeamEditProps) {
         <div className="w-full md:w-2/5 min-w-0 flex flex-col space-y-4 h-full">
           {/* Team Name */}
           <div className="flex flex-col">
-            <label className="block text-lg font-semibold text-white mb-1">
+            <label className="block text-lg font-semibold text-text-primary mb-1">
                 {t('team.name')} <span className="text-red-400">*</span>
             </label>
             <input
@@ -318,18 +318,18 @@ export default function TeamEdit(props: TeamEditProps) {
               value={name}
               onChange={e => setName(e.target.value)}
               placeholder={t('team.name_placeholder')}
-              className="w-full px-4 py-1 bg-[#0d1117] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent text-base"
+              className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base"
             />
           </div>
 
           {/* Mode 组件 */}
           <div className='min-h-[400px] flex flex-col'>
-            <label className="block text-lg font-semibold text-white mb-1">
+            <label className="block text-lg font-semibold text-text-primary mb-1">
                 {t('team.model')} <span className="text-red-400">*</span>
             </label>
 
             {/* 整合 Mode 选择和说明到一个统一容器 */}
-            <div className="rounded-md border min-h-[400px] border-[#30363d] bg-[#0d1117] p-3 h-full flex flex-col">
+            <div className="rounded-md border min-h-[400px] border-border bg-base p-3 h-full flex flex-col">
               {/* Mode 选择 - 保留 Radio.Group */}
               <div className="mb-3">
                 <Radio.Group
@@ -347,14 +347,14 @@ export default function TeamEdit(props: TeamEditProps) {
               </div>
 
               {/* 分隔线 */}
-              <div className="border-t border-[#30363d] my-2"></div>
+              <div className="border-t border-border my-2"></div>
 
               {/* Mode 说明 */}
               <div className="flex-1 flex flex-col">
-                <p className="text-sm text-gray-300">{MODE_INFO.info.desc}</p>
+                <p className="text-sm text-text-secondary">{MODE_INFO.info.desc}</p>
 
                 {MODE_INFO.info.bullets.length > 0 && (
-                  <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-gray-300">
+                  <ul className="mt-2 list-disc list-inside space-y-1 text-sm text-text-secondary">
                     {MODE_INFO.info.bullets.map((b, i) => (
                       <li key={i}>{b}</li>
                     ))}
@@ -373,28 +373,28 @@ export default function TeamEdit(props: TeamEditProps) {
         <div className="w-full md:w-3/5 min-w-0 flex flex-col space-y-4 h-full">
           {/* LeaderBot 单选 */}
           <div className="flex flex-col">
-            <label className="block text-lg font-semibold text-white mb-1">
+            <label className="block text-lg font-semibold text-text-primary mb-1">
               {t('team.leader')} <span className="text-red-400">*</span>
             </label>
             <Select
               value={leaderBotId ?? undefined}
               onChange={onLeaderChange}
               placeholder={t('team.select_leader')}
-              suffixIcon={<DownOutlined className="text-gray-300" />}
-              notFoundContent={<div className="text-sm text-gray-400">Select Bots</div>}
+              suffixIcon={<DownOutlined className="text-text-secondary" />}
+              notFoundContent={<div className="text-sm text-text-muted">Select Bots</div>}
               className="w-full"
               options={leaderOptions.map(b => ({
                 value: b.id,
                 label: (
                   <div className="flex items-center justify-between w-full">
                     <div className="flex items-center space-x-2">
-                      <RiRobot2Line className="w-4 h-4 text-gray-400" />
+                      <RiRobot2Line className="w-4 h-4 text-text-muted" />
                       <span className="block truncate">
-                        {b.name} <span className="text-gray-500 text-xs">({b.agent_name})</span>
+                        {b.name} <span className="text-text-muted text-xs">({b.agent_name})</span>
                       </span>
                     </div>
                     <EditOutlined
-                      className="ml-8 text-gray-700 hover:text-gray-200 cursor-pointer"
+                      className="ml-8 text-text-secondary hover:text-text-primary cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation(); // 阻止事件冒泡，避免触发选择
                         setEditingBotId(b.id);
@@ -414,7 +414,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
           {/* Bots 穿梭框 */}
           <div className="flex flex-col flex-1 min-h-[280px]">
-            <label className="block text-lg font-semibold text-white mb-1">
+            <label className="block text-lg font-semibold text-text-primary mb-1">
                 {t('team.bots')}
             </label>
             <div className="relative flex-1 min-h-[260px] bg-transparent">
@@ -427,14 +427,13 @@ export default function TeamEdit(props: TeamEditProps) {
                   <div className="flex items-center justify-between w-full">
                     <span className="truncate">
                       {item.title}
-                      <span className="text-xs text-gray-400">({item.description})</span>
+                      <span className="text-xs text-text-muted">({item.description})</span>
                     </span>
 
                     <div className="flex items-center">
 
                       <EditOutlined
-                        className="ml-2 text-gray-700 hover:text-gray-200 cursor-pointer"
-                        // style={{ color: '#30363d' }}
+                        className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation(); // 阻止事件冒泡，避免触发选择
                           setEditingBotId(Number(item.key));
@@ -449,8 +448,8 @@ export default function TeamEdit(props: TeamEditProps) {
                 listStyle={{
                   minHeight: 400,
                   width: '50%',
-                  backgroundColor: '#0d1117',
-                  borderColor: '#30363d',
+                  backgroundColor: 'rgb(var(--color-bg-base))',
+                  borderColor: 'rgb(var(--color-border))',
                 }}
                 locale={{
                   itemUnit: 'item',

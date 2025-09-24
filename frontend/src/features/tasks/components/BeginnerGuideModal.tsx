@@ -56,7 +56,7 @@ export default function BeginnerGuideModal({
       maxWidth="sm"
     >
       <div className="flex flex-col items-center">
-        <p className="text-sm text-gray-300 mb-6 text-center leading-relaxed">
+        <p className="text-sm text-text-secondary mb-6 text-center leading-relaxed">
             {t('guide.description')}
         </p>
         {needSetTeam && (

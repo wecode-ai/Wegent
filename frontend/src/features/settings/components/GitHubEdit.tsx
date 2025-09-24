@@ -76,11 +76,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
       <div className="space-y-4">
         {/* 平台选择 */}
         <div>
-          <label className="block text-sm font-medium text-white mb-2">
+          <label className="block text-sm font-medium text-text-secondary mb-2">
             Platform
           </label>
           <div className="flex gap-4">
-            <label className="flex items-center gap-1 text-sm text-white">
+            <label className="flex items-center gap-1 text-sm text-text-primary">
               <input
                 type="radio"
                 value="github"
@@ -93,7 +93,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
               />
               GitHub
             </label>
-            <label className="flex items-center gap-1 text-sm text-white" title="GitLab">
+            <label className="flex items-center gap-1 text-sm text-text-primary" title="GitLab">
               <input
                 type="radio"
                 value="gitlab"
@@ -109,7 +109,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
         </div>
         {/* 域名输入 */}
         <div>
-          <label className="block text-sm font-medium text-white mb-2">
+          <label className="block text-sm font-medium text-text-secondary mb-2">
             Platform Domain
           </label>
           <input
@@ -117,13 +117,13 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
             value={type === 'github' ? 'github.com' : domain}
             onChange={(e) => setDomain(e.target.value)}
             placeholder={type === 'github' ? 'github.com' : 'e.g. gitlab.example.com'}
-            className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent"
+            className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             disabled={type === 'github'}
           />
         </div>
         {/* Token 输入 */}
         <div>
-          <label className="block text-sm font-medium text-white mb-2">
+          <label className="block text-sm font-medium text-text-secondary mb-2">
             Personal Access Token
           </label>
           <input
@@ -131,12 +131,12 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
             value={token}
             onChange={(e) => setToken(e.target.value)}
             placeholder={type === 'github' ? 'ghp_xxxxxxxxxxxxxxxxxxxx' : 'glpat-xxxxxxxxxxxxxxxxxxxx'}
-            className="w-full px-3 py-2 bg-[#0d1117] border border-[#30363d] rounded-md text-white placeholder-gray-400 focus:outline-none focus:outline-white/25 focus:border-transparent"
+            className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
         </div>
         {/* 获取指引 */}
-        <div className="bg-[#0d1117] border border-[#30363d] rounded-md p-3">
-          <p className="text-xs text-gray-400 mb-2">
+        <div className="bg-surface border border-border rounded-md p-3">
+          <p className="text-xs text-text-muted mb-2">
             <strong>
               {type === 'github'
                 ? 'How to get your GitHub token:'
@@ -145,34 +145,34 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
           </p>
           {type === 'github' ? (
             <>
-              <p className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+              <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
                 1. Visit
                 <a
                   href="https://github.com/settings/tokens"
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300 underline truncate max-w-[220px] inline-block align-bottom"
+                  className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
                   title="https://github.com/settings/tokens"
                 >
                   https://github.com/settings/tokens
                 </a>
               </p>
-              <p className="text-xs text-gray-400 mb-2">
+              <p className="text-xs text-text-muted mb-2">
                 2. Click "Generate new token (classic)"
               </p>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-text-muted">
                 3. Select appropriate scopes and copy the generated token
               </p>
             </>
           ) : (
             <>
-              <p className="text-xs text-gray-400 mb-2 flex items-center gap-1">
+              <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
                 1. Visit
                 <a
                   href={type === 'gitlab' && domain.trim() ? `https://${domain.trim()}/-/profile/personal_access_tokens` : '#'}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="text-blue-400 hover:text-blue-300 underline truncate max-w-[220px] inline-block align-bottom"
+                  className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
                   title={type === 'gitlab' && domain.trim()
                     ? `https://${domain.trim()}/-/profile/personal_access_tokens`
                     : 'your-gitlab-domain/-/profile/personal_access_tokens'}
@@ -182,10 +182,10 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
                     : 'your-gitlab-domain/-/profile/personal_access_tokens'}
                 </a>
               </p>
-              <p className="text-xs text-gray-400 mb-2">
+              <p className="text-xs text-text-muted mb-2">
                 2. Click "Add new token"
               </p>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-text-muted">
                 3. Select appropriate scopes and copy the generated token
               </p>
             </>

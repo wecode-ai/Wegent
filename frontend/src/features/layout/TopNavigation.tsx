@@ -6,8 +6,9 @@
 
 import { useRouter } from 'next/navigation'
 import Image from 'next/image'
-import { paths } from '@/config/paths'
 import { Button } from 'antd'
+
+import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 
 type TopNavigationProps = {
@@ -29,10 +30,9 @@ export default function TopNavigation({ activePage, showLogo = false, children }
   }
 
   return (
-    <div className="flex items-center justify-center px-6 py-10 relative">
-      {/* Logo - only shown when showLogo is true */}
+    <div className="relative flex items-center justify-center px-6 py-6">
       {showLogo && (
-        <div className="absolute left-16 top-1/2 -translate-y-1/2 flex items-center">
+        <div className="absolute left-6 flex items-center">
           <Image
             src="/weibo-logo.png"
             alt="Weibo Logo"
@@ -43,39 +43,37 @@ export default function TopNavigation({ activePage, showLogo = false, children }
           />
         </div>
       )}
-      
-      {/* Navigation Links */}
-      <div className="flex space-x-6">
+
+      <div className="flex items-center gap-6">
         <Button
           type="link"
           onClick={navigateToTasks}
-          style={{
-            fontSize: '1.125rem',
-            fontWeight: 500,
-            color: activePage === 'tasks' ? '#ffffff' : '#9ca3af',
-            padding: '0',
-            height: 'auto'
-          }}
+          className={`!p-0 !h-auto !text-lg !font-medium ${
+            activePage === 'tasks'
+              ? '!text-text-primary'
+              : '!text-text-secondary hover:!text-text-primary'
+          }`}
         >
           {t('navigation.tasks')}
         </Button>
         <Button
           type="link"
           onClick={navigateToDashboard}
-          style={{
-            fontSize: '1.125rem',
-            fontWeight: 500,
-            color: activePage === 'dashboard' ? '#ffffff' : '#9ca3af',
-            padding: '0',
-            height: 'auto'
-          }}
+          className={`!p-0 !h-auto !text-lg !font-medium ${
+            activePage === 'dashboard'
+              ? '!text-text-primary'
+              : '!text-text-secondary hover:!text-text-primary'
+          }`}
         >
           {t('navigation.settings')}
         </Button>
       </div>
-      
-      {/* Right side content (user avatar, etc.) */}
-      {children}
+
+      {children && (
+        <div className="absolute right-6 flex items-center gap-3">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
