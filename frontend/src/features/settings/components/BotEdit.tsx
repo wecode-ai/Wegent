@@ -138,7 +138,9 @@ const BotEdit: React.FC<BotEditProps> = ({
       return
     }
     try {
-      JSON.parse(agentConfig)
+      if (agentConfig.trim()) {
+        JSON.parse(agentConfig)
+      }
       if (mcpConfig.trim()) {
         JSON.parse(mcpConfig)
       }
@@ -161,7 +163,7 @@ const BotEdit: React.FC<BotEditProps> = ({
       const botReq: any = {
         name: botName.trim(),
         agent_name: agentName.trim(),
-        agent_config: JSON.parse(agentConfig),
+        agent_config: parsedAgentConfig,
         system_prompt: prompt.trim() || ''
       }
       if (mcpConfig.trim()) {
@@ -306,8 +308,6 @@ const BotEdit: React.FC<BotEditProps> = ({
                 value={selectedModel}
                 onChange={(value) => {
                   setSelectedModel(value);
-                  const modelConfig = JSON.stringify({ private_model: value }, null, 2);
-                  setAgentConfig(modelConfig);
                 }}
                 placeholder="Select a model"
                 style={{ width: '100%' }}
