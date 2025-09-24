@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { teamApis } from '@/apis/team'
 import type { Team } from '@/types/api'
 import type { TeamListResponse } from '@/apis/team'
+import { sortTeamsByUpdatedAt } from '@/utils/team'
 
 /**
  * Service for team related business logic
@@ -29,7 +30,8 @@ export const teamService = {
       setIsTeamsLoading(true)
       teamApis.getTeams()
         .then(res => {
-          setTeams(Array.isArray(res.items) ? res.items : [])
+          const items = Array.isArray(res.items) ? res.items : []
+          setTeams(sortTeamsByUpdatedAt(items))
         })
         .catch(() => {
           setTeams([])

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useCallback, useState, useEffect, useMemo } from 'react'
 import { Button, Select, Switch } from 'antd'
 
 import { Bot } from '@/types/api'
@@ -14,14 +14,16 @@ interface BotEditProps {
   bots: Bot[]
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>
   editingBotId: number
-  setEditingBotId: React.Dispatch<React.SetStateAction<number | null>>
+  cloningBot: Bot | null
+  onClose: () => void
   message: MessageInstance
 }
 const BotEdit: React.FC<BotEditProps> = ({
   bots,
   setBots,
   editingBotId,
-  setEditingBotId,
+  cloningBot,
+  onClose,
   message,
 }) => {
   const { t } = useTranslation()
@@ -41,20 +43,70 @@ const BotEdit: React.FC<BotEditProps> = ({
   }))
 
   // 当前编辑对象
-  const editingBot = editingBotId === 0
-    ? null
-    : bots.find(b => b.id === editingBotId) || null
+  const editingBot = editingBotId > 0
+    ? bots.find(b => b.id === editingBotId) || null
+    : null
 
-  const [botName, setBotName] = useState(editingBot?.name || '')
-  const [agentName, setAgentName] = useState(editingBot?.agent_name || '')
+  const baseBot = useMemo(() => {
+    if (editingBot) {
+      return editingBot
+    }
+    if (editingBotId === 0 && cloningBot) {
+      return cloningBot
+    }
+    return null
+  }, [editingBot, editingBotId, cloningBot])
+
+  const [botName, setBotName] = useState(baseBot?.name || '')
+  const [agentName, setAgentName] = useState(baseBot?.agent_name || '')
   const [agentConfig, setAgentConfig] = useState(
-    editingBot?.agent_config ? JSON.stringify(editingBot.agent_config, null, 2) : ''
+    baseBot?.agent_config ? JSON.stringify(baseBot.agent_config, null, 2) : ''
   )
 
-  const [prompt, setPrompt] = useState(editingBot?.system_prompt || '')
+  const [prompt, setPrompt] = useState(baseBot?.system_prompt || '')
   const [mcpConfig, setMcpConfig] = useState(
-    editingBot?.mcp_servers ? JSON.stringify(editingBot.mcp_servers, null, 2) : ''
+    baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   )
+  const [agentConfigError, setAgentConfigError] = useState(false)
+  const [mcpConfigError, setMcpConfigError] = useState(false)
+
+  const prettifyAgentConfig = useCallback(() => {
+    setAgentConfig(prev => {
+      const trimmed = prev.trim()
+      if (!trimmed) {
+        setAgentConfigError(false)
+        return ''
+      }
+      try {
+        const parsed = JSON.parse(trimmed)
+        setAgentConfigError(false)
+        return JSON.stringify(parsed, null, 2)
+      } catch {
+        message.error(t('bot.errors.agent_config_json'))
+        setAgentConfigError(true)
+        return prev
+      }
+    })
+  }, [message, t])
+
+  const prettifyMcpConfig = useCallback(() => {
+    setMcpConfig(prev => {
+      const trimmed = prev.trim()
+      if (!trimmed) {
+        setMcpConfigError(false)
+        return ''
+      }
+      try {
+        const parsed = JSON.parse(trimmed)
+        setMcpConfigError(false)
+        return JSON.stringify(parsed, null, 2)
+      } catch {
+        message.error(t('bot.errors.mcp_config_json'))
+        setMcpConfigError(true)
+        return prev
+      }
+    })
+  }, [message, t])
 
   // 获取agents列表
   useEffect(() => {
@@ -65,14 +117,14 @@ const BotEdit: React.FC<BotEditProps> = ({
         setAgents(response.items)
       } catch (error) {
         console.error('Failed to fetch agents:', error)
-        message.error('获取Agent列表失败')
+        message.error(t('bot.errors.fetch_agents_failed'))
       } finally {
         setLoadingAgents(false)
       }
     }
 
     fetchAgents()
-  }, [message])
+  }, [message, t])
 
   // 当agentName变化时获取对应的模型列表
   useEffect(() => {
@@ -88,86 +140,114 @@ const BotEdit: React.FC<BotEditProps> = ({
         setModels(response.data)
       } catch (error) {
         console.error('Failed to fetch models:', error)
-        message.error('获取模型列表失败')
+        message.error(t('bot.errors.fetch_models_failed'))
       } finally {
         setLoadingModels(false)
       }
     }
 
     fetchModels()
-  }, [agentName, message])
+  }, [agentName, message, t])
 
   // 切换编辑对象时重置基本表单
   useEffect(() => {
-    setBotName(editingBot?.name || '')
-    setAgentName(editingBot?.agent_name || '')
-    setPrompt(editingBot?.system_prompt || '')
-    setMcpConfig(editingBot?.mcp_servers ? JSON.stringify(editingBot.mcp_servers, null, 2) : '')
+    setBotName(baseBot?.name || '')
+    setAgentName(baseBot?.agent_name || '')
+    setPrompt(baseBot?.system_prompt || '')
+    setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '')
+    setAgentConfigError(false)
+    setMcpConfigError(false)
 
-    // 设置完整的agentConfig
-    if (editingBot?.agent_config) {
-      setAgentConfig(JSON.stringify(editingBot.agent_config, null, 2));
+    if (baseBot?.agent_config) {
+      setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2))
     } else {
-      setAgentConfig('');
+      setAgentConfig('')
     }
-  }, [editingBotId])
+  }, [editingBotId, baseBot])
 
   // 在agents和models加载完成后处理模型相关的初始化
   useEffect(() => {
-    if (!editingBot?.agent_config || loadingAgents || (agentName && loadingModels)) {
-      return; // 如果正在加载或没有配置，则不处理
+    if (!baseBot?.agent_config) {
+      setIsCustomModel(false)
+      setSelectedModel('')
+      return
     }
 
-    // 检查是否为预定义模型
-    const isPredefined = isPredefinedModel(editingBot.agent_config);
-    setIsCustomModel(!isPredefined);
+    const isPredefined = isPredefinedModel(baseBot.agent_config)
+    setIsCustomModel(!isPredefined)
 
     if (isPredefined) {
-      // 如果是预定义模型，设置selectedModel
-      const modelName = getModelFromConfig(editingBot.agent_config);
-      setSelectedModel(modelName);
+      const modelName = getModelFromConfig(baseBot.agent_config)
+      setSelectedModel(modelName)
     } else {
-      setSelectedModel('');
+      setSelectedModel('')
     }
-  }, [editingBot, loadingAgents, loadingModels, agentName])
+  }, [baseBot])
+
+  const handleBack = useCallback(() => {
+    onClose()
+  }, [onClose])
+
+  useEffect(() => {
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+
+      handleBack()
+    }
+
+    window.addEventListener('keydown', handleEsc)
+    return () => window.removeEventListener('keydown', handleEsc)
+  }, [handleBack])
 
   // 保存逻辑
   const handleSave = async () => {
     if (!botName.trim() || !agentName.trim()) {
-      message.error('请填写所有必填项')
+      message.error(t('bot.errors.required'))
       return
     }
-    try {
-      if (agentConfig.trim()) {
-        JSON.parse(agentConfig)
+    let parsedAgentConfig: any = undefined
+    if (isCustomModel) {
+      const trimmedConfig = agentConfig.trim()
+      if (!trimmedConfig) {
+        setAgentConfigError(true)
+        message.error(t('bot.errors.agent_config_json'))
+        return
       }
-      if (mcpConfig.trim()) {
-        JSON.parse(mcpConfig)
+      try {
+        parsedAgentConfig = JSON.parse(trimmedConfig)
+        setAgentConfigError(false)
+      } catch (error) {
+        setAgentConfigError(true)
+        message.error(t('bot.errors.agent_config_json'))
+        return
       }
-    } catch (error) {
-      message.error('Agent Config 必须为合法 JSON，MCP Config（如填写）也需合法 JSON')
-      return
+    } else {
+      parsedAgentConfig = { private_model: selectedModel }
+    }
+
+    let parsedMcpConfig: any = undefined
+    if (mcpConfig.trim()) {
+      try {
+        parsedMcpConfig = JSON.parse(mcpConfig)
+        setMcpConfigError(false)
+      } catch (error) {
+        setMcpConfigError(true)
+        message.error(t('bot.errors.mcp_config_json'))
+        return
+      }
+    } else {
+      setMcpConfigError(false)
     }
     setBotSaving(true)
     try {
-      let parsedAgentConfig;
-
-      if (isCustomModel) {
-        // 自定义模型，使用完整的配置
-        parsedAgentConfig = JSON.parse(agentConfig);
-      } else {
-        // 预定义模型，只使用private_model字段
-        parsedAgentConfig = { private_model: selectedModel };
-      }
-
       const botReq: any = {
         name: botName.trim(),
         agent_name: agentName.trim(),
         agent_config: parsedAgentConfig,
         system_prompt: prompt.trim() || ''
       }
-      if (mcpConfig.trim()) {
-        botReq.mcp_servers = JSON.parse(mcpConfig)
+      if (parsedMcpConfig !== undefined) {
+        botReq.mcp_servers = parsedMcpConfig
       }
       if (editingBotId && editingBotId > 0) {
         // 编辑
@@ -178,9 +258,9 @@ const BotEdit: React.FC<BotEditProps> = ({
         const created = await botApis.createBot(botReq)
         setBots(prev => [created, ...prev])
       }
-      setEditingBotId(null)
+      onClose()
     } catch (error: any) {
-      message.error(error?.message || 'save failed')
+      message.error(error?.message || t('bot.errors.save_failed'))
     } finally {
       setBotSaving(false)
     }
@@ -191,7 +271,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         {/* 顶部导航栏 */}
         <div className="flex items-center justify-between mb-4">
           <button
-            onClick={() => setEditingBotId(null)}
+            onClick={handleBack}
             className="flex items-center text-text-muted hover:text-text-primary text-base"
             title={t('common.back')}
           >
@@ -269,6 +349,10 @@ const BotEdit: React.FC<BotEditProps> = ({
                     setIsCustomModel(checked);
                     if (checked) {
                       setAgentConfig('');
+                      setAgentConfigError(false);
+                    }
+                    if (!checked) {
+                      setAgentConfigError(false);
                     }
                   }}
                 />
@@ -278,7 +362,14 @@ const BotEdit: React.FC<BotEditProps> = ({
             {isCustomModel ? (
               <textarea
                 value={agentConfig}
-                onChange={(e) => setAgentConfig(e.target.value)}
+                onChange={(e) => {
+                  const value = e.target.value
+                  setAgentConfig(value)
+                  if (!value.trim()) {
+                    setAgentConfigError(false)
+                  }
+                }}
+                onBlur={prettifyAgentConfig}
                 rows={4}
                 placeholder={
                   agentName === 'ClaudeCode'
@@ -300,7 +391,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 }`
                       : ''
                 }
-                className="w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent font-mono text-base h-[150px] custom-scrollbar"
+                className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
               />
             ) : (
               <Select
@@ -329,8 +420,15 @@ const BotEdit: React.FC<BotEditProps> = ({
             </div>
             <textarea
               value={mcpConfig}
-              onChange={(e) => setMcpConfig(e.target.value)}
-              className="w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent font-mono text-base flex-grow resize-none custom-scrollbar"
+              onChange={(e) => {
+                const value = e.target.value
+                setMcpConfig(value)
+                if (!value.trim()) {
+                  setMcpConfigError(false)
+                }
+              }}
+              onBlur={prettifyMcpConfig}
+              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
               placeholder={`{
   "github": {
     "command": "docker",
