@@ -75,7 +75,15 @@
     "agent_config": "Agent Config",
     "mcp_config": "Mcp Config",
     "save_prompt": "Save Prompt",
-    "use_custom_model": "Use Custom Model"
+    "use_custom_model": "Use Custom Model",
+    "errors": {
+      "required": "Please fill in all required fields",
+      "agent_config_json": "Model configuration must be valid JSON",
+      "mcp_config_json": "MCP configuration must be valid JSON",
+      "fetch_agents_failed": "Failed to load agents",
+      "fetch_models_failed": "Failed to load models",
+      "save_failed": "Save failed"
+    }
   },
   "bots": {
     "title": "AI Assistant",

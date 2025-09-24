@@ -87,7 +87,15 @@
     "agent_config": "智能体配置",
     "mcp_config": "MCP配置",
     "save_prompt": "保存提示词",
-    "use_custom_model": "自定义配置"
+    "use_custom_model": "自定义配置",
+    "errors": {
+      "required": "请填写所有必填项",
+      "agent_config_json": "模型配置必须是合法 JSON 格式",
+      "mcp_config_json": "MCP 配置必须是合法 JSON 格式",
+      "fetch_agents_failed": "获取 Agent 列表失败",
+      "fetch_models_failed": "获取模型列表失败",
+      "save_failed": "保存失败"
+    }
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",

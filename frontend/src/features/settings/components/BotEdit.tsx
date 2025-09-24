@@ -82,12 +82,12 @@ const BotEdit: React.FC<BotEditProps> = ({
         setAgentConfigError(false)
         return JSON.stringify(parsed, null, 2)
       } catch {
-        message.error('模型配置必须是合法 JSON 格式')
+        message.error(t('bot.errors.agent_config_json'))
         setAgentConfigError(true)
         return prev
       }
     })
-  }, [message])
+  }, [message, t])
 
   const prettifyMcpConfig = useCallback(() => {
     setMcpConfig(prev => {
@@ -101,12 +101,12 @@ const BotEdit: React.FC<BotEditProps> = ({
         setMcpConfigError(false)
         return JSON.stringify(parsed, null, 2)
       } catch {
-        message.error('MCP 配置必须是合法 JSON 格式')
+        message.error(t('bot.errors.mcp_config_json'))
         setMcpConfigError(true)
         return prev
       }
     })
-  }, [message])
+  }, [message, t])
 
   // 获取agents列表
   useEffect(() => {
@@ -117,14 +117,14 @@ const BotEdit: React.FC<BotEditProps> = ({
         setAgents(response.items)
       } catch (error) {
         console.error('Failed to fetch agents:', error)
-        message.error('获取Agent列表失败')
+        message.error(t('bot.errors.fetch_agents_failed'))
       } finally {
         setLoadingAgents(false)
       }
     }
 
     fetchAgents()
-  }, [message])
+  }, [message, t])
 
   // 当agentName变化时获取对应的模型列表
   useEffect(() => {
@@ -140,14 +140,14 @@ const BotEdit: React.FC<BotEditProps> = ({
         setModels(response.data)
       } catch (error) {
         console.error('Failed to fetch models:', error)
-        message.error('获取模型列表失败')
+        message.error(t('bot.errors.fetch_models_failed'))
       } finally {
         setLoadingModels(false)
       }
     }
 
     fetchModels()
-  }, [agentName, message])
+  }, [agentName, message, t])
 
   // 切换编辑对象时重置基本表单
   useEffect(() => {
@@ -202,7 +202,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   // 保存逻辑
   const handleSave = async () => {
     if (!botName.trim() || !agentName.trim()) {
-      message.error('请填写所有必填项')
+      message.error(t('bot.errors.required'))
       return
     }
     let parsedAgentConfig: any = undefined
@@ -210,7 +210,7 @@ const BotEdit: React.FC<BotEditProps> = ({
       const trimmedConfig = agentConfig.trim()
       if (!trimmedConfig) {
         setAgentConfigError(true)
-        message.error('模型配置必须是合法 JSON 格式')
+        message.error(t('bot.errors.agent_config_json'))
         return
       }
       try {
@@ -218,7 +218,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         setAgentConfigError(false)
       } catch (error) {
         setAgentConfigError(true)
-        message.error('模型配置必须是合法 JSON 格式')
+        message.error(t('bot.errors.agent_config_json'))
         return
       }
     } else {
@@ -232,7 +232,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         setMcpConfigError(false)
       } catch (error) {
         setMcpConfigError(true)
-        message.error('MCP 配置必须是合法 JSON 格式')
+        message.error(t('bot.errors.mcp_config_json'))
         return
       }
     } else {
@@ -260,7 +260,7 @@ const BotEdit: React.FC<BotEditProps> = ({
       }
       onClose()
     } catch (error: any) {
-      message.error(error?.message || 'save failed')
+      message.error(error?.message || t('bot.errors.save_failed'))
     } finally {
       setBotSaving(false)
     }
