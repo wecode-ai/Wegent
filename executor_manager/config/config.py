@@ -46,4 +46,4 @@ GITHUB_PRIVATE_KEY = os.getenv("GITHUB_PRIVATE_KEY")
 
 EXECUTOR_DISPATCHER_MODE = os.getenv("EXECUTOR_DISPATCHER_MODE", "docker")
 EXECUTOR_CONFIG = os.getenv("EXECUTOR_CONFIG", "{\"docker\":\"executor_manager.executors.docker.DockerExecutor\"}")
-EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{\"DEFAULT_HEADERS\":{\"wecode-user\":\"${task_data.user.name}\",\"wecode-action\":\"wecode-group-test\",\"wecode-model-id\":\"${agent_config.env.model_id}\"}}")
+EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{\"DEFAULT_HEADERS\":{\"wecode-user\":\"${task_data.user.name}\",\"wecode-action\":\"wegent\",\"wecode-model-id\":\"${agent_config.env.model_id}\"}}")
