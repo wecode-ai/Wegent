@@ -32,12 +32,14 @@ function PromptEdit({
   onClose,
   message,
   onTeamUpdate,
+  setBots,
 }: {
   team: Team,
   allBots: Bot[],
   onClose: () => void,
   message: MessageInstance,
-  onTeamUpdate: (updatedTeam: Team) => void
+  onTeamUpdate: (updatedTeam: Team) => void,
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>
 }) {
   const { t } = useTranslation('common')
   const [form] = Form.useForm()
@@ -81,13 +83,19 @@ function PromptEdit({
         bot_prompt: values[`prompt-${teamBot.bot_id}`] || '',
       }))
 
-      await teamApis.updateTeam(team.id, {
+      const response = await teamApis.updateTeam(team.id, {
         name: team.name,
         workflow: team.workflow,
         bots: updatedBots,
       })
 
+      // 更新team状态
       onTeamUpdate({ ...team, bots: updatedBots })
+      
+      // 更新全局bots状态
+      // 注意：这里我们不需要更新全局bots，因为bot_prompt是team特有的属性
+      // 但如果将来需要同步其他bot属性，可以在这里添加
+
       message.success('Prompts updated successfully!')
       onClose()
     } catch (error) {
@@ -193,6 +201,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
             onClose={handleClose}
             message={message}
             onTeamUpdate={onTeamUpdate}
+            setBots={setBots}
           />
         )}
       </div>

@@ -85,6 +85,7 @@ export default function TeamEdit(props: TeamEditProps) {
   }, [mode, t]);
 
   // 初始化/切换编辑对象时重置表单
+  // 初始化/切换编辑对象时重置表单
   useEffect(() => {
     if (editingTeam) {
       setName(editingTeam.name)
@@ -103,8 +104,20 @@ export default function TeamEdit(props: TeamEditProps) {
       setSelectedBotKeys([])
       setLeaderBotId(null)
     }
-  }, [editingTeamId, bots])
-
+  }, [editingTeamId])
+  
+  // 当bots变化时，只更新与bots相关的状态，不重置name和mode
+  useEffect(() => {
+    if (editingTeam) {
+      const ids = editingTeam.bots
+        .filter(b => bots.some(bot => bot.id === b.bot_id))
+        .map(b => String(b.bot_id))
+      setSelectedBotKeys(ids)
+      // 查找role="leader"的bot作为leader，如果没有则默认使用第一个
+      const leaderBot = editingTeam.bots.find(b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id))
+      setLeaderBotId(leaderBot?.bot_id ?? null)
+    }
+  }, [bots, editingTeam])
   // 变更 Mode
   const handleModeChange = (newMode: 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
     setMode(newMode)
@@ -192,10 +205,6 @@ export default function TeamEdit(props: TeamEditProps) {
       message.error('Team name is required')
       return
     }
-    if (selectedBotKeys.length === 0) {
-      message.error('At least one bot must be selected')
-      return
-    }
     if (leaderBotId == null) {
       message.error('Leader bot is required')
       return
@@ -226,12 +235,16 @@ export default function TeamEdit(props: TeamEditProps) {
       }
     });
 
-    // 创建 botsData，保持 allBotIds 的顺序
-    const botsData = allBotIds.map(id => ({
-      bot_id: id,
-      bot_prompt: '',
-      role: id === leaderBotId ? 'leader' : undefined,
-    }))
+    // 创建 botsData，保持 allBotIds 的顺序，并保留原有的bot_prompt值
+    const botsData = allBotIds.map(id => {
+      // 如果是编辑现有团队，查找该bot_id是否已存在，如果存在则保留其bot_prompt
+      const existingBot = editingTeam?.bots.find(b => b.bot_id === id);
+      return {
+        bot_id: id,
+        bot_prompt: existingBot?.bot_prompt || '',
+        role: id === leaderBotId ? 'leader' : undefined,
+      };
+    });
 
     const workflow = { mode, leader_bot_id: leaderBotId }
 
