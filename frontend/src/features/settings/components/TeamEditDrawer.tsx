@@ -24,6 +24,8 @@ interface TeamEditDrawerProps {
   mode: 'edit' | 'prompt'
   editingTeam: Team | null
   onTeamUpdate: (updatedTeam: Team) => void
+  cloningBot: Bot | null
+  setCloningBot: React.Dispatch<React.SetStateAction<Bot | null>>
 }
 
 function PromptEdit({
@@ -180,11 +182,14 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
     mode,
     editingTeam,
     onTeamUpdate,
+    cloningBot,
+    setCloningBot,
   } = props
 
   const handleClose = () => {
     setVisible(false)
     setEditingBotId(null)
+    setCloningBot(null)
   }
 
   return (
@@ -207,9 +212,10 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
             bots={bots}
             setBots={setBots}
             editingBotId={editingBotId}
-            cloningBot={null}
+            cloningBot={cloningBot}
             onClose={() => {
               setEditingBotId(null)
+              setCloningBot(null)
               setVisible(false)
             }}
             message={message}
