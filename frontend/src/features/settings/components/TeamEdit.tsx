@@ -217,6 +217,13 @@ export default function TeamEdit(props: TeamEditProps) {
     setEditingBotDrawerVisible(true)
   }, [])
 
+  const handleCreateBot = useCallback(() => {
+    setDrawerMode('edit')
+    setCloningBot(null)
+    setEditingBotId(0)
+    setEditingBotDrawerVisible(true)
+  }, [])
+
   const handleCloneBot = useCallback((botId: number) => {
     const botToClone = bots.find(b => b.id === botId)
     if (!botToClone) {
@@ -436,7 +443,24 @@ export default function TeamEdit(props: TeamEditProps) {
               onChange={onLeaderChange}
               placeholder={t('team.select_leader')}
               suffixIcon={<DownOutlined className="text-text-secondary" />}
-              notFoundContent={<div className="text-sm text-text-muted">Select Bots</div>}
+              notFoundContent={
+                bots.length === 0 ? (
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<PlusOutlined />}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={e => {
+                      e.stopPropagation()
+                      handleCreateBot()
+                    }}
+                  >
+                    {t('bots.new_bot')}
+                  </Button>
+                ) : (
+                  <div className="text-sm text-text-muted">Select Bots</div>
+                )
+              }
               className="w-full"
               options={leaderOptions.map((b: Bot) => ({
                 value: b.id,
@@ -564,14 +588,10 @@ export default function TeamEdit(props: TeamEditProps) {
                         <Button
                           type="primary"
                           size="small"
-                          ghost
                           className="w-70"
                           icon={<PlusOutlined />}
                           onClick={() => {
-                            setDrawerMode('edit');
-                            setCloningBot(null);
-                            setEditingBotId(0);
-                            setEditingBotDrawerVisible(true);
+                            handleCreateBot()
                           }}
                         >
                           New Bot

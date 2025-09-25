@@ -50,14 +50,29 @@ export default function TeamSelector({
   useEffect(() => {
     if (selectedTaskDetail && 'team' in selectedTaskDetail && selectedTaskDetail.team && teams.length > 0) {
       const foundTeam = teams.find(t => t.id === (selectedTaskDetail.team as any).id) || null
-      setSelectedTeam(foundTeam)
-    } else if (teams && teams.length > 0) {
-      setSelectedTeam(teams[0])
-    } else {
-      setSelectedTeam(null)
+      if (foundTeam && (!selectedTeam || selectedTeam.id !== foundTeam.id)) {
+        setSelectedTeam(foundTeam)
+        return
+      }
+    }
+
+    if (!selectedTeam) {
+      if (teams.length > 0) {
+        setSelectedTeam(teams[0])
+      } else {
+        setSelectedTeam(null)
+      }
+      return
+    }
+
+    if (teams.length > 0) {
+      const exists = teams.some(team => team.id === selectedTeam.id)
+      if (!exists) {
+        setSelectedTeam(teams[0])
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail, teams])
+  }, [selectedTaskDetail, teams, selectedTeam])
 
   if (!selectedTeam || teams.length === 0) return null
 
