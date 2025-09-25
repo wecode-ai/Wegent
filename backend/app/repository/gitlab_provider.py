@@ -164,14 +164,7 @@ class GitLabProvider(RepositoryProvider):
                 response.raise_for_status()
 
                 repos = response.json()
-
-                # domain-level caching
-                if len(repos) < limit:
-                    cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
-                    await cache_manager.set(cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
-                else :
-                    asyncio.create_task(self._fetch_all_repositories_async(user, git_token, git_domain))
-
+               
                 all_repos.extend([
                     Repository(
                         id=repo["id"],
@@ -183,6 +176,14 @@ class GitLabProvider(RepositoryProvider):
                         private=repo["visibility"] == "private"
                     ).model_dump() for repo in repos
                 ])
+
+                 # domain-level caching
+                if len(all_repos) < limit:
+                    cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
+                    await cache_manager.set(cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
+                else :
+                    asyncio.create_task(self._fetch_all_repositories_async(user, git_token, git_domain))
+
             except requests.exceptions.RequestException:
                 # skip failed domain, continue others
                 continue
