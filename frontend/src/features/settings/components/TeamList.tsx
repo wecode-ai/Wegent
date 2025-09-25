@@ -10,7 +10,7 @@ import { RiRobot2Line } from 'react-icons/ri'
 import { FiArrowRight } from 'react-icons/fi'
 import { AiOutlineTeam } from 'react-icons/ai'
 import LoadingState from '@/features/common/LoadingState'
-import { PencilIcon, TrashIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline'
+import { PencilIcon, TrashIcon, DocumentDuplicateIcon, ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
 import { fetchTeamsList, deleteTeam } from '../services/teams'
 import { fetchBotsList } from '../services/bots'
@@ -20,6 +20,7 @@ import { Button } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
+import { useRouter } from 'next/navigation'
 
 export default function TeamList() {
   const { t } = useTranslation('common')
@@ -31,6 +32,7 @@ export default function TeamList() {
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
   const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
+  const router = useRouter()
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>((updater) => {
     setTeams(prev => {
@@ -86,6 +88,12 @@ export default function TeamList() {
     setEditingTeamId(0)
   }
 
+  const handleChatTeam = (team: Team) => {
+    const params = new URLSearchParams()
+    params.set('teamId', String(team.id))
+    router.push(`/tasks?${params.toString()}`)
+  }
+
   const handleDelete = async (teamId: number) => {
     setDeletingId(teamId)
     try {
@@ -100,12 +108,12 @@ export default function TeamList() {
 
   return (
     <>
-      <div className="space-y-3">
+      <div className="space-y-3 min-w-[360px]">
         <div>
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
           <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
-        <div className={`bg-surface border border-border rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-h-[70vh]'}`}>
+        <div className={`bg-surface border border-border rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar min-w-[320px] ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-h-[70vh]'}`}>
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('teams.loading')} />
           ) : (
@@ -176,6 +184,15 @@ export default function TeamList() {
                             </div>
                           </div>
                           <div className="flex items-center space-x-2">
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<ChatBubbleLeftEllipsisIcon className="w-4 h-4 text-text-muted" />}
+                              onClick={() => handleChatTeam(team)}
+                              title={t('teams.chat')}
+                              style={{ padding: '4px' }}
+                              className="!text-text-muted hover:!text-text-primary"
+                            />
                             <Button
                               type="text"
                               size="small"

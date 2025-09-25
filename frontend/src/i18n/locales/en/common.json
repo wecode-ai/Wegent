@@ -114,10 +114,14 @@
     "inactive": "Inactive",
     "no_bots": "No bots",
     "edit": "Edit Team",
+    "chat": "Send Task",
     "delete": "Delete Team",
     "copy": "Duplicate Team",
     "no_teams": "No teams available",
-    "new_team": "New Team"
+    "new_team": "New Team",
+    "search_placeholder": "Search team...",
+    "no_match": "No matching teams",
+    "manage": "Team settings"
   },
   "team": {
     "name": "Name",

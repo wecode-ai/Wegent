@@ -41,6 +41,19 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } = useTaskContext()
   const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id)
 
+  useEffect(() => {
+    if (!teams.length) return
+
+    const teamIdParam = searchParams.get('teamId')
+    if (!teamIdParam) return
+
+    const matchedTeam = teams.find(team => String(team.id) === teamIdParam) || null
+
+    if (matchedTeam && (!selectedTeam || selectedTeam.id !== matchedTeam.id)) {
+      setSelectedTeam(matchedTeam)
+    }
+  }, [teams, searchParams, selectedTeam, setSelectedTeam])
+
   const handleSendMessage = async () => {
     setIsLoading(true)
     setError('')
