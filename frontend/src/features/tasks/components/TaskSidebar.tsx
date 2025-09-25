@@ -96,8 +96,9 @@ export default function TaskSidebar() {
             onClick={handleNewAgentClick}
             type="primary"
             size="small"
-            icon={<PlusIcon className="h-3 w-3" />}
+            icon={<PlusIcon className="h-4 w-4 align-middle" />}
             style={{ width: '100%' }}
+            className="!text-base"
           >
             {t('tasks.new_task')}
           </Button>

@@ -150,8 +150,9 @@ export default function GitHubIntegration() {
                 onClick={handleAdd}
                 type="primary"
                 size="small"
-                icon={<PlusIcon className="w-3 h-3" />}
+                icon={<PlusIcon className="h-4 w-4 align-middle" />}
                 style={{ margin: '8px 0' }}
+                className="!text-base"
               >
                 {t('integrations.new_token')}
               </Button>

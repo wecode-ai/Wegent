@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 import { Button } from 'antd'
 import { useRouter } from 'next/navigation'
@@ -45,6 +45,13 @@ export default function LoginForm() {
   }
 
   const { user, refresh, isLoading: userLoading, login } = useUser()
+
+  useEffect(() => {
+    if (!userLoading && user) {
+      router.replace(paths.task.getHref())
+    }
+  }, [userLoading, user, router])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (user) {

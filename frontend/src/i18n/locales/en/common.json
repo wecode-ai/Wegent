@@ -68,14 +68,23 @@
   },
   "bot": {
     "name": "Name",
+    "name_placeholder": "Code Assistant",
     "agent": "Agent",
     "agent_select": "choose an agent",
     "prompt": "Prompt",
-    "prompt_hint": "AI-powered assistant for development tasks",
+    "prompt_placeholder": "AI-powered code review and assistance",
     "agent_config": "Agent Config",
     "mcp_config": "Mcp Config",
     "save_prompt": "Save Prompt",
-    "use_custom_model": "Use Custom Model"
+    "use_custom_model": "Use Custom Model",
+    "errors": {
+      "required": "Please fill in all required fields",
+      "agent_config_json": "Model configuration must be valid JSON",
+      "mcp_config_json": "MCP configuration must be valid JSON",
+      "fetch_agents_failed": "Failed to load agents",
+      "fetch_models_failed": "Failed to load models",
+      "save_failed": "Save failed"
+    }
   },
   "bots": {
     "title": "AI Assistant",
@@ -86,7 +95,8 @@
     "edit": "Edit Bot",
     "delete": "Delete Bot",
     "no_bots": "No bots available",
-    "new_bot": "New Bot"
+    "new_bot": "New Bot",
+    "copy": "Copy Bot"
   },
   "messages": {
     "copy_markdown": "Copy markdown content",
@@ -104,9 +114,14 @@
     "inactive": "Inactive",
     "no_bots": "No bots",
     "edit": "Edit Team",
+    "chat": "Send Task",
     "delete": "Delete Team",
+    "copy": "Duplicate Team",
     "no_teams": "No teams available",
-    "new_team": "New Team"
+    "new_team": "New Team",
+    "search_placeholder": "Search team...",
+    "no_match": "No matching teams",
+    "manage": "Team settings"
   },
   "team": {
     "name": "Name",
@@ -176,7 +191,8 @@
   },
   "guide": {
     "title": "Welcome",
-    "setup": "Before you can start using the app, please complete the setup below first!"
+    "description": "Before you can start using the app, please complete the setup below first!",
+    "create_team": "Create Team"
   },
   "common": {
     "back": "Back",

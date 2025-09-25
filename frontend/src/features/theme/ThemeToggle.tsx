@@ -1,8 +1,6 @@
 'use client'
 
-import { Button } from 'antd'
 import { MoonOutlined, SunOutlined } from '@ant-design/icons'
-
 import { useTheme } from './ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -11,14 +9,24 @@ export function ThemeToggle({ className = '' }: { className?: string }) {
   const { t } = useTranslation('common')
   const isDark = theme === 'dark'
 
+  const mergedClassName = `
+    px-3 py-1 bg-muted border border-border rounded-full
+    flex items-center gap-1 text-sm font-medium text-text-primary
+    hover:bg-border/40 transition-colors duration-200
+    ${className}
+  `.trim()
+
+  const Icon = isDark ? SunOutlined : MoonOutlined
+
   return (
-    <Button
-      shape="round"
+    <button
+      type="button"
       onClick={toggleTheme}
-      className={className}
-      icon={isDark ? <SunOutlined /> : <MoonOutlined />}
+      className={mergedClassName}
+      aria-label={t('actions.toggle_theme')}
     >
-      {t('actions.toggle_theme')}
-    </Button>
+      <Icon className="text-base leading-none" style={{ color: 'var(--text-primary)' }} />
+      <span>{t('actions.toggle_theme')}</span>
+    </button>
   )
 }

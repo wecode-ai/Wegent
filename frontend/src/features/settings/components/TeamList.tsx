@@ -4,13 +4,13 @@
 
 'use client'
 
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
 import '@/features/common/scrollbar.css'
 import { RiRobot2Line } from 'react-icons/ri'
 import { FiArrowRight } from 'react-icons/fi'
 import { AiOutlineTeam } from 'react-icons/ai'
 import LoadingState from '@/features/common/LoadingState'
-import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline'
+import { PencilIcon, TrashIcon, DocumentDuplicateIcon, ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
 import { fetchTeamsList, deleteTeam } from '../services/teams'
 import { fetchBotsList } from '../services/bots'
@@ -18,6 +18,9 @@ import TeamEdit from './TeamEdit'
 import { App } from 'antd'
 import { Button } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
+import { sortTeamsByUpdatedAt } from '@/utils/team'
+import { sortBotsByUpdatedAt } from '@/utils/bot'
+import { useRouter } from 'next/navigation'
 
 export default function TeamList() {
   const { t } = useTranslation('common')
@@ -28,14 +31,34 @@ export default function TeamList() {
   // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
+  const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
+  const router = useRouter()
+
+  const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>((updater) => {
+    setTeams(prev => {
+      const next = typeof updater === 'function'
+        ? (updater as (value: Team[]) => Team[])(prev)
+        : updater
+      return sortTeamsByUpdatedAt(next)
+    })
+  }, [setTeams])
+
+  const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>((updater) => {
+    setBots(prev => {
+      const next = typeof updater === 'function'
+        ? (updater as (value: Bot[]) => Bot[])(prev)
+        : updater
+      return sortBotsByUpdatedAt(next)
+    })
+  }, [setBots])
 
   useEffect(() => {
     async function loadData() {
       setIsLoading(true)
       try {
         const [teamsData, botsData] = await Promise.all([fetchTeamsList(), fetchBotsList()])
-        setTeams(teamsData)
-        setBots(botsData)
+        setTeamsSorted(teamsData)
+        setBotsSorted(botsData)
       } catch (e) {
         message.error(t('teams.loading'))
       } finally {
@@ -45,7 +68,14 @@ export default function TeamList() {
     loadData()
   }, [])
 
+  useEffect(() => {
+    if (editingTeamId === null) {
+      setPrefillTeam(null)
+    }
+  }, [editingTeamId])
+
   const handleCreateTeam = () => {
+    setPrefillTeam(null)
     setEditingTeamId(0) // 用 0 标记新建
   }
 
@@ -53,11 +83,22 @@ export default function TeamList() {
     setEditingTeamId(team.id)
   }
 
+  const handleCopyTeam = (team: Team) => {
+    setPrefillTeam(team)
+    setEditingTeamId(0)
+  }
+
+  const handleChatTeam = (team: Team) => {
+    const params = new URLSearchParams()
+    params.set('teamId', String(team.id))
+    router.push(`/tasks?${params.toString()}`)
+  }
+
   const handleDelete = async (teamId: number) => {
     setDeletingId(teamId)
     try {
       await deleteTeam(teamId)
-      setTeams(prev => prev.filter(team => team.id !== teamId))
+      setTeamsSorted(prev => prev.filter(team => team.id !== teamId))
     } catch (e) {
       message.error(t('teams.delete'))
     } finally {
@@ -67,12 +108,12 @@ export default function TeamList() {
 
   return (
     <>
-      <div className="space-y-3">
+      <div className="space-y-3 min-w-[360px]">
         <div>
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
           <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
-        <div className={`bg-surface border border-border rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-h-[70vh]'}`}>
+        <div className={`bg-surface border border-border rounded-md p-2 space-y-1 overflow-y-auto custom-scrollbar min-w-[320px] ${editingTeamId !== null ? 'md:min-h-[65vh] flex items-center justify-center' : 'max-h-[70vh]'}`}>
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('teams.loading')} />
           ) : (
@@ -81,11 +122,12 @@ export default function TeamList() {
               {editingTeamId !== null ? (
                 <TeamEdit
                   teams={teams}
-                  setTeams={setTeams}
+                  setTeams={setTeamsSorted}
                   editingTeamId={editingTeamId}
                   setEditingTeamId={setEditingTeamId}
+                  initialTeam={prefillTeam}
                   bots={bots}
-                  setBots={setBots}
+                  setBots={setBotsSorted}
                   message={message}
                 />
               ) : (
@@ -145,10 +187,29 @@ export default function TeamList() {
                             <Button
                               type="text"
                               size="small"
+                              icon={<ChatBubbleLeftEllipsisIcon className="w-4 h-4 text-text-muted" />}
+                              onClick={() => handleChatTeam(team)}
+                              title={t('teams.chat')}
+                              style={{ padding: '4px' }}
+                              className="!text-text-muted hover:!text-text-primary"
+                            />
+                            <Button
+                              type="text"
+                              size="small"
                               icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
                               onClick={() => handleEditTeam(team)}
                               title={t('teams.edit')}
                               style={{ padding: '4px' }}
+                              className="!text-text-muted hover:!text-text-primary"
+                            />
+                            <Button
+                              type="text"
+                              size="small"
+                              icon={<DocumentDuplicateIcon className="w-4 h-4 text-text-muted" />}
+                              onClick={() => handleCopyTeam(team)}
+                              title={t('teams.copy')}
+                              style={{ padding: '4px' }}
+                              className="!text-text-muted hover:!text-text-primary"
                             />
                             <Button
                               type="text"
@@ -158,6 +219,7 @@ export default function TeamList() {
                               disabled={deletingId === team.id}
                               title={t('teams.delete')}
                               style={{ padding: '4px' }}
+                              className="!text-text-muted hover:!text-text-primary"
                             />
                           </div>
                         </div>
@@ -178,11 +240,12 @@ export default function TeamList() {
                       type="primary"
                       size="small"
                       icon={
-                        <svg className="w-3 h-3" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <svg className="h-4 w-4 align-middle" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
                           <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                         </svg>
                       }
                       style={{ margin: '8px 0' }}
+                      className="!text-base"
                     >
                       {t('teams.new_team')}
                     </Button>

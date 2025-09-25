@@ -6,7 +6,7 @@ from datetime import timedelta
 
 # -*- coding: utf-8 -*-
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 from agno.tools.mcp import MCPTools
 from agno.tools.mcp import StreamableHTTPClientParams, SSEClientParams, StdioServerParameters
 from shared.logger import setup_logger
@@ -32,8 +32,8 @@ class MCPManager:
         Returns:
             List of MCP tools if successful, None otherwise
         """
-        mcp_servers = config.get("mcp_servers")
-        if not mcp_servers:
+        mcp_servers = self._extract_mcp_servers_config(config)
+        if mcp_servers is None:
             return None
 
         mcp_tools_list = []
@@ -73,6 +73,52 @@ class MCPManager:
 
         return None
     
+    def _extract_mcp_servers_config(self, config: Dict[str, Any]) -> Optional[Any]:
+        """
+        Extract MCP servers configuration supporting multiple formats.
+        Priority order:
+        1) {"mcpServers": {"mcpServers": {...}}}
+        2) {"mcp_servers": {"mcp_servers": {...}}}
+        3) {"mcpServers": {...}}
+        4) {"mcp_servers": {...}}
+        5) Fallback: config.get("mcp_servers")
+        """
+        try:
+            candidates: List[Tuple[str, str, Dict[str, Any]]] = []
+            for outer_key in ("mcpServers", "mcp_servers"):
+                val = config.get(outer_key)
+                if isinstance(val, dict):
+                    nested = val.get(outer_key)
+                    if isinstance(nested, dict) and nested:
+                        logger.info(f"Detected double-nested MCP config under '{outer_key}'.")
+                        candidates.append(("double", outer_key, nested))
+                    else:
+                        logger.info(f"Detected single-nested MCP config under '{outer_key}'.")
+                        candidates.append(("single", outer_key, val))
+
+            # Priority selection
+            for variant, key, cfg in candidates:
+                if variant == "double" and key == "mcpServers":
+                    return cfg
+            for variant, key, cfg in candidates:
+                if variant == "double" and key == "mcp_servers":
+                    return cfg
+            for variant, key, cfg in candidates:
+                if variant == "single" and key == "mcpServers":
+                    return cfg
+            for variant, key, cfg in candidates:
+                if variant == "single" and key == "mcp_servers":
+                    return cfg
+
+            # Fallback: original behavior
+            fallback = config.get("mcp_servers")
+            if fallback is not None:
+                logger.info("Using fallback 'mcp_servers' configuration.")
+                return fallback
+        except Exception as e:
+            logger.warning(f"Failed to extract MCP servers configuration: {str(e)}")
+        return None
+
     async def _create_mcp_tools(self, server_config: Dict[str, Any], server_name: str) -> Optional[MCPTools]:
         """
         Create MCP tools for a specific server configuration

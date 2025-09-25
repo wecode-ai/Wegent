@@ -5,9 +5,9 @@
 'use client'
 import '@/features/common/scrollbar.css'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Button } from 'antd'
-import { PencilIcon, TrashIcon, PlusIcon } from '@heroicons/react/24/outline'
+import { PencilIcon, TrashIcon, PlusIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline'
 import { RiRobot2Line } from 'react-icons/ri'
 import LoadingState from '@/features/common/LoadingState'
 import { Bot } from '@/types/api'
@@ -15,6 +15,7 @@ import { fetchBotsList, deleteBot, isPredefinedModel, getModelFromConfig } from 
 import { App } from 'antd'
 import BotEdit from './BotEdit'
 import { useTranslation } from '@/hooks/useTranslation'
+import { sortBotsByUpdatedAt } from '@/utils/bot'
 
 export default function BotList() {
   const { t } = useTranslation('common')
@@ -23,6 +24,16 @@ export default function BotList() {
   const [isLoading, setIsLoading] = useState(true)
   // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
+  const [cloningBot, setCloningBot] = useState<Bot | null>(null)
+
+  const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>((updater) => {
+    setBots(prev => {
+      const next = typeof updater === 'function'
+        ? (updater as (value: Bot[]) => Bot[])(prev)
+        : updater
+      return sortBotsByUpdatedAt(next)
+    })
+  }, [setBots])
 
 
   useEffect(() => {
@@ -30,7 +41,7 @@ export default function BotList() {
       setIsLoading(true)
       try {
         const botsData = await fetchBotsList()
-        setBots(botsData)
+        setBotsSorted(botsData)
       } catch (e) {
         message.error(t('bots.loading'))
       } finally {
@@ -41,18 +52,30 @@ export default function BotList() {
   }, [])
 
   const handleCreateBot = () => {
+    setCloningBot(null)
     setEditingBotId(0) // 用 0 标记新建
   }
 
   const handleEditBot = (bot: Bot) => {
+    setCloningBot(null)
     setEditingBotId(bot.id)
+  }
+
+  const handleCloneBot = (bot: Bot) => {
+    setCloningBot(bot)
+    setEditingBotId(0)
+  }
+
+  const handleCloseEditor = () => {
+    setEditingBotId(null)
+    setCloningBot(null)
   }
 
 
   const handleDeleteBot = async (botId: number) => {
     try {
       await deleteBot(botId)
-      setBots(prev => prev.filter(b => b.id !== botId))
+      setBotsSorted(prev => prev.filter(b => b.id !== botId))
     } catch (e) {
       message.error(t('bots.delete'))
     }
@@ -74,9 +97,10 @@ export default function BotList() {
               {editingBotId !== null ? (
                 <BotEdit
                   bots={bots}
-                  setBots={setBots}
+                  setBots={setBotsSorted}
                   editingBotId={editingBotId}
-                  setEditingBotId={setEditingBotId}
+                  cloningBot={cloningBot}
+                  onClose={handleCloseEditor}
                   message={message}
                 />
               ) : (
@@ -121,6 +145,15 @@ export default function BotList() {
                             <Button
                               type="text"
                               size="small"
+                              icon={<DocumentDuplicateIcon className="w-4 h-4 text-text-muted" />}
+                              onClick={() => handleCloneBot(bot)}
+                              title={t('bots.copy')}
+                              style={{ padding: '4px' }}
+                              className="!text-text-muted hover:!text-text-primary"
+                            />
+                            <Button
+                              type="text"
+                              size="small"
                               icon={<TrashIcon className="w-4 h-4 text-text-muted" />}
                               onClick={() => handleDeleteBot(bot.id)}
                               title={t('bots.delete')}
@@ -145,8 +178,9 @@ export default function BotList() {
                       onClick={handleCreateBot}
                       type="primary"
                       size="small"
-                      icon={<PlusIcon className="w-3 h-3" />}
+                      icon={<PlusIcon className="h-4 w-4 align-middle" />}
                       style={{ margin: '8px 0' }}
+                      className="!text-base"
                     >
                       {t('bots.new_bot')}
                     </Button>

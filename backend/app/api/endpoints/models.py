@@ -4,6 +4,7 @@
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
+from typing import List
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -14,6 +15,7 @@ from app.schemas.model import (
     ModelInDB,
     ModelListResponse,
     ModelDetail,
+    ModelBulkCreateItem,
 )
 from app.services.model import model_service
 
@@ -66,6 +68,42 @@ def create_model(
     Create new Model
     """
     return model_service.create_model(db=db, obj_in=model_create, current_user=current_user)
+
+
+@router.post("/batch", status_code=status.HTTP_201_CREATED)
+def bulk_create_models(
+    items: List[ModelBulkCreateItem],
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Bulk upsert Models (create if not exists, update if exists).
+
+    Request body example:
+    [
+      {
+        "name": "modelname",
+        "env": {
+          "model": "xx",
+          "base_url": "xx",
+          "model_id": "xx",
+          "api_key": "xx"
+        }
+      }
+    ]
+
+    Response:
+    {
+      "created": [ModelInDB...],
+      "updated": [ModelInDB...],
+      "skipped": [{"name": "...", "reason": "..."}]
+    }
+    """
+    result = model_service.bulk_create_models(db=db, items=items, current_user=current_user)
+    # Convert ORM objects to schema
+    created = [ModelInDB.model_validate(m) for m in result.get("created", [])]
+    updated = [ModelInDB.model_validate(m) for m in result.get("updated", [])]
+    return {"created": created, "updated": updated, "skipped": result.get("skipped", [])}
 
 
 @router.get("/{model_id}", response_model=ModelDetail)

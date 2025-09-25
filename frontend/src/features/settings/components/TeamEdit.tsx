@@ -4,13 +4,13 @@
 
 'use client'
 
-import React, { useEffect, useMemo, useState } from 'react'
-import { Radio, Transfer, Select, Button } from 'antd'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { Radio, Transfer, Select, Button, Tooltip } from 'antd'
 import type { TransferDirection } from 'antd/es/transfer'
 import type { MessageInstance } from 'antd/es/message/interface'
 import Image from 'next/image'
 import { RiRobot2Line } from 'react-icons/ri'
-import { EditOutlined, DownOutlined } from '@ant-design/icons'
+import { EditOutlined, DownOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons'
 
 import { Bot, Team } from '@/types/api'
 import { createTeam, updateTeam } from '../services/teams'
@@ -22,6 +22,7 @@ interface TeamEditProps {
   setTeams: React.Dispatch<React.SetStateAction<Team[]>>
   editingTeamId: number
   setEditingTeamId: React.Dispatch<React.SetStateAction<number | null>>
+  initialTeam?: Team | null
   bots: Bot[]
   setBots: React.Dispatch<React.SetStateAction<Bot[]>> // 添加 setBots 属性
   message: MessageInstance
@@ -33,6 +34,7 @@ export default function TeamEdit(props: TeamEditProps) {
     setTeams,
     editingTeamId,
     setEditingTeamId,
+    initialTeam = null,
     bots,
     setBots,
     message,
@@ -43,6 +45,8 @@ export default function TeamEdit(props: TeamEditProps) {
   const editingTeam: Team | null = editingTeamId === 0
     ? null
     : (teams.find(t => t.id === editingTeamId) || null)
+
+  const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null
 
   // 左列：Team Name, Mode, 说明
   const [name, setName] = useState('')
@@ -58,6 +62,27 @@ export default function TeamEdit(props: TeamEditProps) {
   // Bot编辑相关状态
   const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
+  const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit')
+  const [cloningBot, setCloningBot] = useState<Bot | null>(null)
+  
+  // 存储未保存的team prompts
+  const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
+
+  const handleBack = useCallback(() => {
+    setEditingTeamId(null)
+  }, [setEditingTeamId])
+
+  useEffect(() => {
+    const handleEsc = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      if (editingBotDrawerVisible) return
+
+      handleBack()
+    }
+
+    window.addEventListener('keydown', handleEsc)
+    return () => window.removeEventListener('keydown', handleEsc)
+  }, [handleBack, editingBotDrawerVisible])
 
   // 不同 Mode 的“说明”和“边界”，均包含文字与图片（国际化）
   const MODE_INFO = useMemo(() => {
@@ -84,17 +109,15 @@ export default function TeamEdit(props: TeamEditProps) {
   }, [mode, t]);
 
   // 初始化/切换编辑对象时重置表单
+  // 初始化/切换编辑对象时重置表单
   useEffect(() => {
-    if (editingTeam) {
-      setName(editingTeam.name)
-      const m = (editingTeam.workflow?.mode as any) || 'pipeline'
+    if (formTeam) {
+      setName(formTeam.name)
+      const m = (formTeam.workflow?.mode as any) || 'pipeline'
       setMode(m)
-      const ids = editingTeam.bots
-        .filter(b => bots.some(bot => bot.id === b.bot_id))
-        .map(b => String(b.bot_id))
+      const ids = formTeam.bots.map(b => String(b.bot_id))
       setSelectedBotKeys(ids)
-      // 查找role="leader"的bot作为leader，如果没有则默认使用第一个
-      const leaderBot = editingTeam.bots.find(b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id))
+      const leaderBot = formTeam.bots.find(b => b.role === 'leader')
       setLeaderBotId(leaderBot?.bot_id ?? null)
     } else {
       setName('')
@@ -102,8 +125,19 @@ export default function TeamEdit(props: TeamEditProps) {
       setSelectedBotKeys([])
       setLeaderBotId(null)
     }
-  }, [editingTeamId, bots])
-
+  }, [editingTeamId, formTeam])
+  
+  // 当bots变化时，只更新与bots相关的状态，不重置name和mode
+  useEffect(() => {
+    if (formTeam) {
+      const ids = formTeam.bots
+        .filter(b => bots.some(bot => bot.id === b.bot_id))
+        .map(b => String(b.bot_id))
+      setSelectedBotKeys(ids)
+      const leaderBot = formTeam.bots.find(b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id))
+      setLeaderBotId(leaderBot?.bot_id ?? null)
+    }
+  }, [bots, formTeam])
   // 变更 Mode
   const handleModeChange = (newMode: 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
     setMode(newMode)
@@ -132,8 +166,8 @@ export default function TeamEdit(props: TeamEditProps) {
 
   // 供 Transfer 使用的数据源
   const transferData = useMemo(
-    () =>
-      bots.map(b => ({
+    () => {
+      return bots.map(b => ({
         key: String(b.id),
         title: b.name,
         description: b.agent_name,
@@ -142,7 +176,8 @@ export default function TeamEdit(props: TeamEditProps) {
           mode !== 'pipeline' &&
           selectedAgentName !== null &&
           b.agent_name !== selectedAgentName
-      })),
+      }))
+    },
     [bots, mode, selectedAgentName]
   )
 
@@ -177,6 +212,31 @@ export default function TeamEdit(props: TeamEditProps) {
       }
     }
   }
+
+  const handleEditBot = useCallback((botId: number) => {
+    setDrawerMode('edit')
+    setCloningBot(null)
+    setEditingBotId(botId)
+    setEditingBotDrawerVisible(true)
+  }, [])
+
+  const handleCreateBot = useCallback(() => {
+    setDrawerMode('edit')
+    setCloningBot(null)
+    setEditingBotId(0)
+    setEditingBotDrawerVisible(true)
+  }, [])
+
+  const handleCloneBot = useCallback((botId: number) => {
+    const botToClone = bots.find(b => b.id === botId)
+    if (!botToClone) {
+      return
+    }
+    setDrawerMode('edit')
+    setCloningBot(botToClone)
+    setEditingBotId(0)
+    setEditingBotDrawerVisible(true)
+  }, [bots])
   // 校验 agent_name 一致（非 pipeline 模式要求一致）
   const validateAgentNameConsistency = (ids: number[]) => {
     const selected = bots.filter(b => ids.includes(b.id))
@@ -190,15 +250,10 @@ export default function TeamEdit(props: TeamEditProps) {
       message.error('Team name is required')
       return
     }
-    if (selectedBotKeys.length === 0) {
-      message.error('At least one bot must be selected')
-      return
-    }
     if (leaderBotId == null) {
       message.error('Leader bot is required')
       return
     }
-    console.log('Saving team selectedBotKeys', selectedBotKeys)
     const selectedIds = selectedBotKeys.map(k => Number(k))
 
     // 非 pipeline 模式要求 agent_name 一致
@@ -224,15 +279,20 @@ export default function TeamEdit(props: TeamEditProps) {
         allBotIds.push(id);
       }
     });
-    console.log('Saving team with allBotIds', allBotIds, 's:', selectedIds)
 
-    // 创建 botsData，保持 allBotIds 的顺序
-    const botsData = allBotIds.map(id => ({
-      bot_id: id,
-      bot_prompt: '',
-      role: id === leaderBotId ? 'leader' : undefined,
-    }))
-    console.log('Saving team with bots:', botsData)
+    // 创建 botsData，保持 allBotIds 的顺序，并保留原有的bot_prompt值或使用未保存的prompts
+    const botsData = allBotIds.map(id => {
+      // 如果是编辑现有团队，查找该bot_id是否已存在，如果存在则保留其bot_prompt
+      const existingBot = formTeam?.bots.find(b => b.bot_id === id);
+      // 检查是否有未保存的prompt
+      const unsavedPrompt = unsavedPrompts[`prompt-${id}`];
+      
+      return {
+        bot_id: id,
+        bot_prompt: unsavedPrompt || existingBot?.bot_prompt || '',
+        role: id === leaderBotId ? 'leader' : undefined,
+      };
+    });
 
     const workflow = { mode, leader_bot_id: leaderBotId }
 
@@ -253,6 +313,8 @@ export default function TeamEdit(props: TeamEditProps) {
         })
         setTeams(prev => [created, ...prev])
       }
+      // 清空未保存的prompts
+      setUnsavedPrompts({})
       setEditingTeamId(null)
     } catch (e: any) {
       message.error(e?.message || (editingTeam ? 'Failed to edit team' : 'Failed to create team'))
@@ -283,13 +345,17 @@ export default function TeamEdit(props: TeamEditProps) {
     [bots, mode, selectedBotKeys]
   )
 
+  const handleTeamUpdate = (updatedTeam: Team) => {
+    setTeams(prev => prev.map(t => t.id === updatedTeam.id ? updatedTeam : t))
+  }
+
 
   return (
     <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-surface rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
       {/* 顶部工具条：Back + Save */}
       <div className="w-full flex items-center justify-between mb-4 mt-4">
         <button
-          onClick={() => setEditingTeamId(null)}
+          onClick={handleBack}
           className="flex items-center text-text-muted hover:text-text-primary text-base"
           title={t('common.back')}
         >
@@ -385,26 +451,64 @@ export default function TeamEdit(props: TeamEditProps) {
               onChange={onLeaderChange}
               placeholder={t('team.select_leader')}
               suffixIcon={<DownOutlined className="text-text-secondary" />}
-              notFoundContent={<div className="text-sm text-text-muted">Select Bots</div>}
+              notFoundContent={
+                bots.length === 0 ? (
+                  <Button
+                    type="primary"
+                    size="small"
+                    icon={<PlusOutlined />}
+                    onMouseDown={e => e.preventDefault()}
+                    onClick={e => {
+                      e.stopPropagation()
+                      handleCreateBot()
+                    }}
+                  >
+                    {t('bots.new_bot')}
+                  </Button>
+                ) : (
+                  <div className="text-sm text-text-muted">Select Bots</div>
+                )
+              }
               className="w-full"
-              options={leaderOptions.map(b => ({
+              options={leaderOptions.map((b: Bot) => ({
                 value: b.id,
                 label: (
-                  <div className="flex items-center justify-between w-full">
-                    <div className="flex items-center space-x-2">
+                  <div className="flex items-center w-full">
+                    <div className="flex min-w-0 flex-1 items-center space-x-2">
                       <RiRobot2Line className="w-4 h-4 text-text-muted" />
-                      <span className="block truncate">
-                        {b.name} <span className="text-text-muted text-xs">({b.agent_name})</span>
-                      </span>
+                      <Tooltip title={`${b.name} (${b.agent_name})`}>
+                        <span className="block truncate">
+                          {b.name} <span className="text-text-muted text-xs">({b.agent_name})</span>
+                        </span>
+                      </Tooltip>
                     </div>
-                    <EditOutlined
-                      className="ml-8 text-text-secondary hover:text-text-primary cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation(); // 阻止事件冒泡，避免触发选择
-                        setEditingBotId(b.id);
-                        setEditingBotDrawerVisible(true);
-                      }}
-                    />
+                    <div
+                      className="flex items-center gap-3 ml-3"
+                      onMouseDown={e => e.preventDefault()}
+                    >
+                      <EditOutlined
+                        className="text-text-secondary hover:text-text-primary cursor-pointer"
+                        onMouseDown={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation(); // 阻止事件冒泡，避免触发选择
+                          handleEditBot(b.id)
+                        }}
+                      />
+                      <CopyOutlined
+                        className="text-text-secondary hover:text-text-primary cursor-pointer"
+                        onMouseDown={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCloneBot(b.id)
+                        }}
+                      />
+                    </div>
                   </div>
                 )
               }))}
@@ -418,9 +522,22 @@ export default function TeamEdit(props: TeamEditProps) {
 
           {/* Bots 穿梭框 */}
           <div className="flex flex-col flex-1 min-h-[280px]">
-            <label className="block text-lg font-semibold text-text-primary mb-1">
-              {t('team.bots')}
-            </label>
+            <div className="flex items-center justify-between mb-1">
+              <label className="block text-lg font-semibold text-text-primary">
+                {t('team.bots')}
+              </label>
+              <Button
+                type="link"
+                size="small"
+                className="!text-text-muted hover:!text-text-primary"
+                onClick={() => {
+                  setDrawerMode('prompt');
+                  setEditingBotDrawerVisible(true);
+                }}
+              >
+                Edit Team Prompts
+              </Button>
+            </div>
             <div className="relative flex-1 min-h-[260px] bg-transparent">
               <Transfer
                 oneWay
@@ -429,10 +546,12 @@ export default function TeamEdit(props: TeamEditProps) {
                 onChange={onTransferChange}
                 render={item => (
                   <div className="flex items-center justify-between w-full">
-                    <span className="truncate">
-                      {item.title}
-                      <span className="text-xs text-text-muted">({item.description})</span>
-                    </span>
+                    <Tooltip title={`${item.title} (${item.description})`}>
+                      <span className="truncate">
+                        {item.title}
+                        <span className="text-xs text-text-muted">({item.description})</span>
+                      </span>
+                    </Tooltip>
 
                     <div className="flex items-center">
 
@@ -440,8 +559,14 @@ export default function TeamEdit(props: TeamEditProps) {
                         className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation(); // 阻止事件冒泡，避免触发选择
-                          setEditingBotId(Number(item.key));
-                          setEditingBotDrawerVisible(true);
+                          handleEditBot(Number(item.key))
+                        }}
+                      />
+                      <CopyOutlined
+                        className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleCloneBot(Number(item.key))
                         }}
                       />
                     </div>
@@ -460,6 +585,26 @@ export default function TeamEdit(props: TeamEditProps) {
                   itemsUnit: 'items',
                   notFoundContent: t("team.no_data"),
                 }}
+                footer={(_, info) => {
+                  if (info?.direction === 'left') {
+                    return (
+                      <div className="p-2 text-center">
+                        <Button
+                          type="primary"
+                          size="small"
+                          className="w-70"
+                          icon={<PlusOutlined />}
+                          onClick={() => {
+                            handleCreateBot()
+                          }}
+                        >
+                          New Bot
+                        </Button>
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
               />
             </div>
           </div>
@@ -475,6 +620,15 @@ export default function TeamEdit(props: TeamEditProps) {
         visible={editingBotDrawerVisible}
         setVisible={setEditingBotDrawerVisible}
         message={message}
+        mode={drawerMode}
+        editingTeam={editingTeam}
+        onTeamUpdate={handleTeamUpdate}
+        cloningBot={cloningBot}
+        setCloningBot={setCloningBot}
+        selectedBotKeys={selectedBotKeys}
+        leaderBotId={leaderBotId}
+        unsavedPrompts={unsavedPrompts}
+        setUnsavedPrompts={setUnsavedPrompts}
       />
     </div>
   )

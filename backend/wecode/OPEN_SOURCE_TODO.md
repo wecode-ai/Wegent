@@ -14,3 +14,9 @@ import wecode.api
 ```bash
 rm -rf wecode/
 ```
+
+
+### 3. 删除init.sql 中初始化数据
+```bash
+删除 agents 和 models 表初始化数据
+```
