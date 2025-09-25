@@ -118,7 +118,10 @@
     "delete": "删除团队",
     "copy": "复制团队",
     "no_teams": "没有可用的团队",
-    "new_team": "新建团队"
+    "new_team": "新建团队",
+    "search_placeholder": "搜索团队...",
+    "no_match": "没有匹配的团队",
+    "manage": "团队设置"
   },
   "team": {
     "name": "名称",
