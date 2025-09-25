@@ -68,10 +68,11 @@
   },
   "bot": {
     "name": "Name",
+    "name_placeholder": "Code Assistant",
     "agent": "Agent",
     "agent_select": "choose an agent",
     "prompt": "Prompt",
-    "prompt_hint": "AI-powered assistant for development tasks",
+    "prompt_placeholder": "AI-powered code review and assistance",
     "agent_config": "Agent Config",
     "mcp_config": "Mcp Config",
     "save_prompt": "Save Prompt",
@@ -186,7 +187,8 @@
   },
   "guide": {
     "title": "Welcome",
-    "setup": "Before you can start using the app, please complete the setup below first!"
+    "description": "Before you can start using the app, please complete the setup below first!",
+    "create_team": "Create Team"
   },
   "common": {
     "back": "Back",

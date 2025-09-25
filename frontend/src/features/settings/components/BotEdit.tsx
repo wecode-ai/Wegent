@@ -26,7 +26,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   onClose,
   message,
 }) => {
-  const { t } = useTranslation()
+  const { t } = useTranslation("common")
 
   const [botSaving, setBotSaving] = useState(false)
   const [agents, setAgents] = useState<Agent[]>([])
@@ -305,7 +305,7 @@ const BotEdit: React.FC<BotEditProps> = ({
               type="text"
               value={botName}
               onChange={(e) => setBotName(e.target.value)}
-              placeholder="Code Assistant"
+              placeholder={t("bot.name_placeholder")}
               className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base"
             />
           </div>
@@ -470,7 +470,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="AI-powered code review and assistance"
+            placeholder={t("bot.prompt_placeholder")}
             className="w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar"
           />
         </div>

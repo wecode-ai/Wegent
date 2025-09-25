@@ -80,10 +80,11 @@
   },
   "bot": {
     "name": "名称",
+    "name_placeholder": "代码助手",
     "agent": "执行引擎",
     "agent_select": "选择执行引擎",
     "prompt": "提示词",
-    "prompt_hint": "AI-powered assistant for development tasks",
+    "prompt_placeholder": "AI驱动的代码审查和辅助",
     "agent_config": "智能体配置",
     "mcp_config": "MCP配置",
     "save_prompt": "保存提示词",
@@ -186,7 +187,8 @@
   },
   "guide": {
     "title": "欢迎",
-    "description": "在开始使用此应用之前，请先完成下面的设置！"
+    "description": "在开始使用此应用之前，请先完成下面的设置！",
+    "create_team": "创建团队"
   },
   "common": {
     "back": "返回",
