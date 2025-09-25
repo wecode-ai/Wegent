@@ -1,6 +1,6 @@
 'use client'
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import Modal from '@/features/common/Modal'
 import { Button } from 'antd'
 import { useUser } from '@/features/common/UserContext'
@@ -14,6 +14,29 @@ interface GitHubEditProps {
   onClose: () => void
   mode: 'add' | 'edit'
   editInfo: GitInfo | null
+}
+
+const sanitizeDomainInput = (value: string) => {
+  if (!value) return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
+  const withoutProtocol = trimmed.replace(/^[a-zA-Z]+:\/\//, '')
+  const domainOnly = withoutProtocol.split('/')[0]
+  return domainOnly.trim().toLowerCase()
+}
+
+const isValidDomain = (value: string) => {
+  if (!value) return false
+  const [host, port] = value.split(':')
+  if (!host) return false
+  if (port !== undefined) {
+    if (!/^\d{1,5}$/.test(port)) return false
+    const portNumber = Number(port)
+    if (portNumber < 1 || portNumber > 65535) return false
+  }
+  if (host === 'localhost') return true
+  const domainRegex = /^(?!-)[A-Za-z0-9-]{1,63}(?<!-)(?:\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$/
+  return domainRegex.test(host)
 }
 
 const GitHubEdit: React.FC<GitHubEditProps> = ({
@@ -31,12 +54,23 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
   const [type, setType] = useState<'github' | 'gitlab'>('github')
   const [tokenSaving, setTokenSaving] = useState(false)
 
+  const isGitlabDomainInvalid = useMemo(() => {
+    if (type !== 'gitlab' || !domain) return false
+    return !isValidDomain(domain)
+  }, [type, domain])
+
+  const hasGithubPlatform = useMemo(
+    () => platforms.some(info => sanitizeDomainInput(info.git_domain) === 'github.com'),
+    [platforms],
+  )
+
   // Load platform info and reset form when modal opens
   useEffect(() => {
     if (isOpen && user) {
       fetchGitInfo(user).then((info) => setPlatforms(info))
       if (mode === 'edit' && editInfo) {
-        setDomain(editInfo.git_domain)
+        const sanitizedDomain = sanitizeDomainInput(editInfo.git_domain)
+        setDomain(sanitizedDomain)
         setToken(editInfo.git_token)
         setType(editInfo.type)
       } else {
@@ -50,10 +84,16 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
   // Save logic
   const handleSave = async () => {
     if (!user) return
-    const domainToSave = type === 'github' ? 'github.com' : domain.trim()
+    const sanitizedDomain = type === 'github' ? 'github.com' : sanitizeDomainInput(domain)
+    const domainToSave = type === 'github' ? 'github.com' : sanitizedDomain
     const tokenToSave = token.trim()
     if (!domainToSave || !tokenToSave) {
       message.error(t('github.error.required'))
+      return
+    }
+    if (type === 'gitlab' && !isValidDomain(domainToSave)) {
+      message.error(t('github.error.invalid_domain'))
+      setDomain(sanitizedDomain)
       return
     }
     setTokenSaving(true)
@@ -91,7 +131,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
                   setType('github')
                   setDomain('github.com')
                 }}
-                disabled={!!domain && !!platforms.find(info => info.git_domain === domain)}
+                disabled={hasGithubPlatform && !(mode === 'edit' && editInfo?.type === 'github')}
               />
               {t('github.platform_github')}
             </label>
@@ -117,11 +157,20 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
           <input
             type="text"
             value={type === 'github' ? 'github.com' : domain}
-            onChange={(e) => setDomain(e.target.value)}
+            onChange={(e) => {
+              if (type === 'gitlab') {
+                setDomain(sanitizeDomainInput(e.target.value))
+              }
+            }}
             placeholder={type === 'github' ? 'github.com' : 'e.g. gitlab.example.com'}
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             disabled={type === 'github'}
           />
+          {isGitlabDomainInvalid && (
+            <p className="mt-1 text-xs text-red-500">
+              {t('github.error.invalid_domain')}
+            </p>
+          )}
         </div>
         {/* Token 输入 */}
         <div>
@@ -171,16 +220,16 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
                 {t('github.howto.step1_visit')}
                 <a
-                  href={type === 'gitlab' && domain.trim() ? `https://${domain.trim()}/-/profile/personal_access_tokens` : '#'}
+                  href={type === 'gitlab' && domain ? `https://${domain}/-/profile/personal_access_tokens` : '#'}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
-                  title={type === 'gitlab' && domain.trim()
-                    ? `https://${domain.trim()}/-/profile/personal_access_tokens`
+                  title={type === 'gitlab' && domain
+                    ? `https://${domain}/-/profile/personal_access_tokens`
                     : 'your-gitlab-domain/-/profile/personal_access_tokens'}
                 >
-                  {type === 'gitlab' && domain.trim()
-                    ? `https://${domain.trim()}/-/profile/personal_access_tokens`
+                  {type === 'gitlab' && domain
+                    ? `https://${domain}/-/profile/personal_access_tokens`
                     : 'your-gitlab-domain/-/profile/personal_access_tokens'}
                 </a>
               </p>
@@ -207,7 +256,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
         <Button
           onClick={handleSave}
           disabled={
-            (type === 'gitlab' && !domain.trim()) ||
+            (type === 'gitlab' && (!domain || isGitlabDomainInvalid)) ||
             !token.trim() ||
             tokenSaving
           }

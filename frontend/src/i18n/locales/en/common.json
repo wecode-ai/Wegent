@@ -201,7 +201,8 @@
   "github": {
     "error": {
       "required": "Please fill in all required fields",
-      "save_failed": "Save failed"
+      "save_failed": "Save failed",
+      "invalid_domain": "Please enter a valid domain (e.g. gitlab.example.com) without protocol or trailing slash"
     },
     "modal": {
       "title_edit": "Edit Token",

@@ -201,7 +201,8 @@
   "github": {
     "error": {
       "required": "请填写所有必填项",
-      "save_failed": "保存失败"
+      "save_failed": "保存失败",
+      "invalid_domain": "请输入有效的域名（如 gitlab.example.com），不要包含协议或结尾斜杠"
     },
     "modal": {
       "title_edit": "编辑令牌",
