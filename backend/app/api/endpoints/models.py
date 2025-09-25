@@ -77,7 +77,7 @@ def bulk_create_models(
     db: Session = Depends(get_db),
 ):
     """
-    Bulk create Models.
+    Bulk upsert Models (create if not exists, update if exists).
 
     Request body example:
     [
@@ -95,13 +95,15 @@ def bulk_create_models(
     Response:
     {
       "created": [ModelInDB...],
+      "updated": [ModelInDB...],
       "skipped": [{"name": "...", "reason": "..."}]
     }
     """
     result = model_service.bulk_create_models(db=db, items=items, current_user=current_user)
     # Convert ORM objects to schema
     created = [ModelInDB.model_validate(m) for m in result.get("created", [])]
-    return {"created": created, "skipped": result.get("skipped", [])}
+    updated = [ModelInDB.model_validate(m) for m in result.get("updated", [])]
+    return {"created": created, "updated": updated, "skipped": result.get("skipped", [])}
 
 
 @router.get("/{model_id}", response_model=ModelDetail)

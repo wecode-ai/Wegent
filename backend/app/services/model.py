@@ -41,42 +41,53 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
 
     def bulk_create_models(self, db: Session, *, items: List[ModelBulkCreateItem], current_user: User) -> Dict[str, Any]:
         """
-        Bulk create models.
-        Input items where each has:
-          - name: str
-          - env: dict (will be wrapped as {'env': env})
-          - is_active: bool (default True)
-        Behavior:
-          - Skip if name already exists (collect in 'skipped' with reason)
-          - On success, return created models list (as ORM objects)
+        Bulk upsert models.
+        For each item:
+          - If model with the given name exists: update config.env with provided env and update is_active (when provided).
+          - If not exists: insert new model with config={'env': env} and is_active.
+        Returns:
+          {
+            "created": [Model, ...],
+            "updated": [Model, ...],
+            "skipped": [{"name": str, "reason": str}, ...]  # only on DB errors
+          }
         """
         created: List[Model] = []
+        updated: List[Model] = []
         skipped: List[Dict[str, Any]] = []
-
+        
         for it in items:
-            # Check existence
-            existed = db.query(Model).filter(Model.name == it.name).first()
-            if existed:
-                skipped.append({"name": it.name, "reason": "Model name already exists"})
-                continue
-
-            # Compose config with env wrapper
-            cfg = {"env": it.env}
-            db_obj = Model(
-                name=it.name,
-                config=cfg,
-                is_active=it.is_active if it.is_active is not None else True,
-            )
-            db.add(db_obj)
             try:
-                db.commit()
-                db.refresh(db_obj)
-                created.append(db_obj)
+                existed = db.query(Model).filter(Model.name == it.name).first()
+                if existed:
+                    # Overwrite env section to match request semantics
+                    cfg = existed.config if isinstance(existed.config, dict) else {}
+                    cfg["env"] = dict(it.env) if isinstance(it.env, dict) else {}
+                    existed.config = cfg
+                    # Update is_active only if explicitly provided
+                    if getattr(it, "is_active", None) is not None:
+                        existed.is_active = it.is_active  # type: ignore[attr-defined]
+                    db.add(existed)
+                    db.commit()
+                    db.refresh(existed)
+                    updated.append(existed)
+                else:
+                    # Create new
+                    cfg = {"env": it.env}
+                    db_obj = Model(
+                        name=it.name,
+                        config=cfg,
+                        is_active=getattr(it, "is_active", True),  # type: ignore[attr-defined]
+                    )
+                    db.add(db_obj)
+                    db.commit()
+                    db.refresh(db_obj)
+                    created.append(db_obj)
             except Exception as e:
                 db.rollback()
                 skipped.append({"name": it.name, "reason": f"DB error: {str(e)}"})
-
-        return {"created": created, "skipped": skipped}
+        
+        return {"created": created, "updated": updated, "skipped": skipped}
 
     def get_models(
         self, db: Session, *, skip: int = 0, limit: int = 100, current_user: User
