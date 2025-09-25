@@ -6,19 +6,19 @@
 
 import { useRouter } from 'next/navigation'
 import { Button } from 'antd'
-import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import LanguageSwitcher from '@/components/LanguageSwitcher'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { getToken } from '@/apis/user'
 
 export default function Home() {
   const router = useRouter()
   const { t } = useTranslation('common')
-  const { user } = useUser()
   
   const handleGetStarted = () => {
-    if (user) {
+    const token = getToken()
+    if (token) {
       router.replace(paths.task.getHref())
     } else {
       router.push(paths.auth.login.getHref())
@@ -45,7 +45,7 @@ export default function Home() {
           type="primary"
           size="middle"
         >
-          {user ? t('navigation.dashboard') : t('actions.start')}
+          {t('actions.start')}
         </Button>
       </div>
     </main>
