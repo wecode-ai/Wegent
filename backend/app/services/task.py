@@ -672,19 +672,19 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 detail="Task not found"
             )
         
-        # Get all running subtasks
-        running_subtasks = db.query(Subtask).filter(
+        # Get all subtasks for the task
+        task_subtasks = db.query(Subtask).filter(
             Subtask.task_id == task_id
         ).all()
         
-        # Collect unique executor names to avoid duplicate calls
-        unique_executor_names = set()
-        for subtask in running_subtasks:
-            if subtask.executor_name:
-                unique_executor_names.add(subtask.executor_name)
+        # Collect unique executor keys to avoid duplicate calls (namespace + name)
+        unique_executor_keys = set()
+        for subtask in task_subtasks:
+            if subtask.executor_name and subtask.executor_namespace:
+                unique_executor_keys.add((subtask.executor_namespace, subtask.executor_name))
         
-        # Stop running subtasks on executor (deduplicated)
-        for executor_name in unique_executor_names:
+        # Stop running subtasks on executor (deduplicated by (namespace, name))
+        for executor_namespace, executor_name in unique_executor_keys:
             try:
                 import asyncio
                 from app.services.executor import executor_service
@@ -694,13 +694,13 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 asyncio.set_event_loop(loop)
                 try:
                     loop.run_until_complete(
-                        executor_service.delete_executor_task(executor_name)
+                        executor_service.delete_executor_task(executor_name, executor_namespace)
                     )
                 finally:
                     loop.close()
             except Exception as e:
                 # Log error but continue with status update
-                print(f"Warning: Failed to delete executor task {executor_name}: {str(e)}")
+                print(f"Warning: Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}")
         
         # Update all subtasks to DELETE status
         db.query(Subtask).filter(Subtask.task_id == task_id).update({

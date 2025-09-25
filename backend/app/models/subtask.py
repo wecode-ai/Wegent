@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from enum import Enum as PyEnum
-from sqlalchemy import Column, Integer, String, Text, Boolean, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from sqlalchemy import Enum as SQLEnum
@@ -35,6 +35,7 @@ class Subtask(Base):
     role = Column(SQLEnum(SubtaskRole), nullable=False, default=SubtaskRole.ASSISTANT)
     executor_namespace = Column(String(100))
     executor_name = Column(String(100))
+    executor_deleted_at = Column(DateTime, nullable=True)
     prompt = Column(Text)
     message_id = Column(Integer, nullable=False, default=1)
     parent_id = Column(Integer, nullable=True)
