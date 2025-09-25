@@ -26,6 +26,11 @@ interface TeamEditDrawerProps {
   onTeamUpdate: (updatedTeam: Team) => void
   cloningBot: Bot | null
   setCloningBot: React.Dispatch<React.SetStateAction<Bot | null>>
+  // 新增属性，用于处理新团队的情况
+  selectedBotKeys?: React.Key[]
+  leaderBotId?: number | null
+  unsavedPrompts?: Record<string, string>
+  setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>
 }
 
 function PromptEdit({
@@ -35,13 +40,23 @@ function PromptEdit({
   message,
   onTeamUpdate,
   setBots,
+  isNewTeam = false,
+  selectedBotKeys = [],
+  leaderBotId = null,
+  unsavedPrompts = {},
+  setUnsavedPrompts,
 }: {
-  team: Team,
+  team?: Team,
   allBots: Bot[],
   onClose: () => void,
   message: MessageInstance,
   onTeamUpdate: (updatedTeam: Team) => void,
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>>
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>,
+  isNewTeam?: boolean,
+  selectedBotKeys?: React.Key[],
+  leaderBotId?: number | null,
+  unsavedPrompts?: Record<string, string>,
+  setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>,
 }) {
   const { t } = useTranslation('common')
   const [form] = Form.useForm()
@@ -52,22 +67,43 @@ function PromptEdit({
   }, [onClose])
 
   const teamBotsWithDetails = React.useMemo(() => {
-    if (!team) return []
-    return team.bots
-      .map(teamBot => {
-        const botDetails = allBots.find(b => b.id === teamBot.bot_id)
+    if (isNewTeam) {
+      // 处理新团队的情况
+      const allBotIds = [...(selectedBotKeys || [])];
+      if (leaderBotId !== null && !allBotIds.includes(String(leaderBotId))) {
+        allBotIds.unshift(String(leaderBotId));
+      }
+      
+      return allBotIds.map(botId => {
+        const botDetails = allBots.find(b => String(b.id) === String(botId));
+        const numericBotId = Number(botId);
         return {
-          ...teamBot,
-          name: botDetails?.name || `Bot ID: ${teamBot.bot_id}`,
-          isLeader: teamBot.role === 'leader',
-        }
-      })
-      .sort((a, b) => {
-        if (a.isLeader && !b.isLeader) return -1
-        if (!a.isLeader && b.isLeader) return 1
-        return 0
-      })
-  }, [team, allBots])
+          bot_id: numericBotId,
+          bot_prompt: unsavedPrompts[`prompt-${numericBotId}`] || '',
+          name: botDetails?.name || `Bot ID: ${botId}`,
+          isLeader: numericBotId === leaderBotId,
+        };
+      });
+    } else if (!team) {
+      return [];
+    } else {
+      // 处理已有团队的情况
+      return team.bots
+        .map(teamBot => {
+          const botDetails = allBots.find(b => b.id === teamBot.bot_id)
+          return {
+            ...teamBot,
+            name: botDetails?.name || `Bot ID: ${teamBot.bot_id}`,
+            isLeader: teamBot.role === 'leader',
+          }
+        })
+        .sort((a, b) => {
+          if (a.isLeader && !b.isLeader) return -1
+          if (!a.isLeader && b.isLeader) return 1
+          return 0
+        })
+    }
+  }, [team, allBots, isNewTeam, selectedBotKeys, leaderBotId, unsavedPrompts])
 
   React.useEffect(() => {
     const initialValues: Record<string, string> = {}
@@ -102,27 +138,41 @@ function PromptEdit({
     try {
       setLoading(true)
       const values = await form.validateFields()
-
-      const updatedBots: TeamBot[] = team.bots.map(teamBot => ({
-        ...teamBot,
-        bot_prompt: values[`prompt-${teamBot.bot_id}`] || '',
-      }))
-
-      const response = await teamApis.updateTeam(team.id, {
-        name: team.name,
-        workflow: team.workflow,
-        bots: updatedBots,
-      })
-
-      // 更新team状态
-      onTeamUpdate({ ...team, bots: updatedBots })
       
-      // 更新全局bots状态
-      // 注意：这里我们不需要更新全局bots，因为bot_prompt是team特有的属性
-      // 但如果将来需要同步其他bot属性，可以在这里添加
+      if (isNewTeam) {
+        // 处理新团队的情况，保存到unsavedPrompts
+        if (setUnsavedPrompts) {
+          const newPrompts: Record<string, string> = {}
+          teamBotsWithDetails.forEach(bot => {
+            newPrompts[`prompt-${bot.bot_id}`] = values[`prompt-${bot.bot_id}`] || ''
+          })
+          setUnsavedPrompts(newPrompts)
+          message.success('Prompts saved! They will be applied when you create the team.')
+        }
+        onClose()
+      } else if (team) {
+        // 处理已有团队的情况
+        const updatedBots: TeamBot[] = team.bots.map(teamBot => ({
+          ...teamBot,
+          bot_prompt: values[`prompt-${teamBot.bot_id}`] || '',
+        }))
 
-      message.success('Prompts updated successfully!')
-      onClose()
+        const response = await teamApis.updateTeam(team.id, {
+          name: team.name,
+          workflow: team.workflow,
+          bots: updatedBots,
+        })
+
+        // 更新team状态
+        onTeamUpdate({ ...team, bots: updatedBots })
+        
+        // 更新全局bots状态
+        // 注意：这里我们不需要更新全局bots，因为bot_prompt是team特有的属性
+        // 但如果将来需要同步其他bot属性，可以在这里添加
+
+        message.success('Prompts updated successfully!')
+        onClose()
+      }
     } catch (error) {
       message.error('Failed to update prompts.')
     } finally {
@@ -148,7 +198,9 @@ function PromptEdit({
         </Button>
       </div>
 
-      <h2 className="text-lg font-semibold mb-4">Team '{team.name}'</h2>
+      <h2 className="text-lg font-semibold mb-4">
+        {isNewTeam ? 'New Team Prompts' : team ? `Team '${team.name}'` : 'Team Prompts'}
+      </h2>
       <Form form={form} layout="vertical" className="flex-grow overflow-y-auto custom-scrollbar pr-4">
         {teamBotsWithDetails.map(bot => (
           <Form.Item
@@ -221,14 +273,19 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
             message={message}
           />
         )}
-        {mode === 'prompt' && editingTeam && (
+        {mode === 'prompt' && (
           <PromptEdit
-            team={editingTeam}
+            team={editingTeam || undefined}
             allBots={bots}
             onClose={handleClose}
             message={message}
             onTeamUpdate={onTeamUpdate}
             setBots={setBots}
+            isNewTeam={!editingTeam}
+            selectedBotKeys={props.selectedBotKeys}
+            leaderBotId={props.leaderBotId}
+            unsavedPrompts={props.unsavedPrompts}
+            setUnsavedPrompts={props.setUnsavedPrompts}
           />
         )}
       </div>
