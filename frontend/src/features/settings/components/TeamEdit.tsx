@@ -441,8 +441,8 @@ export default function TeamEdit(props: TeamEditProps) {
               options={leaderOptions.map((b: Bot) => ({
                 value: b.id,
                 label: (
-                  <div className="flex items-center justify-between w-full">
-                    <div className="flex items-center space-x-2">
+                  <div className="flex items-center w-full">
+                    <div className="flex min-w-0 flex-1 items-center space-x-2">
                       <RiRobot2Line className="w-4 h-4 text-text-muted" />
                       <Tooltip title={`${b.name} (${b.agent_name})`}>
                         <span className="block truncate">
@@ -450,20 +450,33 @@ export default function TeamEdit(props: TeamEditProps) {
                         </span>
                       </Tooltip>
                     </div>
-                    <EditOutlined
-                      className="ml-8 text-text-secondary hover:text-text-primary cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation(); // 阻止事件冒泡，避免触发选择
-                        handleEditBot(b.id)
-                      }}
-                    />
-                    <CopyOutlined
-                      className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleCloneBot(b.id)
-                      }}
-                    />
+                    <div
+                      className="flex items-center gap-3 ml-3"
+                      onMouseDown={e => e.preventDefault()}
+                    >
+                      <EditOutlined
+                        className="text-text-secondary hover:text-text-primary cursor-pointer"
+                        onMouseDown={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation(); // 阻止事件冒泡，避免触发选择
+                          handleEditBot(b.id)
+                        }}
+                      />
+                      <CopyOutlined
+                        className="text-text-secondary hover:text-text-primary cursor-pointer"
+                        onMouseDown={e => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCloneBot(b.id)
+                        }}
+                      />
+                    </div>
                   </div>
                 )
               }))}
