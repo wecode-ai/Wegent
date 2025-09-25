@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 import time
 import structlog
 from fastapi.middleware.cors import CORSMiddleware
+import threading
 
 from app.api.api import api_router
 from app.core.config import settings
@@ -17,8 +18,9 @@ from app.core.exceptions import (
     RequestValidationError
 )
 from app.core.logging import setup_logging
-from app.db.session import engine
+from app.db.session import engine, SessionLocal
 from app.db.base import Base
+from app.services.subtask import subtask_service
 
 # Import all models to ensure they are registered with SQLAlchemy
 from app.models import *  # noqa: F401,F403
@@ -76,10 +78,47 @@ def create_app():
     # Include API routes
     app.include_router(api_router, prefix=settings.API_PREFIX)
 
-    # Create database tables
+    # Background cleanup worker
+    def _cleanup_worker(stop_event: threading.Event):
+        # Periodically scan and cleanup stale executors for subtasks
+        while not stop_event.is_set():
+            try:
+                db = SessionLocal()
+                try:
+                    subtask_service.cleanup_stale_executors(db)
+                finally:
+                    db.close()
+            except Exception as e:
+                # Log and continue loop
+                logger.error(f"subtask cleanup worker error: {e}")
+            # Wait with wake-up capability
+            stop_event.wait(timeout=settings.SUBTASK_CLEANUP_INTERVAL_SECONDS)
+
+    # Create database tables and start background worker
     @app.on_event("startup")
     def startup():
         Base.metadata.create_all(bind=engine)
+        # Start cleanup thread
+        app.state.cleanup_stop_event = threading.Event()
+        app.state.cleanup_thread = threading.Thread(
+            target=_cleanup_worker,
+            args=(app.state.cleanup_stop_event,),
+            name="subtask-cleanup-worker",
+            daemon=True,
+        )
+        app.state.cleanup_thread.start()
+        logger.info("subtask cleanup worker started")
+
+    @app.on_event("shutdown")
+    def shutdown():
+        # Stop cleanup thread gracefully
+        stop_event = getattr(app.state, "cleanup_stop_event", None)
+        thread = getattr(app.state, "cleanup_thread", None)
+        if stop_event:
+            stop_event.set()
+        if thread:
+            thread.join(timeout=5.0)
+        logger.info("subtask cleanup worker stopped")
 
     return app
 

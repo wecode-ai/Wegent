@@ -47,6 +47,8 @@ class SaveGitToken:
                         gitlab_tokens["gitStaffSinaComCn"] = token
                     elif domain == "gitlab.weibo.cn":
                         gitlab_tokens["gitlabWeiboCn"] = token
+                    else :
+                        self.logger.info("Unknown git domain: %s", domain)
             
             if not gitlab_tokens:
                 self.logger.info("No gitlab tokens to save")

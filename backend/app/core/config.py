@@ -36,6 +36,13 @@ class Settings(BaseSettings):
     # Task append expiration (hours)
     APPEND_TASK_EXPIRE_HOURS: int = 48
 
+    # Subtask executor cleanup configuration
+    # After a subtask is COMPLETED or FAILED, if executor_name/executor_namespace are set
+    # and updated_at exceeds this threshold, the executor task will be deleted automatically.
+    SUBTASK_EXECUTOR_DELETE_AFTER_HOURS: int = 48
+    # Cleanup scanning interval seconds
+    SUBTASK_CLEANUP_INTERVAL_SECONDS: int = 600
+
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"
 

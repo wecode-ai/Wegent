@@ -389,15 +389,28 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
         
         db.add(task)
 
-    async def delete_executor_task(self, executor_name: str) -> Dict:
+    async def delete_executor_task(self, executor_name: str, executor_namespace: str) -> Dict:
         """
         Delete task from executor
+
+        Args:
+            executor_name: The executor task name to delete
+            executor_namespace: Executor namespace (required)
         """
+        if not executor_name or not executor_namespace:
+            raise HTTPException(status_code=400, detail="executor_name and executor_namespace are required")
         try:
+            payload = {
+                "executor_name": executor_name,
+                "executor_namespace": executor_namespace,
+            }
+            # Log before sending delete request
+            logger.info(f"executor.delete request url={settings.EXECUTOR_DELETE_TASK_URL} {payload}")
+
             async with httpx.AsyncClient() as client:
                 response = await client.post(
                     settings.EXECUTOR_DELETE_TASK_URL,
-                    json={"executor_name": executor_name},
+                    json=payload,
                     headers={"Content-Type": "application/json"},
                     timeout=30.0
                 )

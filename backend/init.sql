@@ -92,6 +92,7 @@ CREATE TABLE IF NOT EXISTS subtasks (
     prompt TEXT,
     executor_namespace VARCHAR(100),
     executor_name VARCHAR(100),
+    executor_deleted_at DATETIME NULL,
     status ENUM('PENDING', 'RUNNING', 'COMPLETED', 'FAILED', 'CANCELLED', 'DELETE') NOT NULL DEFAULT 'PENDING',
     progress INT NOT NULL DEFAULT 0,
     batch INT NOT NULL DEFAULT 0,
@@ -164,7 +165,7 @@ INSERT INTO `teams` (`id`, `user_id`, `k_id`, `name`, `bots`, `workflow`, `is_ac
 INSERT INTO `agents` (`id`, `name`, `config`, `created_at`, `updated_at`)
 VALUES
 	('1', 'ClaudeCode', '{\"mode_filter\": [\"claude\"]}', '2025-09-23 10:20:24', '2025-09-23 02:47:27'),
-	('2', 'Agno', '{\"mode_filter\": []}', '2025-09-23 02:45:53', '2025-09-23 02:45:53');
+	('2', 'Agno', '{\"mode_filter\": []}', '2025-09-23 10:21:24', '2025-09-23 02:45:53');
 
 INSERT INTO `models` (`id`, `name`, `config`, `is_active`, `created_at`, `updated_at`)
 VALUES
