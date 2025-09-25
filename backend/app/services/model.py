@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from app.models.model import Model
 from app.models.user import User
 from app.models.agent import Agent
-from app.schemas.model import ModelCreate, ModelUpdate
+from app.schemas.model import ModelCreate, ModelUpdate, ModelBulkCreateItem
 from app.services.base import BaseService
 
 
@@ -38,6 +38,45 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
         db.commit()
         db.refresh(db_obj)
         return db_obj
+
+    def bulk_create_models(self, db: Session, *, items: List[ModelBulkCreateItem], current_user: User) -> Dict[str, Any]:
+        """
+        Bulk create models.
+        Input items where each has:
+          - name: str
+          - env: dict (will be wrapped as {'env': env})
+          - is_active: bool (default True)
+        Behavior:
+          - Skip if name already exists (collect in 'skipped' with reason)
+          - On success, return created models list (as ORM objects)
+        """
+        created: List[Model] = []
+        skipped: List[Dict[str, Any]] = []
+
+        for it in items:
+            # Check existence
+            existed = db.query(Model).filter(Model.name == it.name).first()
+            if existed:
+                skipped.append({"name": it.name, "reason": "Model name already exists"})
+                continue
+
+            # Compose config with env wrapper
+            cfg = {"env": it.env}
+            db_obj = Model(
+                name=it.name,
+                config=cfg,
+                is_active=it.is_active if it.is_active is not None else True,
+            )
+            db.add(db_obj)
+            try:
+                db.commit()
+                db.refresh(db_obj)
+                created.append(db_obj)
+            except Exception as e:
+                db.rollback()
+                skipped.append({"name": it.name, "reason": f"DB error: {str(e)}"})
+
+        return {"created": created, "skipped": skipped}
 
     def get_models(
         self, db: Session, *, skip: int = 0, limit: int = 100, current_user: User

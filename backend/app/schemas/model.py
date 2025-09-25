@@ -54,3 +54,24 @@ class ModelListResponse(BaseModel):
     """Model paginated response schema"""
     total: int
     items: list[ModelInDB]
+
+# ===== Bulk create schemas =====
+
+from typing import Any, List, Optional
+from pydantic import BaseModel
+
+class ModelBulkCreateItem(BaseModel):
+    """
+    Bulk create item schema.
+    Accepts 'env' to match request body, we will wrap it into {'env': ...} as Model.config.
+    """
+    name: str
+    env: dict[str, Any]
+    is_active: bool = True
+
+class ModelBulkCreateResponse(BaseModel):
+    """
+    Bulk create response schema.
+    """
+    created: List["ModelInDB"]
+    skipped: List[dict]
