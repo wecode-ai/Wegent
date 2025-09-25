@@ -35,7 +35,7 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
         if existing:
             raise HTTPException(
                 status_code=400,
-                detail="Bot name already exists for this user"
+                detail="Bot name already exists, please modify the name"
             )
 
         db_obj = Bot(
@@ -135,13 +135,12 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
                     Bot.user_id == user_id,
                     Bot.name == new_name,
                     Bot.is_active == True,
-                    Bot.id != bot.id,
-                    Bot.is_active == True
+                    Bot.id != bot.id
                 ).first()
                 if conflict:
                     raise HTTPException(
                         status_code=400,
-                        detail="Bot name already exists for this user"
+                        detail="Bot name already exists, please modify the name"
                     )
         
         for field, value in update_data.items():
@@ -277,13 +276,12 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
                     Bot.user_id == user_id,
                     Bot.name == candidate_name,
                     Bot.is_active == True,
-                    Bot.id != bot.id,
-                    Bot.is_active == True
+                    Bot.id != bot.id
                 ).first()
                 if conflict:
                     raise HTTPException(
                         status_code=400,
-                        detail="Bot name already exists for this user"
+                        detail="Bot name already exists, please modify the name"
                     )
 
             # Update existing bot
@@ -303,7 +301,7 @@ class BotService(BaseService[Bot, BotCreate, BotUpdate]):
             if conflict:
                 raise HTTPException(
                     status_code=400,
-                    detail="Bot name already exists for this user"
+                    detail="Bot name already exists, please modify the name"
                 )
 
             # Create new bot

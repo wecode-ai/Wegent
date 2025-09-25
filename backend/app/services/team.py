@@ -38,7 +38,7 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
         if exist_team:
             raise HTTPException(
                 status_code=400,
-                detail="Team name already exists, please try another"
+                detail="Team name already exists, please modify the name"
             )
 
         # Validate bots
@@ -162,9 +162,26 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
             )
         
         update_data = obj_in.model_dump(exclude_unset=True)
+
         # Validate bots if provided
         if 'bots' in update_data:
             self._validate_bots(db, update_data['bots'], user_id)
+
+        # Validate team name 
+        if 'name' in update_data:
+            new_name = update_data["name"]
+            if new_name != team.name:
+                conflict = db.query(Team).filter(
+                    Team.user_id == user_id,
+                    Team.name == new_name,
+                    Team.is_active == True,
+                    Team.id != team.id
+                ).first()
+                if conflict:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Team name already exists, please modify the name"
+                    )
         
         for field, value in update_data.items():
             if field == 'bots':
