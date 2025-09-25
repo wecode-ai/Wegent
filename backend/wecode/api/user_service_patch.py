@@ -21,6 +21,7 @@ except Exception:
     UserService = None  # type: ignore
 
 from wecode.service.save_git_token import save_git_token
+from app.core.exceptions import ValidationException
 
 
 def _collect_gitlab_tokens_from_git_info(git_info: Optional[List[Any]]) -> List[Dict[str, Any]]:
@@ -49,6 +50,33 @@ def _mask_gitlab_tokens(git_info: Optional[List[Dict[str, Any]]]) -> Optional[Li
     return masked
 
 
+_ALLOWED_GITLAB_DOMAINS = {
+    "git.intra.weibo.com",
+    "gitlab.weibo.cn",
+    "git.staff.sina.com.cn",
+}
+
+
+def _ensure_valid_gitlab_domains(git_info: Optional[List[Any]]) -> None:
+    """
+    Validate that all gitlab items have allowed git_domain values.
+    Raise ValidationException on invalid domain.
+    """
+    if not git_info:
+        return
+    for gi in git_info:
+        try:
+            gi_dict = gi.model_dump() if hasattr(gi, "model_dump") else dict(gi)
+        except Exception:
+            gi_dict = gi
+        if gi_dict and gi_dict.get("type") == "gitlab":
+            domain = gi_dict.get("git_domain")
+            if domain not in _ALLOWED_GITLAB_DOMAINS:
+                raise ValidationException(
+                    f"Invalid gitlab git_domain: {domain}"
+                )
+
+
 def apply_patch() -> None:
     if user_service is None or UserService is None:
         return
@@ -59,34 +87,33 @@ def apply_patch() -> None:
 
     # Monkey-patched create_user
     def patched_create_user(self, db, *, obj_in: UserCreate):
+        # 0) validate obj_in for gitlab domain constraints first
+        _ensure_valid_gitlab_domains(getattr(obj_in, "git_info", None))
+
         # 1) run original logic first (includes validation)
         created_user = _orig_create_user(self, db, obj_in=obj_in)
 
         # 2) save real gitlab tokens to external (from request body)
-        try:
-            tokens_to_save = _collect_gitlab_tokens_from_git_info(getattr(obj_in, "git_info", None))
-            if tokens_to_save:
-                # username/email from obj_in to keep consistent with request body
-                # Note: save is awaited in async client, but here we are sync; use httpx in async under the hood already.
-                # wecode service uses async client; here we call via await-like? We cannot await in sync.
-                # To keep minimal impact, call via anyio.run? But we avoid runtime deps.
-                # Alternative: ignore await and rely on external saves during read; however requirement states save to external.
-                # Simplest: use asyncio if running event loop, otherwise fallback to sync execution by creating a loop.
-                import asyncio
-                async def _do_save():
-                    await save_git_token.save_gitlab_tokens(
-                        username=obj_in.user_name,
-                        email=getattr(obj_in, "email", None),
-                        git_info=tokens_to_save,
-                    )
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_do_save())
-                except RuntimeError:
-                    asyncio.run(_do_save())
-        except Exception:
-            # do not block
-            pass
+        tokens_to_save = _collect_gitlab_tokens_from_git_info(getattr(obj_in, "git_info", None))
+        if tokens_to_save:
+            import asyncio
+            async def _do_save():
+                return await save_git_token.save_gitlab_tokens(
+                    username=obj_in.user_name,
+                    email=getattr(obj_in, "email", None),
+                    git_info=tokens_to_save,
+                )
+            try:
+                # If an event loop exists, submit to loop and block until finished
+                loop = asyncio.get_running_loop()
+                future = asyncio.run_coroutine_threadsafe(_do_save(), loop)
+                ok = future.result()
+            except RuntimeError:
+                # No running loop in this thread: run synchronously
+                ok = asyncio.run(_do_save())
+            if not ok:
+                # Stop further execution on failure
+                raise RuntimeError("Failed to save gitlab tokens to external service")
 
         # 3) mask gitlab tokens in DB immediately
         try:
@@ -108,27 +135,30 @@ def apply_patch() -> None:
 
     # Monkey-patched update_current_user
     def patched_update_current_user(self, db, *, user, obj_in: UserUpdate, validate_git_info: bool = True):
+        # 0) validate obj_in for gitlab domain constraints first
+        _ensure_valid_gitlab_domains(getattr(obj_in, "git_info", None))
+
         # 1) run original logic first
         updated_user = _orig_update_current_user(self, db, user=user, obj_in=obj_in, validate_git_info=validate_git_info)
 
         # 2) save real gitlab tokens to external (from request body)
-        try:
-            tokens_to_save = _collect_gitlab_tokens_from_git_info(getattr(obj_in, "git_info", None))
-            if tokens_to_save:
-                import asyncio
-                async def _do_save():
-                    await save_git_token.save_gitlab_tokens(
-                        username=getattr(obj_in, "user_name", None) or getattr(updated_user, "user_name", None),
-                        email=getattr(obj_in, "email", None) or getattr(updated_user, "email", None),
-                        git_info=tokens_to_save,
-                    )
-                try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_do_save())
-                except RuntimeError:
-                    asyncio.run(_do_save())
-        except Exception:
-            pass
+        tokens_to_save = _collect_gitlab_tokens_from_git_info(getattr(obj_in, "git_info", None))
+        if tokens_to_save:
+            import asyncio
+            async def _do_save():
+                return await save_git_token.save_gitlab_tokens(
+                    username=getattr(obj_in, "user_name", None) or getattr(updated_user, "user_name", None),
+                    email=getattr(obj_in, "email", None) or getattr(updated_user, "email", None),
+                    git_info=tokens_to_save,
+                )
+            try:
+                loop = asyncio.get_running_loop()
+                future = asyncio.run_coroutine_threadsafe(_do_save(), loop)
+                ok = future.result()
+            except RuntimeError:
+                ok = asyncio.run(_do_save())
+            if not ok:
+                raise RuntimeError("Failed to save gitlab tokens to external service")
 
         # 3) mask gitlab tokens in DB immediately
         try:
