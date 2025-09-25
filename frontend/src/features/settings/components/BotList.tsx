@@ -25,6 +25,7 @@ export default function BotList() {
   // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
   const [cloningBot, setCloningBot] = useState<Bot | null>(null)
+  const isEditing = editingBotId !== null
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>((updater) => {
     setBots(prev => {
@@ -89,16 +90,18 @@ export default function BotList() {
           <p className="text-sm text-text-muted mb-1">{t('bots.description')}</p>
         </div>
         <div
-          className={`bg-surface border border-border rounded-md p-2 ${editingBotId !== null
-            ? 'md:min-h-[70vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
-            : ''}`}
+          className={`bg-surface border border-border rounded-md p-2 ${
+            isEditing
+              ? 'md:min-h-[70vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
+              : 'max-h-[70vh] flex flex-col overflow-hidden'
+          }`}
         >
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('bots.loading')} />
           ) : (
             <>
               {/* 编辑/新建模式 */}
-              {editingBotId !== null ? (
+              {isEditing ? (
                 <BotEdit
                   bots={bots}
                   setBots={setBotsSorted}
@@ -108,8 +111,8 @@ export default function BotList() {
                   message={message}
                 />
               ) : (
-                <div className="relative">
-                  <div className="max-h-[70vh] overflow-y-auto custom-scrollbar pr-1">
+                <>
+                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
                     {bots.length > 0 ? (
                       bots.map((bot) => (
                         <div key={bot.id}>
@@ -177,20 +180,22 @@ export default function BotList() {
                         <p className="text-sm">{t('bots.no_bots')}</p>
                       </div>
                     )}
-                    <div className="sticky bottom-0 -mx-2 mt-2 flex items-center justify-center bg-surface px-2 py-2 border-t border-border">
+                  </div>
+                  <div className="border-t border-border pt-2 bg-surface">
+                    <div className="flex justify-center">
                       <Button
                         onClick={handleCreateBot}
                         type="primary"
                         size="small"
-                        style={{ margin: '4px 0' }}
+                        style={{ margin: '8px 0' }}
                         className="flex items-center justify-center gap-1 text-base"
                       >
                         <PlusIcon className="h-4 w-4" aria-hidden="true" />
-                        <span className="relative top-[0.5px]">{t('bots.new_bot')}</span>
+                        <span>{t('bots.new_bot')}</span>
                       </Button>
                     </div>
                   </div>
-                </div>
+                </>
               )}
             </>
           )}
