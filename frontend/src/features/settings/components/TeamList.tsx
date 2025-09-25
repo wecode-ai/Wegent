@@ -161,7 +161,7 @@ export default function TeamList() {
                                   <div className="flex items-center space-x-1 mt-0">
                                     {team.workflow?.mode && (
                                       <>
-                                        <span className="px-2 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize">
+                                        <span className="inline-block max-w-full truncate px-2 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize">
                                           {t(`team_model.${team.workflow.mode}`)}
                                         </span>
                                         <span className="mx-2"></span>
