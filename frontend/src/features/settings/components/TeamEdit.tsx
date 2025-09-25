@@ -5,11 +5,11 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Radio, Transfer, Select, Button, Tooltip } from 'antd'
+import { Radio, Transfer, Select, Button, Tooltip, Tag } from 'antd'
 import type { TransferDirection } from 'antd/es/transfer'
 import type { MessageInstance } from 'antd/es/message/interface'
 import Image from 'next/image'
-import { RiRobot2Line } from 'react-icons/ri'
+import { RiRobot2Line, RiMagicLine } from 'react-icons/ri'
 import { EditOutlined, DownOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons'
 
 import { Bot, Team } from '@/types/api'
@@ -67,6 +67,55 @@ export default function TeamEdit(props: TeamEditProps) {
   
   // 存储未保存的team prompts
   const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
+
+  const teamPromptMap = useMemo(() => {
+    const map = new Map<number, boolean>()
+    if (editingTeam) {
+      editingTeam.bots.forEach(bot => {
+        map.set(bot.bot_id, !!bot.bot_prompt?.trim())
+      })
+    }
+    Object.entries(unsavedPrompts).forEach(([key, value]) => {
+      const id = Number(key.replace('prompt-', ''))
+      if (!Number.isNaN(id)) {
+        map.set(id, !!value?.trim())
+      }
+    })
+    return map
+  }, [editingTeam, unsavedPrompts])
+
+  const promptSummary = useMemo(() => {
+    let configuredCount = 0
+    teamPromptMap.forEach(value => {
+      if (value) configuredCount += 1
+    })
+    const unsavedHasContent = Object.values(unsavedPrompts).some(value => (value ?? '').trim().length > 0)
+
+    if (unsavedHasContent) {
+      const countText = configuredCount > 0
+        ? ` - ${t('team.prompts_tag_configured', { count: configuredCount })}`
+        : ''
+      return {
+        label: `${t('team.prompts_tag_pending')}${countText}`,
+        color: 'gold' as const,
+        count: configuredCount,
+      }
+    }
+
+    if (configuredCount > 0) {
+      return {
+        label: t('team.prompts_tag_configured', { count: configuredCount }),
+        color: 'blue' as const,
+        count: configuredCount,
+      }
+    }
+
+    return {
+      label: t('team.prompts_tag_none'),
+      color: undefined,
+      count: 0,
+    }
+  }, [teamPromptMap, unsavedPrompts, t])
 
   const handleBack = useCallback(() => {
     setEditingTeamId(null)
@@ -481,6 +530,13 @@ export default function TeamEdit(props: TeamEditProps) {
                           {b.name} <span className="text-text-muted text-xs">({b.agent_name})</span>
                         </span>
                       </Tooltip>
+                      {teamPromptMap.get(b.id) && (
+                        <Tooltip title={t('team.prompts_badge_tooltip')}>
+                          <Tag color="blue" className="!m-0 !ml-1 !px-1.5 !py-0 text-[11px] leading-4">
+                            {t('team.prompts_badge')}
+                          </Tag>
+                        </Tooltip>
+                      )}
                     </div>
                     <div
                       className="flex items-center gap-3 ml-3"
@@ -526,17 +582,28 @@ export default function TeamEdit(props: TeamEditProps) {
               <label className="block text-lg font-semibold text-text-primary">
                 {t('team.bots')}
               </label>
-              <Button
-                type="link"
-                size="small"
-                className="!text-text-muted hover:!text-text-primary"
-                onClick={() => {
-                  setDrawerMode('prompt');
-                  setEditingBotDrawerVisible(true);
-                }}
-              >
-                Edit Team Prompts
-              </Button>
+              <div className="flex items-center gap-2">
+                <Tooltip title={t('team.prompts_tooltip')}>
+                  <Button
+                    type="link"
+                    size="small"
+                    icon={<RiMagicLine className="text-sm" />}
+                    className="!px-1.5 !text-primary hover:!text-primary"
+                    onClick={() => {
+                      setDrawerMode('prompt');
+                      setEditingBotDrawerVisible(true);
+                    }}
+                  >
+                    {t('team.prompts_link')}
+                  </Button>
+                </Tooltip>
+                <Tag
+                  color={promptSummary.color}
+                  className="!m-0 !px-2 !py-0 text-xs leading-5"
+                >
+                  {promptSummary.label}
+                </Tag>
+              </div>
             </div>
             <div className="relative flex-1 min-h-[260px] bg-transparent">
               <Transfer
@@ -554,6 +621,13 @@ export default function TeamEdit(props: TeamEditProps) {
                     </Tooltip>
 
                     <div className="flex items-center">
+                      {teamPromptMap.get(Number(item.key)) && (
+                        <Tooltip title={t('team.prompts_badge_tooltip')}>
+                          <Tag color="blue" className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4">
+                            {t('team.prompts_badge')}
+                          </Tag>
+                        </Tooltip>
+                      )}
 
                       <EditOutlined
                         className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
@@ -587,7 +661,7 @@ export default function TeamEdit(props: TeamEditProps) {
                 }}
                 footer={(_, info) => {
                   if (info?.direction === 'left') {
-                    return (
+                    return (                      
                       <div className="p-2 text-center">
                         <Button
                           type="primary"
@@ -598,7 +672,7 @@ export default function TeamEdit(props: TeamEditProps) {
                             handleCreateBot()
                           }}
                         >
-                          New Bot
+                          {t('bots.new_bot')}
                         </Button>
                       </div>
                     );
