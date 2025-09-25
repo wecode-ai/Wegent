@@ -64,6 +64,9 @@ export default function TeamEdit(props: TeamEditProps) {
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
   const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit')
   const [cloningBot, setCloningBot] = useState<Bot | null>(null)
+  
+  // 存储未保存的team prompts
+  const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
 
   const handleBack = useCallback(() => {
     setEditingTeamId(null)
@@ -270,13 +273,16 @@ export default function TeamEdit(props: TeamEditProps) {
       }
     });
 
-    // 创建 botsData，保持 allBotIds 的顺序，并保留原有的bot_prompt值
+    // 创建 botsData，保持 allBotIds 的顺序，并保留原有的bot_prompt值或使用未保存的prompts
     const botsData = allBotIds.map(id => {
       // 如果是编辑现有团队，查找该bot_id是否已存在，如果存在则保留其bot_prompt
       const existingBot = formTeam?.bots.find(b => b.bot_id === id);
+      // 检查是否有未保存的prompt
+      const unsavedPrompt = unsavedPrompts[`prompt-${id}`];
+      
       return {
         bot_id: id,
-        bot_prompt: existingBot?.bot_prompt || '',
+        bot_prompt: unsavedPrompt || existingBot?.bot_prompt || '',
         role: id === leaderBotId ? 'leader' : undefined,
       };
     });
@@ -300,6 +306,8 @@ export default function TeamEdit(props: TeamEditProps) {
         })
         setTeams(prev => [created, ...prev])
       }
+      // 清空未保存的prompts
+      setUnsavedPrompts({})
       setEditingTeamId(null)
     } catch (e: any) {
       message.error(e?.message || (editingTeam ? 'Failed to edit team' : 'Failed to create team'))
@@ -486,10 +494,6 @@ export default function TeamEdit(props: TeamEditProps) {
                 size="small"
                 className="!text-text-muted hover:!text-text-primary"
                 onClick={() => {
-                  if (!editingTeam) {
-                    message.info('Please save the team before editing prompts.')
-                    return
-                  }
                   setDrawerMode('prompt');
                   setEditingBotDrawerVisible(true);
                 }}
@@ -588,6 +592,10 @@ export default function TeamEdit(props: TeamEditProps) {
         onTeamUpdate={handleTeamUpdate}
         cloningBot={cloningBot}
         setCloningBot={setCloningBot}
+        selectedBotKeys={selectedBotKeys}
+        leaderBotId={leaderBotId}
+        unsavedPrompts={unsavedPrompts}
+        setUnsavedPrompts={setUnsavedPrompts}
       />
     </div>
   )
