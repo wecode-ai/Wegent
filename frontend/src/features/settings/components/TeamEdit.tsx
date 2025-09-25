@@ -5,12 +5,12 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Radio, Transfer, Select, Button } from 'antd'
+import { Radio, Transfer, Select, Button, Tooltip } from 'antd'
 import type { TransferDirection } from 'antd/es/transfer'
 import type { MessageInstance } from 'antd/es/message/interface'
 import Image from 'next/image'
 import { RiRobot2Line } from 'react-icons/ri'
-import { EditOutlined, DownOutlined, PlusOutlined } from '@ant-design/icons'
+import { EditOutlined, DownOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons'
 
 import { Bot, Team } from '@/types/api'
 import { createTeam, updateTeam } from '../services/teams'
@@ -63,6 +63,7 @@ export default function TeamEdit(props: TeamEditProps) {
   const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
   const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit')
+  const [cloningBot, setCloningBot] = useState<Bot | null>(null)
 
   const handleBack = useCallback(() => {
     setEditingTeamId(null)
@@ -208,6 +209,24 @@ export default function TeamEdit(props: TeamEditProps) {
       }
     }
   }
+
+  const handleEditBot = useCallback((botId: number) => {
+    setDrawerMode('edit')
+    setCloningBot(null)
+    setEditingBotId(botId)
+    setEditingBotDrawerVisible(true)
+  }, [])
+
+  const handleCloneBot = useCallback((botId: number) => {
+    const botToClone = bots.find(b => b.id === botId)
+    if (!botToClone) {
+      return
+    }
+    setDrawerMode('edit')
+    setCloningBot(botToClone)
+    setEditingBotId(0)
+    setEditingBotDrawerVisible(true)
+  }, [bots])
   // 校验 agent_name 一致（非 pipeline 模式要求一致）
   const validateAgentNameConsistency = (ids: number[]) => {
     const selected = bots.filter(b => ids.includes(b.id))
@@ -425,17 +444,24 @@ export default function TeamEdit(props: TeamEditProps) {
                   <div className="flex items-center justify-between w-full">
                     <div className="flex items-center space-x-2">
                       <RiRobot2Line className="w-4 h-4 text-text-muted" />
-                      <span className="block truncate">
-                        {b.name} <span className="text-text-muted text-xs">({b.agent_name})</span>
-                      </span>
+                      <Tooltip title={`${b.name} (${b.agent_name})`}>
+                        <span className="block truncate">
+                          {b.name} <span className="text-text-muted text-xs">({b.agent_name})</span>
+                        </span>
+                      </Tooltip>
                     </div>
                     <EditOutlined
                       className="ml-8 text-text-secondary hover:text-text-primary cursor-pointer"
                       onClick={(e) => {
                         e.stopPropagation(); // 阻止事件冒泡，避免触发选择
-                        setDrawerMode('edit')
-                        setEditingBotId(b.id);
-                        setEditingBotDrawerVisible(true);
+                        handleEditBot(b.id)
+                      }}
+                    />
+                    <CopyOutlined
+                      className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleCloneBot(b.id)
                       }}
                     />
                   </div>
@@ -479,10 +505,12 @@ export default function TeamEdit(props: TeamEditProps) {
                 onChange={onTransferChange}
                 render={item => (
                   <div className="flex items-center justify-between w-full">
-                    <span className="truncate">
-                      {item.title}
-                      <span className="text-xs text-text-muted">({item.description})</span>
-                    </span>
+                    <Tooltip title={`${item.title} (${item.description})`}>
+                      <span className="truncate">
+                        {item.title}
+                        <span className="text-xs text-text-muted">({item.description})</span>
+                      </span>
+                    </Tooltip>
 
                     <div className="flex items-center">
 
@@ -490,9 +518,14 @@ export default function TeamEdit(props: TeamEditProps) {
                         className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
                         onClick={(e) => {
                           e.stopPropagation(); // 阻止事件冒泡，避免触发选择
-                          setDrawerMode('edit')
-                          setEditingBotId(Number(item.key));
-                          setEditingBotDrawerVisible(true);
+                          handleEditBot(Number(item.key))
+                        }}
+                      />
+                      <CopyOutlined
+                        className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleCloneBot(Number(item.key))
                         }}
                       />
                     </div>
@@ -523,6 +556,7 @@ export default function TeamEdit(props: TeamEditProps) {
                           icon={<PlusOutlined />}
                           onClick={() => {
                             setDrawerMode('edit');
+                            setCloningBot(null);
                             setEditingBotId(0);
                             setEditingBotDrawerVisible(true);
                           }}
@@ -552,6 +586,8 @@ export default function TeamEdit(props: TeamEditProps) {
         mode={drawerMode}
         editingTeam={editingTeam}
         onTeamUpdate={handleTeamUpdate}
+        cloningBot={cloningBot}
+        setCloningBot={setCloningBot}
       />
     </div>
   )
