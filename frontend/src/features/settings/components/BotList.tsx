@@ -78,7 +78,10 @@ export default function BotList() {
       await deleteBot(botId)
       setBotsSorted(prev => prev.filter(b => b.id !== botId))
     } catch (e) {
-      message.error(t('bots.delete'))
+      const errorMessage = e instanceof Error && e.message
+        ? e.message
+        : t('bots.delete')
+      message.error(errorMessage)
     }
   }
 
