@@ -49,6 +49,25 @@ def get_tasks(
     )
     return {"total": total, "items": items}
 
+@router.get("/search", response_model=TaskListResponse)
+def search_tasks_by_title(
+    title: str = Query(..., min_length=1, description="按任务标题关键字搜索"),
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """根据标题模糊搜索当前用户的任务列表（分页），排除 DELETE 状态"""
+    skip = (page - 1) * limit
+    items, total = task_service.get_user_tasks_by_title_with_pagination(
+        db=db,
+        user_id=current_user.id,
+        title=title,
+        skip=skip,
+        limit=limit
+    )
+    return {"total": total, "items": items}
+
 @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(
     task_id: int,
