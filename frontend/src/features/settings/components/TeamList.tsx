@@ -85,7 +85,12 @@ export default function TeamList() {
   }
 
   const handleCopyTeam = (team: Team) => {
-    setPrefillTeam(team)
+    const clone: Team = {
+      ...team,
+      bots: team.bots.map(bot => ({ ...bot })),
+      workflow: team.workflow ? { ...team.workflow } : {},
+    }
+    setPrefillTeam(clone)
     setEditingTeamId(0)
   }
 

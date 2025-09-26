@@ -133,6 +133,21 @@ export default function TeamEdit(props: TeamEditProps) {
     return () => window.removeEventListener('keydown', handleEsc)
   }, [handleBack, editingBotDrawerVisible])
 
+  useEffect(() => {
+    if (editingTeamId === 0 && initialTeam) {
+      setUnsavedPrompts(prev => {
+        if (Object.keys(prev).length > 0) {
+          return prev
+        }
+        const next: Record<string, string> = {}
+        initialTeam.bots.forEach(bot => {
+          next[`prompt-${bot.bot_id}`] = bot.bot_prompt || ''
+        })
+        return next
+      })
+    }
+  }, [editingTeamId, initialTeam])
+
   // 不同 Mode 的“说明”和“边界”，均包含文字与图片（国际化）
   const MODE_INFO = useMemo(() => {
     // i18n keys
