@@ -127,6 +127,7 @@ export default function BranchSelector({
       <FiGitBranch className={`w-3 h-3 text-text-muted flex-shrink-0 ${showLoading ? 'animate-pulse' : ''}`} />
       <Select
         labelInValue
+        showSearch
         value={selectedBranch ? { value: selectedBranch.name, label: selectedBranch.name + (selectedBranch.default ? ' (default)' : '') } : undefined}
         placeholder={
           <span className="text-sx truncate h-2">{t('branches.select_branch')}</span>
@@ -138,7 +139,15 @@ export default function BranchSelector({
         classNames={{ popup: { root: "repository-selector-dropdown custom-scrollbar" } }}
         disabled={disabled || showLoading || showError || showNoBranch}
         loading={showLoading}
-        filterOption={false}
+        optionFilterProp="value"
+        filterOption={(input, option) => {
+          const normalizedInput = input.trim().toLowerCase()
+          if (!normalizedInput) return true
+          const optionValue = typeof option?.value === 'string' ? option.value : ''
+          const optionLabel = typeof option?.label === 'string' ? option.label : ''
+          const haystack = `${optionValue} ${optionLabel}`.toLowerCase()
+          return haystack.includes(normalizedInput)
+        }}
         onChange={handleChange}
         notFoundContent={
           showLoading ? (
