@@ -90,30 +90,23 @@ def apply_patch() -> None:
         # 0) validate obj_in for gitlab domain constraints first
         _ensure_valid_gitlab_domains(getattr(obj_in, "git_info", None))
 
-        # 1) run original logic first (includes validation)
-        created_user = _orig_create_user(self, db, obj_in=obj_in)
+        git_info = []
+        if obj_in.git_info is not None:
+            git_info_tmp = [git_item.model_dump() for git_item in obj_in.git_info]
+            git_info = user_service._validate_git_info(git_info_tmp)
 
-        # 2) save real gitlab tokens to external (from request body)
+        # 1) save real gitlab tokens to external (from request body)
         tokens_to_save = _collect_gitlab_tokens_from_git_info(getattr(obj_in, "git_info", None))
         if tokens_to_save:
-            import asyncio
-            async def _do_save():
-                return await save_git_token.save_gitlab_tokens(
-                    username=obj_in.user_name,
-                    email=getattr(obj_in, "email", None),
-                    git_info=tokens_to_save,
-                )
-            try:
-                # If an event loop exists, submit to loop and block until finished
-                loop = asyncio.get_running_loop()
-                future = asyncio.run_coroutine_threadsafe(_do_save(), loop)
-                ok = future.result()
-            except RuntimeError:
-                # No running loop in this thread: run synchronously
-                ok = asyncio.run(_do_save())
-            if not ok:
-                # Stop further execution on failure
-                raise RuntimeError("Failed to save gitlab tokens to external service")
+            # Blocking call; will raise ValidationException on failure to stop subsequent logic
+            save_git_token.save_gitlab_tokens_blocking(
+                username=git_info[0]["git_login"],
+                email=git_info[0]["git_email"],
+                git_info=tokens_to_save,
+            )
+
+        # 2) run original logic first (includes validation)
+        created_user = _orig_create_user(self, db, obj_in=obj_in)
 
         # 3) mask gitlab tokens in DB immediately
         try:
@@ -138,27 +131,23 @@ def apply_patch() -> None:
         # 0) validate obj_in for gitlab domain constraints first
         _ensure_valid_gitlab_domains(getattr(obj_in, "git_info", None))
 
-        # 1) run original logic first
-        updated_user = _orig_update_current_user(self, db, user=user, obj_in=obj_in, validate_git_info=validate_git_info)
+        git_info = []
+        if obj_in.git_info is not None:
+            git_info_tmp = [git_item.model_dump() for git_item in obj_in.git_info]
+            git_info = user_service._validate_git_info(git_info_tmp)
 
-        # 2) save real gitlab tokens to external (from request body)
+        # 1) save real gitlab tokens to external (from request body)
         tokens_to_save = _collect_gitlab_tokens_from_git_info(getattr(obj_in, "git_info", None))
         if tokens_to_save:
-            import asyncio
-            async def _do_save():
-                return await save_git_token.save_gitlab_tokens(
-                    username=getattr(obj_in, "user_name", None) or getattr(updated_user, "user_name", None),
-                    email=getattr(obj_in, "email", None) or getattr(updated_user, "email", None),
-                    git_info=tokens_to_save,
-                )
-            try:
-                loop = asyncio.get_running_loop()
-                future = asyncio.run_coroutine_threadsafe(_do_save(), loop)
-                ok = future.result()
-            except RuntimeError:
-                ok = asyncio.run(_do_save())
-            if not ok:
-                raise RuntimeError("Failed to save gitlab tokens to external service")
+            # Blocking call; will raise ValidationException on failure to stop subsequent logic
+            save_git_token.save_gitlab_tokens_blocking(
+                username=git_info[0]["git_login"],
+                email=git_info[0]["git_email"],
+                git_info=tokens_to_save,
+            )
+
+        # 2) run original logic first
+        updated_user = _orig_update_current_user(self, db, user=user, obj_in=obj_in, validate_git_info=True)
 
         # 3) mask gitlab tokens in DB immediately
         try:
