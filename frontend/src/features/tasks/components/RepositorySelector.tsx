@@ -147,6 +147,7 @@ export default function RepositorySelector({
       <Select
         labelInValue
         showSearch
+        allowClear
         value={selectedRepo ? { value: selectedRepo.git_repo_id, label: selectedRepo.git_repo } : undefined}
         placeholder={
           <span className="text-sx truncate h-2">{t('branches.select_repository')}</span>

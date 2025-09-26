@@ -133,6 +133,21 @@ export default function TeamEdit(props: TeamEditProps) {
     return () => window.removeEventListener('keydown', handleEsc)
   }, [handleBack, editingBotDrawerVisible])
 
+  useEffect(() => {
+    if (editingTeamId === 0 && initialTeam) {
+      setUnsavedPrompts(prev => {
+        if (Object.keys(prev).length > 0) {
+          return prev
+        }
+        const next: Record<string, string> = {}
+        initialTeam.bots.forEach(bot => {
+          next[`prompt-${bot.bot_id}`] = bot.bot_prompt || ''
+        })
+        return next
+      })
+    }
+  }, [editingTeamId, initialTeam])
+
   // 不同 Mode 的“说明”和“边界”，均包含文字与图片（国际化）
   const MODE_INFO = useMemo(() => {
     // i18n keys
@@ -496,31 +511,36 @@ export default function TeamEdit(props: TeamEditProps) {
               {t('team.leader')} <span className="text-red-400">*</span>
             </label>
             <Select
+              showSearch
               value={leaderBotId ?? undefined}
               onChange={onLeaderChange}
               placeholder={t('team.select_leader')}
               suffixIcon={<DownOutlined className="text-text-secondary" />}
+              optionFilterProp="title"
+              filterOption={(input, option) => {
+                const searchText = typeof option?.title === 'string'
+                  ? option.title
+                  : ''
+                return searchText.toLowerCase().includes(input.toLowerCase())
+              }}
               notFoundContent={
-                bots.length === 0 ? (
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<PlusOutlined />}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => {
-                      e.stopPropagation()
-                      handleCreateBot()
-                    }}
-                  >
-                    {t('bots.new_bot')}
-                  </Button>
-                ) : (
-                  <div className="text-sm text-text-muted">Select Bots</div>
-                )
+                <Button
+                  type="primary"
+                  size="small"
+                  icon={<PlusOutlined />}
+                  onMouseDown={e => e.preventDefault()}
+                  onClick={e => {
+                    e.stopPropagation()
+                    handleCreateBot()
+                  }}
+                >
+                  {t('bots.new_bot')}
+                </Button>
               }
               className="w-full"
               options={leaderOptions.map((b: Bot) => ({
                 value: b.id,
+                title: `${b.name} ${b.agent_name}`,
                 label: (
                   <div className="flex items-center w-full">
                     <div className="flex min-w-0 flex-1 items-center space-x-2">
@@ -568,7 +588,6 @@ export default function TeamEdit(props: TeamEditProps) {
                   </div>
                 )
               }))}
-              optionFilterProp="children"
               popupMatchSelectWidth={true}
               listHeight={250}
               menuItemSelectedIcon={null}
