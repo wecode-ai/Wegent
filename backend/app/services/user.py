@@ -82,6 +82,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         password = obj_in.password if obj_in.password else obj_in.user_name
         
         # Convert GitInfo objects to dictionaries and validate git info
+        git_info = []
         if obj_in.git_info:
             git_info = [git_item.model_dump() for git_item in obj_in.git_info]
             git_info = self._validate_git_info(git_info)
