@@ -16,6 +16,11 @@ import { ThemeScript } from '@/features/theme/ThemeScript'
 export const metadata: Metadata = {
   title: 'WeCode AI Assistant',
   description: 'AI-powered assistant for development tasks',
+  icons: {
+    icon: '/weibo-logo.png',
+    shortcut: '/weibo-logo.png',
+    apple: '/weibo-logo.png',
+  },
 }
 
 export default function RootLayout({
