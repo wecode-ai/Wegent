@@ -18,7 +18,7 @@ import { useTranslation } from '@/hooks/useTranslation'
 interface BranchSelectorProps {
   selectedRepo: GitRepoInfo | null
   selectedBranch: GitBranch | null
-  handleBranchChange: (branch: GitBranch) => void
+  handleBranchChange: (branch: GitBranch | null) => void
   disabled: boolean
 }
 
@@ -36,6 +36,7 @@ export default function BranchSelector({
   const [loading, setLoading] = useState<boolean>(false)
   // 已用 antd message.error 统一错误提示，无需本地 error 状态
   const [error, setError] = useState<string | null>(null)
+  const [userCleared, setUserCleared] = useState(false)
   const { selectedTaskDetail } = useTaskContext()
 
   // antd Select 不需要 dropdownDirection
@@ -56,6 +57,7 @@ export default function BranchSelector({
         if (!ignore) {
           setBranches(data)
           setError(null)
+          setUserCleared(false)
         }
       })
       .catch((err) => {
@@ -74,6 +76,7 @@ export default function BranchSelector({
   // Automatically set branch based on selectedTask
   useEffect(() => {
     if (!branches || branches.length === 0) return
+    if (userCleared) return
     if (
       selectedTaskDetail &&
       'branch_name' in selectedTaskDetail &&
@@ -90,7 +93,11 @@ export default function BranchSelector({
       handleBranchChange(branches[0])
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail, branches])
+  }, [selectedTaskDetail, branches, userCleared])
+
+  useEffect(() => {
+    setUserCleared(false)
+  }, [selectedRepo, selectedTaskDetail?.branch_name])
 
   // 状态合并
   const showLoading = loading
@@ -115,9 +122,14 @@ export default function BranchSelector({
 
   // antd Select onChange
   const handleChange = (value: { value: string; label: React.ReactNode } | undefined) => {
-    if (!value) return
+    if (!value) {
+      setUserCleared(true)
+      handleBranchChange(null)
+      return
+    }
     const branch = branches.find(b => b.name === value.value)
     if (branch) {
+      setUserCleared(false)
       handleBranchChange(branch)
     }
   }
@@ -128,6 +140,7 @@ export default function BranchSelector({
       <Select
         labelInValue
         showSearch
+        allowClear
         value={selectedBranch ? { value: selectedBranch.name, label: selectedBranch.name + (selectedBranch.default ? ' (default)' : '') } : undefined}
         placeholder={
           <span className="text-sx truncate h-2">{t('branches.select_branch')}</span>

@@ -172,9 +172,14 @@ button:focus-visible {
   width: calc(100% - 8px);
 }
 
-.repository-selector-dropdown .ant-select-item-option-active,
 .repository-selector-dropdown .ant-select-item-option-selected {
   background-color: rgb(var(--color-bg-muted)) !important;
+  color: rgb(var(--color-text-primary)) !important;
+}
+
+.repository-selector-dropdown .ant-select-item-option-active:not(.ant-select-item-option-selected) {
+  background-color: rgb(var(--color-primary) / 0.15) !important;
+  color: rgb(var(--color-text-primary)) !important;
 }
 
 .repository-selector-dropdown .ant-select-item-empty {
