@@ -12,6 +12,7 @@ import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.us
 import wecode.api.user_service_patch    # noqa: F401  patch app.services.user without modifying source
 import wecode.api.models_endpoint_patch # noqa: F401  patch app.api.endpoints.models to enforce admin-only endpoints
 import wecode.api.agents_endpoint_patch # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
+import wecode.api.oidc_endpoint_patch   # noqa: F401  patch app.api.endpoints.oidc OIDC callback for wecode-specific git_info handling
 
 internal_router = APIRouter(prefix="/internal")
 
