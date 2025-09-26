@@ -5,7 +5,7 @@
 'use client'
 
 import React from 'react'
-import { Drawer, Form, Input, Button } from 'antd'
+import { Drawer, Form, Input, Button, Alert, Tooltip } from 'antd'
 import type { MessageInstance } from 'antd/es/message/interface'
 import { teamApis } from '@/apis/team'
 import { useTranslation } from 'react-i18next'
@@ -61,6 +61,11 @@ function PromptEdit({
   const { t } = useTranslation('common')
   const [form] = Form.useForm()
   const [loading, setLoading] = React.useState(false)
+  const drawerTitle = React.useMemo(() => {
+    if (isNewTeam) return t('team.prompts_drawer_title_new')
+    if (team) return t('team.prompts_drawer_title_existing', { name: team.name })
+    return t('team.prompts_drawer_title_generic')
+  }, [isNewTeam, team, t])
 
   const handleBack = React.useCallback(() => {
     onClose()
@@ -82,26 +87,47 @@ function PromptEdit({
           bot_prompt: unsavedPrompts[`prompt-${numericBotId}`] || '',
           name: botDetails?.name || `Bot ID: ${botId}`,
           isLeader: numericBotId === leaderBotId,
+          basePrompt: botDetails?.system_prompt || '',
         };
       });
     } else if (!team) {
       return [];
     } else {
-      // 处理已有团队的情况
-      return team.bots
-        .map(teamBot => {
-          const botDetails = allBots.find(b => b.id === teamBot.bot_id)
-          return {
-            ...teamBot,
-            name: botDetails?.name || `Bot ID: ${teamBot.bot_id}`,
-            isLeader: teamBot.role === 'leader',
-          }
-        })
-        .sort((a, b) => {
-          if (a.isLeader && !b.isLeader) return -1
-          if (!a.isLeader && b.isLeader) return 1
-          return 0
-        })
+      // 处理已有团队的情况，包含未保存的新 Bot
+      const selectedIds = Array.isArray(selectedBotKeys)
+        ? (selectedBotKeys as React.Key[]).map(key => Number(key)).filter(id => !Number.isNaN(id))
+        : []
+
+      const orderedIds: number[] = []
+      if (leaderBotId !== null) {
+        orderedIds.push(leaderBotId)
+      }
+      selectedIds.forEach(id => {
+        if (!orderedIds.includes(id)) {
+          orderedIds.push(id)
+        }
+      })
+      team.bots.forEach(teamBot => {
+        if (!orderedIds.includes(teamBot.bot_id)) {
+          orderedIds.push(teamBot.bot_id)
+        }
+      })
+
+      return orderedIds.map(botId => {
+        const teamBot = team.bots.find(b => b.bot_id === botId)
+        const botDetails = allBots.find(b => b.id === botId)
+        const promptKey = `prompt-${botId}`
+        const promptValue = (unsavedPrompts?.[promptKey] ?? teamBot?.bot_prompt ?? '')
+
+        return {
+          bot_id: botId,
+          bot_prompt: promptValue,
+          name: botDetails?.name || (teamBot ? `Bot ID: ${teamBot.bot_id}` : `Bot ID: ${botId}`),
+          isLeader: (teamBot?.role === 'leader') || botId === leaderBotId,
+          basePrompt: botDetails?.system_prompt || '',
+          role: teamBot?.role,
+        }
+      })
     }
   }, [team, allBots, isNewTeam, selectedBotKeys, leaderBotId, unsavedPrompts])
 
@@ -138,26 +164,43 @@ function PromptEdit({
     try {
       setLoading(true)
       const values = await form.validateFields()
+      const existingBotIds = team ? team.bots.map(bot => bot.bot_id) : []
+      const currentBotIds = teamBotsWithDetails.map(bot => bot.bot_id)
+      const structureChanged =
+        currentBotIds.length !== existingBotIds.length ||
+        currentBotIds.some(id => !existingBotIds.includes(id)) ||
+        existingBotIds.some(id => !currentBotIds.includes(id))
+      const existingLeaderId = team?.bots.find(b => b.role === 'leader')?.bot_id ?? null
+      const leaderChanged = (leaderBotId ?? null) !== (existingLeaderId ?? null)
+      const shouldPersistLocally = isNewTeam || structureChanged || leaderChanged
+
+      const collectPrompts = () => {
+        const newPrompts: Record<string, string> = {}
+        teamBotsWithDetails.forEach(bot => {
+          const key = `prompt-${bot.bot_id}`
+          const value = (values[key] ?? '').trim()
+          newPrompts[key] = value
+        })
+        return newPrompts
+      }
       
-      if (isNewTeam) {
-        // 处理新团队的情况，保存到unsavedPrompts
+      if (shouldPersistLocally) {
         if (setUnsavedPrompts) {
-          const newPrompts: Record<string, string> = {}
-          teamBotsWithDetails.forEach(bot => {
-            newPrompts[`prompt-${bot.bot_id}`] = values[`prompt-${bot.bot_id}`] || ''
-          })
-          setUnsavedPrompts(newPrompts)
-          message.success('Prompts saved! They will be applied when you create the team.')
+          setUnsavedPrompts(collectPrompts())
         }
+        message.success(t('team.prompts_save_success'))
         onClose()
-      } else if (team) {
+        return
+      }
+
+      if (team) {
         // 处理已有团队的情况
         const updatedBots: TeamBot[] = team.bots.map(teamBot => ({
           ...teamBot,
           bot_prompt: values[`prompt-${teamBot.bot_id}`] || '',
         }))
 
-        const response = await teamApis.updateTeam(team.id, {
+        await teamApis.updateTeam(team.id, {
           name: team.name,
           workflow: team.workflow,
           bots: updatedBots,
@@ -170,11 +213,11 @@ function PromptEdit({
         // 注意：这里我们不需要更新全局bots，因为bot_prompt是team特有的属性
         // 但如果将来需要同步其他bot属性，可以在这里添加
 
-        message.success('Prompts updated successfully!')
+        message.success(t('team.prompts_update_success'))
         onClose()
       }
     } catch (error) {
-      message.error('Failed to update prompts.')
+      message.error(t('team.prompts_update_error'))
     } finally {
       setLoading(false)
     }
@@ -198,22 +241,45 @@ function PromptEdit({
         </Button>
       </div>
 
-      <h2 className="text-lg font-semibold mb-4">
-        {isNewTeam ? 'New Team Prompts' : team ? `Team '${team.name}'` : 'Team Prompts'}
+      <h2 className="text-lg font-semibold mb-3">
+        {drawerTitle}
       </h2>
+      <Alert
+        type="info"
+        showIcon
+        message={t('team.prompts_scope_hint')}
+        description={t('team.prompts_scope_sub')}
+        className="mb-4"
+      />
       <Form form={form} layout="vertical" className="flex-grow overflow-y-auto custom-scrollbar pr-4">
         {teamBotsWithDetails.map(bot => (
           <Form.Item
             key={bot.bot_id}
             label={
-              <span className="font-medium">
-                {bot.name}
-                {bot.isLeader && <span className="text-gray-400 ml-2 font-semibold">(Leader)</span>}
-              </span>
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">
+                  {bot.name}
+                  {bot.isLeader && <span className="text-gray-400 ml-2 font-semibold">(Leader)</span>}
+                </span>
+                {bot.basePrompt && (
+                  <Tooltip
+                    title={
+                      <div className="max-w-xs whitespace-pre-wrap text-xs leading-5">
+                        {bot.basePrompt}
+                      </div>
+                    }
+                    overlayStyle={{ maxWidth: 360 }}
+                  >
+                    <Button type="link" size="small" className="!px-0">
+                      {t('team.prompts_base_button')}
+                    </Button>
+                  </Tooltip>
+                )}
+              </div>
             }
             name={`prompt-${bot.bot_id}`}
           >
-            <Input.TextArea rows={4} placeholder={`Enter Team prompt for every bot work better`} />
+            <Input.TextArea rows={4} placeholder={t('team.prompts_placeholder')} />
           </Form.Item>
         ))}
       </Form>
