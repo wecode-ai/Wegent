@@ -85,6 +85,8 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if obj_in.git_info:
             git_info = [git_item.model_dump() for git_item in obj_in.git_info]
             git_info = self._validate_git_info(git_info)
+            if obj_in.email is None:
+                obj_in.email = git_info[0]["git_email"]
 
         # Check if user already exists
         existing_user = db.query(User).filter(
@@ -141,6 +143,8 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             git_info = [git_item.model_dump() for git_item in obj_in.git_info]
             if validate_git_info:
                 git_info = self._validate_git_info(git_info)
+                if user.email is None or user.email == '':
+                    user.email = git_info[0]["git_email"]
             user.git_info = git_info
         
         if obj_in.password:

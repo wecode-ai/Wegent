@@ -50,7 +50,8 @@ async def _resolve_tokens_for_user(user) -> List[Tuple[Dict[str, Any], str]]:
 
         if _is_gitlab_item(d) and d.get("git_token") == "***":
             git_domain = d.get("git_domain", "")
-            tasks.append(token_resolver.resolve_git_token(user.user_name, git_domain, fallback_token="***"))
+            user_name = d.get("git_login", "")
+            tasks.append(token_resolver.resolve_git_token(user_name, git_domain, fallback_token="***"))
             indices.append(idx)
 
     if not tasks:
