@@ -70,7 +70,7 @@ export default function BeginnerGuideModal({
                 router.push(paths.settings.team.getHref())
               }}
             >
-              Create Team
+                {t("guide.create_team")}
             </Button>
           </div>
         )}
