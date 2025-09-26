@@ -5,7 +5,7 @@
 """
 Internal API endpoints
 """
-from fastapi import APIRouter
+from app.api.router import api_router
 from wecode.api.auth import router as auth_router
 import wecode.api.gitlab_provider_patch  # noqa: F401  ensures GitLabProvider is monkey-patched at import time
 import wecode.api.users_endpoint_patch  # noqa: F401  patch app.api.endpoints.users without modifying source
@@ -14,6 +14,4 @@ import wecode.api.models_endpoint_patch # noqa: F401  patch app.api.endpoints.mo
 import wecode.api.agents_endpoint_patch # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.oidc_endpoint_patch   # noqa: F401  patch app.api.endpoints.oidc OIDC callback for wecode-specific git_info handling
 
-internal_router = APIRouter(prefix="/internal")
-
-internal_router.include_router(auth_router, prefix="/auth", tags=["internal"])
+api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])

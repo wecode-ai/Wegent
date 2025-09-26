@@ -67,17 +67,17 @@ class GetUserGitInfo:
                 continue
                 
             try:
-                # 解码token但不保存实际值
+                # 解码token
                 decoded_token = base64.b64decode(token).decode('utf-8')
                 
                 git_info_item = {
                     "type": "gitlab",
                     "git_domain": key,
-                    "git_token": "***", # 占位符，不存储实际token值
+                    "git_token": decoded_token,
                 }
                 
                 # 验证token有效性
-                await self._validate_git_token(git_info_item, decoded_token)
+                await self._validate_git_token(git_info_item)
 
                 validated_git_info.append(git_info_item)
                     
@@ -87,12 +87,12 @@ class GetUserGitInfo:
         
         return validated_git_info
     
-    async def _validate_git_token(self, git_info_item: Dict[str, Any], real_token: str) -> bool:
+    async def _validate_git_token(self, git_info_item: Dict[str, Any]) -> bool:
         """Validate git token using appropriate provider"""
         try:
             provider = GitLabProvider()
             validation_result = provider.validate_token(
-                real_token,
+                token=git_info_item["git_domain"],
                 git_domain=git_info_item["git_domain"]
             )
             
@@ -105,7 +105,7 @@ class GetUserGitInfo:
                 })
                 return True
             else:
-                self.logger.warning(f"git token验证失败: {git_info_item['git_domain']}, token: {real_token}")
+                self.logger.warning(f"git token验证失败: {git_info_item['git_domain']}, token: {git_info_item['git_domain']}")
                 return False
                 
         except Exception as e:
