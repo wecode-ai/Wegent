@@ -506,6 +506,22 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         items = query.order_by(Task.created_at.desc()).offset(skip).limit(limit).all()
         
         return items, total
+    def get_user_tasks_by_title_with_pagination(
+        self, db: Session, *, user_id: int, title: str, skip: int = 0, limit: int = 100
+    ) -> Tuple[List[Task], int]:
+        """
+        根据标题模糊搜索当前用户的任务列表（分页），排除 DELETE 状态
+        """
+        query = db.query(Task).filter(
+            Task.user_id == user_id,
+            Task.status != TaskStatus.DELETE,
+            Task.title.ilike(f"%{title}%")
+        )
+
+        total = query.with_entities(func.count(Task.id)).scalar()
+        items = query.order_by(Task.created_at.desc()).offset(skip).limit(limit).all()
+
+        return items, total
 
     def get_task_by_id(
         self, db: Session, *, task_id: int, user_id: int, include_relations: bool = False
