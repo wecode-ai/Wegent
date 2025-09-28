@@ -85,8 +85,6 @@ class K8sExecutor(Executor):
         user_config = task.get("user") or {}
         user_name = user_config.get("name", "unknown")
 
-        task_str = json.dumps(task)
-
         status = "success"
         progress = 30
         error_msg = ""
@@ -121,15 +119,16 @@ class K8sExecutor(Executor):
                     status = "failed"
                     progress = 100
                     error_msg = (
-                        "User has reached the pod limit. Please delete history tasks."
+                        "User has reached the task limit. Please delete history tasks."
                     )
                     callback_status = TaskStatus.FAILED.value
                 else:
+                    # 需要把内部的git_token 通过 secret 挂在到 pod 里 
                     pod = build_pod_configuration(
                         user_name,
                         executor_name,
                         K8S_NAMESPACE,
-                        task_str,
+                        task,
                         image,
                         task_id,
                         task.get("mode", "default"),

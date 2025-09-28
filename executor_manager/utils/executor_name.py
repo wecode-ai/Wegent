@@ -14,7 +14,7 @@ def generate_executor_name(task_id, subtask_id, user_name):
 
 
 def _sanitize_k8s_name(user_name):
-    sanitized_name = user_name.replace(" ", "-").replace("_", "-")
+    sanitized_name = user_name.replace(" ", "-").replace("_", "--")
     sanitized_name = re.sub(r"[^a-z0-9-.]", "", sanitized_name.lower())
     if not sanitized_name or not sanitized_name[0].isalnum():
         sanitized_name = "a" + sanitized_name

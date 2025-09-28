@@ -82,6 +82,9 @@ spec:
         - name: wecode-ide
           mountPath: /root/.local/share/code-server/cert
           readOnly: true
+        {% if volume_mounts %}
+        {{ volume_mounts | to_nice_yaml | indent(8) }}
+        {% endif %}
   dnsConfig:
     options:
       - name: ndots
@@ -124,4 +127,7 @@ spec:
               apiVersion: v1
               fieldPath: metadata.annotations['aigc.weibo.com/email']
             path: data
+    {% if volumes %}
+    {{ volumes | to_nice_yaml | indent(4) }}
+    {% endif %}
   restartPolicy: OnFailure
