@@ -37,6 +37,7 @@ wegent-executor-manager:
     - changes:
       - executor_manager/**/*
       - wecode/docker/executor_manager/**/*
+      - shared/**/*
 
 trigger_update_manifest_log:
     stage: production
@@ -67,6 +68,7 @@ wegent-executor:
     - changes:
       - executor/**/*
       - wecode/docker/executor/**/*
+      - shared/**/*
 
 trigger_update_manifest_log:
     stage: production

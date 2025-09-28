@@ -34,7 +34,7 @@ def clone_repo(project_url, branch, project_path, user_name=None, token=None):
         - On success: (True, None)
         - On failure: (False, error_message)
     """
-    if token is None:
+    if  not token or token == "***":
         token = get_git_token_from_url(project_url)
     if user_name is None:
         user_name = "token"
