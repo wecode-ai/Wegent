@@ -34,12 +34,12 @@ export default function BranchSelector({
   const { message } = App.useApp()
   const [branches, setBranches] = useState<GitBranch[]>([])
   const [loading, setLoading] = useState<boolean>(false)
-  // 已用 antd message.error 统一错误提示，无需本地 error 状态
+      // Used antd message.error for unified error prompt, no need for local error state
   const [error, setError] = useState<string | null>(null)
   const [userCleared, setUserCleared] = useState(false)
   const { selectedTaskDetail } = useTaskContext()
 
-  // antd Select 不需要 dropdownDirection
+      // antd Select does not need dropdownDirection
   const selectRef = useRef(null)
 
   // Fetch branch list
@@ -99,15 +99,15 @@ export default function BranchSelector({
     setUserCleared(false)
   }, [selectedRepo, selectedTaskDetail?.branch_name])
 
-  // 状态合并
+      // State merging
   const showLoading = loading
   const showError = !!error
   const showNoBranch = !showLoading && !showError && branches.length === 0
 
-  // 不渲染（无分支且无选中且无loading/error）
+      // Do not render (no branches, no selection, and no loading/error)
   if (!selectedBranch && branches.length === 0 && !showLoading && !showError) return null
 
-  // 构造分支选项
+      // Construct branch options
   const branchOptions = branches.map(branch => ({
     label: (
       <span>
@@ -172,7 +172,7 @@ export default function BranchSelector({
             <div className="px-3 py-2 text-sm" style={{ color: 'rgb(var(--color-error))' }}>
               <FiGitBranch className="w-4 h-4 mr-2" />
               {error}
-              {/* antd message.error 已全局提示 */}
+              {/* antd message.error is globally prompted */}
             </div>
           ) : showNoBranch ? (
             <div className="px-3 py-2 text-sm text-text-muted">

@@ -24,15 +24,15 @@ export default function LoginForm() {
     password: 'admin'
   })
   const [showPassword, setShowPassword] = useState(false)
-  // 已用 antd message.error 统一错误提示，无需本地 error 状态
+      // Used antd message.error for unified error prompt, no need for local error state
   const [isLoading, setIsLoading] = useState(false)
 
-  // 获取登录模式配置
+      // Get login mode configuration
   const loginMode = process.env.NEXT_PUBLIC_LOGIN_MODE || 'all'
   const showPasswordLogin = loginMode === 'password' || loginMode === 'all'
   const showOidcLogin = loginMode === 'oidc' || loginMode === 'all'
 
-  // 获取 OIDC 登录按钮文本
+      // Get OIDC login button text
   const oidcLoginText = process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || t('login.oidc_login')
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -41,7 +41,7 @@ export default function LoginForm() {
       ...prev,
       [name]: value
     }))
-    // 已用 antd message.error 统一错误提示，无需本地 error 状态
+        // Used antd message.error for unified error prompt, no need for local error state
   }
 
   const { user, refresh, isLoading: userLoading, login } = useUser()
@@ -59,7 +59,7 @@ export default function LoginForm() {
       return
     }
     setIsLoading(true)
-    // 已用 antd message.error 统一错误提示，无需本地 error 状态
+        // Used antd message.error for unified error prompt, no need for local error state
 
     try {
       await login({
@@ -76,12 +76,12 @@ export default function LoginForm() {
 
   return (
     <div className="space-y-6">
-      {/* 语言切换器 */}
+      {/* Language switcher */}
       <div className="absolute top-4 right-4 flex items-center gap-3">
         <ThemeToggle />
         <LanguageSwitcher />
       </div>
-      {/* 密码登录表单 */}
+      {/* Password login form */}
       {showPasswordLogin && (
         <form className="space-y-6" onSubmit={handleSubmit}>
           <div>
@@ -133,7 +133,7 @@ export default function LoginForm() {
             </div>
           </div>
 
-          {/* 错误提示已用 antd message 统一，不再本地渲染 */}
+          {/* Error prompts are unified with antd message, no longer rendered locally */}
 
           <div>
             <Button
@@ -157,14 +157,14 @@ export default function LoginForm() {
             </Button>
           </div>
 
-          {/* 显示测试账号信息 */}
+          {/* Show test account info */}
           <div className="mt-6 text-center text-xs text-text-muted">
             {t('login.test_account')}
           </div>
         </form>
       )}
 
-      {/* 分隔线和第三方登录 - 只在同时显示两种登录方式时显示 */}
+      {/* Divider and third-party login - only shown when both login modes are displayed */}
       {showPasswordLogin && showOidcLogin && (
         <div className="mt-6">
           <div className="relative">
@@ -178,7 +178,7 @@ export default function LoginForm() {
         </div>
       )}
 
-      {/* OIDC 登录 */}
+      {/* OIDC login */}
       {showOidcLogin && (
         <div className={showPasswordLogin ? "mt-6" : ""}>
           <div className="grid grid-cols-1 gap-3">

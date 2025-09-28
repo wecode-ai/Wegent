@@ -33,7 +33,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       const token = getToken()
       if (!token) {
         router.replace(loginPath)
-        // 不渲染内容，等待跳转
+                // Do not render content, wait for redirect
         return
       }
     }
@@ -51,6 +51,6 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     )
   }
 
-  // 校验通过后再渲染页面内容
+      // Render page content after validation passes
   return <>{children}</>
 }

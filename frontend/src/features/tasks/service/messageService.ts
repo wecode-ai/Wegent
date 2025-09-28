@@ -7,8 +7,8 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
 
 /**
  * Send message:
- * - 若传入 task_id，则直接调用 /api/tasks/{task_id} 发送消息
- * - 若未传入 task_id，则先创建任务 (/api/tasks) 获取 task_id，再调用 /api/tasks/{task_id} 发送消息
+ * - If task_id is provided, directly call /api/tasks/{task_id} to send the message
+ * - If task_id is not provided, create a task (/api/tasks) to get task_id, then call /api/tasks/{task_id} to send the message
  */
 export async function sendMessage(params: {
   message: string
@@ -24,12 +24,12 @@ export async function sendMessage(params: {
     return { error: 'Message is empty', newTask: null }
   }
 
-  // 若没有 task_id，则需要完整上下文用于首次发送
+    // If there is no task_id, a complete context is required for the first send
   if ((!task_id || !Number.isFinite(task_id)) && (!team)) {
     return { error: 'Please select Team, repository and branch', newTask: null }
   }
 
-  // 统一委托给 taskApis.sendTaskMessage（内部负责是否先创建任务）
+    // Unified delegation to taskApis.sendTaskMessage (internally handles whether to create a task first)
   const payload = {
     task_id: Number.isFinite(task_id as number) ? (task_id as number) : undefined,
     message: trimmed,

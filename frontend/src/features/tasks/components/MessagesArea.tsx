@@ -27,7 +27,7 @@ const CopyButton = ({ content, className }: { content: string, className?: strin
   const { t } = useTranslation();
 
   const handleCopy = async () => {
-    // 优先使用 Clipboard API
+        // Prefer using Clipboard API
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       try {
         await navigator.clipboard.writeText(content);
@@ -39,7 +39,7 @@ const CopyButton = ({ content, className }: { content: string, className?: strin
       }
     }
 
-    // 降级方案：使用 document.execCommand
+        // Fallback: use document.execCommand
     try {
       const textarea = document.createElement('textarea');
       textarea.value = content;
@@ -77,7 +77,7 @@ const CopyButton = ({ content, className }: { content: string, className?: strin
   );
 }
 
-// 气泡工具栏：支持复制按钮与可扩展的其它工具按钮
+    // Bubble toolbar: supports copy button and extensible tool buttons
 const BubbleTools = ({
   contentToCopy,
   tools = [],
@@ -120,10 +120,10 @@ export default function MessagesArea() {
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
 
-    // 只有当任务存在且未完成时才进行定时刷新
+        // Only auto-refresh when the task exists and is not completed
     if (selectedTaskDetail?.id && selectedTaskDetail.status !== 'COMPLETED' && selectedTaskDetail.status !== 'FAILED' && selectedTaskDetail.status !== 'CANCELLED') {
       intervalId = setInterval(() => {
-        refreshSelectedTaskDetail(true); // 这是自动刷新
+        refreshSelectedTaskDetail(true); // This is auto-refresh
       }, 5000);
     }
 
@@ -263,19 +263,19 @@ export default function MessagesArea() {
                               <div className="text-sm">
                                 <div className="w-full" style={{ background: 'transparent' }}>
                                   {(() => {
-                                    // ★ 规范化：如果 result 是一个完整的 fenced code block，就解包
+                                        // ★ Normalize: if result is a complete fenced code block, unpack it
                                     const normalizedResult = (() => {
                                       const s = (result ?? '').trim();
 
-                                      // 只匹配“整串都是 fenced block”的情况：
-                                      // ```markdown\n...\n```  或 ```md\n...\n```  或 ```\n...\n```
+                                          // Only match the case where the entire string is a fenced block:
+                                          // ```markdown\n...\n``` or ```md\n...\n``` or ```\n...\n```
                                       const m = s.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/);
                                       if (m) return m[1];
 
                                       return s;
                                     })();
 
-                                    // ★ 锚定进度条匹配，避免误伤正文里提到的标记
+                                        // ★ Anchor progress bar matching to avoid false positives in main text
                                     const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/);
                                     if (progressMatch) {
                                       const status = progressMatch[1];
@@ -302,7 +302,7 @@ export default function MessagesArea() {
                                           style={{ background: 'transparent' }}
                                           wrapperElement={{ 'data-color-mode': theme }}
                                         />
-                                        {/* ★ 顶部悬浮工具栏：复制 + 可扩展工具 */}
+                                        {/* ★ Top floating toolbar: copy + extensible tools */}
                                         <BubbleTools
                                           contentToCopy={`${prompt ? (prompt + '\n\n') : ''}${normalizedResult}`}
                                           tools={[
@@ -311,7 +311,7 @@ export default function MessagesArea() {
                                               title: t('messages.download') || 'Download',
                                               icon: <FiDownload className="w-4 h-4 text-gray-400 hover:text-white" />,
                                               onClick: () => {
-                                                // 简易下载：将内容作为文件下载
+                                                    // Simple download: save content as file
                                                 const blob = new Blob([`${normalizedResult}`], { type: 'text/plain;charset=utf-8' });
                                                 const url = URL.createObjectURL(blob);
                                                 const a = document.createElement('a');
@@ -376,7 +376,7 @@ export default function MessagesArea() {
                     // Plain text
                     return (
                       <div key={idx} className="group pb-8">
-                        {/* 仅在首行渲染工具栏，复制整条消息 */}
+                        {/* Only render toolbar on the first line, copy the entire message */}
                         {idx === 0 && (
                           <BubbleTools
                             contentToCopy={msg.content}

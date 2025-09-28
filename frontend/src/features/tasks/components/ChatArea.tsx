@@ -30,7 +30,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
 
   const [taskInputMessage, setTaskInputMessage] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  // 已用 antd message.error 统一错误提示，无需本地 error 状态
+  // Unified error prompt using antd message.error, no local error state needed
   const [error, setError] = useState('')
 
   const scrollContainerRef = useRef<HTMLDivElement>(null)
@@ -73,14 +73,14 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
         const params = new URLSearchParams(Array.from(searchParams.entries()))
         params.set('taskId', String(newTask.task_id))
         router.push(`?${params.toString()}`)
-        // 主动刷新任务列表和任务详情
+        // Actively refresh task list and task details
         refreshTasks();
-        setSelectedTask({ id: newTask.task_id } as any); // 只传 id，详情组件会自动拉取
+        setSelectedTask({ id: newTask.task_id } as any); // Only pass id, detail component will auto-fetch
       } else if (selectedTaskDetail?.id) {
-        // 如果是追加消息到现有任务，也刷新任务详情
+        // If appending message to existing task, also refresh task details
         refreshTasks();
-        // 主动刷新任务详情，确保能够获取最新的任务状态和消息
-        refreshSelectedTaskDetail(false); // false 表示这不是自动刷新，允许获取已完成任务的详情
+        // Actively refresh task details to ensure latest status and messages
+        refreshSelectedTaskDetail(false); // false means not auto-refresh, allow fetching completed task details
       }
       // Manually trigger scroll to bottom after sending message
       setTimeout(scrollToBottom, 0)
@@ -120,7 +120,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
           {/* Input Area */}
           <div className="w-full max-w-2xl mx-auto px-4">
             {/* Error Message */}
-            {/* 错误提示已用 antd message 统一，不再本地渲染 */}
+            {/* Error prompt unified with antd message, no local rendering */}
             {/* Chat Input */}
             <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface">
               <ChatInput
@@ -180,7 +180,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
       ) : (
         <div className="w-full max-w-2xl flex flex-col justify-center h-full">
           {/* Error Message */}
-          {/* 错误提示已用 antd message 统一，不再本地渲染 */}
+          {/* Error prompt unified with antd message, no local rendering */}
           {/* Chat Input */}
           <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface">
             <ChatInput

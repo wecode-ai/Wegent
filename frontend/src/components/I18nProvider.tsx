@@ -20,12 +20,12 @@ export default function I18nProvider({ children }: I18nProviderProps) {
       try {
         await initI18n()
         
-        // 从 localStorage 读取用户的语言偏好
+                // Read user's language preference from localStorage
         const savedLanguage = localStorage.getItem('preferred-language')
         if (savedLanguage && supportedLanguages.includes(savedLanguage)) {
           await i18next.changeLanguage(savedLanguage)
         } else {
-          // 尝试检测浏览器语言
+                      // Try to detect browser language
           const browserLanguage = navigator.language
           const matchedLanguage = supportedLanguages.find(lang =>
             browserLanguage.startsWith(lang) || browserLanguage === lang
@@ -39,7 +39,7 @@ export default function I18nProvider({ children }: I18nProviderProps) {
         setIsInitialized(true)
       } catch (error) {
         console.error('Failed to initialize i18n:', error)
-        // 即使初始化失败也要设置为 true，避免无限加载
+                    // Even if initialization fails, set to true to avoid infinite loading
         setIsInitialized(true)
       }
     }

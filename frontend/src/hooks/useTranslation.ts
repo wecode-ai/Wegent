@@ -11,7 +11,7 @@ export function useTranslation(namespace?: string) {
   const changeLanguage = (language: string) => {
     if (supportedLanguages.includes(language)) {
       i18n.changeLanguage(language)
-      // 保存到 localStorage
+            // Save to localStorage
       localStorage.setItem('preferred-language', language)
     }
   }
@@ -29,7 +29,7 @@ export function useTranslation(namespace?: string) {
   }
 }
 
-// 语言显示名称映射
+  // Language display name mapping
 export const languageNames: Record<string, string> = {
   'ca': 'Català',
   'de': 'Deutsch',

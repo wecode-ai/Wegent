@@ -43,13 +43,13 @@ export default function LanguageSwitcher({
       
       {isOpen && (
         <>
-          {/* 背景遮罩 */}
+          {/* Background overlay */}
           <div 
             className="fixed inset-0 z-10" 
             onClick={() => setIsOpen(false)}
           />
           
-          {/* 下拉菜单 */}
+          {/* Dropdown menu */}
           <div
             className="absolute right-0 z-20 mt-2 w-48 bg-surface border border-border rounded-md shadow-lg max-h-60 overflow-y-auto"
             style={{ boxShadow: 'var(--shadow-popover)' }}

@@ -90,7 +90,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   }, [])
 
   // Automatically refresh all loaded pages every 30 seconds
-  // 只有当存在未完成的任务时才进行定时刷新
+  // Only refresh periodically when there are unfinished tasks
   useEffect(() => {
     const hasIncompleteTasks = tasks.some(task =>
       task.status !== 'COMPLETED' && task.status !== 'FAILED' && task.status !== 'CANCELLED'
@@ -112,7 +112,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
     if (!selectedTask) return
 
-    // 只有在自动刷新时才检查任务状态，手动触发时允许查看已完成的任务
+    // Only check task status during auto-refresh; manual trigger allows viewing completed tasks
     if (isAutoRefresh && selectedTaskDetail &&
       (selectedTaskDetail.status === 'COMPLETED' ||
         selectedTaskDetail.status === 'FAILED' ||
@@ -130,14 +130,14 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     if (selectedTask) {
-      refreshSelectedTaskDetail(false) // 手动选择任务，不是自动刷新
+      refreshSelectedTaskDetail(false) // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask])
 
-  // 搜索任务
+  // Search tasks
   const searchTasks = async (term: string) => {
     if (!term.trim()) {
       setIsSearchResult(false)
@@ -150,7 +150,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     try {
       const result = await taskApis.searchTasks(term, { page: 1, limit: 1000 })
       setTasks(result.items)
-      setHasMore(false) // 搜索结果不支持分页加载更多
+      setHasMore(false) // Search results do not support loading more pages
     } catch (error) {
       console.error('Failed to search tasks:', error)
     } finally {

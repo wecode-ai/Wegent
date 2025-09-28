@@ -120,7 +120,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
       maxWidth="md"
     >
       <div className="space-y-4">
-        {/* 平台选择 */}
+        {/* Platform selection */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
             {t('github.platform')}
@@ -153,7 +153,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
             </label>
           </div>
         </div>
-        {/* 域名输入 */}
+        {/* Domain input */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
             {t('github.domain')}
@@ -176,7 +176,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
             </p>
           )}
         </div>
-        {/* Token 输入 */}
+        {/* Token input */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
             {t('github.token.title')}
@@ -189,7 +189,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
         </div>
-        {/* 获取指引 */}
+        {/* Get guidance */}
         <div className="bg-surface border border-border rounded-md p-3">
           <p className="text-xs text-text-muted mb-2">
             <strong>
@@ -247,7 +247,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({
           )}
         </div>
       </div>
-      {/* 底部按钮区 */}
+      {/* Bottom button area */}
       <div className="flex space-x-3 mt-6">
         <Button
           onClick={onClose}

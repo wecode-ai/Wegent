@@ -28,7 +28,7 @@ export default function TeamList() {
   const [teams, setTeams] = useState<Team[]>([])
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  // 已用 antd message.error 统一错误提示，无需本地 error 状态
+    // Unified error prompt using antd message.error, no local error state needed
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
   const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
@@ -77,7 +77,7 @@ export default function TeamList() {
 
   const handleCreateTeam = () => {
     setPrefillTeam(null)
-    setEditingTeamId(0) // 用 0 标记新建
+    setEditingTeamId(0) // Use 0 to mark new creation
   }
 
   const handleEditTeam = (team: Team) => {
@@ -130,7 +130,7 @@ export default function TeamList() {
             <LoadingState fullScreen={false} message={t('teams.loading')} />
           ) : (
             <>
-              {/* 编辑/新建模式 */}
+              {/* Edit/New mode */}
               {isEditing ? (
                 <TeamEdit
                   teams={teams}
@@ -273,7 +273,7 @@ export default function TeamList() {
           )}
         </div>
       </div>
-      {/* 错误提示已用 antd message 统一，不再本地渲染 */}
+      {/* Error prompt unified with antd message, no local rendering */}
     </>
   )
 }
