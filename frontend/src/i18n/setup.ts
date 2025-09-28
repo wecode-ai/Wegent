@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import i18next from "i18next"
 import { initReactI18next } from "react-i18next"
 
