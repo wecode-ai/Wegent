@@ -19,6 +19,11 @@ type TaskContextType = {
   loadMore: () => void
   hasMore: boolean
   loadingMore: boolean
+  searchTerm: string
+  setSearchTerm: (term: string) => void
+  searchTasks: (term: string) => Promise<void>
+  isSearching: boolean
+  isSearchResult: boolean
 }
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined)
@@ -28,6 +33,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [taskLoading, setTaskLoading] = useState<boolean>(false)
   const [selectedTask, setSelectedTask] = useState<Task | null>(null)
   const [selectedTaskDetail, setSelectedTaskDetail] = useState<TaskDetail | null>(null)
+  const [searchTerm, setSearchTerm] = useState<string>('')
+  const [isSearching, setIsSearching] = useState<boolean>(false)
+  const [isSearchResult, setIsSearchResult] = useState<boolean>(false)
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true)
@@ -87,15 +95,15 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     const hasIncompleteTasks = tasks.some(task =>
       task.status !== 'COMPLETED' && task.status !== 'FAILED' && task.status !== 'CANCELLED'
     );
-    
+
     let interval: NodeJS.Timeout | null = null;
-    
+
     if (hasIncompleteTasks) {
       interval = setInterval(() => {
         refreshTasks()
       }, 30000)
     }
-    
+
     return () => {
       if (interval) clearInterval(interval)
     }
@@ -103,15 +111,15 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
     if (!selectedTask) return
-    
+
     // 只有在自动刷新时才检查任务状态，手动触发时允许查看已完成的任务
     if (isAutoRefresh && selectedTaskDetail &&
-        (selectedTaskDetail.status === 'COMPLETED' ||
-         selectedTaskDetail.status === 'FAILED' ||
-         selectedTaskDetail.status === 'CANCELLED')) {
+      (selectedTaskDetail.status === 'COMPLETED' ||
+        selectedTaskDetail.status === 'FAILED' ||
+        selectedTaskDetail.status === 'CANCELLED')) {
       return
     }
-    
+
     try {
       const updatedTaskDetail = await taskApis.getTaskDetail(selectedTask.id)
       setSelectedTaskDetail(updatedTaskDetail)
@@ -129,6 +137,27 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask])
 
+  // 搜索任务
+  const searchTasks = async (term: string) => {
+    if (!term.trim()) {
+      setIsSearchResult(false)
+      return refreshTasks()
+    }
+
+    setIsSearching(true)
+    setIsSearchResult(true)
+
+    try {
+      const result = await taskApis.searchTasks(term, { page: 1, limit: 1000 })
+      setTasks(result.items)
+      setHasMore(false) // 搜索结果不支持分页加载更多
+    } catch (error) {
+      console.error('Failed to search tasks:', error)
+    } finally {
+      setIsSearching(false)
+    }
+  }
+
   return (
     <TaskContext.Provider
       value={{
@@ -142,6 +171,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         loadMore,
         hasMore,
         loadingMore,
+        searchTerm,
+        setSearchTerm,
+        searchTasks,
+        isSearching,
+        isSearchResult
       }}
     >
       {children}

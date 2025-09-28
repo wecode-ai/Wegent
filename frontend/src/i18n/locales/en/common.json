@@ -199,7 +199,9 @@
     "earlier": "Earlier",
     "loading": "Loading...",
     "no_more_tasks": "No more tasks",
-    "settings": "Settings"
+    "settings": "Settings",
+    "search_results": "Search Results",
+    "no_search_results": "No matching tasks"
   },
   "settings": {
     "integrations": "Integrations",
