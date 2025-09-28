@@ -76,7 +76,9 @@
     "delete": "删除机器人",
     "no_bots": "没有可用的机器人",
     "new_bot": "新建机器人",
-    "copy": "复制机器人"
+    "copy": "复制机器人",
+    "delete_confirm_title": "确认删除",
+    "delete_confirm_message": "确定要删除这个机器人吗？此操作无法撤销。"
   },
   "bot": {
     "name": "名称",
@@ -117,11 +119,14 @@
     "chat": "发送任务",
     "delete": "删除团队",
     "copy": "复制团队",
+    "more": "更多操作",
     "no_teams": "没有可用的团队",
     "new_team": "新建团队",
     "search_placeholder": "搜索团队...",
     "no_match": "没有匹配的团队",
-    "manage": "团队设置"
+    "manage": "团队设置",
+    "delete_confirm_title": "确认删除",
+    "delete_confirm_message": "确定要删除这个团队吗？此操作无法撤销。"
   },
   "team": {
     "name": "名称",
@@ -215,7 +220,10 @@
   },
   "common": {
     "back": "返回",
-    "cancel": "取消"
+    "cancel": "取消",
+    "confirm": "确认",
+    "open_sidebar": "打开侧边栏",
+    "close_sidebar": "关闭侧边栏"
   },
   "github": {
     "error": {

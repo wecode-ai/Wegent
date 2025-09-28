@@ -35,9 +35,13 @@ export default function GitHubIntegration() {
         if (user) {
           const info = await fetchGitInfo(user)
           setGitInfo(info)
+        } else {
+          // If no user, set empty array to show the "no tokens" state
+          setGitInfo([])
         }
       } catch (e) {
         message.error(t('integrations.loading'))
+        setGitInfo([])
       } finally {
         setIsLoading(false)
       }
@@ -89,8 +93,8 @@ export default function GitHubIntegration() {
         <h2 className="text-xl font-semibold text-text-primary mb-1">{t('integrations.title')}</h2>
         <p className="text-sm text-text-muted mb-1">{t('integrations.description')}</p>
       </div>
-      <div className="bg-surface border border-border rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar">
-        {isUserLoading || isLoading ? (
+      <div className="bg-surface border border-border rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar w-full">
+        {isLoading ? (
           <LoadingState fullScreen={false} message={t('integrations.loading')} />
         ) : (
           <>

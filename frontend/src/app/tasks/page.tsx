@@ -4,13 +4,13 @@
 
 'use client'
 
-import { Suspense} from 'react'
+import { Suspense, useState } from 'react'
 import { UserProvider } from '@/features/common/UserContext'
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import UserMenu from '@/features/layout/UserMenu'
-import TaskSidebar from '@/features/tasks/components/TaskSidebar'
+import ResponsiveTaskSidebar from '@/features/tasks/components/ResponsiveTaskSidebar'
 import BeginnerGuideModal from '@/features/tasks/components/BeginnerGuideModal'
 import ChatArea from '@/features/tasks/components/ChatArea'
 import TaskParamSync from '@/features/tasks/components/TaskParamSync'
@@ -22,6 +22,9 @@ import { ThemeToggle } from '@/features/theme/ThemeToggle'
 export default function TasksPage() {
   // Team state from service
   const { teams, isTeamsLoading } = teamService.useTeams()
+  
+  // Mobile sidebar state
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
 
   return (
     <UserProvider>
@@ -37,12 +40,19 @@ export default function TasksPage() {
             teamLoading={isTeamsLoading}
           />
           <div className="flex h-screen bg-base text-text-primary">
-            {/* Left sidebar */}
-            <TaskSidebar />
+            {/* Responsive sidebar */}
+            <ResponsiveTaskSidebar 
+              isMobileSidebarOpen={isMobileSidebarOpen}
+              setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+            />
             {/* Main content area */}
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col min-w-0">
               {/* Top navigation */}
-              <TopNavigation activePage="tasks" showLogo={false}>
+              <TopNavigation 
+                activePage="tasks" 
+                showLogo={false}
+                onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+              >
                 <ThemeToggle />
                 <UserMenu />
               </TopNavigation>

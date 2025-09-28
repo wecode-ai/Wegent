@@ -25,9 +25,15 @@ export default function TabParamSync({ tabIndex, setTabIndex }: TabParamSyncProp
   useEffect(() => {
     const tab = searchParams?.get('tab')
     if (tab && tabNameToIndex.hasOwnProperty(tab)) {
-      setTabIndex(tabNameToIndex[tab])
+      const newIndex = tabNameToIndex[tab]
+      setTabIndex(newIndex)
     } else {
+      // Default to integrations tab (index 0) and update URL
       setTabIndex(0)
+      // Update URL to reflect the default tab
+      const url = new URL(window.location.href)
+      url.searchParams.set('tab', 'integrations')
+      window.history.replaceState({}, '', url.toString())
     }
   }, [searchParams, setTabIndex])
   
