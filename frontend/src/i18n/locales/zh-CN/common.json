@@ -80,11 +80,11 @@
   },
   "bot": {
     "name": "名称",
-    "name_placeholder": "代码助手",
+    "name_placeholder": "输入机器人名称",
     "agent": "执行引擎",
     "agent_select": "选择执行引擎",
     "prompt": "提示词",
-    "prompt_placeholder": "AI驱动的代码审查和辅助",
+    "prompt_placeholder": "你是一个 [身份/角色定位] 助手。\n你的角色是 [能力/专长/风格]。\n你的任务是 [要完成的具体目标]。",
     "agent_config": "智能体配置",
     "mcp_config": "MCP配置",
     "save_prompt": "保存提示词",
