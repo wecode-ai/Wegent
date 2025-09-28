@@ -7,29 +7,29 @@
 # -*- coding: utf-8 -*-
 
 """
-常量定义文件，用于Docker执行器
+Constants definition file for Docker executor
 """
 
-# 容器所有者标识
+# Container owner identifier
 CONTAINER_OWNER = "executor_manager"
 
-# Docker主机配置
+# Docker host configuration
 DEFAULT_DOCKER_HOST = "host.docker.internal"
 DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 
-# API配置
+# API configuration
 DEFAULT_API_ENDPOINT = "/api/tasks/execute"
 
-# 环境配置
+# Environment configuration
 DEFAULT_TIMEZONE = "Asia/Shanghai"
 DEFAULT_LOCALE = "en_US.UTF-8"
 
-# 挂载路径
+# Mount path
 WORKSPACE_MOUNT_PATH = "/workspace"
 
-# 任务进度状态
+# Task progress status
 DEFAULT_PROGRESS_RUNNING = 30
 DEFAULT_PROGRESS_COMPLETE = 100
 
-# 默认值
+# Default values
 DEFAULT_TASK_ID = -1
