@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useState, useCallback } from 'react'
 import { Button } from 'antd'
 import Image from 'next/image'
 import { useRouter } from 'next/navigation'
@@ -13,18 +13,30 @@ import {
   MagnifyingGlassIcon,
   PlusIcon,
   Cog6ToothIcon,
+  XMarkIcon,
 } from '@heroicons/react/24/outline'
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import TaskListSection from './TaskListSection'
 import { useTranslation } from '@/hooks/useTranslation'
 
 
-
 export default function TaskSidebar() {
   const { t } = useTranslation('common')
   const router = useRouter()
-  const { tasks, setSelectedTask, loadMore, hasMore, loadingMore } = useTaskContext()
+  const {
+    tasks,
+    setSelectedTask,
+    loadMore,
+    hasMore,
+    loadingMore,
+    searchTerm,
+    setSearchTerm,
+    searchTasks,
+    isSearching,
+    isSearchResult
+  } = useTaskContext()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm)
 
   // Grouping logic
   const groupTasksByDate = React.useMemo(() => {
@@ -63,6 +75,53 @@ export default function TaskSidebar() {
     return () => el.removeEventListener('scroll', handleScroll)
   }, [loadMore])
 
+  // 自定义debounce函数
+  const useDebounce = (callback: Function, delay: number) => {
+    const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+    
+    const debouncedFn = useCallback((...args: any[]) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
+      
+      timeoutRef.current = setTimeout(() => {
+        callback(...args)
+      }, delay)
+    }, [callback, delay])
+    
+    useEffect(() => {
+      return () => {
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current)
+        }
+      }
+    }, [])
+    
+    return debouncedFn
+  }
+
+  // 使用自定义debounce处理搜索，避免频繁请求
+  const debouncedSearch = useDebounce(async (term: string) => {
+    setSearchTerm(term)
+    await searchTasks(term)
+  }, 500)
+
+  // 处理搜索输入变化
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+    setLocalSearchTerm(value)
+    debouncedSearch(value)
+  }
+
+  // 清除搜索
+  const handleClearSearch = () => {
+    setLocalSearchTerm('')
+    setSearchTerm('')
+    searchTasks('')
+  }
+
+  // 不需要取消debounce，因为我们的自定义实现在组件卸载时会自动清理
+
   return (
       <div className="w-56 bg-surface border-r border-border flex flex-col">
         {/* Logo */}
@@ -79,17 +138,27 @@ export default function TaskSidebar() {
         </div>
 
         {/* Search */}
+        {/* Search */}
         <div className="p-3">
           <div className="relative">
             <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
             <input
               type="text"
+              value={localSearchTerm}
+              onChange={handleSearchChange}
               placeholder={t('tasks.search_placeholder')}
-              className="w-full pl-8 pr-2 py-1.5 bg-surface border border-border rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
+              className="w-full pl-8 pr-8 py-1.5 bg-surface border border-border rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
+            {localSearchTerm && (
+              <button
+                onClick={handleClearSearch}
+                className="absolute right-2 top-1/2 transform -translate-y-1/2"
+              >
+                <XMarkIcon className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
+              </button>
+            )}
           </div>
         </div>
-
         {/* New Task Button */}
         <div className="px-3 mb-3">
           <Button
@@ -109,28 +178,41 @@ export default function TaskSidebar() {
           className="flex-1 px-3 overflow-y-auto custom-scrollbar"
           ref={scrollRef}
         >
-          {tasks.length === 0 ? (
-            <div className="text-center py-8 text-xs text-text-muted">{t('tasks.no_tasks')}</div>
+          {isSearching ? (
+            <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
+          ) : tasks.length === 0 ? (
+            <div className="text-center py-8 text-xs text-text-muted">
+              {isSearchResult ? t('tasks.no_search_results') : t('tasks.no_tasks')}
+            </div>
           ) : (
             <>
-              <TaskListSection
-                tasks={groupTasksByDate.today}
-                title={t('tasks.today')}
-              />
-              <TaskListSection
-                tasks={groupTasksByDate.thisWeek}
-                title={t('tasks.this_week')}
-              />
-              <TaskListSection
-                tasks={groupTasksByDate.earlier}
-                title={t('tasks.earlier')}
-              />
+              {isSearchResult ? (
+                <TaskListSection
+                  tasks={tasks}
+                  title={t('tasks.search_results')}
+                />
+              ) : (
+                <>
+                  <TaskListSection
+                    tasks={groupTasksByDate.today}
+                    title={t('tasks.today')}
+                  />
+                  <TaskListSection
+                    tasks={groupTasksByDate.thisWeek}
+                    title={t('tasks.this_week')}
+                  />
+                  <TaskListSection
+                    tasks={groupTasksByDate.earlier}
+                    title={t('tasks.earlier')}
+                  />
+                </>
+              )}
             </>
           )}
           {loadingMore && (
             <div className="text-center py-2 text-xs text-text-muted">{t('tasks.loading')}</div>
           )}
-          {!hasMore && tasks.length > 0 && (
+          {!isSearchResult && !hasMore && tasks.length > 0 && (
             <div className="text-center py-2 text-xs text-text-muted">{t('tasks.no_more_tasks')}</div>
           )}
         </div>

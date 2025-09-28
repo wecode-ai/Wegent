@@ -167,9 +167,9 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
         """Format subtask response data"""
         formatted_subtasks = []
         
-        # 为每个子任务预先获取相邻的子任务信息
+        # Pre-fetch adjacent subtask information for each subtask
         for subtask in subtasks:
-            # 一次性查询同一任务下的所有相关子任务
+            # Query all related subtasks under the same task in one go
             related_subtasks = db.query(Subtask).filter(
                 Subtask.task_id == subtask.task_id,
             ).order_by(
@@ -196,10 +196,10 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
             
             # Build aggregated prompt
             aggregated_prompt = ""
-            # 用户输入prompt
+            # User input prompt
             if user_prompt:
                 aggregated_prompt = user_prompt
-            # 上一次subtask结果
+            # Previous subtask result
             team = db.query(Team).filter(Team.id == subtask.team_id).first()
             if previous_subtask_results != "" :
                 aggregated_prompt += f"\nPrevious execution result: {previous_subtask_results}"
@@ -240,7 +240,7 @@ class ExecutorService(BaseService[Task, SubtaskExecutorUpdate, SubtaskExecutorUp
                 agent_config_data = bot.agent_config
                 try:
                     if isinstance(bot.agent_config, dict):
-                        # 在不改变原有逻辑情况下，前后端约定使用private_model
+                        # Without changing the original logic, frontend and backend agreed to use private_model
                         private_model_name = bot.agent_config.get("private_model")
                         if isinstance(private_model_name, str) and private_model_name.strip():
                             model_row = db.query(Model).filter(Model.name == private_model_name.strip()).first()
