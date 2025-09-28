@@ -85,14 +85,14 @@ class DockerExecutor(Executor):
         Returns:
             Dict[str, Any]: Submission result with unified structure.
         """
-        # 提取任务基本信息，避免重复获取
+        # Extract basic task information to avoid repeated retrieval
         task_info = self._extract_task_info(task)
         task_id = task_info["task_id"]
         subtask_id = task_info["subtask_id"]
         user_name = task_info["user_name"]
         executor_name = task_info["executor_name"]
         
-        # 初始化执行状态
+        # Initialize execution status
         execution_status = {
             "status": "success",
             "progress": DEFAULT_PROGRESS_RUNNING,
@@ -102,19 +102,19 @@ class DockerExecutor(Executor):
         }
         
         try:
-            # 根据是否已有容器名称决定执行路径
+            # Determine execution path based on whether container name exists
             if executor_name:
                 self._execute_in_existing_container(task, execution_status)
             else:
-                # 生成新的容器名称
+                # Generate new container name
                 execution_status["executor_name"] = generate_executor_name(task_id, subtask_id, user_name)
 
                 self._create_new_container(task, task_info, execution_status)
         except Exception as e:
-            # 统一异常处理
+            # Unified exception handling
             self._handle_execution_exception(e, task_id, execution_status)
         
-        # 调用回调函数
+        # Call callback function
         self._call_callback(
             callback,
             task_id,
@@ -124,11 +124,11 @@ class DockerExecutor(Executor):
             execution_status["callback_status"]
         )
         
-        # 返回统一的结果结构
+        # Return unified result structure
         return self._create_result_response(execution_status)
     
     def _extract_task_info(self, task: Dict[str, Any]) -> Dict[str, Any]:
-        """提取任务的基本信息"""
+        """Extract basic task information"""
         task_id = task.get("task_id", DEFAULT_TASK_ID)
         subtask_id = task.get("subtask_id", DEFAULT_TASK_ID)
         user_config = task.get("user") or {}
@@ -143,20 +143,20 @@ class DockerExecutor(Executor):
         }
     
     def _execute_in_existing_container(self, task: Dict[str, Any], status: Dict[str, Any]) -> None:
-        """在已存在的容器中执行任务"""
+        """Execute task in existing container"""
         executor_name = status["executor_name"]
         port_info = self._get_container_port(executor_name)
         
-        # 发送HTTP请求到容器
+        # Send HTTP request to container
         response = self._send_task_to_container(task, DEFAULT_DOCKER_HOST, port_info)
         
-        # 处理响应
+        # Process response
         if response.json()["status"] == "success":
             status["progress"] = DEFAULT_PROGRESS_COMPLETE
             status["error_msg"] = response.json().get("error_msg", "")
     
     def _get_container_port(self, executor_name: str) -> int:
-        """获取容器的端口信息"""
+        """Get container port information"""
         port_result = get_container_ports(executor_name)
         logger.info(f"Container port info: {executor_name}, {port_result}")
         
@@ -167,32 +167,32 @@ class DockerExecutor(Executor):
         return ports[0].get("host_port")
     
     def _send_task_to_container(self, task: Dict[str, Any], host: str, port: int) -> requests.Response:
-        """发送任务到容器的API端点"""
+        """Send task to container API endpoint"""
         endpoint = f"http://{host}:{port}{DEFAULT_API_ENDPOINT}"
         logger.info(f"Sending task to {endpoint}")
         return self.requests.post(endpoint, json=task)
     
     def _create_new_container(self, task: Dict[str, Any], task_info: Dict[str, Any], status: Dict[str, Any]) -> None:
-        """创建新的Docker容器"""
+        """Create new Docker container"""
         executor_name = status["executor_name"]
         task_id = task_info["task_id"]
         
-        # 获取执行器镜像
+        # Get executor image
         executor_image = self._get_executor_image(task)
         
-        # 准备Docker命令
+        # Prepare Docker command
         cmd = self._prepare_docker_command(task, task_info, executor_name, executor_image)
         
-        # 执行Docker命令
+        # Execute Docker command
         logger.info(f"Starting Docker container for task {task_id}: {executor_name}")
         result = self.subprocess.run(cmd, check=True, capture_output=True, text=True)
         
-        # 记录容器ID
+        # Record container ID
         container_id = result.stdout.strip()
         logger.info(f"Started Docker container {executor_name} with ID {container_id}")
     
     def _get_executor_image(self, task: Dict[str, Any]) -> str:
-        """获取执行器镜像名称"""
+        """Get executor image name"""
         executor_image = task.get("executor_image", os.getenv("EXECUTOR_IMAGE", ""))
         if not executor_image:
             raise ValueError("Executor image not provided")
@@ -205,76 +205,76 @@ class DockerExecutor(Executor):
         executor_name: str,
         executor_image: str
     ) -> List[str]:
-        """准备Docker运行命令"""
+        """Prepare Docker run command"""
         task_id = task_info["task_id"]
         subtask_id = task_info["subtask_id"]
         user_name = task_info["user_name"]
         
-        # 转换任务为JSON字符串
+        # Convert task to JSON string
         task_str = json.dumps(task)
         
-        # 基本命令
+        # Basic command
         cmd = [
             "docker",
             "run",
-            "-d",  # 后台运行模式
+            "-d",  # Run in background mode
             "--name", executor_name,
-            # 添加标签用于容器管理
+            # Add labels for container management
             "--label", f"owner={CONTAINER_OWNER}",
             "--label", f"task_id={task_id}",
             "--label", f"subtask_id={subtask_id}",
             "--label", f"user={user_name}",
             "--label", f"aigc.weibo.com/team-mode={task.get("mode","default")}",
             "--label", f"subtask_next_id={task.get('subtask_next_id', '')}",
-            # 环境变量
+            # Environment variables
             "-e", f"TASK_INFO={task_str}",
             "-e", f"EXECUTOR_NAME={executor_name}",
             "-e", f"TZ={DEFAULT_TIMEZONE}",
             "-e", f"LANG={DEFAULT_LOCALE}",
             "-e", f"EXECUTOR_ENV={EXECUTOR_ENV}",
-            # 挂载
+            # Mount
             "-v", f"{DOCKER_SOCKET_PATH}:{DOCKER_SOCKET_PATH}"
         ]
         
-        # 添加工作空间挂载
+        # Add workspace mount
         self._add_workspace_mount(cmd)
         
-        # 添加网络配置
+        # Add network configuration
         self._add_network_config(cmd)
         
-        # 添加端口映射
+        # Add port mapping
         port = find_available_port()
         logger.info(f"Assigned port {port} for container {executor_name}")
         cmd.extend(["-p", f"{port}:{port}", "-e", f"PORT={port}"])
         
-        # 添加回调URL
+        # Add callback URL
         self._add_callback_url(cmd, task)
         
-        # 添加执行器镜像
+        # Add executor image
         cmd.append(executor_image)
         
         return cmd
     
     def _add_workspace_mount(self, cmd: List[str]) -> None:
-        """添加工作空间挂载配置"""
-        executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")  # 修正拼写错误
+        """Add workspace mount configuration"""
+        executor_workspace = os.getenv("EXECUTOR_WORKSPACE", "")  # Fix spelling error
         if executor_workspace:
             cmd.extend(["-v", f"{executor_workspace}:{WORKSPACE_MOUNT_PATH}"])
     
     def _add_network_config(self, cmd: List[str]) -> None:
-        """添加网络配置"""
+        """Add network configuration"""
         network = os.getenv("NETWORK", "")
         if network:
             cmd.extend(["--network", network])
     
     def _add_callback_url(self, cmd: List[str], task: Dict[str, Any]) -> None:
-        """添加回调URL配置"""
+        """Add callback URL configuration"""
         callback_url = build_callback_url(task)
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
     
     def _handle_execution_exception(self, exception: Exception, task_id: int, status: Dict[str, Any]) -> None:
-        """统一处理执行过程中的异常"""
+        """Handle exceptions during execution uniformly"""
         if isinstance(exception, subprocess.CalledProcessError):
             logger.error(f"Docker run error for task {task_id}: {exception.stderr}")
             error_msg = f"Docker run error: {exception.stderr}"
@@ -288,7 +288,7 @@ class DockerExecutor(Executor):
         status["callback_status"] = TaskStatus.FAILED.value
     
     def _create_result_response(self, status: Dict[str, Any]) -> Dict[str, Any]:
-        """创建统一的返回结果结构"""
+        """Create unified return result structure"""
         result = {
             "status": status["status"],
             "executor_name": status["executor_name"]
@@ -310,14 +310,14 @@ class DockerExecutor(Executor):
             Dict[str, Any]: Deletion result with unified structure.
         """
         try:
-            # 检查容器是否存在且归属于executor_manager
+            # Check if container exists and is owned by executor_manager
             if not check_container_ownership(executor_name):
                 return {
                     "status": "unauthorized",
                     "error_msg": f"Container '{executor_name}' is not owned by {CONTAINER_OWNER}",
                 }
 
-            # 删除容器
+            # Delete container
             return delete_container(executor_name)
         except Exception as e:
             logger.error(f"Error deleting container {executor_name}: {e}")
@@ -342,7 +342,7 @@ class DockerExecutor(Executor):
         try:
             result = get_running_task_details(label_selector)
 
-            # 维持API向后兼容性
+            # Maintain API backward compatibility
             if result["status"] == "success":
                 result["running"] = len(result.get("task_ids", []))
 
