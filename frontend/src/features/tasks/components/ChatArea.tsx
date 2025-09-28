@@ -112,13 +112,13 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
         <>
           {/* Messages Area */}
           <div ref={scrollContainerRef} className="flex-1 overflow-y-auto custom-scrollbar">
-            <div className="w-full max-w-2xl mx-auto px-4">
+            <div className="w-full max-w-2xl mx-auto px-4 sm:px-6">
               <MessagesArea />
             </div>
           </div>
 
           {/* Input Area */}
-          <div className="w-full max-w-2xl mx-auto px-4">
+          <div className="w-full max-w-2xl mx-auto px-4 sm:px-6">
             {/* Error Message */}
             {/* Error prompt unified with antd message, no local rendering */}
             {/* Chat Input */}
@@ -158,7 +158,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
             </div>
 
             {/* Bottom Controls */}
-            <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center">
+            <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center flex-wrap">
               <RepositorySelector
                 selectedRepo={selectedRepo}
                 handleRepoChange={setSelectedRepo}
@@ -218,7 +218,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
           </div>
 
           {/* Bottom Controls */}
-          <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center">
+          <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center flex-wrap">
             <RepositorySelector
               selectedRepo={selectedRepo}
               handleRepoChange={setSelectedRepo}

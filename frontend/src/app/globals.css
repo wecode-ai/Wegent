@@ -59,11 +59,36 @@ body {
       rgb(var(--color-bg-base))
     );
   background-attachment: fixed;
+  overflow-x: hidden;
 }
 
 @layer utilities {
   .text-balance {
     text-wrap: balance;
+  }
+  
+  /* Touch-friendly optimizations */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+  
+  /* Mobile-specific styles */
+  @media (max-width: 768px) {
+    .mobile-padding {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+    
+    .mobile-text {
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+    
+    .mobile-button {
+      min-height: 44px;
+      padding: 0.75rem 1rem;
+    }
   }
 }
 

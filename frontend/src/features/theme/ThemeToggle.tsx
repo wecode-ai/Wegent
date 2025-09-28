@@ -30,7 +30,6 @@ export function ThemeToggle({ className = '' }: { className?: string }) {
       aria-label={t('actions.toggle_theme')}
     >
       <Icon className="text-base leading-none" style={{ color: 'var(--text-primary)' }} />
-      <span>{t('actions.toggle_theme')}</span>
     </button>
   )
 }

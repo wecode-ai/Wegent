@@ -10,12 +10,12 @@ import { RiRobot2Line } from 'react-icons/ri'
 import { FiArrowRight } from 'react-icons/fi'
 import { AiOutlineTeam } from 'react-icons/ai'
 import LoadingState from '@/features/common/LoadingState'
-import { PencilIcon, TrashIcon, DocumentDuplicateIcon, ChatBubbleLeftEllipsisIcon } from '@heroicons/react/24/outline'
+import { PencilIcon, TrashIcon, DocumentDuplicateIcon, ChatBubbleLeftEllipsisIcon, EllipsisVerticalIcon } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
 import { fetchTeamsList, deleteTeam } from '../services/teams'
 import { fetchBotsList } from '../services/bots'
 import TeamEdit from './TeamEdit'
-import { App } from 'antd'
+import { App, Dropdown, Modal } from 'antd'
 import { Button } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
@@ -32,6 +32,8 @@ export default function TeamList() {
   const [deletingId, setDeletingId] = useState<number | null>(null)
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null)
   const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
+  const [teamToDelete, setTeamToDelete] = useState<number | null>(null)
   const router = useRouter()
   const isEditing = editingTeamId !== null
 
@@ -100,11 +102,20 @@ export default function TeamList() {
     router.push(`/tasks?${params.toString()}`)
   }
 
-  const handleDelete = async (teamId: number) => {
-    setDeletingId(teamId)
+  const handleDelete = (teamId: number) => {
+    setTeamToDelete(teamId)
+    setDeleteConfirmVisible(true)
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!teamToDelete) return
+
+    setDeletingId(teamToDelete)
     try {
-      await deleteTeam(teamId)
-      setTeamsSorted(prev => prev.filter(team => team.id !== teamId))
+      await deleteTeam(teamToDelete)
+      setTeamsSorted(prev => prev.filter(team => team.id !== teamToDelete))
+      setDeleteConfirmVisible(false)
+      setTeamToDelete(null)
     } catch (e) {
       message.error(t('teams.delete'))
     } finally {
@@ -112,18 +123,23 @@ export default function TeamList() {
     }
   }
 
+  const handleCancelDelete = () => {
+    setDeleteConfirmVisible(false)
+    setTeamToDelete(null)
+  }
+
   return (
     <>
-      <div className="space-y-3 min-w-[360px]">
+      <div className="space-y-3">
         <div>
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
           <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
         <div
-          className={`bg-surface border border-border rounded-md p-2 min-w-[320px] ${
+          className={`bg-surface border border-border rounded-md p-2 w-full ${
             isEditing
-              ? 'md:min-h-[65vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
-              : 'max-h-[70vh] flex flex-col overflow-hidden'
+              ? 'md:min-h-[70vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
+              : 'max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'
           }`}
         >
           {isLoading ? (
@@ -149,13 +165,13 @@ export default function TeamList() {
                       <div className="space-y-1">
                         {teams.map((team) => (
                           <div key={team.id}>
-                            <div className="flex items-center justify-between py-0.5">
-                              <div className="flex items-center space-x-2 flex-1 overflow-hidden">
+                            <div className="flex items-center justify-between py-0.5 min-w-0">
+                              <div className="flex items-center space-x-2 min-w-0 flex-1">
                                 <AiOutlineTeam className="w-4 h-4 flex-shrink-0" />
-                                <div className="flex flex-col justify-center flex-1 overflow-hidden">
-                                  <div className="flex items-center space-x-1">
-                                    <h3 className="text-base font-medium text-text-primary mb-0">{team.name}</h3>
-                                    <div className="flex items-center h-4 space-x-0.5">
+                                <div className="flex flex-col justify-center min-w-0 flex-1">
+                                  <div className="flex items-center space-x-1 min-w-0">
+                                    <h3 className="text-base font-medium text-text-primary mb-0 truncate">{team.name}</h3>
+                                    <div className="flex items-center h-4 space-x-0.5 flex-shrink-0">
                                       <div
                                         className="w-2 h-2 rounded-full"
                                         style={{ backgroundColor: team.is_active ? 'rgb(var(--color-success))' : 'rgb(var(--color-border))' }}
@@ -163,33 +179,42 @@ export default function TeamList() {
                                       <span className="text-xs text-text-muted flex items-center justify-center">{team.is_active ? t('teams.active') : t('teams.inactive')}</span>
                                     </div>
                                   </div>
-                                  <div className="flex items-center space-x-1 mt-0">
+                                  <div className="flex items-center space-x-1 mt-0 min-w-0">
                                     {team.workflow?.mode && (
                                       <>
                                         <span className="inline-block max-w-full truncate px-2 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize">
                                           {t(`team_model.${team.workflow.mode}`)}
                                         </span>
-                                        <span className="mx-2"></span>
+                                        <span className="mx-2 hidden sm:inline"></span>
                                       </>
                                     )}
                                     {team.bots.length > 0 ? (
-                                      <div className="flex items-center max-w-3xl overflow-hidden whitespace-nowrap text-ellipsis ml-4">
-                                        {team.bots.map((bot, idx) => (
-                                          <span key={`${bot.bot_id}-${idx}`} className="flex items-center">
-                                            <RiRobot2Line className="w-4 h-4 mr-0.5 text-text-muted" />
-                                            <span className="text-xs text-text-muted mr-0.5">
-                                              {bots.find(b => b.id === bot.bot_id)?.name || bot.bot_id}
+                                      <div className="flex items-center min-w-0 flex-1">
+                                        <div className="flex items-center overflow-hidden whitespace-nowrap text-ellipsis">
+                                          {/* 移动端只显示第一个机器人，桌面端显示所有 */}
+                                          {team.bots.map((bot, idx) => (
+                                            <span key={`${bot.bot_id}-${idx}`} className={`flex items-center flex-shrink-0 ${idx > 0 ? 'hidden sm:flex' : ''}`}>
+                                              <RiRobot2Line className="w-4 h-4 mr-0.5 text-text-muted" />
+                                              <span className="text-xs text-text-muted mr-0.5 truncate max-w-[80px] sm:max-w-none">
+                                                {bots.find(b => b.id === bot.bot_id)?.name || bot.bot_id}
+                                              </span>
+                                              {team.workflow?.mode === 'pipeline'
+                                                ? (idx < team.bots.length - 1 && (
+                                                    <FiArrowRight className="w-4 h-4 text-text-muted mx-2 hidden sm:inline" />
+                                                  ))
+                                                : (idx < team.bots.length - 1 && (
+                                                    <span className="text-text-muted mx-1 hidden sm:inline"> </span>
+                                                  ))
+                                              }
                                             </span>
-                                            {team.workflow?.mode === 'pipeline'
-                                              ? (idx < team.bots.length - 1 && (
-                                                  <FiArrowRight className="w-4 h-4 text-text-muted mx-2" />
-                                                ))
-                                              : (idx < team.bots.length - 1 && (
-                                                  <span className="text-text-muted mx-1"> </span>
-                                                ))
-                                            }
-                                          </span>
-                                        ))}
+                                          ))}
+                                          {/* 移动端显示省略号 */}
+                                          {team.bots.length > 1 && (
+                                            <span className="text-xs text-text-muted ml-1 sm:hidden">
+                                              +{team.bots.length - 1}
+                                            </span>
+                                          )}
+                                        </div>
                                       </div>
                                     ) : (
                                       <span className="text-xs text-text-muted">{t('teams.no_bots')}</span>
@@ -197,23 +222,15 @@ export default function TeamList() {
                                   </div>
                                 </div>
                               </div>
-                              <div className="flex items-center space-x-2">
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<ChatBubbleLeftEllipsisIcon className="w-4 h-4 text-text-muted" />}
-                                  onClick={() => handleChatTeam(team)}
-                                  title={t('teams.chat')}
-                                  style={{ padding: '4px' }}
-                                  className="!text-text-muted hover:!text-text-primary"
-                                />
+                              <div className="flex items-center space-x-1 flex-shrink-0">
+                                {/* 主要操作按钮 - 始终显示 */}
                                 <Button
                                   type="text"
                                   size="small"
                                   icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
                                   onClick={() => handleEditTeam(team)}
                                   title={t('teams.edit')}
-                                  style={{ padding: '4px' }}
+                                  style={{ padding: '2px' }}
                                   className="!text-text-muted hover:!text-text-primary"
                                 />
                                 <Button
@@ -222,19 +239,41 @@ export default function TeamList() {
                                   icon={<DocumentDuplicateIcon className="w-4 h-4 text-text-muted" />}
                                   onClick={() => handleCopyTeam(team)}
                                   title={t('teams.copy')}
-                                  style={{ padding: '4px' }}
+                                  style={{ padding: '2px' }}
                                   className="!text-text-muted hover:!text-text-primary"
                                 />
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<TrashIcon className="w-4 h-4 text-text-muted" />}
-                                  onClick={() => handleDelete(team.id)}
-                                  disabled={deletingId === team.id}
-                                  title={t('teams.delete')}
-                                  style={{ padding: '4px' }}
-                                  className="!text-text-muted hover:!text-text-primary"
-                                />
+
+                                {/* 次要操作按钮 - 下拉菜单 */}
+                                <Dropdown
+                                  menu={{
+                                    items: [
+                                      {
+                                        key: 'chat',
+                                        label: t('teams.chat'),
+                                        icon: <ChatBubbleLeftEllipsisIcon className="w-4 h-4" />,
+                                        onClick: () => handleChatTeam(team)
+                                      },
+                                      {
+                                        key: 'delete',
+                                        label: t('teams.delete'),
+                                        icon: <TrashIcon className="w-4 h-4" />,
+                                        onClick: () => handleDelete(team.id),
+                                        danger: true
+                                      }
+                                    ]
+                                  }}
+                                  trigger={['click']}
+                                  placement="bottomRight"
+                                >
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<EllipsisVerticalIcon className="w-4 h-4 text-text-muted" />}
+                                    title={t('teams.more')}
+                                    style={{ padding: '2px' }}
+                                    className="!text-text-muted hover:!text-text-primary"
+                                  />
+                                </Dropdown>
                               </div>
                             </div>
                             {teams.length > 1 && team.id !== teams[teams.length - 1].id && (
@@ -273,6 +312,20 @@ export default function TeamList() {
           )}
         </div>
       </div>
+
+      {/* 删除确认对话框 */}
+      <Modal
+        title={t('teams.delete_confirm_title')}
+        open={deleteConfirmVisible}
+        onOk={handleConfirmDelete}
+        onCancel={handleCancelDelete}
+        okText={t('common.confirm')}
+        cancelText={t('common.cancel')}
+        okButtonProps={{ danger: true }}
+        centered
+      >
+        <p>{t('teams.delete_confirm_message')}</p>
+      </Modal>
       {/* Error prompt unified with antd message, no local rendering */}
     </>
   )

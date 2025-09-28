@@ -415,7 +415,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
 
   return (
-    <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-surface rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
+    <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-surface rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full">
       {/* Top toolbar: Back + Save */}
       <div className="w-full flex items-center justify-between mb-4 mt-4">
         <button
@@ -428,25 +428,28 @@ export default function TeamEdit(props: TeamEditProps) {
           </svg>
           {t('common.back')}
         </button>
+
         <Button
-          type="primary"
           onClick={handleSave}
           disabled={saving}
           loading={saving}
+          type="primary"
         >
           {saving ? (editingTeam ? t('actions.saving') : t('actions.creating')) : t('actions.save')}
         </Button>
       </div>
 
       {/* Two-column layout: Left (Name, Mode, Description Image), Right (LeaderBot, Bots Transfer) */}
-      <div className="w-full flex flex-col md:flex-row gap-4 items-stretch flex-1 h-full py-0">
+      <div className="w-full flex flex-col md:flex-row gap-4 items-stretch flex-1 py-0">
         {/* Left column */}
-        <div className="w-full md:w-2/5 min-w-0 flex flex-col space-y-4 h-full">
+        <div className="w-full md:w-2/5 min-w-0 flex flex-col space-y-4 flex-1 min-w-0">
           {/* Team Name */}
           <div className="flex flex-col">
-            <label className="block text-lg font-semibold text-text-primary mb-1">
-              {t('team.name')} <span className="text-red-400">*</span>
-            </label>
+            <div className="flex items-center mb-1">
+              <label className="block text-lg font-semibold text-text-primary">
+                {t('team.name')} <span className="text-red-400">*</span>
+              </label>
+            </div>
             <input
               type="text"
               value={name}
@@ -457,13 +460,15 @@ export default function TeamEdit(props: TeamEditProps) {
           </div>
 
           {/* Mode component */}
-          <div className='min-h-[400px] flex flex-col'>
-            <label className="block text-lg font-semibold text-text-primary mb-1">
-              {t('team.model')} <span className="text-red-400">*</span>
-            </label>
+          <div className="flex flex-col">
+            <div className="flex items-center mb-1">
+              <label className="block text-lg font-semibold text-text-primary">
+                {t('team.model')} <span className="text-red-400">*</span>
+              </label>
+            </div>
 
             {/* Integrate Mode selection and description into one container */}
-            <div className="rounded-md border min-h-[400px] border-border bg-base p-3 h-full flex flex-col">
+            <div className="rounded-md border border-border bg-base p-3 flex flex-col h-full">
               {/* Mode selection - keep Radio.Group */}
               <div className="mb-3">
                 <Radio.Group
@@ -495,8 +500,14 @@ export default function TeamEdit(props: TeamEditProps) {
                   </ul>
                 )}
 
-                <div className="mt-auto pt-3 rounded-md overflow-hidden flex items-center justify-center">
-                  <Image src={MODE_INFO.info.image} alt={MODE_INFO.info.title} width={640} height={360} className="object-contain" />
+                <div className="mt-auto pt-3 rounded-md overflow-hidden flex items-stretch justify-start h-[70vh]">
+                  <Image
+                    src={MODE_INFO.info.image}
+                    alt={MODE_INFO.info.title}
+                    width={640}
+                    height={360}
+                    className="object-contain"
+                  />
                 </div>
               </div>
             </div>
@@ -504,12 +515,14 @@ export default function TeamEdit(props: TeamEditProps) {
         </div>
 
         {/* Right column */}
-        <div className="w-full md:w-3/5 min-w-0 flex flex-col space-y-4 h-full">
+        <div className="w-full md:w-3/5 min-w-0 flex flex-col space-y-4 flex-1 min-w-0">
           {/* LeaderBot single select */}
           <div className="flex flex-col">
-            <label className="block text-lg font-semibold text-text-primary mb-1">
-              {t('team.leader')} <span className="text-red-400">*</span>
-            </label>
+            <div className="flex items-center mb-1">
+              <label className="block text-lg font-semibold text-text-primary">
+                {t('team.leader')} <span className="text-red-400">*</span>
+              </label>
+            </div>
             <Select
               showSearch
               value={leaderBotId ?? undefined}
@@ -596,111 +609,152 @@ export default function TeamEdit(props: TeamEditProps) {
           </div>
 
           {/* Bots Transfer */}
-          <div className="flex flex-col flex-1 min-h-[280px]">
+          <div className="flex flex-col flex-1">
             <div className="flex items-center justify-between mb-1">
               <label className="block text-lg font-semibold text-text-primary">
                 {t('team.bots')}
               </label>
-              <div className="flex items-center gap-2">
-                <Tooltip title={t('team.prompts_tooltip')}>
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<RiMagicLine className="text-sm" />}
-                    className="!px-1.5 !text-primary hover:!text-primary"
-                    onClick={() => {
-                      setDrawerMode('prompt');
-                      setEditingBotDrawerVisible(true);
-                    }}
-                  >
-                    {t('team.prompts_link')}
-                  </Button>
-                </Tooltip>
-                <Tag
-                  color={promptSummary.color}
-                  className="!m-0 !px-2 !py-0 text-xs leading-5"
-                >
-                  {promptSummary.label}
-                </Tag>
-              </div>
             </div>
-            <div className="relative flex-1 min-h-[260px] bg-transparent">
-              <Transfer
-                oneWay
-                dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
-                targetKeys={selectedBotKeys}
-                onChange={onTransferChange}
-                render={item => (
-                  <div className="flex items-center justify-between w-full">
-                    <Tooltip title={`${item.title} (${item.description})`}>
-                      <span className="truncate">
-                        {item.title}
-                        <span className="text-xs text-text-muted">({item.description})</span>
-                      </span>
-                    </Tooltip>
-
-                    <div className="flex items-center">
-                      {teamPromptMap.get(Number(item.key)) && (
-                        <Tooltip title={t('team.prompts_badge_tooltip')}>
-                          <Tag color="blue" className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4">
-                            {t('team.prompts_badge')}
-                          </Tag>
-                        </Tooltip>
-                      )}
-
-                      <EditOutlined
-                        className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation(); // Stop event propagation to avoid triggering selection
-                          handleEditBot(Number(item.key))
-                        }}
-                      />
-                      <CopyOutlined
-                        className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleCloneBot(Number(item.key))
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-                titles={[t("team.candidates"), t("team.in_team")]}
-                style={{}}
-                listStyle={{
-                  minHeight: 400,
-                  width: '50%',
-                  backgroundColor: 'rgb(var(--color-bg-base))',
-                  borderColor: 'rgb(var(--color-border))',
-                }}
-                locale={{
-                  itemUnit: 'item',
-                  itemsUnit: 'items',
-                  notFoundContent: t("team.no_data"),
-                }}
-                footer={(_, info) => {
-                  if (info?.direction === 'left') {
-                    return (                      
-                      <div className="p-2 text-center">
-                        <Button
-                          type="primary"
-                          size="small"
-                          className="w-70"
-                          icon={<PlusOutlined />}
-                          onClick={() => {
-                            handleCreateBot()
-                          }}
-                        >
-                          {t('bots.new_bot')}
-                        </Button>
-                      </div>
-                    );
-                  }
-                  return null;
-                }}
-              />
+            <div className="flex items-center gap-2">
+              <Tooltip title={t('team.prompts_tooltip')}>
+                <Button
+                  type="link"
+                  size="small"
+                  icon={<RiMagicLine className="text-sm" />}
+                  className="!px-1.5 !text-primary hover:!text-primary"
+                  onClick={() => {
+                    setDrawerMode('prompt');
+                    setEditingBotDrawerVisible(true);
+                  }}
+                >
+                  {t('team.prompts_link')}
+                </Button>
+              </Tooltip>
+              <Tag
+                color={promptSummary.color}
+                className="!m-0 !px-2 !py-0 text-xs leading-5"
+              >
+                {promptSummary.label}
+              </Tag>
             </div>
           </div>
+
+          {/* Bots 穿梭框 */}
+          <div className="relative bg-transparent overflow-x-auto min-w-0" style={{ minHeight: 0 }}>
+            <Transfer
+              oneWay
+              dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
+              targetKeys={selectedBotKeys}
+              onChange={onTransferChange}
+              render={item => (
+                <div className="flex items-center justify-between w-full">
+                  <Tooltip title={`${item.title} (${item.description})`}>
+                    <span className="truncate">
+                      {item.title}
+                      <span className="text-xs text-text-muted">({item.description})</span>
+                    </span>
+                  </Tooltip>
+
+                  <div className="flex items-center">
+                    {teamPromptMap.get(Number(item.key)) && (
+                      <Tooltip title={t('team.prompts_badge_tooltip')}>
+                        <Tag color="blue" className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4">
+                          {t('team.prompts_badge')}
+                        </Tag>
+                      </Tooltip>
+                    )}
+
+                    <EditOutlined
+                      className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation(); // Stop event propagation to avoid triggering selection
+                        handleEditBot(Number(item.key))
+                      }}
+                    />
+                    <CopyOutlined
+                      className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        handleCloneBot(Number(item.key))
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
+              titles={[t("team.candidates"), t("team.in_team")]}
+              style={{}}
+              listStyle={{
+                minHeight: 400,
+                width: '50%',
+                backgroundColor: 'rgb(var(--color-bg-base))',
+                borderColor: 'rgb(var(--color-border))',
+              }}
+              locale={{
+                itemUnit: 'item',
+                itemsUnit: 'items',
+                notFoundContent: t("team.no_data"),
+              }}
+              footer={(_, info) => {
+                if (info?.direction === 'left') {
+                  return (
+                    <div className="p-2 text-center">
+                      <Button
+                        type="primary"
+                        size="small"
+                        className="w-70"
+                        icon={<PlusOutlined />}
+                        onClick={() => {
+                          handleCreateBot()
+                        }}
+                      >
+                        {t('bots.new_bot')}
+                      </Button>
+                    </div>
+                  );
+                }
+                return null;
+              }}
+            />
+          </div>
+
+          {/* 移动端 Transfer 布局优化样式 */}
+          <style dangerouslySetInnerHTML={{
+            __html: `
+              @media (max-width: 640px) {
+                .ant-transfer {
+                  display: grid !important;
+                  grid-template-columns: 1fr !important;
+                  gap: 8px !important;
+                }
+                .ant-transfer .ant-transfer-list {
+                  width: 100% !important;
+                }
+                .ant-transfer .ant-transfer-operation {
+                  order: 2 !important;
+                  justify-content: center !important;
+                }
+              }
+            `
+          }} />
+
+          {/* 额外的滚动和宽度修复样式 */}
+          <style dangerouslySetInnerHTML={{
+            __html: `
+              /* 确保 Transfer 组件在移动端不会横向撑爆 */
+              @media (max-width: 640px) {
+                .ant-transfer-list {
+                  max-width: 100% !important;
+                  overflow-x: hidden !important;
+                }
+              }
+
+              /* 修复 Transfer 组件的滚动问题 */
+              .ant-transfer-list-body {
+                overflow-y: auto !important;
+                max-height: 300px !important;
+              }
+            `
+          }} />
         </div>
       </div>
 
