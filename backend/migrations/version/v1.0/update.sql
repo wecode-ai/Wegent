@@ -7,11 +7,6 @@ ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_2; -- task_id foreign key
 ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_3; -- team_id foreign key
 ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_4; -- bot_id foreign key
 
--- 删除外键约束
-ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_2; -- task_id外键
-ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_3; -- team_id外键
-ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_4; -- bot_id外键
-
 -- Drop indexes
 ALTER TABLE subtasks DROP INDEX idx_task_sort;
 
