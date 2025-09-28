@@ -38,20 +38,20 @@ class GetUserGitInfo:
                 response.raise_for_status()
                 
                 data = response.json()
-                # self.logger.info(f"获取git token响应: {data}")
+                # self.logger.info(f"Received git token response: {data}")
                 
                 if data.get("code") != 0 or not data.get("data", {}).get("data"):
-                    self.logger.warning("API返回数据格式无效")
+                    self.logger.warning("API returned invalid data format")
                     return []
                 
                 git_data = data["data"]["data"]
                 return await self._process_git_tokens(git_data)
                 
         except httpx.RequestError as e:
-            self.logger.error(f"获取git token请求失败: {str(e)}")
+            self.logger.error(f"Failed to request git token: {str(e)}")
             return []
         except Exception as e:
-            self.logger.error(f"处理git token数据失败: {str(e)}")
+            self.logger.error(f"Failed to process git token data: {str(e)}")
             return []
     
     async def _process_git_tokens(self, git_data: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -67,7 +67,7 @@ class GetUserGitInfo:
                 continue
                 
             try:
-                # 解码token
+                # Decode token
                 decoded_token = base64.b64decode(token).decode('utf-8')
                 
                 git_info_item = {
@@ -76,13 +76,13 @@ class GetUserGitInfo:
                     "git_token": decoded_token,
                 }
                 
-                # 验证token有效性
+                # Validate token
                 await self._validate_git_token(git_info_item)
 
                 validated_git_info.append(git_info_item)
                     
             except Exception as e:
-                self.logger.error(f"处理token失败 (key: {key}): {str(e)}")
+                self.logger.error(f"Failed to process token (key: {key}): {str(e)}")
                 continue
         
         return validated_git_info
@@ -105,18 +105,18 @@ class GetUserGitInfo:
                 })
                 return True
             else:
-                self.logger.warning(f"git token验证失败: {git_info_item['git_domain']}, token: {git_info_item['git_domain']}")
+                self.logger.warning(f"Git token validation failed: {git_info_item['git_domain']}, token: {git_info_item['git_domain']}")
                 return False
                 
         except Exception as e:
-            self.logger.error(f"验证git token时出错: {str(e)}")
+            self.logger.error(f"Error occurred while validating git token: {str(e)}")
             return False
     
     async def get_and_validate_git_info(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
         """Main method to get and validate git info"""
-        self.logger.info(f"开始获取用户git token: username={username}")
+        self.logger.info(f"Start fetching user git token: username={username}")
         git_info = await self.fetch_git_tokens(username, cluster)
-        self.logger.info(f"完成git token获取和验证: count={len(git_info)}")
+        self.logger.info(f"Completed fetching and validating git tokens: count={len(git_info)}")
         return git_info
 
     async def get_real_git_tokens(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
@@ -135,7 +135,7 @@ class GetUserGitInfo:
                 data = response.json()
                 
                 if data.get("code") != 0 or not data.get("data", {}).get("data"):
-                    self.logger.warning("API返回数据格式无效")
+                    self.logger.warning("API returned invalid data format")
                     return []
                 
                 git_data = data["data"]["data"]
@@ -150,28 +150,28 @@ class GetUserGitInfo:
                         continue
                         
                     try:
-                        # 解码真实token
+                        # Decode real token
                         decoded_token = base64.b64decode(token).decode('utf-8')
                         
                         git_info_item = {
                             "type": "gitlab",
                             "git_domain": key,
-                            "git_token": decoded_token,  # 返回真实token
+                            "git_token": decoded_token,  # Return real token
                         }
                         
                         real_git_info.append(git_info_item)
                             
                     except Exception as e:
-                        self.logger.error(f"处理真实token失败 (key: {key}): {str(e)}")
+                        self.logger.error(f"Failed to process real token (key: {key}): {str(e)}")
                         continue
                 
                 return real_git_info
                 
         except httpx.RequestError as e:
-            self.logger.error(f"获取真实git token请求失败: {str(e)}")
+            self.logger.error(f"Failed to request real git token: {str(e)}")
             return []
         except Exception as e:
-            self.logger.error(f"获取真实git token时出错: {str(e)}")
+            self.logger.error(f"Error occurred while fetching real git token: {str(e)}")
             return []
 
 

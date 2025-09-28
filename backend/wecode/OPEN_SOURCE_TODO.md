@@ -1,22 +1,16 @@
-# 开源迁移指南
+# Open Source Migration Guide
 
-## 概述
-本文件记录了从内部版本迁移到开源版本所需的工作
+## Overview
+This document records the tasks required to migrate from the internal version to the open source version.
 
-## 修改如下：
-### 1. 修改 app/api/api.py 文件
+## Changes:
+### 1. Modify app/api/api.py file
 ```python
-# 删除以下行
+# Remove the following line
 import wecode.api
 ```
 
-### 2. 删除wecode目录
+### 2. Delete the wecode directory
 ```bash
 rm -rf wecode/
-```
-
-
-### 3. 删除init.sql 中初始化数据
-```bash
-删除 agents 和 models 表初始化数据
 ```

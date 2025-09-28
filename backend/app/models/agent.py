@@ -13,7 +13,7 @@ class Agent(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
-    config = Column(JSON, nullable=False)  # 配置，支持的协议或其他信息；与 models.config 语义一致
+    config = Column(JSON, nullable=False)  # Configuration, supported protocols or other information; consistent with models.config semantics
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
