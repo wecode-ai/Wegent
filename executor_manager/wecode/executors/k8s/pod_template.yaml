@@ -53,6 +53,8 @@ spec:
         - name: EXECUTOR_ENV
           value: |-
             {{ executor_env }}
+        - name: DEBUG_RUN
+          value: DEBUG
         - name: CALLBACK_URL
           value: http://wegent-executor-manager-web.wb-plat-ide:8080/executor-manager/callback
         - name: ENABLE_CODE_REVIEW_PROCESSING
