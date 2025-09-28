@@ -12,7 +12,7 @@ import { UserProvider } from '@/features/common/UserContext'
 export default function LoginPage() {
   return (
     <UserProvider>
-      <div className="min-h-screen bg-base flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+      <div className="smart-h-screen bg-base flex flex-col justify-center py-12 sm:px-6 lg:px-8 box-border">
         <div className="sm:mx-auto sm:w-full sm:max-w-md">
           <LogoHeader />
           <LogoSubTitle />

@@ -10,6 +10,7 @@ import {
   TrashIcon,
 } from '@heroicons/react/24/outline'
 import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface TaskMenuProps {
   taskId: number
@@ -22,6 +23,8 @@ export default function TaskMenu({
   handleCopyTaskId,
   handleDeleteTask
 }: TaskMenuProps) {
+  const { t } = useTranslation('common')
+
   return (
     <Menu as="div" className="relative">
       <Menu.Button
@@ -44,7 +47,7 @@ export default function TaskMenu({
               className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
             >
               <ClipboardDocumentIcon className="h-3.5 w-3.5 mr-2" />
-              Copy TaskId
+              {t('tasks.copy_task_id')}
             </button>
           )}
         </Menu.Item>
@@ -58,7 +61,7 @@ export default function TaskMenu({
               className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
             >
               <TrashIcon className="h-3.5 w-3.5 mr-2" />
-              Delete Task
+              {t('tasks.delete_task')}
             </button>
           )}
         </Menu.Item>

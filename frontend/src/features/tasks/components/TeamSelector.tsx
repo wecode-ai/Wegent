@@ -22,6 +22,23 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useTaskContext } from '../contexts/taskContext'
 import { useTranslation } from '@/hooks/useTranslation'
 
+// Mobile detection hook
+const useIsMobile = () => {
+  const [isMobile, setIsMobile] = useState(false)
+
+  useEffect(() => {
+    const checkIsMobile = () => {
+      setIsMobile(window.innerWidth < 768) // md breakpoint
+    }
+
+    checkIsMobile()
+    window.addEventListener('resize', checkIsMobile)
+    return () => window.removeEventListener('resize', checkIsMobile)
+  }, [])
+
+  return isMobile
+}
+
 export default function TeamSelector({
   selectedTeam,
   setSelectedTeam,
@@ -32,22 +49,33 @@ export default function TeamSelector({
   const { selectedTaskDetail } = useTaskContext()
   const { t } = useTranslation('common')
   const [searchTerm, setSearchTerm] = useState('')
+  const isMobile = useIsMobile()
 
-  // Dropdown expansion direction
+  // Dropdown expansion direction and position
   const [dropdownDirection, setDropdownDirection] = useState<'up' | 'down'>('down')
+  const [dropdownPosition, setDropdownPosition] = useState<{ top?: number; bottom?: number; left: number }>({ left: 0 })
   const buttonRef = useRef<HTMLButtonElement>(null)
 
-  // Calculate dropdown expansion direction
+  // Calculate dropdown expansion direction and position
   const handleDropdownClick = () => {
     if (!buttonRef.current) return
     const rect = buttonRef.current.getBoundingClientRect()
     const spaceBelow = window.innerHeight - rect.bottom
     const spaceAbove = rect.top
+
+    let direction: 'up' | 'down' = 'down'
+    let position: { top?: number; bottom?: number; left: number } = { left: rect.left }
+
     if (spaceBelow < 100 && spaceAbove > spaceBelow) {
-      setDropdownDirection('up')
+      direction = 'up'
+      position.bottom = window.innerHeight - rect.top + 4
     } else {
-      setDropdownDirection('down')
+      direction = 'down'
+      position.top = rect.bottom + 4
     }
+
+    setDropdownDirection(direction)
+    setDropdownPosition(position)
   }
 
   // Automatically set team based on selectedTask
@@ -89,6 +117,14 @@ export default function TeamSelector({
     setSearchTerm('')
   }
 
+  // Initialize dropdown position on mount
+  useEffect(() => {
+    if (buttonRef.current) {
+      const rect = buttonRef.current.getBoundingClientRect()
+      setDropdownPosition({ left: rect.left, top: rect.bottom + 4 })
+    }
+  }, [])
+
   if (!selectedTeam || teams.length === 0) return null
 
   return (
@@ -101,14 +137,22 @@ export default function TeamSelector({
             onClick={handleDropdownClick}
           >
             <FaUsers className={`w-3 h-3 flex-shrink-0 ${isLoading ? 'animate-pulse' : ''}`} />
-            <span className="text-sm truncate max-w-[200px]" title={selectedTeam.name}>
+            <span className={`text-sm truncate ${isMobile ? 'max-w-[240px]' : 'max-w-[200px]'}`} title={selectedTeam.name}>
               {isLoading ? 'Loading...' : selectedTeam.name}
             </span>
             <ChevronDownIcon className="w-4 h-4 flex-shrink-0" />
           </Listbox.Button>
           <Listbox.Options
-            className={`absolute ${dropdownDirection === 'up' ? 'bottom-full mb-2' : 'top-full mt-2'} left-0 bg-surface border border-border rounded-lg z-20 w-[220px] overflow-hidden flex flex-col`}
-            style={{ boxShadow: 'var(--shadow-popover)' }}
+            className={`fixed bg-surface border border-border rounded-lg z-[60] overflow-hidden flex flex-col ${
+              isMobile ? 'w-[280px] max-h-[240px]' : 'w-[220px] max-h-[200px]'
+            }`}
+            style={{
+              ...dropdownPosition,
+              boxShadow: 'var(--shadow-popover)',
+              WebkitOverflowScrolling: 'touch', // 启用iOS原生滚动
+              touchAction: 'pan-y', // 允许垂直滚动
+              pointerEvents: 'auto' // 确保触摸事件能传递
+            }}
           >
             <div className="p-2 border-b border-border">
               <input
@@ -117,11 +161,17 @@ export default function TeamSelector({
                 onChange={event => setSearchTerm(event.target.value)}
                 placeholder={t('teams.search_placeholder')}
                 className="w-full rounded-md border border-border bg-transparent px-2 py-1 text-xs text-text-primary focus:outline-none focus:ring-1 focus:ring-primary"
-                onMouseDown={event => event.stopPropagation()}
-                onKeyDown={event => event.stopPropagation()}
               />
             </div>
-            <div className="py-1 max-h-[200px] overflow-y-auto">
+            <div
+              className={`py-1 overflow-y-auto ${isMobile ? 'max-h-[160px]' : 'max-h-[120px]'}`}
+              style={{
+                WebkitOverflowScrolling: 'touch',
+                touchAction: 'pan-y',
+                scrollbarWidth: 'thin', // Firefox 滚动条
+                overscrollBehavior: 'contain' // 防止滚动超出边界时触发页面滚动
+              }}
+            >
               {filteredTeams.length > 0 ? (
                 filteredTeams.map(team => (
                   <Listbox.Option

@@ -39,7 +39,7 @@ export default function TasksPage() {
             teams={teams}
             teamLoading={isTeamsLoading}
           />
-          <div className="flex h-screen bg-base text-text-primary">
+          <div className="flex smart-h-screen bg-base text-text-primary box-border">
             {/* Responsive sidebar */}
             <TaskSidebar 
               isMobileSidebarOpen={isMobileSidebarOpen}

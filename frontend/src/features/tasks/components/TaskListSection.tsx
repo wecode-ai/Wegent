@@ -30,12 +30,23 @@ export default function TaskListSection({
   const [loading, setLoading] = useState(false)
 
   // Select task
-  const handleTaskClick = (task: Task) => {
+  const handleTaskClick = (task: Task, event?: React.MouseEvent | React.TouchEvent) => {
+    // Prevent default behavior for touch events
+    if (event) {
+      event.preventDefault()
+    }
+
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search)
       params.set('taskId', String(task.id))
       router.push(`?${params.toString()}`)
     }
+  }
+
+  // Handle touch start for immediate response on mobile
+  const handleTaskTouchStart = (task: Task) => (event: React.TouchEvent) => {
+    event.preventDefault()
+    handleTaskClick(task, event)
   }
 
   // Copy task ID
@@ -128,8 +139,16 @@ export default function TaskListSection({
               key={task.id}
               className={`flex items-center justify-between py-1 rounded hover:bg-muted cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-muted' : ''}`}
               onClick={() => handleTaskClick(task)}
+              onTouchStart={handleTaskTouchStart(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
               onMouseLeave={() => setHoveredTaskId(null)}
+              style={{
+                touchAction: 'manipulation',
+                WebkitTapHighlightColor: 'transparent',
+                minHeight: '44px',
+                padding: '8px 12px',
+                userSelect: 'none'
+              }}
             >
               <div className="flex items-center space-x-2 flex-1 min-w-0">
                 <div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
