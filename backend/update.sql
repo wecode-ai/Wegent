@@ -1,3 +1,7 @@
+-- SPDX-FileCopyrightText: 2025 Weibo, Inc.
+--
+-- SPDX-License-Identifier: Apache-2.0
+
 -- 删除外键约束
 ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_2; -- task_id外键
 ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_3; -- team_id外键

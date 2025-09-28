@@ -1,3 +1,7 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
 import os
 import yaml
 from jinja2 import Environment, FileSystemLoader

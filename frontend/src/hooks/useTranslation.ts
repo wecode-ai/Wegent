@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 import { useTranslation as useI18nextTranslation } from 'react-i18next'
 import { supportedLanguages } from '@/i18n/setup'
 

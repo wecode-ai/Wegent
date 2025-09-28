@@ -1,3 +1,7 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
 /// <reference types="next" />
 /// <reference types="next/image-types/global" />
 
