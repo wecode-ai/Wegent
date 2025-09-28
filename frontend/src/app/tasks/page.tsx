@@ -10,7 +10,7 @@ import { TaskContextProvider } from '@/features/tasks/contexts/taskContext'
 import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import UserMenu from '@/features/layout/UserMenu'
-import ResponsiveTaskSidebar from '@/features/tasks/components/ResponsiveTaskSidebar'
+import TaskSidebar from '@/features/tasks/components/TaskSidebar'
 import BeginnerGuideModal from '@/features/tasks/components/BeginnerGuideModal'
 import ChatArea from '@/features/tasks/components/ChatArea'
 import TaskParamSync from '@/features/tasks/components/TaskParamSync'
@@ -41,7 +41,7 @@ export default function TasksPage() {
           />
           <div className="flex h-screen bg-base text-text-primary">
             {/* Responsive sidebar */}
-            <ResponsiveTaskSidebar 
+            <TaskSidebar 
               isMobileSidebarOpen={isMobileSidebarOpen}
               setIsMobileSidebarOpen={setIsMobileSidebarOpen}
             />
