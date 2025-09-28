@@ -55,25 +55,25 @@ export default function GitHubIntegration() {
     return token
   }
 
-  // 编辑
+  // Edit
   const handleEdit = (info: GitInfo) => {
     setModalType('edit')
     setCurrentEditInfo(info)
     setShowModal(true)
   }
 
-  // 新增
+  // Add
   const handleAdd = () => {
     setModalType('add')
     setCurrentEditInfo(null)
     setShowModal(true)
   }
 
-  // 删除 token 逻辑不变
+  // Token deletion logic unchanged
 
   const handleDelete = async (domain: string) => {
     if (!user) return; // Fix type issue
-    // 已用 antd message.error 统一错误提示，无需本地 error 状态
+    // Unified error prompt using antd message.error, no local error state needed
     try {
       const success = await deleteGitToken(user, domain)
       if (!success) message.error(t('integrations.delete'))

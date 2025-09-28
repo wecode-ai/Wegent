@@ -22,7 +22,7 @@ export default function BotList() {
   const { message } = App.useApp()
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
-  // 已用 antd message.error 统一错误提示，无需本地 error 状态
+    // Unified error prompt using antd message.error, no local error state needed
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
   const [cloningBot, setCloningBot] = useState<Bot | null>(null)
   const isEditing = editingBotId !== null
@@ -54,7 +54,7 @@ export default function BotList() {
 
   const handleCreateBot = () => {
     setCloningBot(null)
-    setEditingBotId(0) // 用 0 标记新建
+    setEditingBotId(0) // Use 0 to mark new creation
   }
 
   const handleEditBot = (bot: Bot) => {
@@ -103,7 +103,7 @@ export default function BotList() {
             <LoadingState fullScreen={false} message={t('bots.loading')} />
           ) : (
             <>
-              {/* 编辑/新建模式 */}
+              {/* Edit/New mode */}
               {isEditing ? (
                 <BotEdit
                   bots={bots}

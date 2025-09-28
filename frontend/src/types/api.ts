@@ -88,13 +88,13 @@ export interface TaskDetailSubtask {
   task_id: number
   team_id: number
   title: string
-  /** 多bot支持 */
+  /** Multi-bot support */
   bot_ids: number[]
-  /** 角色 */
+  /** Role */
   role: string
-  /** 消息ID */
+  /** Message ID */
   message_id: number
-  /** 父任务ID */
+  /** Parent Task ID */
   parent_id: number
   prompt: string
   executor_namespace: string

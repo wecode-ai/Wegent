@@ -75,7 +75,7 @@ export default function TaskSidebar() {
     return () => el.removeEventListener('scroll', handleScroll)
   }, [loadMore])
 
-  // 自定义debounce函数
+      // Custom debounce function
   const useDebounce = (callback: Function, delay: number) => {
     const timeoutRef = useRef<NodeJS.Timeout | null>(null)
     
@@ -100,27 +100,27 @@ export default function TaskSidebar() {
     return debouncedFn
   }
 
-  // 使用自定义debounce处理搜索，避免频繁请求
+      // Use custom debounce to handle search and avoid frequent requests
   const debouncedSearch = useDebounce(async (term: string) => {
     setSearchTerm(term)
     await searchTasks(term)
   }, 500)
 
-  // 处理搜索输入变化
+      // Handle search input change
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
     setLocalSearchTerm(value)
     debouncedSearch(value)
   }
 
-  // 清除搜索
+      // Clear search
   const handleClearSearch = () => {
     setLocalSearchTerm('')
     setSearchTerm('')
     searchTasks('')
   }
 
-  // 不需要取消debounce，因为我们的自定义实现在组件卸载时会自动清理
+      // No need to cancel debounce, our custom implementation will auto-clean on component unmount
 
   return (
       <div className="w-56 bg-surface border-r border-border flex flex-col">

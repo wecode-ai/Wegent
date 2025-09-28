@@ -35,7 +35,7 @@ export default function RepositorySelector({
   const router = useRouter()
   const [repos, setRepos] = useState<GitRepoInfo[]>([])
   const [loading, setLoading] = useState<boolean>(false)
-  // 已用 antd message.error 统一错误提示，无需本地 error 状态
+      // Used antd message.error for unified error prompt, no need for local error state
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const searchTimeout = useRef<NodeJS.Timeout | null>(null)
@@ -44,7 +44,7 @@ export default function RepositorySelector({
     return user && user.git_info && user.git_info.length > 0
   }
 
-  // 仓库加载函数，点击按钮时调用
+      // Repository loading function, called when button is clicked
   const handleLoadRepos = () => {
     if (!hasGitInfo()) {
       return
@@ -55,7 +55,7 @@ export default function RepositorySelector({
       .then((data) => {
         setRepos(data)
         setError(null)
-        // 仅首次加载时自动选中第一个仓库
+            // Automatically select the first repository only on initial load
         if (data.length > 0 && !selectedRepo) {
           handleRepoChange(data[0])
         }
@@ -99,7 +99,7 @@ export default function RepositorySelector({
   }))
 
 
-  // 首次挂载时自动加载仓库（有 git_info 且 repos 为空）
+      // Automatically load repositories on first mount (when git_info exists and repos is empty)
   useEffect(() => {
     if (hasGitInfo() && repos.length === 0) {
       handleLoadRepos()
@@ -107,10 +107,10 @@ export default function RepositorySelector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user])
 
-  // 监听 selectedTaskDetail，自动定位仓库
+      // Listen to selectedTaskDetail, auto-locate repository
   useEffect(() => {
     if (selectedTaskDetail?.git_repo) {
-      // 查找仓库列表中与 git_repo 匹配的仓库对象
+          // Find the repository object in the list that matches git_repo
       const repo = repos.find(r => r.git_repo === selectedTaskDetail.git_repo)
       if (repo) {
         handleRepoChange(repo)
@@ -121,25 +121,25 @@ export default function RepositorySelector({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTaskDetail?.git_repo, repos])
 
-  // 提取 onOpenChange 逻辑
+      // Extract onOpenChange logic
   const handleOpenChange = (visible: boolean) => {
     if (!hasGitInfo() && visible) {
       setIsModalOpen(true)
     }
-    // 仓库未加载且有 git_info，首次点开下拉时加载仓库
+        // If repository not loaded and git_info exists, load repositories on first dropdown open
     if (visible && hasGitInfo() && repos.length === 0 && !loading) {
       handleLoadRepos()
     }
   }
 
-  // 提取 onClick 逻辑
+      // Extract onClick logic
   const handleModalClick = () => {
     setIsModalOpen(false)
     router.push(paths.settings.integrations.getHref())
   }
 
   const { t } = useTranslation()
-  // Git 图标独立于 Select，不再需要 renderLabel
+      // Git icon is independent of Select, no longer needs renderLabel
 
   return (
     <div className="flex items-center space-x-1 min-w-0">
@@ -166,7 +166,7 @@ export default function RepositorySelector({
           error ? (
             <div className="px-3 py-2 text-sm" style={{ color: 'rgb(var(--color-error))' }}>
               {error}
-              {/* antd message.error 已全局提示 */}
+              {/* antd message.error is globally prompted */}
             </div>
           ) : !loading ? (
             <div className="px-3 py-2 text-sm text-text-muted">
@@ -175,7 +175,7 @@ export default function RepositorySelector({
           ) : null
         }
         options={repoOptions}
-        // 禁止下拉选择和搜索（无git_info时）
+            // Disable dropdown selection and search (when no git_info)
         open={hasGitInfo() ? undefined : false}
         onOpenChange={handleOpenChange}
       />

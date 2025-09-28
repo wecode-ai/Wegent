@@ -36,13 +36,13 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [isCustomModel, setIsCustomModel] = useState(false)
   const [selectedModel, setSelectedModel] = useState('')
 
-  // 将agents转换为Select组件需要的options格式
+    // Convert agents to options format for Select component
   const agentOptions = agents.map(agent => ({
     value: agent.name,
     label: agent.name
   }))
 
-  // 当前编辑对象
+    // Current editing object
   const editingBot = editingBotId > 0
     ? bots.find(b => b.id === editingBotId) || null
     : null
@@ -108,7 +108,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     })
   }, [message, t])
 
-  // 获取agents列表
+    // Get agents list
   useEffect(() => {
     const fetchAgents = async () => {
       setLoadingAgents(true)
@@ -126,7 +126,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     fetchAgents()
   }, [message, t])
 
-  // 当agentName变化时获取对应的模型列表
+    // Fetch corresponding model list when agentName changes
   useEffect(() => {
     if (!agentName) {
       setModels([])
@@ -149,7 +149,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     fetchModels()
   }, [agentName, message, t])
 
-  // 切换编辑对象时重置基本表单
+    // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '')
     setAgentName(baseBot?.agent_name || '')
@@ -165,7 +165,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     }
   }, [editingBotId, baseBot])
 
-  // 在agents和models加载完成后处理模型相关的初始化
+    // Initialize model-related data after agents and models are loaded
   useEffect(() => {
     if (!baseBot?.agent_config) {
       setIsCustomModel(false)
@@ -199,7 +199,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     return () => window.removeEventListener('keydown', handleEsc)
   }, [handleBack])
 
-  // 保存逻辑
+    // Save logic
   const handleSave = async () => {
     if (!botName.trim() || !agentName.trim()) {
       message.error(t('bot.errors.required'))
@@ -250,11 +250,11 @@ const BotEdit: React.FC<BotEditProps> = ({
         botReq.mcp_servers = parsedMcpConfig
       }
       if (editingBotId && editingBotId > 0) {
-        // 编辑
+          // Edit
         const updated = await botApis.updateBot(editingBotId, botReq)
         setBots(prev => prev.map(b => b.id === editingBotId ? updated : b))
       } else {
-        // 新建
+          // Create
         const created = await botApis.createBot(botReq)
         setBots(prev => [created, ...prev])
       }
@@ -268,7 +268,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   return (
     <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 relative h-full min-h-[650px]">
-        {/* 顶部导航栏 */}
+        {/* Top navigation bar */}
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={handleBack}
@@ -291,7 +291,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           </Button>
         </div>
   
-        {/* 主要内容区域 - 使用grid布局 */}
+        {/* Main content area - using grid layout */}
         <div className="grid grid-cols-1 md:grid-cols-6 gap-4 flex-grow mx-2" style={{ minHeight: 0 }}>
         <div className="md:col-span-2 flex flex-col space-y-3 overflow-y-auto">
           {/* Bot Name */}
@@ -455,7 +455,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           </div>
         </div>
 
-        {/* 右侧 Prompt 区域 - 使用grid布局占3列 */}
+        {/* Right Prompt area - using grid layout occupying 3 columns */}
         <div className="md:col-span-4 grid grid-rows-[auto_1fr]">
           <div className="mb-1">
             <div className="flex items-center">
@@ -466,7 +466,7 @@ const BotEdit: React.FC<BotEditProps> = ({
             </div>
           </div>
 
-          {/* textarea直接占据第二行的所有空间 */}
+          {/* textarea occupies all space in the second row */}
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}

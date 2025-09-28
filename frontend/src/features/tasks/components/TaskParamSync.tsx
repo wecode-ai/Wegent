@@ -43,7 +43,7 @@ export default function TaskParamSync() {
         // Use getTask for a lighter check to see if the task exists
         const task = await taskApis.getTask(Number(taskId))
         
-        // 允许已完成的任务被选中，用户应该能够查看任何任务的详情
+            // Allow completed tasks to be selected, users should be able to view details of any task
         // If it exists, set it. The context will handle fetching the full detail.
         setSelectedTask({ id: Number(taskId) } as Task)
       } catch (err) {

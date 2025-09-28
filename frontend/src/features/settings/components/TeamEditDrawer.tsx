@@ -26,7 +26,7 @@ interface TeamEditDrawerProps {
   onTeamUpdate: (updatedTeam: Team) => void
   cloningBot: Bot | null
   setCloningBot: React.Dispatch<React.SetStateAction<Bot | null>>
-  // 新增属性，用于处理新团队的情况
+  // Added property to handle new team cases
   selectedBotKeys?: React.Key[]
   leaderBotId?: number | null
   unsavedPrompts?: Record<string, string>
@@ -73,7 +73,7 @@ function PromptEdit({
 
   const teamBotsWithDetails = React.useMemo(() => {
     if (isNewTeam) {
-      // 处理新团队的情况
+      // Handle new team case
       const allBotIds = [...(selectedBotKeys || [])];
       if (leaderBotId !== null && !allBotIds.includes(String(leaderBotId))) {
         allBotIds.unshift(String(leaderBotId));
@@ -93,7 +93,7 @@ function PromptEdit({
     } else if (!team) {
       return [];
     } else {
-      // 处理已有团队的情况，包含未保存的新 Bot
+      // Handle existing team case, including unsaved new Bot
       const selectedIds = Array.isArray(selectedBotKeys)
         ? (selectedBotKeys as React.Key[]).map(key => Number(key)).filter(id => !Number.isNaN(id))
         : []
@@ -194,7 +194,7 @@ function PromptEdit({
       }
 
       if (team) {
-        // 处理已有团队的情况
+        // Handle existing team case
         const updatedBots: TeamBot[] = team.bots.map(teamBot => ({
           ...teamBot,
           bot_prompt: values[`prompt-${teamBot.bot_id}`] || '',
@@ -206,12 +206,12 @@ function PromptEdit({
           bots: updatedBots,
         })
 
-        // 更新team状态
+        // Update team state
         onTeamUpdate({ ...team, bots: updatedBots })
         
-        // 更新全局bots状态
-        // 注意：这里我们不需要更新全局bots，因为bot_prompt是team特有的属性
-        // 但如果将来需要同步其他bot属性，可以在这里添加
+        // Update global bots state
+        // Note: No need to update global bots here, as bot_prompt is team-specific
+        // If other bot properties need to be synced in the future, add here
 
         message.success(t('team.prompts_update_success'))
         onClose()

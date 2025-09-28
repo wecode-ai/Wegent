@@ -34,7 +34,7 @@ const TOKEN_EXPIRE_KEY = 'auth_token_expire'
 function getJwtExp(token: string): number | null {
   try {
     const payload = JSON.parse(atob(token.split('.')[1]))
-    return typeof payload.exp === 'number' ? payload.exp * 1000 : null // 转为毫秒
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null // convert to milliseconds
   } catch {
     return null
   }
@@ -75,7 +75,7 @@ export function removeToken() {
 }
 
 /**
- * 判断 token 是否存在且未过期
+ * Check if token exists and is not expired
  */
 function isAuthenticated(): boolean {
   const token = getToken()

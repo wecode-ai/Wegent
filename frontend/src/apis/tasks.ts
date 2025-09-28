@@ -96,7 +96,7 @@ export const taskApis = {
     let taskId = params.task_id
 
     if (!taskId) {
-      // /tasks 返回 { task_id }，直接拿到 id；本方法不再获取完整 Task
+          // /tasks returns { task_id }, directly get the id; this method no longer fetches the full Task
       const newId = await taskApis.createTask()
       taskId = newId
     }
@@ -108,7 +108,7 @@ export const taskApis = {
       ...rest,
     })
 
-    // 返回 mock 对象，仅包含 task_id
+        // Returns a mock object containing only task_id
     return { task_id: taskId }
   },
   

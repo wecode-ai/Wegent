@@ -24,7 +24,7 @@ interface TeamEditProps {
   setEditingTeamId: React.Dispatch<React.SetStateAction<number | null>>
   initialTeam?: Team | null
   bots: Bot[]
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>> // 添加 setBots 属性
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>> // Add setBots property
   message: MessageInstance
 }
 
@@ -41,31 +41,31 @@ export default function TeamEdit(props: TeamEditProps) {
   } = props
 
   const { t } = useTranslation('common')
-  // 当前编辑对象（0 表示新建）
+    // Current editing object (0 means create new)
   const editingTeam: Team | null = editingTeamId === 0
     ? null
     : (teams.find(t => t.id === editingTeamId) || null)
 
   const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null
 
-  // 左列：Team Name, Mode, 说明
+    // Left column: Team Name, Mode, Description
   const [name, setName] = useState('')
   const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline')
 
-  // 右列：LeaderBot（单选），Bots 穿梭框（多选）
-  // antd Transfer 使用 string key，这里用字符串化的 bot.id
+    // Right column: LeaderBot (single select), Bots Transfer (multi-select)
+    // Use string key for antd Transfer, stringify bot.id here
   const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([])
   const [leaderBotId, setLeaderBotId] = useState<number | null>(null)
 
   const [saving, setSaving] = useState(false)
 
-  // Bot编辑相关状态
+    // Bot editing related state
   const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
   const [editingBotId, setEditingBotId] = useState<number | null>(null)
   const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit')
   const [cloningBot, setCloningBot] = useState<Bot | null>(null)
   
-  // 存储未保存的team prompts
+    // Store unsaved team prompts
   const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
 
   const teamPromptMap = useMemo(() => {
@@ -148,13 +148,13 @@ export default function TeamEdit(props: TeamEditProps) {
     }
   }, [editingTeamId, initialTeam])
 
-  // 不同 Mode 的“说明”和“边界”，均包含文字与图片（国际化）
+    // Each Mode's "description" and "boundary", including text and images (i18n)
   const MODE_INFO = useMemo(() => {
     // i18n keys
     const titleKey = `team_model.${mode}`;
     const descKey = `team_model_desc.${mode}`;
 
-    // 图片按模式固定映射
+      // Image mapping by mode
     const imageMap: Record<typeof mode, string> = {
       pipeline: '/settings/sequential.png',
       route: '/settings/router.png',
@@ -172,8 +172,8 @@ export default function TeamEdit(props: TeamEditProps) {
     };
   }, [mode, t]);
 
-  // 初始化/切换编辑对象时重置表单
-  // 初始化/切换编辑对象时重置表单
+    // Reset form when initializing/switching editing object
+    // Reset form when initializing/switching editing object
   useEffect(() => {
     if (formTeam) {
       setName(formTeam.name)
@@ -191,7 +191,7 @@ export default function TeamEdit(props: TeamEditProps) {
     }
   }, [editingTeamId, formTeam])
   
-  // 当bots变化时，只更新与bots相关的状态，不重置name和mode
+    // When bots change, only update bots-related state, do not reset name and mode
   useEffect(() => {
     if (formTeam) {
       const ids = formTeam.bots
@@ -202,33 +202,33 @@ export default function TeamEdit(props: TeamEditProps) {
       setLeaderBotId(leaderBot?.bot_id ?? null)
     }
   }, [bots, formTeam])
-  // 变更 Mode
+    // Change Mode
   const handleModeChange = (newMode: 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
     setMode(newMode)
     setSelectedBotKeys([])
   }
-  // 获取当前选中的 agent_name（从 leader 或已选的 bot 中）
+    // Get currently selected agent_name (from leader or selected bot)
   const selectedAgentName = useMemo(() => {
-    // 如果是 pipeline 模式，不需要限制 agent_name
+      // No agent_name restriction in pipeline mode
     if (mode === 'pipeline') return null;
 
-    // 如果有 leader，优先使用 leader 的 agent_name
+      // If leader exists, use leader's agent_name first
     if (leaderBotId !== null) {
       const leaderBot = bots.find(b => b.id === leaderBotId);
       if (leaderBot) return leaderBot.agent_name;
     }
 
-    // 如果没有 leader 但有选中的 bot，使用第一个选中 bot 的 agent_name
+      // If no leader but selected bot exists, use first selected bot's agent_name
     if (selectedBotKeys.length > 0) {
       const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
       if (firstSelectedBot) return firstSelectedBot.agent_name;
     }
 
-    // 没有任何选择，返回 null
+      // No selection, return null
     return null;
   }, [mode, leaderBotId, selectedBotKeys, bots]);
 
-  // 供 Transfer 使用的数据源
+    // Data source for Transfer
   const transferData = useMemo(
     () => {
       return bots.map(b => ({
@@ -236,7 +236,7 @@ export default function TeamEdit(props: TeamEditProps) {
         title: b.name,
         description: b.agent_name,
         disabled:
-          // 在非 pipeline 模式下，如果已经选择了 agent_name，则禁用不匹配的选项
+            // In non-pipeline mode, disable options not matching agent_name if already selected
           mode !== 'pipeline' &&
           selectedAgentName !== null &&
           b.agent_name !== selectedAgentName
@@ -245,7 +245,7 @@ export default function TeamEdit(props: TeamEditProps) {
     [bots, mode, selectedAgentName]
   )
 
-  // 穿梭框变更
+    // Transfer change
   const onTransferChange = (targetKeys: React.Key[], direction: TransferDirection, moveKeys: React.Key[]) => {
     if (direction === 'right') {
       setSelectedBotKeys([...new Set(selectedBotKeys.concat(moveKeys))]);
@@ -253,20 +253,20 @@ export default function TeamEdit(props: TeamEditProps) {
     }
     setSelectedBotKeys(targetKeys);
   }
-  // Leader 切换
+    // Leader change
   const onLeaderChange = (botId: number) => {
-    // 如果新的leader在已选bot中，需要将其从已选bot中移除
+      // If new leader is in selected bots, remove it from selected bots
     if (selectedBotKeys.some(k => Number(k) === botId)) {
       setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId))
     }
 
     setLeaderBotId(botId)
 
-    // 如果是非 pipeline 模式，根据新选择的 leader 的 agent_name 过滤已选的 bots
+      // In non-pipeline mode, filter selected bots by new leader's agent_name
     if (mode !== 'pipeline') {
       const leaderBot = bots.find(b => b.id === botId);
       if (leaderBot) {
-        // 过滤掉不匹配 agent_name 的已选 bots
+          // Filter out selected bots not matching agent_name
         setSelectedBotKeys(prev =>
           prev.filter(key => {
             const bot = bots.find(b => String(b.id) === key);
@@ -301,14 +301,14 @@ export default function TeamEdit(props: TeamEditProps) {
     setEditingBotId(0)
     setEditingBotDrawerVisible(true)
   }, [bots])
-  // 校验 agent_name 一致（非 pipeline 模式要求一致）
+    // Validate agent_name consistency (required in non-pipeline mode)
   const validateAgentNameConsistency = (ids: number[]) => {
     const selected = bots.filter(b => ids.includes(b.id))
     const agentNames = Array.from(new Set(selected.map(b => b.agent_name)))
     return agentNames.length <= 1
   }
 
-  // 保存
+    // Save
   const handleSave = async () => {
     if (!name.trim()) {
       message.error('Team name is required')
@@ -320,35 +320,35 @@ export default function TeamEdit(props: TeamEditProps) {
     }
     const selectedIds = selectedBotKeys.map(k => Number(k))
 
-    // 非 pipeline 模式要求 agent_name 一致
+      // Non-pipeline mode requires agent_name consistency
     if (mode !== 'pipeline') {
       if (!validateAgentNameConsistency(selectedIds)) {
-        message.error('非 Pipeline 模式仅支持选择 agent_name 相同的 Bot')
+        message.error('Only bots with the same agent_name can be selected in non-Pipeline mode')
         return
       }
     }
 
-    // 组装 bots 数据（目前暂不支持 per-step prompt，自然全部 prompt 为空）
-    // 确保 leader bot 是第一位，其他bot按照穿梭框的顺序排列
+    // Assemble bots data (per-step prompt not supported, all prompts empty)
+    // Ensure leader bot is first, others follow transfer order
     let allBotIds: number[] = [];
 
-    // 首先添加 leader bot（如果有）
+    // Add leader bot first (if any)
     if (leaderBotId !== null) {
       allBotIds.push(leaderBotId);
     }
 
-    // 然后添加其他 bot，确保不重复添加 leader bot
+    // Then add other bots, avoid duplicate leader bot
     selectedIds.forEach(id => {
       if (id !== leaderBotId) {
         allBotIds.push(id);
       }
     });
 
-    // 创建 botsData，保持 allBotIds 的顺序，并保留原有的bot_prompt值或使用未保存的prompts
+    // Create botsData, keep allBotIds order, retain original bot_prompt or use unsaved prompts
     const botsData = allBotIds.map(id => {
-      // 如果是编辑现有团队，查找该bot_id是否已存在，如果存在则保留其bot_prompt
+      // If editing existing team, keep bot_prompt if bot_id exists
       const existingBot = formTeam?.bots.find(b => b.bot_id === id);
-      // 检查是否有未保存的prompt
+      // Check for unsaved prompt
       const unsavedPrompt = unsavedPrompts[`prompt-${id}`];
       
       return {
@@ -377,7 +377,7 @@ export default function TeamEdit(props: TeamEditProps) {
         })
         setTeams(prev => [created, ...prev])
       }
-      // 清空未保存的prompts
+      // Clear unsaved prompts
       setUnsavedPrompts({})
       setEditingTeamId(null)
     } catch (e: any) {
@@ -387,23 +387,23 @@ export default function TeamEdit(props: TeamEditProps) {
     }
   }
 
-  // Leader 下拉可选项，在非 pipeline 模式下根据已选 bot 的 agent_name 过滤
+  // Leader dropdown options, filter by agent_name in non-pipeline mode
   const leaderOptions = useMemo(
     () => {
-      // 如果是 pipeline 模式，显示所有 bots
+      // Show all bots in pipeline mode
       if (mode === 'pipeline') return bots;
 
-      // 如果非 pipeline 模式且已有选中的 bot
+      // If non-pipeline mode and selected bot exists
       if (selectedBotKeys.length > 0) {
-        // 找到第一个选中的 bot
+        // Find first selected bot
         const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
         if (firstSelectedBot) {
-          // 只显示相同 agent_name 的 bots
+          // Show only bots with same agent_name
           return bots.filter(b => b.agent_name === firstSelectedBot.agent_name);
         }
       }
 
-      // 没有选中的 bot，显示所有 bots
+      // Show all bots if no selected bot
       return bots;
     },
     [bots, mode, selectedBotKeys]
@@ -416,7 +416,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
   return (
     <div className="flex flex-col flex-1 items-stretch max-w-4xl mx-auto bg-surface rounded-lg pt-0 pr-4 pb-4 pl-4 relative w-full h-full min-h-[500px] md:min-h-[65vh]">
-      {/* 顶部工具条：Back + Save */}
+      {/* Top toolbar: Back + Save */}
       <div className="w-full flex items-center justify-between mb-4 mt-4">
         <button
           onClick={handleBack}
@@ -438,9 +438,9 @@ export default function TeamEdit(props: TeamEditProps) {
         </Button>
       </div>
 
-      {/* 双栏布局：左（名称、模式、说明图片）、右（LeaderBot、Bots 穿梭框） */}
+      {/* Two-column layout: Left (Name, Mode, Description Image), Right (LeaderBot, Bots Transfer) */}
       <div className="w-full flex flex-col md:flex-row gap-4 items-stretch flex-1 h-full py-0">
-        {/* 左列 */}
+        {/* Left column */}
         <div className="w-full md:w-2/5 min-w-0 flex flex-col space-y-4 h-full">
           {/* Team Name */}
           <div className="flex flex-col">
@@ -456,15 +456,15 @@ export default function TeamEdit(props: TeamEditProps) {
             />
           </div>
 
-          {/* Mode 组件 */}
+          {/* Mode component */}
           <div className='min-h-[400px] flex flex-col'>
             <label className="block text-lg font-semibold text-text-primary mb-1">
               {t('team.model')} <span className="text-red-400">*</span>
             </label>
 
-            {/* 整合 Mode 选择和说明到一个统一容器 */}
+            {/* Integrate Mode selection and description into one container */}
             <div className="rounded-md border min-h-[400px] border-border bg-base p-3 h-full flex flex-col">
-              {/* Mode 选择 - 保留 Radio.Group */}
+              {/* Mode selection - keep Radio.Group */}
               <div className="mb-3">
                 <Radio.Group
                   value={mode}
@@ -480,10 +480,10 @@ export default function TeamEdit(props: TeamEditProps) {
                 />
               </div>
 
-              {/* 分隔线 */}
+              {/* Divider */}
               <div className="border-t border-border my-2"></div>
 
-              {/* Mode 说明 */}
+              {/* Mode description */}
               <div className="flex-1 flex flex-col">
                 <p className="text-sm text-text-secondary">{MODE_INFO.info.desc}</p>
 
@@ -503,9 +503,9 @@ export default function TeamEdit(props: TeamEditProps) {
           </div>
         </div>
 
-        {/* 右列 */}
+        {/* Right column */}
         <div className="w-full md:w-3/5 min-w-0 flex flex-col space-y-4 h-full">
-          {/* LeaderBot 单选 */}
+          {/* LeaderBot single select */}
           <div className="flex flex-col">
             <label className="block text-lg font-semibold text-text-primary mb-1">
               {t('team.leader')} <span className="text-red-400">*</span>
@@ -569,7 +569,7 @@ export default function TeamEdit(props: TeamEditProps) {
                           e.stopPropagation();
                         }}
                         onClick={(e) => {
-                          e.stopPropagation(); // 阻止事件冒泡，避免触发选择
+                          e.stopPropagation(); // Stop event propagation to avoid triggering selection
                           handleEditBot(b.id)
                         }}
                       />
@@ -595,7 +595,7 @@ export default function TeamEdit(props: TeamEditProps) {
             />
           </div>
 
-          {/* Bots 穿梭框 */}
+          {/* Bots Transfer */}
           <div className="flex flex-col flex-1 min-h-[280px]">
             <div className="flex items-center justify-between mb-1">
               <label className="block text-lg font-semibold text-text-primary">
@@ -651,7 +651,7 @@ export default function TeamEdit(props: TeamEditProps) {
                       <EditOutlined
                         className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
                         onClick={(e) => {
-                          e.stopPropagation(); // 阻止事件冒泡，避免触发选择
+                          e.stopPropagation(); // Stop event propagation to avoid triggering selection
                           handleEditBot(Number(item.key))
                         }}
                       />
@@ -704,7 +704,7 @@ export default function TeamEdit(props: TeamEditProps) {
         </div>
       </div>
 
-      {/* Bot编辑抽屉 */}
+      {/* Bot edit drawer */}
       <TeamEditDrawer
         bots={bots}
         setBots={setBots}

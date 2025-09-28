@@ -13,7 +13,7 @@ export const paths = {
         login: {
             getHref: () => {
                 console.log(typeof window === 'undefined');
-                // SSR/Node 环境下始终返回本地登录页
+                // Always return local login page in SSR/Node environment
                 return paths.auth.password_login.getHref()
             },
         },

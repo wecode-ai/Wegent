@@ -27,7 +27,7 @@ export default function Home() {
 
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-8 bg-base relative">
-      {/* 语言切换器 */}
+      {/* Language Switcher */}
       <div className="absolute top-4 right-4 flex items-center gap-3">
         <ThemeToggle />
         <LanguageSwitcher />
