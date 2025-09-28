@@ -148,7 +148,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setIsSearchResult(true)
 
     try {
-      const result = await taskApis.searchTasks(term, { page: 1, limit: 1000 })
+      const result = await taskApis.searchTasks(term, { page: 1, limit: 100 })
       setTasks(result.items)
       setHasMore(false) // Search results do not support loading more pages
     } catch (error) {
