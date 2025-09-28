@@ -5,6 +5,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useState } from 'react'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import '@/features/common/scrollbar.css'
 import { RiRobot2Line } from 'react-icons/ri'
 import { FiArrowRight } from 'react-icons/fi'
@@ -36,6 +37,7 @@ export default function TeamList() {
   const [teamToDelete, setTeamToDelete] = useState<number | null>(null)
   const router = useRouter()
   const isEditing = editingTeamId !== null
+  const isDesktop = useMediaQuery('(min-width: 640px)')
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>((updater) => {
     setTeams(prev => {
@@ -191,27 +193,30 @@ export default function TeamList() {
                                     {team.bots.length > 0 ? (
                                       <div className="flex items-center min-w-0 flex-1">
                                         <div className="flex items-center overflow-hidden whitespace-nowrap text-ellipsis">
-                                          {/* 移动端只显示第一个机器人，桌面端显示所有 */}
-                                          {team.bots.map((bot, idx) => (
-                                            <span key={`${bot.bot_id}-${idx}`} className={`flex items-center flex-shrink-0 ${idx > 0 ? 'hidden sm:flex' : ''}`}>
+                                          {/* 限制显示的机器人数量，移动端显示1个，桌面端显示3个 */}
+                                          {team.bots.slice(0, isDesktop ? 3 : 1).map((bot, idx) => (
+                                            <span
+                                              key={`${bot.bot_id}-${idx}`}
+                                              className="flex items-center shrink min-w-0"
+                                            >
                                               <RiRobot2Line className="w-4 h-4 mr-0.5 text-text-muted" />
-                                              <span className="text-xs text-text-muted mr-0.5 truncate max-w-[80px] sm:max-w-none">
+                                              <span className="text-xs text-text-muted mr-0.5 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap max-w-[80px] sm:max-w-[120px] lg:max-w-[160px]">
                                                 {bots.find(b => b.id === bot.bot_id)?.name || bot.bot_id}
                                               </span>
                                               {team.workflow?.mode === 'pipeline'
-                                                ? (idx < team.bots.length - 1 && (
-                                                    <FiArrowRight className="w-4 h-4 text-text-muted mx-2 hidden sm:inline" />
+                                                ? (idx < Math.min(team.bots.length - 1, isDesktop ? 2 : 0) && (
+                                                    <FiArrowRight className="w-4 h-4 text-text-muted mx-2" />
                                                   ))
-                                                : (idx < team.bots.length - 1 && (
-                                                    <span className="text-text-muted mx-1 hidden sm:inline"> </span>
+                                                : (idx < Math.min(team.bots.length - 1, isDesktop ? 2 : 0) && (
+                                                    <span className="text-text-muted mx-1"> </span>
                                                   ))
                                               }
                                             </span>
                                           ))}
-                                          {/* 移动端显示省略号 */}
-                                          {team.bots.length > 1 && (
-                                            <span className="text-xs text-text-muted ml-1 sm:hidden">
-                                              +{team.bots.length - 1}
+                                          {/* 显示省略号 */}
+                                          {(isDesktop ? team.bots.length > 3 : team.bots.length > 1) && (
+                                            <span className="text-xs text-text-muted ml-1">
+                                              +{team.bots.length - (isDesktop ? 3 : 1)}
                                             </span>
                                           )}
                                         </div>

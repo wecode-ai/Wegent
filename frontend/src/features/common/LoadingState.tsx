@@ -15,7 +15,7 @@ export default function LoadingState({
 }: LoadingStateProps) {
   if (fullScreen) {
     return (
-      <div className="flex h-screen bg-base items-center justify-center">
+      <div className="flex smart-h-screen bg-base items-center justify-center box-border">
         <div className="text-text-primary">{message}</div>
       </div>
     )

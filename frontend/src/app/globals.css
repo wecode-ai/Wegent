@@ -62,33 +62,58 @@ body {
   overflow-x: hidden;
 }
 
+/* 100vh fallback for better mobile compatibility */
+html {
+  height: 100%;
+}
+
+body {
+  min-height: min(100vh, 100dvh); /* Use the smaller of 100vh or 100dvh for better compatibility */
+  box-sizing: border-box;
+}
+
 @layer utilities {
   .text-balance {
     text-wrap: balance;
   }
-  
+
+  /* Smart height that works on both mobile and desktop */
+  .smart-h-screen {
+    height: min(100vh, 100dvh);
+  }
+
   /* Touch-friendly optimizations */
   .touch-target {
     min-height: 44px;
     min-width: 44px;
   }
-  
+
   /* Mobile-specific styles */
   @media (max-width: 768px) {
     .mobile-padding {
       padding-left: 1rem;
       padding-right: 1rem;
     }
-    
+
     .mobile-text {
       font-size: 1rem;
       line-height: 1.5;
     }
-    
+
     .mobile-button {
       min-height: 44px;
       padding: 0.75rem 1rem;
     }
+  }
+
+  /* Optimize touch interactions */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Improve scrolling on mobile */
+  .custom-scrollbar {
+    -webkit-overflow-scrolling: touch;
   }
 }
 

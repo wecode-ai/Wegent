@@ -17,7 +17,7 @@ export default function DemoPage() {
     <UserProvider>
       {/* Handle OIDC token from URL parameters */}
       <OidcTokenHandler />
-      <div className="flex h-screen bg-base text-text-primary">
+      <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Main content area */}
         <div className="flex-1 flex flex-col ">
           {/* Demo content */}

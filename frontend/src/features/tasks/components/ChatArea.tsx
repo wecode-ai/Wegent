@@ -107,7 +107,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
       hasMessages
         ? "flex-1 flex flex-col min-h-0 w-full"
         : "flex w-full items-center justify-center h-full px-4"
-    }>
+    } style={{ height: '100%', boxSizing: 'border-box' }}>
       {hasMessages ? (
         <>
           {/* Messages Area */}

@@ -42,7 +42,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
 
   if (checking) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-base">
+      <div className="flex items-center justify-center smart-h-screen bg-base box-border">
         <div className="bg-surface rounded-xl px-8 py-8 flex flex-col items-center shadow-lg">
           <Spin size="large" />
           <div className="mt-4 text-text-secondary text-base font-medium tracking-wide">{t('auth.loading')}</div>
