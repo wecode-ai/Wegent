@@ -47,22 +47,22 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 detail=f"Maximum number of running tasks per user ({settings.MAX_RUNNING_TASKS_PER_USER}) exceeded."
             )
 
-        # 设置任务ID
+        # Set task ID
         if task_id is None:
             task_id = self.create_task_id(db)
         else:
-            # 验证task_id是否有效
+            # Validate if task_id is valid
             if not self.validate_task_id(db, task_id):
                 raise HTTPException(
                     status_code=400,
                     detail=f"Invalid task_id: {task_id} does not exist in session"
                 )
         
-        # 查询是否已存在
+        # Check if already exists
         existing_task = db.query(Task).filter(Task.id == task_id).first()
         if existing_task:
-            # 追加任务
-            # 根据任务状态提供相应的错误提示
+            # Append task
+            # Provide appropriate error message based on task status
             if existing_task.status == TaskStatus.RUNNING:
                 raise HTTPException(
                     status_code=400,
@@ -97,7 +97,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                     detail=f"Task has expired. You can only append tasks within {expire_hours} hours after last update."
                 )
 
-            # 更新现有任务状态为PENDING
+            # Update existing task status to PENDING
             existing_task.status = TaskStatus.PENDING
             existing_task.progress = 0
             task = existing_task
@@ -115,8 +115,8 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 )
             team = existing_team
         else:
-            # 首次创建新任务
-            # 必须输入team_id
+            # First time creating new task
+            # team_id is required
             if not obj_in.team_id:
                 raise HTTPException(
                     status_code=400,
@@ -142,7 +142,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                     status_code=400,
                     detail="Prompt content is too long. Maximum allowed size is 60000 bytes in UTF-8 encoding."
                 )
-            # git相关信息默认值
+            # Default values for git-related information
             if not obj_in.git_url:
                 obj_in.git_url = ""
             if not obj_in.git_repo:
@@ -162,9 +162,9 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 if len(obj_in.prompt) > 50:
                     title += "..."
         
-        # 如果不存在，则创建新任务
+        # If not exists, create new task
         if task is None:
-            # 准备任务数据
+            # Prepare task data
             task_data = {
                 "id": task_id,
                 "user_id": user.id,
@@ -182,7 +182,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 "progress": 0,
             }
             
-            # 创建并添加新任务
+            # Create and add new task
             task = Task(**task_data)
             db.add(task)
 
@@ -437,7 +437,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                     progress=0,
                     message_id=next_message_id,
                     parent_id=parent_id,
-                    # 如果executor_infos 不是空，则取i个，否则是空字符串
+                    # If executor_infos is not empty, take the i-th one, otherwise empty string
                     executor_name=executor_infos[i].get('executor_name') if len(executor_infos) > 0 else "",
                     executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > 0 else ""
                 )
@@ -449,7 +449,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
                 db.add(subtask)
         else :
             if existing_subtasks:
-                #取 existing_subtasks 最后一个的executor_name 和 executor_namespace
+                # Take executor_name and executor_namespace from the last existing_subtasks
                 executor_name = existing_subtasks[0].executor_name
                 executor_namespace = existing_subtasks[0].executor_namespace
             assistant_subtask = Subtask(
@@ -510,7 +510,7 @@ class TaskService(BaseService[Task, TaskCreate, TaskUpdate]):
         self, db: Session, *, user_id: int, title: str, skip: int = 0, limit: int = 100
     ) -> Tuple[List[Task], int]:
         """
-        根据标题模糊搜索当前用户的任务列表（分页），排除 DELETE 状态
+        Fuzzy search tasks by title for current user (pagination), excluding DELETE status
         """
         query = db.query(Task).filter(
             Task.user_id == user_id,

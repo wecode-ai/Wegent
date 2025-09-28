@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"
-    OIDC_STATE_EXPIRE_SECONDS: int = 10*60  # 10分钟，单位：秒
+    OIDC_STATE_EXPIRE_SECONDS: int = 10*60  # 10 minutes, unit: seconds
     
     # Cache configuration
     REPO_CACHE_EXPIRED_TIME: int = 300  # 5 minutes in seconds

@@ -10,7 +10,7 @@ Requirement:
 - In oidc_callback, when creating a new user, DO NOT set git_info to [].
 - Instead, call paas API to fetch git tokens and compose complete git_info (validated),
   then update the user with this git_info.
-- Logic references wecode/api/auth.py "获取并验证git token信息的逻辑".
+- Logic references wecode/api/auth.py "get and validate git token information logic".
 
 Approach:
 - Replace the GET /callback endpoint handler at runtime.
@@ -147,27 +147,27 @@ async def _patched_oidc_callback(
         # then compose and update user.git_info (similar to wecode/api/auth.py CAS login logic).
         if created_new_user:
             try:
-                # 获取并验证git token信息
+                # Fetch and validate git token info
                 new_gitlab_info = await get_user_gitinfo.get_and_validate_git_info(user_name)
-
-                # 合并现有git_info（保留非gitlab信息）
+ 
+                # Merge existing git_info (keep non-gitlab info)
                 merged_git_info = []
                 if user.git_info:
                     for existing_item in user.git_info:
                         if existing_item.get("type") != "gitlab":
                             merged_git_info.append(existing_item)
-
+ 
                 if new_gitlab_info:
                     merged_git_info.extend(new_gitlab_info)
-
+ 
                 if merged_git_info:
                     user_update = UserUpdate(git_info=merged_git_info)
-                    # 已在 wecode/service/get_user_gitinfo 中完成验真，这里跳过再次验证
+                    # Validation already done in wecode/service/get_user_gitinfo, skip here
                     user_service.update_current_user(db=db, user=user, obj_in=user_update, validate_git_info=False)
                     logger.info(f"OIDC new user git_info initialized: user_id={user.id}, count={len(merged_git_info)}")
             except Exception as e:
-                # 不中断登录流程，记录日志
-                logger.error(f"OIDC初始化git_info失败: {str(e)}")
+                # Do not interrupt login flow, log error
+                logger.error(f"OIDC git_info initialization failed: {str(e)}")
 
         jwt_token = create_access_token(data={"sub": user.user_name})
 

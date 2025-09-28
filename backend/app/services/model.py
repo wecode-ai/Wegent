@@ -112,19 +112,19 @@ class ModelService(BaseService[Model, ModelCreate, ModelUpdate]):
 
     def list_model_names(self, db: Session, *, current_user: User, agent_name: str) -> List[Dict[str, str]]:
         """
-        列出可用的模型名称 [{'name': str}, ...]
-        简化逻辑：
-        - 校验 agent_name 是否存在，不存在报 400
-        - 从 agent.config.mode_filter 读取白名单；缺失/空 => 允许全部
-        - 白名单匹配 Model.config.env.model
+        List available model names [{'name': str}, ...]
+        Simplified logic:
+        - Validate if agent_name exists, return 400 if not
+        - Read whitelist from agent.config.mode_filter; missing/empty => allow all
+        - Whitelist matches Model.config.env.model
         """
-        # 校验并取出 agent 配置
+        # Validate and retrieve agent configuration
         agent_row = db.query(Agent.id, Agent.config).filter(Agent.name == agent_name).first()
         if not agent_row:
             raise HTTPException(status_code=400, detail="Agent not found")
         _, agent_cfg = agent_row
 
-        # 归一化 mode_filter 为 List[str] 或空（空代表允许全部）
+        # Normalize mode_filter to List[str] or empty (empty means allow all)
         mode_filter: List[str] = []
         if isinstance(agent_cfg, dict):
             mf = agent_cfg.get("mode_filter")
