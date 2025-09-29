@@ -9,16 +9,13 @@
 import asyncio
 import os
 import json
-from typing import Dict, Any, Optional, List, Union, Tuple
+from typing import Dict, Any
 from pathlib import Path
 
 from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
-from claude_code_sdk.types import Message
 from executor.agents.claude_code.response_processor import process_response
-from shared.utils import git_util
 from executor.agents.base import Agent
 from shared.logger import setup_logger
-from executor.config import config
 from shared.status import TaskStatus
 
 logger = setup_logger("claude_code_agent")
@@ -73,9 +70,10 @@ class ClaudeCodeAgent(Agent):
         """
         try:
             # Check if bot config is available
-            if "bot" in self.task_data and "agent_config" in self.task_data["bot"]:
+            if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
+                bot_config = self.task_data["bot"][0]
                 # Get config from bot
-                agent_config = self.task_data["bot"]["agent_config"]
+                agent_config = self._create_claude_model(bot_config)
                 if agent_config:
                     # Ensure ~/.claude directory exists
                     claude_dir = os.path.expanduser("~/.claude")
@@ -92,6 +90,26 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.error(f"Failed to initialize Claude Code Agent: {str(e)}")
             return TaskStatus.FAILED
+    def _create_claude_model(self, bot_config: Dict[str, Any]) -> Dict[str, Any]:
+        agent_config = bot_config.get("agent_config", {})
+        env = agent_config.get("env", {})
+        # Using user-defined input model configuration
+        if not env.get("model"):
+            return agent_config
+        
+        model_id = env.get("model_id", "")
+        
+        env_config = {
+            "ANTHROPIC_MODEL": model_id,
+            "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
+            "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
+        }
+        
+        base_url = env.get("base_url", "")
+        if base_url:
+            env_config["ANTHROPIC_BASE_URL"] = base_url.removesuffix("/v1")
+        
+        return {"env": env_config}
 
     def _extract_claude_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -124,8 +142,8 @@ class ClaudeCodeAgent(Agent):
 
         # Collect all non-None configuration parameters
         options = {}
-        bot_config = task_data.get("bot", {})
-
+        bots = task_data.get("bot", [])
+        bot_config = bots[0]
         # Extract all non-None parameters from bot_config
         if bot_config:
             for key in valid_options:
