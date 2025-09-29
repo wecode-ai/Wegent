@@ -192,10 +192,19 @@ class Agent:
         """
         git_id = user_config.get("git_id")
         git_login = user_config.get("git_login")
-        if git_id and git_login:
+        git_email = user_config.get("git_email")
+
+        if not git_email and git_id and git_login:
             git_email = f"{git_id}+{git_login}@users.noreply.github.com"
-            logger.info(f"Agent[{self.get_name()}][{self.task_id}] Setting git config user.name to {git_login} and user.email to {git_email}")
+
+        if git_login and git_email:
+            logger.info(
+                f"Agent[{self.get_name()}][{self.task_id}] "
+                f"Setting git config user.name='{git_login}', user.email='{git_email}'"
+            )
             success, error_msg = git_util.set_git_config(project_path, git_login, git_email)
             if not success:
                 logger.error(f"Agent[{self.get_name()}][{self.task_id}] Failed to set git config: {error_msg}")
+        else:
+            logger.warning(f"Agent[{self.get_name()}][{self.task_id}] Missing git_login or git_email, skip git config")
 
