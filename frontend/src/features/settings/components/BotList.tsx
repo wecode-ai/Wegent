@@ -178,31 +178,15 @@ export default function BotList() {
                                 style={{ padding: '2px' }}
                                 className="!text-text-muted hover:!text-text-primary"
                               />
-
-                              {/* 次要操作按钮 - 下拉菜单 */}
-                              <Dropdown
-                                menu={{
-                                  items: [
-                                    {
-                                      key: 'delete',
-                                      label: t('bots.delete'),
-                                      icon: <TrashIcon className="w-4 h-4" />,
-                                      onClick: () => handleDeleteBot(bot.id),
-                                      danger: true
-                                    }
-                                  ]
-                                }}
-                                trigger={['click']}
-                              >
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<EllipsisHorizontalIcon className="w-4 h-4 text-text-muted" />}
-                                  title={t('common.more')}
-                                  style={{ padding: '2px' }}
-                                  className="!text-text-muted hover:!text-text-primary"
-                                />
-                              </Dropdown>
+                              <Button
+                                type="text"
+                                size="small"
+                                icon={<TrashIcon className="w-4 h-4 text-text-muted" />}
+                                onClick={() => handleDeleteBot(bot?.id)}
+                                title={t('bots.delete')}
+                                style={{ padding: '2px' }}
+                                className="!text-text-muted hover:!text-text-primary"
+                              />
                             </div>
                           </div>
                           {bots.length > 1 && bot.id !== bots[bots.length - 1].id && (

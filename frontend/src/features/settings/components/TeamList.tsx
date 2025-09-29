@@ -232,6 +232,15 @@ export default function TeamList() {
                                 <Button
                                   type="text"
                                   size="small"
+                                  icon={<ChatBubbleLeftEllipsisIcon className="w-4 h-4" />}
+                                  onClick={() => handleChatTeam(team)}
+                                  title={t('teams.chat')}
+                                  style={{ padding: '2px' }}
+                                  className="!text-text-muted hover:!text-text-primary"
+                                />
+                                <Button
+                                  type="text"
+                                  size="small"
                                   icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
                                   onClick={() => handleEditTeam(team)}
                                   title={t('teams.edit')}
@@ -252,12 +261,6 @@ export default function TeamList() {
                                 <Dropdown
                                   menu={{
                                     items: [
-                                      {
-                                        key: 'chat',
-                                        label: t('teams.chat'),
-                                        icon: <ChatBubbleLeftEllipsisIcon className="w-4 h-4" />,
-                                        onClick: () => handleChatTeam(team)
-                                      },
                                       {
                                         key: 'delete',
                                         label: t('teams.delete'),
