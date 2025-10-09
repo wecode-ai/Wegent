@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     OIDC_DISCOVERY_URL: str = "http://test.intra.weibo.com:5556/.well-known/openid-configuration"
     OIDC_REDIRECT_URI: str = "http://localhost:8000/api/auth/oidc/callback"
 
+    # Redis configuration
+    REDIS_URL: str = "redis://127.0.0.1:6379/0"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
