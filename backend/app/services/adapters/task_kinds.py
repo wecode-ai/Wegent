@@ -449,6 +449,17 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         import json as json_lib
         
         try:
+            # First check if user already has a Placeholder record
+            existing_placeholder = db.execute(text("""
+                SELECT id FROM kinds
+                WHERE user_id = :user_id AND kind = 'Placeholder' AND is_active = false
+                LIMIT 1
+            """), {"user_id": user_id}).fetchone()
+            
+            if existing_placeholder:
+                # Return existing placeholder ID
+                return existing_placeholder[0]
+            
             # Create placeholder JSON data
             placeholder_json = {
                 "kind": "Placeholder",

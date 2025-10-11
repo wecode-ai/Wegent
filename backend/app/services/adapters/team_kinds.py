@@ -66,12 +66,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
             
             member = {
-                "name": role or bot.name,  # Use role as name, fallback to bot name
                 "botRef": {
                     "name": bot.name,
                     "namespace": bot.namespace
                 },
-                "prompt": bot_prompt or ""
+                "prompt": bot_prompt or "",
+                "role": role or ""
             }
             members.append(member)
 
@@ -263,14 +263,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         status_code=400,
                         detail=f"Bot with id {bot_id} not found"
                     )
-                
                 member = {
-                    "name": role or bot.name,
                     "botRef": {
                         "name": bot.name,
                         "namespace": bot.namespace
                     },
-                    "prompt": bot_prompt or ""
+                    "prompt": bot_prompt or "",
+                    "role": role or ""
                 }
                 members.append(member)
             
@@ -398,10 +397,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 bot_info = {
                     "bot_id": bot.id,
                     "bot_prompt": member.get("prompt", ""),
-                    "role": member.get("name", "")
+                    "role": member.get("role", "")
                 }
                 bots.append(bot_info)
-        
         # Convert collaboration model to workflow format
         workflow = {}
         if collaboration_model:

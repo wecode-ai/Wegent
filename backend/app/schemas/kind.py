@@ -163,9 +163,9 @@ class BotTeamRef(BaseModel):
 
 class TeamMember(BaseModel):
     """Team member specification"""
-    name: str
     botRef: BotTeamRef
     prompt: Optional[str] = None
+    role: Optional[str] = None
 
 
 class TeamSpec(BaseModel):
