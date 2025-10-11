@@ -47,10 +47,10 @@ def create_app():
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
-        # Skip logging for health check/probe requests (root path)
+         # Skip logging for health check/probe requests (root path)
         if request.url.path == "/":
             return await call_next(request)
-        
+
         start_time = time.time()
         
         # Pre-request logging
