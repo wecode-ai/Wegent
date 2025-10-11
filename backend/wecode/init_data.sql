@@ -22,5 +22,5 @@ VALUES
 	('14', 'wecode-claude-opus-4.1', '{\"env\": {\"model\": \"claude\", \"api_key\": \"7a7edbdef9eab85c8x\", \"base_url\": \"https://copilot.weibo.com/v1\", \"model_id\": \"wecode-claude-opus-4.1\"}}', '1', '2025-09-25 10:30:52', '2025-09-25 10:30:52'),
 	('15', 'huoshan-deepseek-v3', '{\"env\": {\"model\": \"openai\", \"api_key\": \"7a7edbdef9eab85c8x\", \"base_url\": \"https://copilot.weibo.com/v1\", \"model_id\": \"deepseek-chat\"}}', '1', '2025-09-25 10:30:52', '2025-09-25 10:30:52'),
 	('16', 'ali-deepseek-v3.1', '{\"env\": {\"model\": \"openai\", \"api_key\": \"7a7edbdef9eab85c8x\", \"base_url\": \"https://copilot.weibo.com/v1\", \"model_id\": \"ali-deepseek-v3.1\"}}', '1', '2025-09-25 10:30:52', '2025-09-25 10:30:52'),
-	('17', 'wecode-gemini-2.5', '{\"env\": {\"model\": \"openai\", \"api_key\": \"7a7edbdef9eab85c8x\", \"base_url\": \"https://copilot.weibo.com/v1\", \"model_id\": \"wecode-gemini-2.5\"}}', '1', '2025-09-25 10:30:52', '2025-09-25 10:30:52');
-
+	('17', 'wecode-gemini-2.5', '{\"env\": {\"model\": \"openai\", \"api_key\": \"7a7edbdef9eab85c8x\", \"base_url\": \"https://copilot.weibo.com/v1\", \"model_id\": \"wecode-gemini-2.5\"}}', '1', '2025-09-25 10:30:52', '2025-09-25 10:30:52'),
+	('18', 'wecode-claude-sina-glm-4.5', '{\"env\": {\"model\": \"claude\", \"api_key\": \"sk-wecode-proxy-claude-code-sk\", \"base_url\": \"https://ccr-copilot.weibo.com\", \"model_id\": \"wecode,sina-glm-4.5\"}}', '1', '2025-10-11 14:21:10', '2025-10-11 14:21:10');
