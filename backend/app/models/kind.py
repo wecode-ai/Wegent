@@ -16,7 +16,7 @@ class Kind(Base):
     __tablename__ = "kinds"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, nullable=False)
     kind = Column(String(50), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     namespace = Column(String(100), nullable=False, default="default")

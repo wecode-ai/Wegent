@@ -3,6 +3,8 @@
 -- SPDX-License-Identifier: Apache-2.0
 
 -- Drop foreign key constraints
+ALTER TABLE kinds DROP FOREIGN KEY kinds_ibfk_1; -- user_id foreign key
+
 ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_2; -- task_id foreign key
 ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_3; -- team_id foreign key
 ALTER TABLE subtasks DROP FOREIGN KEY subtasks_ibfk_4; -- bot_id foreign key

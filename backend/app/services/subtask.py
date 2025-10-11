@@ -169,6 +169,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                     for ns, name in unique_executor_keys:
                         ok = False
                         try:
+                            logger.info(f"Deleting executor task ns={ns} name={name}")
                             res = await executor_service.delete_executor_task(name, ns)
                             ok = True
                             results.append(((ns, name), True, res))

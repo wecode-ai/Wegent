@@ -168,27 +168,10 @@ class TeamMember(BaseModel):
     prompt: Optional[str] = None
 
 
-class WorkflowStep(BaseModel):
-    """Individual step in collaboration workflow"""
-    step: str
-    nextStep: str = ""
-
-
-class CollaborationConfig(BaseModel):
-    """Detailed collaboration configuration"""
-    workflow: List[WorkflowStep]
-
-
-class CollaborationModel(BaseModel):
-    """Collaboration model configuration"""
-    name: str  # sequential, parallel, hybrid
-    config: Optional[CollaborationConfig] = None
-
-
 class TeamSpec(BaseModel):
     """Team specification"""
     members: List[TeamMember]
-    collaborationModel: CollaborationModel
+    collaborationModel: str  # pipeline、route、coordinate、collaborate
 
 
 class TeamStatus(Status):
@@ -217,6 +200,7 @@ class Repository(BaseModel):
     """Repository configuration"""
     gitUrl: str
     gitRepo: str
+    gitRepoId: Optional[int] = None
     branchName: str
     gitDomain: str
 
@@ -265,17 +249,19 @@ class TaskSpec(BaseModel):
     prompt: str
     teamRef: TeamTaskRef
     workspaceRef: WorkspaceTaskRef
+    batch: Optional[int] = 0
 
 
 class TaskStatus(Status):
     """Task status"""
     state: str = "Available"  # Available, Unavailable
+    status: str = "PENDING"  # PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, DELETE
     progress: int = 0
     result: Optional[Dict[str, Any]] = None
     errorMessage: Optional[str] = None
-    startedAt: Optional[datetime] = None
+    createdAt: Optional[datetime] = None
+    updatedAt: Optional[datetime] = None
     completedAt: Optional[datetime] = None
-    subTasks:  Optional[List[Dict[str, Any]]] = None 
 
 
 class Task(BaseModel):

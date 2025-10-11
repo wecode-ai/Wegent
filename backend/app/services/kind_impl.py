@@ -236,17 +236,17 @@ class TeamKindService(KindBaseService):
                     f"Bot '{bot_name}' not found in namespace '{bot_namespace}'"
                 )
         
-        # Validate sequential workflow configuration
+        # Validate  pipeline workflow configuration
         collaboration_model = resource['spec']['collaborationModel']
-        self._validate_sequential_workflow(members, collaboration_model)
+        self._validate_pipeline_workflow(members, collaboration_model)
     
-    def _validate_sequential_workflow(self, members: List[Dict[str, Any]], collaboration_model: Dict[str, Any]) -> None:
-        """Validate sequential workflow configuration"""
-        if collaboration_model.get('name') == 'sequential':
+    def _validate_pipeline_workflow(self, members: List[Dict[str, Any]], collaboration_model: Dict[str, Any]) -> None:
+        """Validate  pipeline workflow configuration"""
+        if collaboration_model.get('name') == 'pipeline':
             config = collaboration_model.get('config')
             if not config or 'workflow' not in config:
                 raise NotFoundException(
-                    "Sequential collaboration model requires config.workflow"
+                    "pipeline collaboration model requires config.workflow"
                 )
             
             workflow = config['workflow']

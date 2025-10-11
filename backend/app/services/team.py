@@ -305,7 +305,7 @@ class TeamService(BaseService[Team, TeamCreate, TeamUpdate]):
         collaboration_model = k_team_json.get('spec', {}).get('collaborationModel', {})
         
         # Build workflow order from collaboration model
-        if collaboration_model.get('name') == 'sequential':
+        if collaboration_model.get('name') == 'pipeline':
             workflow = collaboration_model.get('config', {}).get('workflow', [])
             workflow_order = [step.get('step') for step in workflow if step.get('step')]
         
