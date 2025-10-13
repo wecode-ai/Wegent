@@ -584,7 +584,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Collect unique executor keys to avoid duplicate calls (namespace + name)
         unique_executor_keys = set()
         for subtask in task_subtasks:
-            if subtask.executor_name and subtask.executor_namespace:
+            if subtask.executor_name:
                 unique_executor_keys.add((subtask.executor_namespace, subtask.executor_name))
         
         # Stop running subtasks on executor (deduplicated by (namespace, name))

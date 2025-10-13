@@ -561,8 +561,8 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             executor_name: The executor task name to delete
             executor_namespace: Executor namespace (required)
         """
-        if not executor_name or not executor_namespace:
-            raise HTTPException(status_code=400, detail="executor_name and executor_namespace are required")
+        if not executor_name:
+            raise HTTPException(status_code=400, detail="executor_name are required")
         try:
             import requests
             payload = {
