@@ -18,7 +18,7 @@ wegent-runtime:
   retry: 1
   variables:
     SERVICE: wegent-runtime
-    DOCKERFILE_PATH: wecode/docker/runtime
+    DOCKERFILE_PATH: wecode/docker/base
   script:
     - build_image
   when: manual
