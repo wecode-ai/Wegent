@@ -2,13 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Optional, List
-from fastapi import APIRouter, Depends, HTTPException, Query
+from typing import List
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.services.repository_service import repository_service
+from app.services.repository import repository_service
 from app.models.user import User
 from app.schemas.github import RepositoryResult, Branch
 

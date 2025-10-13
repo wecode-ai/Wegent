@@ -3,11 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Any, Optional
+import logging
 
 from redis.asyncio import Redis
 import orjson
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 class RedisCache:
     """Redis-based cache manager for GitHub repositories"""
@@ -34,7 +37,7 @@ class RedisCache:
 
     async def set(self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME) -> bool:
         """Set value to cache with expiration (seconds)"""
-        print(f"Storing {key} in cache, expire: {expire}")
+        logger.info(f"Storing {key} in cache, expire: {expire}")
         payload = orjson.dumps(value)
         ok = await self._client.set(key, payload, ex=expire)
         return bool(ok)

@@ -7,13 +7,12 @@ Repository aggregation service for handling multiple repository providers
 """
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from fastapi import HTTPException
 
 from app.models.user import User
 from app.repository.github_provider import GitHubProvider
 from app.repository.gitlab_provider import GitLabProvider
-from app.schemas.github import RepositoryResult, Branch, TokenValidationResponse
 
 
 class RepositoryService:

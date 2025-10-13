@@ -5,6 +5,7 @@
 """
 Base service for all Kubernetes-style CRD operations
 """
+import logging
 from typing import List, Optional, Dict, Any, Type, TypeVar, Generic
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
@@ -15,6 +16,8 @@ from abc import ABC, abstractmethod
 from app.db.session import SessionLocal
 from app.models.kind import Kind
 from app.core.exceptions import NotFoundException, ConflictException
+
+logger = logging.getLogger(__name__)
 
 
 class KindBaseService(ABC):
@@ -90,6 +93,13 @@ class KindBaseService(ABC):
             # Get the resource ID
             resource_id = db_resource.id
             
+            # Log resource creation
+            logger.info(
+                f"Created {self.kind} resource: name='{resource['metadata']['name']}', "
+                f"namespace='{resource['metadata']['namespace']}', user_id={user_id}, "
+                f"resource_id={resource_id}"
+            )
+            
             # Perform side effects
             self._perform_side_effects(db, user_id, db_resource, resource)
             
@@ -121,24 +131,66 @@ class KindBaseService(ABC):
             # Get the resource ID
             resource_id = db_resource.id
             
+            # Log resource update
+            logger.info(
+                f"Updated {self.kind} resource: name='{name}', "
+                f"namespace='{namespace}', user_id={user_id}, "
+                f"resource_id={resource_id}"
+            )
+            
             # Perform side effects
             self._update_side_effects(db, user_id, db_resource, resource)
             
             return resource_id
     
-    def delete_resource(self, user_id: int, namespace: str, name: str) -> bool:
-        """Delete a resource (soft delete)"""
+    def soft_delete_resource(self, user_id: int, namespace: str, name: str) -> bool:
+        """Soft delete a resource (mark as inactive)"""
         with self.get_db() as db:
             filters = self._build_filters(user_id, namespace, name)
             db_resource = db.query(Kind).filter(and_(*filters)).first()
             if not db_resource:
+                logger.warning(f"Attempted to soft delete non-existent {self.kind} '{name}' in namespace '{namespace}' for user {user_id}")
                 raise NotFoundException(
                     f"{self.kind} '{name}' not found"
                 )
             
             db_resource.is_active = False
             db_resource.updated_at = datetime.utcnow()
+            
+            # Perform pre-delete side effects
+            self._pre_delete_side_effects(db, user_id, db_resource)
+            
             db.commit()
+            logger.info(f"Soft deleted {self.kind} '{name}' in namespace '{namespace}' for user {user_id}")
+            
+            # Perform post-delete side effects
+            self._post_delete_side_effects(db, user_id, db_resource)
+            
+            return True
+    
+    def delete_resource(self, user_id: int, namespace: str, name: str) -> bool:
+        """Hard delete a resource (permanently remove from database)"""
+        with self.get_db() as db:
+            filters = self._build_filters(user_id, namespace, name)
+            db_resource = db.query(Kind).filter(and_(*filters)).first()
+            if not db_resource:
+                logger.warning(f"Attempted to hard delete non-existent {self.kind} '{name}' in namespace '{namespace}' for user {user_id}")
+                raise NotFoundException(
+                    f"{self.kind} '{name}' not found"
+                )
+            
+            # Perform pre-delete side effects
+            self._pre_delete_side_effects(db, user_id, db_resource)
+            
+            # Check if deletion should proceed
+            if self._should_delete_resource(db, user_id, db_resource):
+                db.delete(db_resource)
+                db.commit()
+                logger.info(f"Hard deleted {self.kind} '{name}' in namespace '{namespace}' for user {user_id}")
+            
+            # Perform post-delete side effects
+            self._post_delete_side_effects(db, user_id, db_resource)
+            
             return True
     
     def _extract_resource_data(self, resource: Dict[str, Any]) -> Dict[str, Any]:
@@ -170,6 +222,27 @@ class KindBaseService(ABC):
         result['kind'] = self.kind
         
         return result
+    
+    def _pre_delete_side_effects(self, db: Session, user_id: int, db_resource: Kind) -> None:
+        """Perform side effects before resource deletion"""
+        pass
+    
+    def _post_delete_side_effects(self, db: Session, user_id: int, db_resource: Kind) -> None:
+        """Perform side effects after resource deletion"""
+        pass
+    
+    def _should_delete_resource(self, db: Session, user_id: int, db_resource: Kind) -> bool:
+        """Determine whether the resource should be deleted
+        
+        Args:
+            db: Database session
+            user_id: User ID
+            db_resource: The resource being deleted
+            
+        Returns:
+            bool: True to proceed with deletion, False to cancel
+        """
+        return True
     
     @abstractmethod
     def _validate_references(self, db: Session, user_id: int, resource: Dict[str, Any]) -> None:

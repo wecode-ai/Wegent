@@ -44,9 +44,9 @@ services:
       start_period: 10s
 
   backend:
-    build:
-      dockerfile: docker/backend/Dockerfile
-    # image: ghcr.io/wecode-ai/wegent-backend:1.0.0
+    # build:
+      # dockerfile: docker/backend/Dockerfile
+    image: ghcr.io/wecode-ai/wegent-backend:1.0.0
     
     container_name: wegent-backend
     restart: always

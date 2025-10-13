@@ -119,17 +119,12 @@ metadata:
   namespace: default
 spec:
   members:
-    - name: "developer"
+    - role: "leader"
       botRef:
         name: developer-bot
         namespace: default
       prompt: ""
-  collaborationModel:
-    name: "sequential"
-    config:
-      workflow:
-        - step: "developer"
-          nextStep: ""
+  collaborationModel: "pipeline"
 status:
   state: "Available"
 ---
@@ -161,17 +156,11 @@ spec:
   workspaceRef:
     name: project-workspace
     namespace: default
-  batch: 0
 status:
   state: "Available"
+  status: "PENDING"
   progress: 0
   result: null
   errorMessage: null
   startedAt: null
   completedAt: null
-  subtasks:
-    - title: "developer"
-      state: "Pending"
-      progress: 0
-      result: ""
-      errorMessage: ""

@@ -90,6 +90,7 @@ class ModelRef(BaseModel):
 class ShellSpec(BaseModel):
     """Shell specification"""
     runtime: str
+    supportModel: Optional[List[str]] = None
 
 
 class ShellStatus(Status):
@@ -249,7 +250,6 @@ class TaskSpec(BaseModel):
     prompt: str
     teamRef: TeamTaskRef
     workspaceRef: WorkspaceTaskRef
-    batch: Optional[int] = 0
 
 
 class TaskStatus(Status):
@@ -262,6 +262,7 @@ class TaskStatus(Status):
     createdAt: Optional[datetime] = None
     updatedAt: Optional[datetime] = None
     completedAt: Optional[datetime] = None
+    subTasks:  Optional[List[Dict[str, Any]]] = None 
 
 
 class Task(BaseModel):
@@ -278,17 +279,6 @@ class TaskList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "TaskList"
     items: List[Task]
-
-
-# Batch operation schemas
-class ApplyRequest(BaseModel):
-    """Batch apply request"""
-    resources: List[Dict[str, Any]]
-
-
-class DeleteRequest(BaseModel):
-    """Batch delete request"""
-    resources: List[Dict[str, Any]]
 
 
 class BatchResponse(BaseModel):

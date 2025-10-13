@@ -14,6 +14,6 @@ from app.api.endpoints.kind.batch import router as batch_router
 k_router = APIRouter(prefix="/v1")
 
 # Include batch router first to avoid path conflicts
-k_router.include_router(batch_router, tags=["k8s-batch"])
+k_router.include_router(batch_router, tags=["kinds-batch"])
 # Include unified kinds router after batch router
 k_router.include_router(kinds_router, tags=["kinds"])

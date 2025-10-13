@@ -156,3 +156,24 @@ def verify_token(token: str) -> Dict[str, Any]:
         return {"username": token_data.username}
     except JWTError:
         raise credentials_exception
+
+def get_username_from_request(request) -> str:
+    """
+    Extract username from Authorization header in request
+    
+    Args:
+        request: FastAPI Request object
+        
+    Returns:
+        Username or 'anonymous'/'invalid_token' if not found/invalid
+    """
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return "anonymous"
+    
+    try:
+        token = auth_header.split(" ")[1]
+        token_data = verify_token(token)
+        return token_data.get("username", "anonymous")
+    except Exception:
+        return "invalid_token"

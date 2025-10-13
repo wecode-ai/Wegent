@@ -12,6 +12,7 @@ from app.models.public_model import PublicModel
 from app.models.public_shell import PublicShell
 from app.models.user import User
 from app.schemas.model import ModelCreate, ModelUpdate, ModelBulkCreateItem
+from app.schemas.kind import Model, Shell
 from app.services.base import BaseService
 
 
@@ -28,9 +29,8 @@ class ModelAdapter:
         # Extract config from json.spec.modelConfig
         config = {}
         if isinstance(public_model.json, dict):
-            spec = public_model.json.get("spec", {})
-            if isinstance(spec, dict):
-                config = spec.get("modelConfig", {})
+            model_crd = Model.model_validate(public_model.json)
+            config = model_crd.spec.modelConfig
         
         return {
             "id": public_model.id,
@@ -110,19 +110,28 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
                     PublicModel.name == it.name,
                     PublicModel.namespace == 'default'
                 ).first()
-                
                 if existed:
-                    # Update existing model
-                    json_data = existed.json if isinstance(existed.json, dict) else {}
-                    if "spec" not in json_data:
-                        json_data["spec"] = {}
-                    if "modelConfig" not in json_data["spec"]:
-                        json_data["spec"]["modelConfig"] = {}
-                    
-                    # Update env section
-                    json_data["spec"]["modelConfig"]["env"] = dict(it.env) if isinstance(it.env, dict) else {}
-                    existed.json = json_data
-                    
+                    if existed:
+                        # Update existing model
+                        if isinstance(existed.json, dict):
+                            model_crd = Model.model_validate(existed.json)
+                            # Update env section
+                            model_crd.spec.modelConfig["env"] = dict(it.env) if isinstance(it.env, dict) else {}
+                            existed.json = model_crd.model_dump()
+                        else:
+                            # Fallback for invalid JSON
+                            json_data = {
+                                "kind": "Model",
+                                "spec": {
+                                    "modelConfig": {
+                                        "env": dict(it.env) if isinstance(it.env, dict) else {}
+                                    }
+                                },
+                                "status": {"state": "Available"},
+                                "metadata": {"name": it.name, "namespace": "default"},
+                                "apiVersion": "agent.wecode.io/v1"
+                            }
+                            existed.json = json_data
                     # Update is_active only if explicitly provided
                     if getattr(it, "is_active", None) is not None:
                         existed.is_active = it.is_active  # type: ignore[attr-defined]
@@ -190,7 +199,7 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
 
     def list_model_names(self, db: Session, *, current_user: User, agent_name: str) -> List[Dict[str, str]]:
         """
-        List available model names based on shell support_model filter
+        List available model names based on shell supportModel filter
         """
         # Get shell configuration from public_shells table
         shell_row = db.query(PublicShell.json).filter(PublicShell.name == agent_name).first()
@@ -199,36 +208,33 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         
         shell_json = shell_row[0] if isinstance(shell_row[0], dict) else {}
         
-        # Extract support_model from shell spec
-        support_model: List[str] = []
-        spec = shell_json.get("spec", {})
-        if isinstance(spec, dict):
-            sm = spec.get("support_model", [])
-            if isinstance(sm, list):
-                support_model = [str(x) for x in sm if x]
+        # Extract supportModel from shell spec
+        supportModel: List[str] = []
+        if isinstance(shell_json, dict):
+            shell_crd = Shell.model_validate(shell_json)
+            supportModel = shell_crd.spec.supportModel or []
+            supportModel = [str(x) for x in supportModel if x]
 
-        allow_all = len(support_model) == 0
+        allow_all = len(supportModel) == 0
         models = db.query(PublicModel).filter(PublicModel.is_active == True).all()  # noqa: E712
 
         if allow_all:
             return [{"name": m.name} for m in models]
 
-        allowed = set(support_model)
-
+        allowed = set(supportModel)
+        
         def get_model_provider(m: PublicModel) -> Optional[str]:
             json_data = getattr(m, "json", None)
             if not isinstance(json_data, dict):
                 return None
-            spec = json_data.get("spec", {})
-            if not isinstance(spec, dict):
+            try:
+                model_crd = Model.model_validate(json_data)
+                env = model_crd.spec.modelConfig.get("env", {})
+                if not isinstance(env, dict):
+                    return None
+                return env.get("model")
+            except:
                 return None
-            model_config = spec.get("modelConfig", {})
-            if not isinstance(model_config, dict):
-                return None
-            env = model_config.get("env", {})
-            if not isinstance(env, dict):
-                return None
-            return env.get("model")
 
         return [{"name": m.name} for m in models if (get_model_provider(m) in allowed)]
 
@@ -276,18 +282,16 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
             if field == "name":
                 setattr(model, field, value)
                 # Also update metadata in json
-                json_data = model.json if isinstance(model.json, dict) else {}
-                if "metadata" not in json_data:
-                    json_data["metadata"] = {}
-                json_data["metadata"]["name"] = value
-                model.json = json_data
+                if isinstance(model.json, dict):
+                    model_crd = Model.model_validate(model.json)
+                    model_crd.metadata.name = value
+                    model.json = model_crd.model_dump()
             elif field == "config":
                 # Update modelConfig in json
-                json_data = model.json if isinstance(model.json, dict) else {}
-                if "spec" not in json_data:
-                    json_data["spec"] = {}
-                json_data["spec"]["modelConfig"] = value
-                model.json = json_data
+                if isinstance(model.json, dict):
+                    model_crd = Model.model_validate(model.json)
+                    model_crd.spec.modelConfig = value
+                    model.json = model_crd.model_dump()
             else:
                 setattr(model, field, value)
 

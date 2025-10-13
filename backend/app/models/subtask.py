@@ -41,7 +41,6 @@ class Subtask(Base):
     parent_id = Column(Integer, nullable=True)
     status = Column(SQLEnum(SubtaskStatus), nullable=False, default=SubtaskStatus.PENDING)
     progress = Column(Integer, nullable=False, default=0)
-    batch = Column(Integer, nullable=False, default=0)
     result = Column(JSON)
     error_message = Column(Text)
     created_at = Column(DateTime, default=func.now())

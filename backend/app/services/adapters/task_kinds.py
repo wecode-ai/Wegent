@@ -5,6 +5,8 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Tuple
 import json
+import logging
+import asyncio
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -15,9 +17,12 @@ from app.models.kind import Kind
 from app.models.user import User
 from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
 from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskStatus
+from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
+from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.base import BaseService
 from app.core.config import settings
 
+logger = logging.getLogger(__name__)
 
 class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     """
@@ -30,6 +35,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         Create user Task using kinds table
         """
+        logger.info(f"create_task_or_append called with task_id={task_id}, user_id={user.id}")
+        task = None
+        team = None
+
         # Limit running tasks per user
         running_count = db.query(Kind).filter(
             Kind.user_id == user.id,
@@ -60,10 +69,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             Kind.kind == "Task",
             Kind.is_active == True
         ).first()
-        
         if existing_task:
             # Handle existing task logic
-            task_status = existing_task.json.get("status", {}).get("status", "PENDING")
+            task_crd = Task.model_validate(existing_task.json)
+            task_status = task_crd.status.status if task_crd.status else "PENDING"
             
             if task_status == "RUNNING":
                 raise HTTPException(
@@ -89,140 +98,159 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     detail=f"Task has expired. You can only append tasks within {expire_hours} hours after last update."
                 )
 
-            # Update existing task status to PENDING
-            task_json = existing_task.json
-            task_json["status"]["status"] = "PENDING"
-            task_json["status"]["progress"] = 0
-            existing_task.json = task_json
-            flag_modified(existing_task, "json")
+            # Get team reference information from task_crd and validate if team exists
+            team_name = task_crd.spec.teamRef.name
+            team_namespace = task_crd.spec.teamRef.namespace
             
-            db.commit()
-            db.refresh(existing_task)
-            return self._convert_to_task_dict(existing_task, db, user.id)
+            existing_team = db.query(Kind).filter(
+                Kind.name == team_name,
+                Kind.namespace == team_namespace,
+                Kind.user_id == user.id,
+                Kind.kind == "Team",
+                Kind.is_active == True
+            ).first()
+            if not existing_team:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Team '{team_name}' not found, it may be deleted"
+                )
+            team = existing_team
 
-        # Validate team exists and belongs to user
-        if not obj_in.team_id:
-            raise HTTPException(
-                status_code=400,
-                detail="Team ID is required for creating a new task."
-            )
+            # Update existing task status to PENDING
+            if task_crd.status:
+                task_crd.status.status = "PENDING"
+                task_crd.status.progress = 0
+            existing_task.json = task_crd.model_dump(mode='json', exclude_none=True)
+            existing_task.updated_at = datetime.utcnow()
 
-        team = db.query(Kind).filter(
-            Kind.id == obj_in.team_id,
-            Kind.user_id == user.id,
-            Kind.kind == "Team",
-            Kind.is_active == True
-        ).first()
-        if not team:
-            raise HTTPException(
-                status_code=404,
-                detail="Team not found"
-            )
+            task = existing_task
+        else:
+            # Validate team exists and belongs to user
+            if not obj_in.team_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Team ID is required for creating a new task."
+                )
 
-        # Additional business validation for prompt length
-        if obj_in.prompt and len(obj_in.prompt.encode('utf-8')) > 60000:
-            raise HTTPException(
-                status_code=400,
-                detail="Prompt content is too long. Maximum allowed size is 60000 bytes in UTF-8 encoding."
-            )
+            existing_team = db.query(Kind).filter(
+                Kind.id == obj_in.team_id,
+                Kind.user_id == user.id,
+                Kind.kind == "Team",
+                Kind.is_active == True
+            ).first()
+            if not existing_team:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Team not found"
+                )
+            team = existing_team
 
-        # Default values for git-related information
-        git_url = obj_in.git_url or ""
-        git_repo = obj_in.git_repo or ""
-        git_domain = obj_in.git_domain or ""
-        branch_name = obj_in.branch_name or ""
-        git_repo_id = obj_in.git_repo_id or 0
+            # Additional business validation for prompt length
+            if obj_in.prompt and len(obj_in.prompt.encode('utf-8')) > 60000:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Prompt content is too long. Maximum allowed size is 60000 bytes in UTF-8 encoding."
+                )
 
-        # If title is empty, extract first 50 characters from prompt as title
-        title = obj_in.title
-        if not title and obj_in.prompt:
-            title = obj_in.prompt[:50]
-            if len(obj_in.prompt) > 50:
-                title += "..."
+            # Default values for git-related information
+            git_url = obj_in.git_url or ""
+            git_repo = obj_in.git_repo or ""
+            git_domain = obj_in.git_domain or ""
+            branch_name = obj_in.branch_name or ""
+            git_repo_id = obj_in.git_repo_id or 0
 
-        # Create Workspace first
-        workspace_name = f"workspace-{task_id}"
-        workspace_json = {
-            "kind": "Workspace",
-            "spec": {
-                "repository": {
-                    "gitUrl": git_url,
-                    "gitRepo": git_repo,
-                    "gitRepoId": git_repo_id,
-                    "gitDomain": git_domain,
-                    "branchName": branch_name
-                }
-            },
-            "status": {
-                "state": "Available"
-            },
-            "metadata": {
-                "name": workspace_name,
-                "namespace": "default"
-            },
-            "apiVersion": "agent.wecode.io/v1"
-        }
+            # If title is empty, extract first 50 characters from prompt as title
+            title = obj_in.title
+            if not title and obj_in.prompt:
+                title = obj_in.prompt[:50]
+                if len(obj_in.prompt) > 50:
+                    title += "..."
 
-        workspace = Kind(
-            user_id=user.id,
-            kind="Workspace",
-            name=workspace_name,
-            namespace="default",
-            json=workspace_json,
-            is_active=True
-        )
-        db.add(workspace)
-        db.flush()  # Get workspace ID
-
-        # Create Task JSON
-        task_json = {
-            "kind": "Task",
-            "spec": {
-                "title": title,
-                "prompt": obj_in.prompt,
-                "teamRef": {
-                    "name": team.name,
-                    "namespace": team.namespace
+            # Create Workspace first
+            workspace_name = f"workspace-{task_id}"
+            workspace_json = {
+                "kind": "Workspace",
+                "spec": {
+                    "repository": {
+                        "gitUrl": git_url,
+                        "gitRepo": git_repo,
+                        "gitRepoId": git_repo_id,
+                        "gitDomain": git_domain,
+                        "branchName": branch_name
+                    }
                 },
-                "workspaceRef": {
+                "status": {
+                    "state": "Available"
+                },
+                "metadata": {
                     "name": workspace_name,
                     "namespace": "default"
                 },
-                "batch": obj_in.batch or 0
-            },
-            "status": {
-                "state": "Available",
-                "status": obj_in.status.value if obj_in.status else "PENDING",
-                "progress": obj_in.progress or 0,
-                "result": obj_in.result,
-                "errorMessage": obj_in.error_message,
-                "createdAt": datetime.utcnow().isoformat(),
-                "updatedAt": datetime.utcnow().isoformat(),
-                "completedAt": None
-            },
-            "metadata": {
-                "name": f"task-{task_id}",
-                "namespace": "default"
-            },
-            "apiVersion": "agent.wecode.io/v1"
-        }
+                "apiVersion": "agent.wecode.io/v1"
+            }
 
-        task = Kind(
-            id=task_id,  # Use the provided task_id
-            user_id=user.id,
-            kind="Task",
-            name=f"task-{task_id}",
-            namespace="default",
-            json=task_json,
-            is_active=True
-        )
-        db.add(task)
+            workspace = Kind(
+                user_id=user.id,
+                kind="Workspace",
+                name=workspace_name,
+                namespace="default",
+                json=workspace_json,
+                is_active=True
+            )
+            db.add(workspace)
+            
+
+        # If not exists, create new task
+        if task is None:
+            # Create Task JSON
+            task_json = {
+                "kind": "Task",
+                "spec": {
+                    "title": title,
+                    "prompt": obj_in.prompt,
+                    "teamRef": {
+                        "name": team.name,
+                        "namespace": team.namespace
+                    },
+                    "workspaceRef": {
+                        "name": workspace_name,
+                        "namespace": "default"
+                    }
+                },
+                "status": {
+                    "state": "Available",
+                    "status": obj_in.status.value if obj_in.status else "PENDING",
+                    "progress": obj_in.progress or 0,
+                    "result": obj_in.result,
+                    "errorMessage": obj_in.error_message,
+                    "createdAt": datetime.utcnow().isoformat(),
+                    "updatedAt": datetime.utcnow().isoformat(),
+                    "completedAt": None
+                },
+                "metadata": {
+                    "name": f"task-{task_id}",
+                    "namespace": "default"
+                },
+                "apiVersion": "agent.wecode.io/v1"
+            }
+
+            task = Kind(
+                id=task_id,  # Use the provided task_id
+                user_id=user.id,
+                kind="Task",
+                name=f"task-{task_id}",
+                namespace="default",
+                json=task_json,
+                is_active=True
+            )
+            db.add(task)
 
         # Create subtasks for the task
         self._create_subtasks(db, task, team, user.id, obj_in.prompt)
 
         db.commit()
         db.refresh(task)
+        db.flush()
 
         return self._convert_to_task_dict(task, db, user.id)
 
@@ -297,8 +325,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         self, db: Session, *, task_id: int, user_id: int
     ) -> Dict[str, Any]:
         """
-        Get detailed task information including related user and team
+        Get detailed task information including related user, team and subtasks
         """
+        from app.services.subtask import subtask_service
+        
         task_dict = self.get_task_by_id(db, task_id=task_id, user_id=user_id)
 
         # Get related user
@@ -317,9 +347,124 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if team:
                 team = self._convert_team_to_dict(team, db, user_id)
 
+        # Get related subtasks
+        subtasks = subtask_service.get_by_task(
+            db=db,
+            task_id=task_id,
+            user_id=user_id
+        )
+        
+        # Get all bot objects for the subtasks
+        all_bot_ids = set()
+        for subtask in subtasks:
+            if subtask.bot_ids:
+                all_bot_ids.update(subtask.bot_ids)
+        
+        bots = {}
+        if all_bot_ids:
+            # Get bots from kinds table (Bot kind)
+            bot_objects = db.query(Kind).filter(
+                Kind.id.in_(list(all_bot_ids)),
+                Kind.user_id == user_id,
+                Kind.kind == "Bot",
+                Kind.is_active == True
+            ).all()
+            
+            # Convert bot objects to dict using bot JSON data
+            # Convert bot objects to dict using bot JSON data
+            for bot in bot_objects:
+                bot_crd = Bot.model_validate(bot.json)
+                
+                # Initialize default values
+                agent_name = ""
+                agent_config = {}
+                system_prompt = ""
+                mcp_servers = {}
+                
+                # Get Ghost data from kinds table
+                ghost = db.query(Kind).filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Ghost",
+                    Kind.name == bot_crd.spec.ghostRef.name,
+                    Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                    Kind.is_active == True
+                ).first()
+                if ghost and ghost.json:
+                    ghost_crd = Ghost.model_validate(ghost.json)
+                    system_prompt = ghost_crd.spec.systemPrompt
+                    mcp_servers = ghost_crd.spec.mcpServers or {}
+                
+                # Get Model data from kinds table
+                model = db.query(Kind).filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Model",
+                    Kind.name == bot_crd.spec.modelRef.name,
+                    Kind.namespace == bot_crd.spec.modelRef.namespace,
+                    Kind.is_active == True
+                ).first()
+                if model and model.json:
+                    model_crd = Model.model_validate(model.json)
+                    agent_config = model_crd.spec.modelConfig
+                
+                # Get Shell data from kinds table
+                shell = db.query(Kind).filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Shell",
+                    Kind.name == bot_crd.spec.shellRef.name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.is_active == True
+                ).first()
+                if shell and shell.json:
+                    shell_crd = Shell.model_validate(shell.json)
+                    agent_name = shell_crd.spec.runtime
+                
+                # Create bot dict compatible with BotInDB schema
+                bot_dict = {
+                    "id": bot.id,
+                    "user_id": bot.user_id,
+                    "name": bot.name,
+                    "agent_name": agent_name,
+                    "agent_config": agent_config,
+                    "system_prompt": system_prompt,
+                    "mcp_servers": mcp_servers,
+                    "is_active": bot.is_active,
+                    "created_at": bot.created_at,
+                    "updated_at": bot.updated_at
+                }
+                bots[bot.id] = bot_dict
+        # Convert subtasks to dict and replace bot_ids with bot objects
+        subtasks_dict = []
+        for subtask in subtasks:
+            # Convert subtask to dict
+            subtask_dict = {
+                # Subtask base fields
+                "id": subtask.id,
+                "task_id": subtask.task_id,
+                "team_id": subtask.team_id,
+                "title": subtask.title,
+                "bot_ids": subtask.bot_ids,
+                "role": subtask.role,
+                "prompt": subtask.prompt,
+                "executor_namespace": subtask.executor_namespace,
+                "executor_name": subtask.executor_name,
+                "message_id": subtask.message_id,
+                "parent_id": subtask.parent_id,
+                "status": subtask.status,
+                "progress": subtask.progress,
+                "result": subtask.result,
+                "error_message": subtask.error_message,
+                "user_id": subtask.user_id,
+                "created_at": subtask.created_at,
+                "updated_at": subtask.updated_at,
+                "completed_at": subtask.completed_at,
+                # Add bot objects as dict for each bot_id
+                "bots": [bots.get(bot_id) for bot_id in subtask.bot_ids if bot_id in bots]
+            }
+            subtasks_dict.append(subtask_dict)
+
         task_dict["user"] = user
         task_dict["team"] = team
-        task_dict["subtasks"] = []  # TODO: Implement subtasks if needed
+        task_dict["subtasks"] = subtasks_dict
 
         return task_dict
 
@@ -350,59 +495,59 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             )
 
         update_data = obj_in.model_dump(exclude_unset=True)
-        task_json = task.json
+        task_crd = Task.model_validate(task.json)
 
         # Update task spec fields
         if "title" in update_data:
-            task_json["spec"]["title"] = update_data["title"]
+            task_crd.spec.title = update_data["title"]
         if "prompt" in update_data:
-            task_json["spec"]["prompt"] = update_data["prompt"]
+            task_crd.spec.prompt = update_data["prompt"]
 
         # Update task status fields
-        if "status" in update_data:
-            task_json["status"]["status"] = update_data["status"].value if hasattr(update_data["status"], 'value') else update_data["status"]
-        if "progress" in update_data:
-            task_json["status"]["progress"] = update_data["progress"]
-        if "result" in update_data:
-            task_json["status"]["result"] = update_data["result"]
-        if "error_message" in update_data:
-            task_json["status"]["errorMessage"] = update_data["error_message"]
+        if task_crd.status:
+            if "status" in update_data:
+                task_crd.status.status = update_data["status"].value if hasattr(update_data["status"], 'value') else update_data["status"]
+            if "progress" in update_data:
+                task_crd.status.progress = update_data["progress"]
+            if "result" in update_data:
+                task_crd.status.result = update_data["result"]
+            if "error_message" in update_data:
+                task_crd.status.errorMessage = update_data["error_message"]
 
         # Update workspace if git-related fields are provided
         if any(field in update_data for field in ["git_url", "git_repo", "git_repo_id", "git_domain", "branch_name"]):
-            workspace_ref = task_json["spec"]["workspaceRef"]
             workspace = db.query(Kind).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Workspace",
-                Kind.name == workspace_ref["name"],
-                Kind.namespace == workspace_ref["namespace"],
+                Kind.name == task_crd.spec.workspaceRef.name,
+                Kind.namespace == task_crd.spec.workspaceRef.namespace,
                 Kind.is_active == True
             ).first()
             
             if workspace:
-                workspace_json = workspace.json
-                repository = workspace_json["spec"]["repository"]
+                workspace_crd = Workspace.model_validate(workspace.json)
                 
                 if "git_url" in update_data:
-                    repository["gitUrl"] = update_data["git_url"]
+                    workspace_crd.spec.repository.gitUrl = update_data["git_url"]
                 if "git_repo" in update_data:
-                    repository["gitRepo"] = update_data["git_repo"]
+                    workspace_crd.spec.repository.gitRepo = update_data["git_repo"]
                 if "git_repo_id" in update_data:
-                    repository["gitRepoId"] = update_data["git_repo_id"]
+                    workspace_crd.spec.repository.gitRepoId = update_data["git_repo_id"]
                 if "git_domain" in update_data:
-                    repository["gitDomain"] = update_data["git_domain"]
+                    workspace_crd.spec.repository.gitDomain = update_data["git_domain"]
                 if "branch_name" in update_data:
-                    repository["branchName"] = update_data["branch_name"]
+                    workspace_crd.spec.repository.branchName = update_data["branch_name"]
                 
-                workspace.json = workspace_json
+                workspace.json = workspace_crd.model_dump()
                 flag_modified(workspace, "json")
 
         # Update timestamps
-        task_json["status"]["updatedAt"] = datetime.utcnow().isoformat()
-        if "status" in update_data and update_data["status"] in ["COMPLETED", "FAILED", "CANCELLED"]:
-            task_json["status"]["completedAt"] = datetime.utcnow().isoformat()
+        if task_crd.status:
+            task_crd.status.updatedAt = datetime.utcnow()
+            if "status" in update_data and update_data["status"] in ["COMPLETED", "FAILED", "CANCELLED"]:
+                task_crd.status.completedAt = datetime.utcnow()
 
-        task.json = task_json
+        task.json = task_crd.model_dump()
         task.updated_at = datetime.utcnow()
         flag_modified(task, "json")
 
@@ -415,8 +560,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         self, db: Session, *, task_id: int, user_id: int
     ) -> None:
         """
-        Delete user Task (set status to DELETE)
+        Delete user Task and handle running subtasks
         """
+        logger.info(f"Deleting task with id: {task_id}")
         task = db.query(Kind).filter(
             Kind.id == task_id,
             Kind.user_id == user_id,
@@ -430,12 +576,44 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 detail="Task not found"
             )
 
+        # Get all subtasks for the task
+        task_subtasks = db.query(Subtask).filter(
+            Subtask.task_id == task_id
+        ).all()
+        
+        # Collect unique executor keys to avoid duplicate calls (namespace + name)
+        unique_executor_keys = set()
+        for subtask in task_subtasks:
+            if subtask.executor_name and subtask.executor_namespace:
+                unique_executor_keys.add((subtask.executor_namespace, subtask.executor_name))
+        
+        # Stop running subtasks on executor (deduplicated by (namespace, name))
+        for executor_namespace, executor_name in unique_executor_keys:
+            try:
+                logger.info(f"deleting task - delete_executor_task ns={executor_namespace} name={executor_name}")
+                # Use sync version to avoid event loop issues
+                executor_kinds_service.delete_executor_task_sync(executor_name, executor_namespace)
+            except Exception as e:
+                # Log error but continue with status update
+                logger.warning(f"Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}")
+        
+        # Update all subtasks to DELETE status
+        now = datetime.utcnow()
+        db.query(Subtask).filter(Subtask.task_id == task_id).update({
+            Subtask.executor_deleted_at: now,
+            Subtask.status: SubtaskStatus.DELETE,
+            Subtask.updated_at: datetime.utcnow()
+        })
+        
         # Update task status to DELETE
-        task_json = task.json
-        task_json["status"]["status"] = "DELETE"
-        task_json["status"]["updatedAt"] = datetime.utcnow().isoformat()
-        task.json = task_json
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status:
+            task_crd.status.status = "DELETE"
+            task_crd.status.updatedAt = datetime.utcnow()
+        # Use model_dump's exclude_none and json_encoders options to ensure datetime is properly serialized
+        task.json = task_crd.model_dump(mode='json', exclude_none=True)
         task.updated_at = datetime.utcnow()
+        task.is_active = False
         flag_modified(task, "json")
 
         db.commit()
@@ -525,17 +703,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         Convert kinds Task to task-like dictionary
         """
-        # Extract data from task JSON
-        task_spec = task.json.get("spec", {})
-        task_status = task.json.get("status", {})
+        task_crd = Task.model_validate(task.json)
 
         # Get workspace data
-        workspace_ref = task_spec.get("workspaceRef", {})
         workspace = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Workspace",
-            Kind.name == workspace_ref.get("name"),
-            Kind.namespace == workspace_ref.get("namespace", "default"),
+            Kind.name == task_crd.spec.workspaceRef.name,
+            Kind.namespace == task_crd.spec.workspaceRef.namespace,
             Kind.is_active == True
         ).first()
 
@@ -546,20 +721,19 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         branch_name = ""
 
         if workspace and workspace.json:
-            repository = workspace.json.get("spec", {}).get("repository", {})
-            git_url = repository.get("gitUrl", "")
-            git_repo = repository.get("gitRepo", "")
-            git_repo_id = repository.get("gitRepoId", 0)
-            git_domain = repository.get("gitDomain", "")
-            branch_name = repository.get("branchName", "")
+            workspace_crd = Workspace.model_validate(workspace.json)
+            git_url = workspace_crd.spec.repository.gitUrl
+            git_repo = workspace_crd.spec.repository.gitRepo
+            git_repo_id = workspace_crd.spec.repository.gitRepoId or 0
+            git_domain = workspace_crd.spec.repository.gitDomain
+            branch_name = workspace_crd.spec.repository.branchName
 
         # Get team data
-        team_ref = task_spec.get("teamRef", {})
         team = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Team",
-            Kind.name == team_ref.get("name"),
-            Kind.namespace == team_ref.get("namespace", "default"),
+            Kind.name == task_crd.spec.teamRef.name,
+            Kind.namespace == task_crd.spec.teamRef.namespace,
             Kind.is_active == True
         ).first()
 
@@ -570,17 +744,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         updated_at = None
         completed_at = None
         
-        try:
-            if task_status.get("createdAt"):
-                created_at = datetime.fromisoformat(task_status["createdAt"].replace('Z', '+00:00'))
-            if task_status.get("updatedAt"):
-                updated_at = datetime.fromisoformat(task_status["updatedAt"].replace('Z', '+00:00'))
-            if task_status.get("completedAt"):
-                completed_at = datetime.fromisoformat(task_status["completedAt"].replace('Z', '+00:00'))
-        except:
-            # Fallback to task timestamps
-            created_at = task.created_at
-            updated_at = task.updated_at
+        if task_crd.status:
+            try:
+                if task_crd.status.createdAt:
+                    created_at = task_crd.status.createdAt
+                if task_crd.status.updatedAt:
+                    updated_at = task_crd.status.updatedAt
+                if task_crd.status.completedAt:
+                    completed_at = task_crd.status.completedAt
+            except:
+                # Fallback to task timestamps
+                created_at = task.created_at
+                updated_at = task.updated_at
 
         # Get user info
         user = db.query(User).filter(User.id == user_id).first()
@@ -589,21 +764,19 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         return {
             "id": task.id,
             "user_id": task.user_id,
-            "k_id": task.id,  # For compatibility
             "user_name": user_name,
-            "title": task_spec.get("title", ""),
+            "title": task_crd.spec.title,
             "team_id": team_id,
             "git_url": git_url,
             "git_repo": git_repo,
             "git_repo_id": git_repo_id,
             "git_domain": git_domain,
             "branch_name": branch_name,
-            "prompt": task_spec.get("prompt", ""),
-            "status": task_status.get("status", "PENDING"),
-            "progress": task_status.get("progress", 0),
-            "batch": task_spec.get("batch", 0),
-            "result": task_status.get("result"),
-            "error_message": task_status.get("errorMessage"),
+            "prompt": task_crd.spec.prompt,
+            "status": task_crd.status.status if task_crd.status else "PENDING",
+            "progress": task_crd.status.progress if task_crd.status else 0,
+            "result": task_crd.status.result if task_crd.status else None,
+            "error_message": task_crd.status.errorMessage if task_crd.status else None,
             "created_at": created_at or task.created_at,
             "updated_at": updated_at or task.updated_at,
             "completed_at": completed_at,
@@ -613,36 +786,30 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         Convert kinds Team to team-like dictionary (simplified version)
         """
-        team_spec = team.json.get("spec", {})
-        members = team_spec.get("members", [])
-        collaboration_model = team_spec.get("collaborationModel", "pipeline")
+        team_crd = Team.model_validate(team.json)
 
         # Convert members to bots format
         bots = []
-        for member in members:
-            bot_ref = member.get("botRef", {})
-            bot_name = bot_ref.get("name")
-            bot_namespace = bot_ref.get("namespace", "default")
-
+        for member in team_crd.spec.members:
             # Find bot in kinds table
             bot = db.query(Kind).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Bot",
-                Kind.name == bot_name,
-                Kind.namespace == bot_namespace,
+                Kind.name == member.botRef.name,
+                Kind.namespace == member.botRef.namespace,
                 Kind.is_active == True
             ).first()
 
             if bot:
                 bot_info = {
                     "bot_id": bot.id,
-                    "bot_prompt": member.get("prompt", ""),
-                    "role": member.get("name", "")
+                    "bot_prompt": member.prompt or "",
+                    "role": member.role or ""
                 }
                 bots.append(bot_info)
 
         # Convert collaboration model to workflow format
-        workflow = {"mode": collaboration_model}
+        workflow = {"mode": team_crd.spec.collaborationModel}
 
         return {
             "id": team.id,
@@ -659,11 +826,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         Create subtasks based on team's workflow configuration
         """
-        # Extract team members from team JSON
-        team_spec = team.json.get("spec", {})
-        members = team_spec.get("members", [])
+        logger.info(f"_create_subtasks called with task_id={task.id}, team_id={team.id}, user_id={user_id}")
+        team_crd = Team.model_validate(team.json)
+        task_crd = Task.model_validate(task.json)
         
-        if not members:
+        if not team_crd.spec.members:
+            logger.warning(f"No members configured in team {team.id}")
             raise HTTPException(
                 status_code=400,
                 detail="No members configured in team"
@@ -671,17 +839,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Get bot IDs from team members
         bot_ids = []
-        for member in members:
-            bot_ref = member.get("botRef", {})
-            bot_name = bot_ref.get("name")
-            bot_namespace = bot_ref.get("namespace", "default")
-            
+        for member in team_crd.spec.members:
             # Find bot in kinds table
             bot = db.query(Kind).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Bot",
-                Kind.name == bot_name,
-                Kind.namespace == bot_namespace,
+                Kind.name == member.botRef.name,
+                Kind.namespace == member.botRef.namespace,
                 Kind.is_active == True
             ).first()
             
@@ -712,7 +876,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             user_id=user_id,
             task_id=task.id,
             team_id=team.id,
-            title=f"{task.json['spec']['title']} - User",
+            title=f"{task_crd.spec.title} - User",
             bot_ids=bot_ids,
             role=SubtaskRole.USER,
             prompt=user_prompt,
@@ -729,22 +893,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         next_message_id = next_message_id + 1
 
         # Create ASSISTANT role subtask based on team workflow
-        collaboration_model = team_spec.get("collaborationModel", "pipeline")
+        collaboration_model = team_crd.spec.collaborationModel
         
         if collaboration_model == "pipeline":
             # Create individual subtasks for each bot in pipeline mode
             executor_infos = self._get_pipeline_executor_info(existing_subtasks)
-            for i, member in enumerate(members):
-                bot_ref = member.get("botRef", {})
-                bot_name = bot_ref.get("name")
-                bot_namespace = bot_ref.get("namespace", "default")
-                
+            for i, member in enumerate(team_crd.spec.members):
                 # Find bot in kinds table
                 bot = db.query(Kind).filter(
                     Kind.user_id == user_id,
                     Kind.kind == "Bot",
-                    Kind.name == bot_name,
-                    Kind.namespace == bot_namespace,
+                    Kind.name == member.botRef.name,
+                    Kind.namespace == member.botRef.namespace,
                     Kind.is_active == True
                 ).first()
                 
@@ -753,7 +913,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         user_id=user_id,
                         task_id=task.id,
                         team_id=team.id,
-                        title=f"{task.json['spec']['title']} - {bot.name}",
+                        title=f"{task_crd.spec.title} - {bot.name}",
                         bot_ids=[bot.id],
                         role=SubtaskRole.ASSISTANT,
                         prompt="",
@@ -784,7 +944,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 user_id=user_id,
                 task_id=task.id,
                 team_id=team.id,
-                title=f"{task.json['spec']['title']} - Assistant",
+                title=f"{task_crd.spec.title} - Assistant",
                 bot_ids=bot_ids,
                 role=SubtaskRole.ASSISTANT,
                 prompt="",

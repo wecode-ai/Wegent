@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.public_shell import PublicShell
 from app.models.user import User
 from app.schemas.agent import AgentCreate, AgentUpdate
+from app.schemas.kind import Shell
 from app.services.base import BaseService
 
 
@@ -23,14 +24,11 @@ class AgentAdapter:
         """
         Convert PublicShell to Agent-like dictionary
         """
-        # Extract support_model from json.spec.support_model and convert to mode_filter
+        # Extract supportModel from json.spec.supportModel and convert to mode_filter
         mode_filter = []
         if isinstance(public_shell.json, dict):
-            spec = public_shell.json.get("spec", {})
-            if isinstance(spec, dict):
-                support_model = spec.get("support_model", [])
-                if isinstance(support_model, list):
-                    mode_filter = support_model
+            shell_crd = Shell.model_validate(public_shell.json)
+            mode_filter = shell_crd.spec.supportModel or []
         
         config = {"mode_filter": mode_filter}
         
@@ -70,19 +68,19 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         if existed:
             raise HTTPException(status_code=400, detail="Agent name already exists")
 
-        # Extract support_model from config.mode_filter
-        support_model = []
+        # Extract supportModel from config.mode_filter
+        supportModel = []
         if isinstance(obj_in.config, dict):
             mode_filter = obj_in.config.get("mode_filter", [])
             if isinstance(mode_filter, list):
-                support_model = mode_filter
+                supportModel = mode_filter
 
         # Convert to JSON format matching kinds table structure
         json_data = {
             "kind": "Shell",
             "spec": {
                 "runtime": obj_in.name,
-                "support_model": support_model
+                "supportModel": supportModel
             },
             "status": {
                 "state": "Available"
@@ -169,27 +167,23 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
             if field == "name":
                 setattr(shell, field, value)
                 # Also update metadata and runtime in json
-                json_data = shell.json if isinstance(shell.json, dict) else {}
-                if "metadata" not in json_data:
-                    json_data["metadata"] = {}
-                json_data["metadata"]["name"] = value
-                if "spec" not in json_data:
-                    json_data["spec"] = {}
-                json_data["spec"]["runtime"] = value
-                shell.json = json_data
+                if isinstance(shell.json, dict):
+                    shell_crd = Shell.model_validate(shell.json)
+                    shell_crd.metadata.name = value
+                    shell_crd.spec.runtime = value
+                    shell.json = shell_crd.model_dump()
             elif field == "config":
-                # Update support_model from config.mode_filter
-                support_model = []
+                # Update supportModel from config.mode_filter
+                supportModel = []
                 if isinstance(value, dict):
                     mode_filter = value.get("mode_filter", [])
                     if isinstance(mode_filter, list):
-                        support_model = mode_filter
+                        supportModel = mode_filter
                 
-                json_data = shell.json if isinstance(shell.json, dict) else {}
-                if "spec" not in json_data:
-                    json_data["spec"] = {}
-                json_data["spec"]["support_model"] = support_model
-                shell.json = json_data
+                if isinstance(shell.json, dict):
+                    shell_crd = Shell.model_validate(shell.json)
+                    shell_crd.spec.supportModel = supportModel
+                    shell.json = shell_crd.model_dump()
             else:
                 setattr(shell, field, value)
 

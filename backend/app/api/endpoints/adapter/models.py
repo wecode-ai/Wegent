@@ -103,8 +103,29 @@ def bulk_create_models(
     result = public_model_service.bulk_create_models(db=db, items=items, current_user=current_user)
     
     # Convert PublicModel objects to Model-like objects
-    created = [ModelInDB.model_validate(pm) for pm in result.get("created", [])]
-    updated = [ModelInDB.model_validate(pm) for pm in result.get("updated", [])]
+    created = []
+    for pm in result.get("created", []):
+        model_data = {
+            "id": pm.id,
+            "name": pm.name,
+            "config": pm.json.get("spec", {}).get("modelConfig", {}),
+            "is_active": pm.is_active,
+            "created_at": pm.created_at,
+            "updated_at": pm.updated_at
+        }
+        created.append(ModelInDB.model_validate(model_data))
+    
+    updated = []
+    for pm in result.get("updated", []):
+        model_data = {
+            "id": pm.id,
+            "name": pm.name,
+            "config": pm.json.get("spec", {}).get("modelConfig", {}),
+            "is_active": pm.is_active,
+            "created_at": pm.created_at,
+            "updated_at": pm.updated_at
+        }
+        updated.append(ModelInDB.model_validate(model_data))
     
     return {"created": created, "updated": updated, "skipped": result.get("skipped", [])}
 

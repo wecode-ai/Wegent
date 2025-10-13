@@ -12,7 +12,9 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.models.public_shell import PublicShell
 from app.schemas.bot import BotCreate, BotUpdate, BotInDB, BotDetail
+from app.schemas.kind import Ghost, Bot, Shell, Model, Team
 from app.services.base import BaseService
 
 
@@ -94,12 +96,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         )
         db.add(model)
 
-        # Create Shell
+        support_model = []
+        if obj_in.agent_name:
+            public_shell = db.query(PublicShell).filter(
+                PublicShell.name == obj_in.agent_name,
+                PublicShell.namespace == "default"
+            ).first()
+            
+            if public_shell and isinstance(public_shell.json, dict):
+                shell_crd = Shell.model_validate(public_shell.json)
+                support_model = shell_crd.spec.supportModel or []
+
         shell_json = {
             "kind": "Shell",
             "spec": {
                 "runtime": obj_in.agent_name,
-                "support_model": []
+                "supportModel": support_model
             },
             "status": {
                 "state": "Available"
@@ -269,67 +281,81 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             old_name = bot.name
             # Update bot
             bot.name = new_name
-            bot_json = bot.json
-            bot_json["metadata"]["name"] = new_name
+            bot_crd = Bot.model_validate(bot.json)
+            bot_crd.metadata.name = new_name
             
             # Update references in bot spec
-            bot_json["spec"]["ghostRef"]["name"] = f"{new_name}-ghost"
-            bot_json["spec"]["shellRef"]["name"] = f"{new_name}-shell"
-            bot_json["spec"]["modelRef"]["name"] = f"{new_name}-model"
-            bot.json = bot_json
-            flag_modified(bot, "json")  # 标记 JSON 字段已修改
+            bot_crd.spec.ghostRef.name = f"{new_name}-ghost"
+            bot_crd.spec.shellRef.name = f"{new_name}-shell"
+            bot_crd.spec.modelRef.name = f"{new_name}-model"
+            bot.json = bot_crd.model_dump()
+            flag_modified(bot, "json")  # Mark JSON field as modified
             
             # Update ghost
             if ghost:
                 ghost.name = f"{new_name}-ghost"
-                ghost_json = ghost.json
-                ghost_json["metadata"]["name"] = f"{new_name}-ghost"
-                ghost.json = ghost_json
-                flag_modified(ghost, "json")  # 标记 JSON 字段已修改
+                ghost_crd = Ghost.model_validate(ghost.json)
+                ghost_crd.metadata.name = f"{new_name}-ghost"
+                ghost.json = ghost_crd.model_dump()
+                flag_modified(ghost, "json")  # Mark JSON field as modified
             
             # Update shell
             if shell:
                 shell.name = f"{new_name}-shell"
-                shell_json = shell.json
-                shell_json["metadata"]["name"] = f"{new_name}-shell"
-                shell.json = shell_json
-                flag_modified(shell, "json")  # 标记 JSON 字段已修改
+                shell_crd = Shell.model_validate(shell.json)
+                shell_crd.metadata.name = f"{new_name}-shell"
+                shell.json = shell_crd.model_dump()
+                flag_modified(shell, "json")  # Mark JSON field as modified
             
             # Update model
             if model:
                 model.name = f"{new_name}-model"
-                model_json = model.json
-                model_json["metadata"]["name"] = f"{new_name}-model"
-                model.json = model_json
-                flag_modified(model, "json")  # 标记 JSON 字段已修改
+                model_crd = Model.model_validate(model.json)
+                model_crd.metadata.name = f"{new_name}-model"
+                model.json = model_crd.model_dump()
+                flag_modified(model, "json")  # Mark JSON field as modified
             
             # Update all references to this bot in teams
             self._update_bot_references_in_teams(db, old_name, "default", new_name, "default", user_id)
 
         if "agent_name" in update_data and shell:
-            shell_json = shell.json
-            shell_json["spec"]["runtime"] = update_data["agent_name"]
-            shell.json = shell_json
-            flag_modified(shell, "json")  # 标记 JSON 字段已修改
+            # Query public_shells table to get supportModel based on new agent_name
+            support_model = []
+            new_agent_name = update_data["agent_name"]
+            if new_agent_name:
+                public_shell = db.query(PublicShell).filter(
+                    PublicShell.name == new_agent_name,
+                    PublicShell.namespace == "default"
+                ).first()
+                
+                if public_shell and isinstance(public_shell.json, dict):
+                    shell_crd = Shell.model_validate(public_shell.json)
+                    support_model = shell_crd.spec.supportModel or []
+
+            shell_crd = Shell.model_validate(shell.json)
+            shell_crd.spec.runtime = new_agent_name
+            shell_crd.spec.supportModel = support_model
+            shell.json = shell_crd.model_dump()
+            flag_modified(shell, "json")  # Mark JSON field as modified
 
         if "agent_config" in update_data and model:
-            model_json = model.json
-            model_json["spec"]["modelConfig"] = update_data["agent_config"]
-            model.json = model_json
-            flag_modified(model, "json")  # 标记 JSON 字段已修改
+            model_crd = Model.model_validate(model.json)
+            model_crd.spec.modelConfig = update_data["agent_config"]
+            model.json = model_crd.model_dump()
+            flag_modified(model, "json")  # Mark JSON field as modified
 
         if "system_prompt" in update_data and ghost:
-            ghost_json = ghost.json
-            ghost_json["spec"]["systemPrompt"] = update_data["system_prompt"] or ""
-            ghost.json = ghost_json
-            flag_modified(ghost, "json")  # 标记 JSON 字段已修改
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.systemPrompt = update_data["system_prompt"] or ""
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")  # Mark JSON field as modified
 
         if "mcp_servers" in update_data and ghost:
-            ghost_json = ghost.json
-            ghost_json["spec"]["mcpServers"] = update_data["mcp_servers"] or {}
-            ghost.json = ghost_json
-            flag_modified(ghost, "json")  # 标记 JSON 字段已修改
-            db.add(ghost)  # 添加到 session
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.mcpServers = update_data["mcp_servers"] or {}
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")  # Mark JSON field as modified
+            db.add(ghost)  # Add to session
 
         # Update timestamps
         bot.updated_at = datetime.utcnow()
@@ -370,6 +396,27 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 detail="Bot not found"
             )
         
+        # Check if bot is referenced in any team
+        teams = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).all()
+        
+        bot_name = bot.name
+        bot_namespace = bot.namespace
+        
+        # Check if each team references this bot
+        for team in teams:
+            team_crd = Team.model_validate(team.json)
+            for member in team_crd.spec.members:
+                if (member.botRef.name == bot_name and
+                    member.botRef.namespace == bot_namespace):
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Bot '{bot_name}' is being used in team '{team.name}'. Please remove it from the team first."
+                    )
+        
         # Get related components
         ghost, shell, model = self._get_bot_components(db, bot, user_id)
         
@@ -393,40 +440,36 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             Kind.kind == "Bot",
             Kind.is_active == True
         ).count()
-
     def _get_bot_components(self, db: Session, bot: Kind, user_id: int):
         """
         Get Ghost, Shell, Model components for a bot
         """
-        bot_spec = bot.json.get("spec", {})
+        bot_crd = Bot.model_validate(bot.json)
         
         # Get ghost
-        ghost_ref = bot_spec.get("ghostRef", {})
         ghost = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Ghost",
-            Kind.name == ghost_ref.get("name"),
-            Kind.namespace == ghost_ref.get("namespace", "default"),
+            Kind.name == bot_crd.spec.ghostRef.name,
+            Kind.namespace == bot_crd.spec.ghostRef.namespace,
             Kind.is_active == True
         ).first()
         
         # Get shell
-        shell_ref = bot_spec.get("shellRef", {})
         shell = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Shell",
-            Kind.name == shell_ref.get("name"),
-            Kind.namespace == shell_ref.get("namespace", "default"),
+            Kind.name == bot_crd.spec.shellRef.name,
+            Kind.namespace == bot_crd.spec.shellRef.namespace,
             Kind.is_active == True
         ).first()
         
         # Get model
-        model_ref = bot_spec.get("modelRef", {})
         model = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Model",
-            Kind.name == model_ref.get("name"),
-            Kind.namespace == model_ref.get("namespace", "default"),
+            Kind.name == bot_crd.spec.modelRef.name,
+            Kind.namespace == bot_crd.spec.modelRef.namespace,
             Kind.is_active == True
         ).first()
         
@@ -443,17 +486,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         agent_config = {}
         
         if ghost and ghost.json:
-            ghost_spec = ghost.json.get("spec", {})
-            system_prompt = ghost_spec.get("systemPrompt", "")
-            mcp_servers = ghost_spec.get("mcpServers", {})
+            ghost_crd = Ghost.model_validate(ghost.json)
+            system_prompt = ghost_crd.spec.systemPrompt
+            mcp_servers = ghost_crd.spec.mcpServers or {}
         
         if shell and shell.json:
-            shell_spec = shell.json.get("spec", {})
-            agent_name = shell_spec.get("runtime", "")
+            shell_crd = Shell.model_validate(shell.json)
+            agent_name = shell_crd.spec.runtime
         
         if model and model.json:
-            model_spec = model.json.get("spec", {})
-            agent_config = model_spec.get("modelConfig", {})
+            model_crd = Model.model_validate(model.json)
+            agent_config = model_crd.spec.modelConfig
         
         return {
             "id": bot.id,
@@ -481,24 +524,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         ).all()
         
         for team in teams:
-            team_json = team.json
-            team_spec = team_json.get("spec", {})
-            members = team_spec.get("members", [])
+            team_crd = Team.model_validate(team.json)
             
             # Check if any member references the old bot
             updated = False
-            for member in members:
-                bot_ref = member.get("botRef", {})
-                if (bot_ref.get("name") == old_name and
-                    bot_ref.get("namespace", "default") == old_namespace):
+            for member in team_crd.spec.members:
+                if (member.botRef.name == old_name and
+                    member.botRef.namespace == old_namespace):
                     # Update the reference
-                    bot_ref["name"] = new_name
-                    bot_ref["namespace"] = new_namespace
+                    member.botRef.name = new_name
+                    member.botRef.namespace = new_namespace
                     updated = True
             
             # Save changes if any updates were made
             if updated:
-                team.json = team_json
+                team.json = team_crd.model_dump()
                 team.updated_at = datetime.utcnow()
                 flag_modified(team, "json")
 

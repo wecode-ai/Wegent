@@ -4,7 +4,7 @@
 
 from fastapi import FastAPI, Request
 import time
-import structlog
+import logging
 from fastapi.middleware.cors import CORSMiddleware
 import threading
 
@@ -20,7 +20,7 @@ from app.core.exceptions import (
 from app.core.logging import setup_logging
 from app.db.session import engine, SessionLocal
 from app.db.base import Base
-from app.services.subtask import subtask_service
+from app.services.adapters.job import job_service
 
 # Import all models to ensure they are registered with SQLAlchemy
 from app.models import *  # noqa: F401,F403
@@ -43,26 +43,31 @@ def create_app():
     
     # Initialize logging
     setup_logging()
-    logger = structlog.get_logger(__name__)
+    logger = logging.getLogger(__name__)
 
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
-         # Skip logging for health check/probe requests (root path)
+        # Skip logging for health check/probe requests (root path)
         if request.url.path == "/":
             return await call_next(request)
 
         start_time = time.time()
         
-        # Pre-request logging
+        # Extract username from Authorization header
+        from app.core.security import get_username_from_request
+        username = get_username_from_request(request)
+        
         client_ip = request.client.host if request.client else "Unknown"
-        logger.info(f"request : {request.method} {request.url.path} {request.query_params} {client_ip}")
+        
+        # Pre-request logging
+        logger.info(f"request : {request.method} {request.url.path} {request.query_params} {client_ip} [{username}]")
         
         # Process request
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
         
         # Post-request logging
-        logger.info(f"response: {request.method} {request.url.path} {request.query_params} {client_ip} {response.status_code} {process_time:.2f}ms")
+        logger.info(f"response: {request.method} {request.url.path} {request.query_params} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms")
         return response
 
     # Setup CORS
@@ -89,7 +94,7 @@ def create_app():
             try:
                 db = SessionLocal()
                 try:
-                    subtask_service.cleanup_stale_executors(db)
+                    job_service.cleanup_stale_executors(db)
                 finally:
                     db.close()
             except Exception as e:

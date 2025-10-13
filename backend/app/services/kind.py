@@ -5,6 +5,7 @@
 """
 Unified Kind service for all Kubernetes-style CRD operations
 """
+from app.core.exceptions import NotFoundException
 from typing import List, Optional, Dict, Any
 
 from app.models.kind import Kind

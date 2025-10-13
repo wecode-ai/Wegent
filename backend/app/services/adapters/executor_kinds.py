@@ -12,8 +12,8 @@ from sqlalchemy import and_, func, text
 
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
-from app.models.user import User
 from app.schemas.subtask import SubtaskExecutorUpdate
+from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
 from app.services.base import BaseService
 from app.core.config import settings
 
@@ -51,9 +51,9 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 if not task:
                     # Task doesn't exist, skip
                     continue
-                
                 # Check task status from JSON, skip if not PENDING or RUNNING
-                task_status = task.json.get("status", {}).get("status", "PENDING")
+                task_crd = Task.model_validate(task.json)
+                task_status = task_crd.status.status if task_crd.status else "PENDING"
                 if task_status not in ["PENDING", "RUNNING"]:
                     continue
                 
@@ -167,18 +167,19 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         ).first()
         
         if task:
-            task_json = task.json
-            current_status = task_json.get("status", {}).get("status", "PENDING")
-            
-            # Ensure only PENDING status can be updated
-            if current_status == "PENDING":
-                task_json["status"]["status"] = "RUNNING"
-                task_json["status"]["updatedAt"] = datetime.utcnow().isoformat()
-                task.json = task_json
-                task.updated_at = datetime.utcnow()
-                from sqlalchemy.orm.attributes import flag_modified
-                flag_modified(task, "json")
-
+            if task:
+                task_crd = Task.model_validate(task.json)
+                current_status = task_crd.status.status if task_crd.status else "PENDING"
+                
+                # Ensure only PENDING status can be updated
+                if current_status == "PENDING":
+                    if task_crd.status:
+                        task_crd.status.status = "RUNNING"
+                        task_crd.status.updatedAt = datetime.utcnow()
+                    task.json = task_crd.model_dump(mode='json')
+                    task.updated_at = datetime.utcnow()
+                    from sqlalchemy.orm.attributes import flag_modified
+                    flag_modified(task, "json")
     def _format_subtasks_response(self, db: Session, subtasks: List[Subtask]) -> Dict[str, List[Dict]]:
         """Format subtask response data using kinds table for task information"""
         formatted_subtasks = []
@@ -218,7 +219,6 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             # Previous subtask result
             if previous_subtask_results != "":
                 aggregated_prompt += f"\nPrevious execution result: {previous_subtask_results}"
-
             # Get task information from kinds table
             task = db.query(Kind).filter(
                 Kind.id == subtask.task_id,
@@ -229,15 +229,14 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             if not task:
                 continue
                 
-            task_spec = task.json.get("spec", {})
+            task_crd = Task.model_validate(task.json)
             
             # Get workspace information
-            workspace_ref = task_spec.get("workspaceRef", {})
             workspace = db.query(Kind).filter(
                 Kind.user_id == task.user_id,
                 Kind.kind == "Workspace",
-                Kind.name == workspace_ref.get("name"),
-                Kind.namespace == workspace_ref.get("namespace", "default"),
+                Kind.name == task_crd.spec.workspaceRef.name,
+                Kind.namespace == task_crd.spec.workspaceRef.namespace,
                 Kind.is_active == True
             ).first()
             
@@ -248,32 +247,31 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             branch_name = ""
             
             if workspace and workspace.json:
-                repository = workspace.json.get("spec", {}).get("repository", {})
-                git_url = repository.get("gitUrl", "")
-                git_repo = repository.get("gitRepo", "")
-                git_repo_id = repository.get("gitRepoId", 0)
-                git_domain = repository.get("gitDomain", "")
-                branch_name = repository.get("branchName", "")
+                workspace_crd = Workspace.model_validate(workspace.json)
+                git_url = workspace_crd.spec.repository.gitUrl
+                git_repo = workspace_crd.spec.repository.gitRepo
+                git_repo_id = workspace_crd.spec.repository.gitRepoId or 0
+                git_domain = workspace_crd.spec.repository.gitDomain
+                branch_name = workspace_crd.spec.repository.branchName
 
             # Build user git information
             git_info = next((info for info in subtask.user.git_info if info.get("git_domain") == git_domain), None) if subtask.user.git_info else None
 
             # Get team information from kinds table
-            team_ref = task_spec.get("teamRef", {})
             team = db.query(Kind).filter(
                 Kind.user_id == task.user_id,
                 Kind.kind == "Team",
-                Kind.name == team_ref.get("name"),
-                Kind.namespace == team_ref.get("namespace", "default"),
+                Kind.name == task_crd.spec.teamRef.name,
+                Kind.namespace == task_crd.spec.teamRef.namespace,
                 Kind.is_active == True
             ).first()
             
             if not team:
                 continue
                 
-            team_spec = team.json.get("spec", {})
-            team_members = team_spec.get("members", [])
-            collaboration_model = team_spec.get("collaborationModel", "pipeline")
+            team_crd = Team.model_validate(team.json)
+            team_members = team_crd.spec.members
+            collaboration_model = team_crd.spec.collaborationModel
 
             # Build bot information
             bots = []
@@ -289,81 +287,78 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
 
             for index, bot_id in enumerate(subtask.bot_ids):
                 # Get bot from kinds table
-                bot = db.query(Kind).filter(
-                    Kind.id == bot_id,
-                    Kind.user_id == task.user_id,
-                    Kind.kind == "Bot",
-                    Kind.is_active == True
-                ).first()
-                
-                if not bot:
-                    continue
+                for index, bot_id in enumerate(subtask.bot_ids):
+                    # Get bot from kinds table
+                    bot = db.query(Kind).filter(
+                        Kind.id == bot_id,
+                        Kind.user_id == task.user_id,
+                        Kind.kind == "Bot",
+                        Kind.is_active == True
+                    ).first()
                     
-                bot_spec = bot.json.get("spec", {})
-                
-                # Get ghost for system prompt and mcp servers
-                ghost_ref = bot_spec.get("ghostRef", {})
-                ghost = db.query(Kind).filter(
-                    Kind.user_id == task.user_id,
-                    Kind.kind == "Ghost",
-                    Kind.name == ghost_ref.get("name"),
-                    Kind.namespace == ghost_ref.get("namespace", "default"),
-                    Kind.is_active == True
-                ).first()
-                
-                # Get shell for agent name
-                shell_ref = bot_spec.get("shellRef", {})
-                shell = db.query(Kind).filter(
-                    Kind.user_id == task.user_id,
-                    Kind.kind == "Shell",
-                    Kind.name == shell_ref.get("name"),
-                    Kind.namespace == shell_ref.get("namespace", "default"),
-                    Kind.is_active == True
-                ).first()
-                
-                # Get model for agent config
-                model_ref = bot_spec.get("modelRef", {})
-                model = db.query(Kind).filter(
-                    Kind.user_id == task.user_id,
-                    Kind.kind == "Model",
-                    Kind.name == model_ref.get("name"),
-                    Kind.namespace == model_ref.get("namespace", "default"),
-                    Kind.is_active == True
-                ).first()
-                
-                # Extract data from components
-                system_prompt = ""
-                mcp_servers = {}
-                agent_name = ""
-                agent_config = {}
-                
-                if ghost and ghost.json:
-                    ghost_spec = ghost.json.get("spec", {})
-                    system_prompt = ghost_spec.get("systemPrompt", "")
-                    mcp_servers = ghost_spec.get("mcpServers", {})
-                
-                if shell and shell.json:
-                    shell_spec = shell.json.get("spec", {})
-                    agent_name = shell_spec.get("runtime", "")
-                
-                if model and model.json:
-                    model_spec = model.json.get("spec", {})
-                    agent_config = model_spec.get("modelConfig", {})
-                
-                # Get team member info for bot prompt and role
-                team_member_info = {}
-                if collaboration_model == "pipeline":
-                    if pipeline_index < len(team_members):
-                        team_member_info = team_members[pipeline_index]
-                else:
-                    if index < len(team_members):
-                        team_member_info = team_members[index]
-                
-                bot_prompt = system_prompt
-                if team_member_info.get('prompt'):
-                    bot_prompt += f"\n{team_member_info['prompt']}"
-                
-                # Resolve agent_config: check for private_model reference
+                    if not bot:
+                        continue
+                        
+                    bot_crd = Bot.model_validate(bot.json)
+                    
+                    # Get ghost for system prompt and mcp servers
+                    ghost = db.query(Kind).filter(
+                        Kind.user_id == task.user_id,
+                        Kind.kind == "Ghost",
+                        Kind.name == bot_crd.spec.ghostRef.name,
+                        Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                        Kind.is_active == True
+                    ).first()
+                    
+                    # Get shell for agent name
+                    shell = db.query(Kind).filter(
+                        Kind.user_id == task.user_id,
+                        Kind.kind == "Shell",
+                        Kind.name == bot_crd.spec.shellRef.name,
+                        Kind.namespace == bot_crd.spec.shellRef.namespace,
+                        Kind.is_active == True
+                    ).first()
+                    
+                    # Get model for agent config
+                    model = db.query(Kind).filter(
+                        Kind.user_id == task.user_id,
+                        Kind.kind == "Model",
+                        Kind.name == bot_crd.spec.modelRef.name,
+                        Kind.namespace == bot_crd.spec.modelRef.namespace,
+                        Kind.is_active == True
+                    ).first()
+                    
+                    # Extract data from components
+                    system_prompt = ""
+                    mcp_servers = {}
+                    agent_name = ""
+                    agent_config = {}
+                    
+                    if ghost and ghost.json:
+                        ghost_crd = Ghost.model_validate(ghost.json)
+                        system_prompt = ghost_crd.spec.systemPrompt
+                        mcp_servers = ghost_crd.spec.mcpServers or {}
+                    
+                    if shell and shell.json:
+                        shell_crd = Shell.model_validate(shell.json)
+                        agent_name = shell_crd.spec.runtime
+                    
+                    if model and model.json:
+                        model_crd = Model.model_validate(model.json)
+                        agent_config = model_crd.spec.modelConfig
+                    
+                    # Get team member info for bot prompt and role
+                    team_member_info = None
+                    if collaboration_model == "pipeline":
+                        if pipeline_index < len(team_members):
+                            team_member_info = team_members[pipeline_index]
+                    else:
+                        if index < len(team_members):
+                            team_member_info = team_members[index]
+                    
+                    bot_prompt = system_prompt
+                    if team_member_info and team_member_info.prompt:
+                        bot_prompt += f"\n{team_member_info.prompt}"
                 agent_config_data = agent_config
                 try:
                     if isinstance(agent_config, dict):
@@ -372,8 +367,11 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                             # Query public_models table for private model
                             from app.models.public_model import PublicModel
                             model_row = db.query(PublicModel).filter(PublicModel.name == private_model_name.strip()).first()
-                            if model_row and isinstance(model_row.config, dict):
-                                agent_config_data = model_row.config
+                            if model_row and model_row.json:
+                                # Extract modelConfig from json.spec.modelConfig
+                                model_config = model_row.json.get("spec", {}).get("modelConfig", {})
+                                if isinstance(model_config, dict):
+                                    agent_config_data = model_config
                 except Exception:
                     # On any error, fallback to original agent_config
                     agent_config_data = agent_config
@@ -385,7 +383,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     "agent_config": agent_config_data,
                     "system_prompt": bot_prompt,
                     "mcp_servers": mcp_servers,
-                    "role": team_member_info.get('role', '')
+                    "role": team_member_info.role if team_member_info else ''
                 })
 
             formatted_subtasks.append({
@@ -395,7 +393,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 "executor_name": subtask.executor_name,
                 "executor_namespace": subtask.executor_namespace,
                 "subtask_title": subtask.title,
-                "task_title": task_spec.get("title", ""),
+                "task_title": task_crd.spec.title,
                 "user": {
                     "id": subtask.user.id,
                     "name": subtask.user.user_name,
@@ -450,9 +448,9 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 Kind.is_active == True
             ).first()
             if task:
-                task_json = task.json
-                task_json["spec"]["title"] = subtask_update.task_title
-                task.json = task_json
+                task_crd = Task.model_validate(task.json)
+                task_crd.spec.title = subtask_update.task_title
+                task.json = task_crd.model_dump(mode='json')
                 task.updated_at = datetime.utcnow()
                 from sqlalchemy.orm.attributes import flag_modified
                 flag_modified(task, "json")
@@ -509,45 +507,56 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         failed_subtasks = len([s for s in subtasks if s.status == SubtaskStatus.FAILED])
         
         task_json = task.json
+        task_crd = Task.model_validate(task.json)
         
         # Calculate task progress
         progress = int((completed_subtasks / total_subtasks) * 100)
-        task_json["status"]["progress"] = progress
+        if task_crd.status:
+            task_crd.status.progress = progress
         
         # Check if there are failed subtasks
         if failed_subtasks > 0:
-            task_json["status"]["status"] = "FAILED"
-            # Get error message from last failed subtask
-            failed_subtask = next((s for s in reversed(subtasks) if s.status == SubtaskStatus.FAILED), None)
-            if failed_subtask and failed_subtask.error_message:
-                task_json["status"]["errorMessage"] = failed_subtask.error_message
-            if failed_subtask and failed_subtask.result:
-                task_json["status"]["result"] = failed_subtask.result
+            if task_crd.status:
+                task_crd.status.status = "FAILED"
+                # Get error message from last failed subtask
+                failed_subtask = next((s for s in reversed(subtasks) if s.status == SubtaskStatus.FAILED), None)
+                if failed_subtask and failed_subtask.error_message:
+                    task_crd.status.errorMessage = failed_subtask.error_message
+                if failed_subtask and failed_subtask.result:
+                    task_crd.status.result = failed_subtask.result
         # Check if all subtasks are completed
         elif completed_subtasks == total_subtasks:
             # Get last completed subtask
             last_subtask = subtasks[-1] if subtasks else None
-            if last_subtask:
-                task_json["status"]["status"] = last_subtask.status.value
-                task_json["status"]["result"] = last_subtask.result
-            task_json["status"]["progress"] = 100
-            task_json["status"]["completedAt"] = datetime.utcnow().isoformat()
+            if last_subtask and task_crd.status:
+                task_crd.status.status = last_subtask.status.value
+                task_crd.status.result = last_subtask.result
+                task_crd.status.errorMessage = last_subtask.error_message
+                task_crd.status.progress = 100
+                task_crd.status.completedAt = datetime.utcnow()
         else:
             # Update to running status
-            task_json["status"]["status"] = "RUNNING"
+            if task_crd.status:
+                task_crd.status.status = "RUNNING"
+                # If there is only one subtask, use the subtask's progress
+                if total_subtasks == 1:
+                    task_crd.status.progress = subtasks[0].progress
+                    task_crd.status.result = subtasks[0].result
+                    task_crd.status.errorMessage = subtasks[0].error_message
         
         # Update timestamps
-        task_json["status"]["updatedAt"] = datetime.utcnow().isoformat()
-        task.json = task_json
+        if task_crd.status:
+            task_crd.status.updatedAt = datetime.utcnow()
+        task.json = task_crd.model_dump(mode='json')
         task.updated_at = datetime.utcnow()
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(task, "json")
         db.add(task)
 
-    async def delete_executor_task(self, executor_name: str, executor_namespace: str) -> Dict:
+    def delete_executor_task_sync(self, executor_name: str, executor_namespace: str) -> Dict:
         """
-        Delete task from executor
-
+        Synchronous version of delete_executor_task to avoid event loop issues
+        
         Args:
             executor_name: The executor task name to delete
             executor_namespace: Executor namespace (required)
@@ -555,28 +564,22 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         if not executor_name or not executor_namespace:
             raise HTTPException(status_code=400, detail="executor_name and executor_namespace are required")
         try:
+            import requests
             payload = {
                 "executor_name": executor_name,
                 "executor_namespace": executor_namespace,
             }
-            # Log before sending delete request
-            logger.info(f"executor.delete request url={settings.EXECUTOR_DELETE_TASK_URL} {payload}")
+            logger.info(f"executor.delete sync request url={settings.EXECUTOR_DELETE_TASK_URL} {payload}")
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    settings.EXECUTOR_DELETE_TASK_URL,
-                    json=payload,
-                    headers={"Content-Type": "application/json"},
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                return response.json()
-        except httpx.HTTPStatusError as e:
-            raise HTTPException(
-                status_code=e.response.status_code,
-                detail=f"Failed to delete executor task: {e.response.text}"
+            response = requests.post(
+                settings.EXECUTOR_DELETE_TASK_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=30.0
             )
-        except Exception as e:
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error deleting executor task: {str(e)}"

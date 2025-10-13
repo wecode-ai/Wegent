@@ -5,17 +5,18 @@
 """
 Implementation of specific Kind services
 """
-from typing import Dict, Any, Optional, List
+import logging
+from typing import Dict, Any
 from sqlalchemy.orm import Session
-from datetime import datetime
 
-from app.models.kind import Kind, KGhost, KModel, KShell, KBot, KTeam, KWorkspace, KTask
-from app.models.bot import Bot
-from app.models.task import Task
+from app.models.kind import Kind
 from app.models.subtask import Subtask
 from app.core.exceptions import NotFoundException
 from app.services.kind_base import KindBaseService
+from app.services.adapters.task_kinds import task_kinds_service
+from app.schemas.kind import Bot, Team, Task
 
+logger = logging.getLogger(__name__)
 
 class GhostKindService(KindBaseService):
     """Service for Ghost resources"""
@@ -58,9 +59,11 @@ class BotKindService(KindBaseService):
     
     def _validate_references(self, db: Session, user_id: int, resource: Dict[str, Any]) -> None:
         """Validate Ghost, Shell, and Model references"""
+        bot_crd = Bot.model_validate(resource)
+        
         # Check if referenced ghost exists
-        ghost_name = resource['spec']['ghostRef']['name']
-        ghost_namespace = resource['spec']['ghostRef'].get('namespace', 'default')
+        ghost_name = bot_crd.spec.ghostRef.name
+        ghost_namespace = bot_crd.spec.ghostRef.namespace or 'default'
         
         ghost = db.query(Kind).filter(
             Kind.user_id == user_id,
@@ -75,8 +78,8 @@ class BotKindService(KindBaseService):
             )
         
         # Check if referenced shell exists
-        shell_name = resource['spec']['shellRef']['name']
-        shell_namespace = resource['spec']['shellRef'].get('namespace', 'default')
+        shell_name = bot_crd.spec.shellRef.name
+        shell_namespace = bot_crd.spec.shellRef.namespace or 'default'
         
         shell = db.query(Kind).filter(
             Kind.user_id == user_id,
@@ -91,8 +94,8 @@ class BotKindService(KindBaseService):
             )
         
         # Check if referenced model exists
-        model_name = resource['spec']['modelRef']['name']
-        model_namespace = resource['spec']['modelRef'].get('namespace', 'default')
+        model_name = bot_crd.spec.modelRef.name
+        model_namespace = bot_crd.spec.modelRef.namespace or 'default'
         
         model = db.query(Kind).filter(
             Kind.user_id == user_id,
@@ -105,72 +108,6 @@ class BotKindService(KindBaseService):
             raise NotFoundException(
                 f"Model '{model_name}' not found in namespace '{model_namespace}'"
             )
-    
-    def _perform_side_effects(self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]) -> None:
-        """Create entry in bots table for compatibility"""
-        ghost_name = resource['spec']['ghostRef']['name']
-        ghost_namespace = resource['spec']['ghostRef'].get('namespace', 'default')
-        shell_name = resource['spec']['shellRef']['name']
-        shell_namespace = resource['spec']['shellRef'].get('namespace', 'default')
-        model_name = resource['spec']['modelRef']['name']
-        model_namespace = resource['spec']['modelRef'].get('namespace', 'default')
-        
-        # Get ghost and shell data
-        ghost_data = self._get_ghost_data(db, user_id, ghost_name, ghost_namespace)
-        shell_data = self._get_shell_data(db, user_id, shell_name, shell_namespace)
-        
-        # Get model data directly from Bot's modelRef
-        model_data = self._get_model_data(db, user_id, model_name, model_namespace)
-        
-        # Create bot entry
-        if ghost_data and shell_data:
-            # Create bot entry
-            bot_entry = Bot(
-                user_id=user_id,
-                k_id=db_resource.id,
-                name=resource['metadata']['name'],
-                agent_name=shell_data.get('spec', {}).get('runtime'),
-                agent_config=model_data.get('spec', {}).get('modelConfig'),
-                system_prompt=ghost_data.get('spec', {}).get('systemPrompt'),
-                mcp_servers=ghost_data.get('spec', {}).get('mcpServers')
-            )
-            
-            db.add(bot_entry)
-            db.commit()
-    
-    def _update_side_effects(self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]) -> None:
-        """Update entry in bots table for compatibility"""
-        bot_entry = db.query(Bot).filter(
-            Bot.user_id == user_id,
-            Bot.k_id == db_resource.id,
-            Bot.is_active == True
-        ).first()
-        
-        if bot_entry:
-            ghost_name = resource['spec']['ghostRef']['name']
-            ghost_namespace = resource['spec']['ghostRef'].get('namespace', 'default')
-            shell_name = resource['spec']['shellRef']['name']
-            shell_namespace = resource['spec']['shellRef'].get('namespace', 'default')
-            model_name = resource['spec']['modelRef']['name']
-            model_namespace = resource['spec']['modelRef'].get('namespace', 'default')
-            
-            # Get ghost and shell data
-            ghost_data = self._get_ghost_data(db, user_id, ghost_name, ghost_namespace)
-            shell_data = self._get_shell_data(db, user_id, shell_name, shell_namespace)
-            
-            # Get model data directly from Bot's modelRef
-            model_data = self._get_model_data(db, user_id, model_name, model_namespace)
-            
-            # Update bot entry
-            if ghost_data and shell_data:
-                # Update bot entry
-                bot_entry.name = resource['metadata']['name']
-                bot_entry.agent_name = shell_data.get('spec', {}).get('runtime')
-                bot_entry.agent_config = model_data.get('spec', {}).get('modelConfig')
-                bot_entry.system_prompt = ghost_data.get('spec', {}).get('systemPrompt')
-                bot_entry.mcp_servers = ghost_data.get('spec', {}).get('mcpServers')
-                
-                db.commit()
     
     def _get_ghost_data(self, db: Session, user_id: int, name: str, namespace: str) -> Dict[str, Any]:
         """Get ghost data from Kind table"""
@@ -217,11 +154,12 @@ class TeamKindService(KindBaseService):
     
     def _validate_references(self, db: Session, user_id: int, resource: Dict[str, Any]) -> None:
         """Validate Bot references and workflow configuration"""
+        team_crd = Team.model_validate(resource)
+        
         # Check if all referenced bots exist
-        members = resource['spec']['members']
-        for member in members:
-            bot_name = member['botRef']['name']
-            bot_namespace = member['botRef'].get('namespace', 'default')
+        for member in team_crd.spec.members:
+            bot_name = member.botRef.name
+            bot_namespace = member.botRef.namespace or 'default'
             
             bot = db.query(Kind).filter(
                 Kind.user_id == user_id,
@@ -236,75 +174,6 @@ class TeamKindService(KindBaseService):
                     f"Bot '{bot_name}' not found in namespace '{bot_namespace}'"
                 )
         
-        # Validate  pipeline workflow configuration
-        collaboration_model = resource['spec']['collaborationModel']
-        self._validate_pipeline_workflow(members, collaboration_model)
-    
-    def _validate_pipeline_workflow(self, members: List[Dict[str, Any]], collaboration_model: Dict[str, Any]) -> None:
-        """Validate  pipeline workflow configuration"""
-        if collaboration_model.get('name') == 'pipeline':
-            config = collaboration_model.get('config')
-            if not config or 'workflow' not in config:
-                raise NotFoundException(
-                    "pipeline collaboration model requires config.workflow"
-                )
-            
-            workflow = config['workflow']
-            if not isinstance(workflow, list):
-                raise NotFoundException(
-                    "config.workflow must be a list"
-                )
-            
-            # Get all member names
-            member_names = {member['name'] for member in members}
-            
-            # Validate each step
-            for step in workflow:
-                if not isinstance(step, dict):
-                    raise NotFoundException(
-                        "Each workflow step must be a dictionary"
-                    )
-                
-                step_name = step.get('step')
-                next_step = step.get('nextStep', '')
-                
-                if step_name not in member_names:
-                    raise NotFoundException(
-                        f"Workflow step '{step_name}' not found in team members"
-                    )
-                
-                if next_step and next_step not in member_names:
-                    raise NotFoundException(
-                        f"Workflow nextStep '{next_step}' not found in team members"
-                    )
-    
-    def _perform_side_effects(self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]) -> None:
-        """Create or update corresponding legacy team"""
-        try:
-            from app.services.team import team_service as legacy_team_service
-            legacy_team_service.create_or_update_by_k_team_id(
-                db=db,
-                k_team_id=db_resource.id,
-                user_id=user_id
-            )
-        except Exception as e:
-            # Log error but don't interrupt the process
-            print(f"Error creating legacy team: {str(e)}")
-    
-    def _update_side_effects(self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]) -> None:
-        """Update corresponding legacy team"""
-        try:
-            from app.services.team import team_service as legacy_team_service
-            legacy_team_service.create_or_update_by_k_team_id(
-                db=db,
-                k_team_id=db_resource.id,
-                user_id=user_id
-            )
-        except Exception as e:
-            # Log error but don't interrupt the process
-            print(f"Error updating legacy team: {str(e)}")
-
-
 class WorkspaceKindService(KindBaseService):
     """Service for Workspace resources"""
     
@@ -324,9 +193,11 @@ class TaskKindService(KindBaseService):
     
     def _validate_references(self, db: Session, user_id: int, resource: Dict[str, Any]) -> None:
         """Validate Team and Workspace references"""
+        task_crd = Task.model_validate(resource)
+        
         # Check if referenced team exists
-        team_name = resource['spec']['teamRef']['name']
-        team_namespace = resource['spec']['teamRef'].get('namespace', 'default')
+        team_name = task_crd.spec.teamRef.name
+        team_namespace = task_crd.spec.teamRef.namespace or 'default'
         
         team = db.query(Kind).filter(
             Kind.user_id == user_id,
@@ -342,8 +213,8 @@ class TaskKindService(KindBaseService):
             )
         
         # Check if referenced workspace exists
-        workspace_name = resource['spec']['workspaceRef']['name']
-        workspace_namespace = resource['spec']['workspaceRef'].get('namespace', 'default')
+        workspace_name = task_crd.spec.workspaceRef.name
+        workspace_namespace = task_crd.spec.workspaceRef.namespace or 'default'
         
         workspace = db.query(Kind).filter(
             Kind.user_id == user_id,
@@ -357,32 +228,86 @@ class TaskKindService(KindBaseService):
             raise NotFoundException(
                 f"Workspace '{workspace_name}' not found in namespace '{workspace_namespace}'"
             )
+        
+        # Check the status of existing task, if not COMPLETED status, modification is not allowed
+        existing_task = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == 'Task',
+            Kind.namespace == resource['metadata']['namespace'],
+            Kind.name == resource['metadata']['name'],
+            Kind.is_active == True
+        ).first()
+        
+        if existing_task:
+            existing_task_crd = Task.model_validate(existing_task.json)
+            
+            if existing_task_crd.status and existing_task_crd.status.status != "COMPLETED":
+                raise NotFoundException(
+                    f"Task '{resource['metadata']['name']}' in namespace '{resource['metadata']['namespace']}' cannot be modified when status is '{existing_task_crd.status.status}'. Only COMPLETED tasks can be updated."
+                )
+    
     
     def _perform_side_effects(self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]) -> None:
-        """Create or update corresponding legacy task"""
+        """Create subtasks for the new task"""
         try:
-            from app.services.task import task_service as legacy_task_service
-            legacy_task_service.create_or_update_by_k_task_id(
+            task_crd = Task.model_validate(resource)
+            
+            team = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == 'Team',
+                Kind.name == task_crd.spec.teamRef.name,
+                Kind.namespace == task_crd.spec.teamRef.namespace,
+                Kind.is_active == True
+            ).first()
+            
+            if not team:
+                logger.error(f"Team not found: {task_crd.spec.teamRef.name}")
+                return
+            
+            # Call _create_subtasks method to create subtasks
+            task_kinds_service._create_subtasks(
                 db=db,
-                k_task_id=db_resource.id,
-                user_id=user_id
+                task=db_resource,
+                team=team,
+                user_id=user_id,
+                user_prompt=task_crd.spec.prompt
             )
+            db.commit()
+                
         except Exception as e:
             # Log error but don't interrupt the process
-            print(f"Error creating legacy task: {str(e)}")
+            logger.error(f"Error creating subtasks: {str(e)}")
     
     def _update_side_effects(self, db: Session, user_id: int, db_resource: Kind, resource: Dict[str, Any]) -> None:
-        """Update corresponding legacy task"""
+        """Update subtasks for the existing task"""
         try:
-            from app.services.task import task_service as legacy_task_service
-            legacy_task_service.create_or_update_by_k_task_id(
+            task_crd = Task.model_validate(resource)
+            
+            team = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == 'Team',
+                Kind.name == task_crd.spec.teamRef.name,
+                Kind.namespace == task_crd.spec.teamRef.namespace,
+                Kind.is_active == True
+            ).first()
+            
+            if not team:
+                logger.error(f"Team not found: {task_crd.spec.teamRef.name}")
+                return
+            
+            # Call _create_subtasks method to update subtasks (append mode)
+            task_kinds_service._create_subtasks(
                 db=db,
-                k_task_id=db_resource.id,
-                user_id=user_id
+                task=db_resource,
+                team=team,
+                user_id=user_id,
+                user_prompt=task_crd.spec.prompt
             )
+            db.commit()
+                
         except Exception as e:
             # Log error but don't interrupt the process
-            print(f"Error updating legacy task: {str(e)}")
+            logger.error(f"Error updating subtasks: {str(e)}")
     
     def _format_resource(self, resource: Kind) -> Dict[str, Any]:
         """Format Task resource for API response with enhanced status information"""
@@ -416,36 +341,49 @@ class TaskKindService(KindBaseService):
         
         # Get database connection
         with self.get_db() as db:
-            # Query corresponding Task based on Kind id
-            task = db.query(Task).filter(Task.k_id == resource.id).first()
+            # Query all Subtasks for this Task
+            subtasks = db.query(Subtask).filter(
+                Subtask.task_id == resource.id
+            ).order_by(Subtask.message_id.asc()).all()
             
-            # If corresponding Task is found, update status fields
-            if task:
-                status['state'] = task.status
-                status['progress'] = task.progress
-                status['result'] = task.result
-                status['errorMessage'] = task.error_message
-                status['startedAt'] = task.created_at
-                status['completedAt'] = task.completed_at
-                
-                # Query all Subtasks for this Task
-                subtasks = db.query(Subtask).filter(
-                    Subtask.task_id == task.id
-                ).order_by(Subtask.message_id.asc()).all()
-                
-                # Build subtasks array
-                subtask_list = []
-                for subtask in subtasks:
-                    subtask_list.append({
-                        'title': subtask.title,
-                        'state': subtask.status,
-                        'progress': subtask.progress,
-                        'result': subtask.result
-                    })
-                
-                status['subTasks'] = subtask_list
+            # Build subtasks array
+            subtask_list = []
+            for subtask in subtasks:
+                subtask_list.append({
+                    'title': subtask.title,
+                    'role': subtask.role,
+                    'bot_ids': subtask.bot_ids,
+                    'executor_namespace': subtask.executor_namespace,
+                    'executor_name': subtask.executor_name,
+                    'status': subtask.status,
+                    'progress': subtask.progress,
+                    'result': subtask.result,
+                    'errorMessage': subtask.error_message,
+                    'messageId': subtask.message_id,
+                    'parentId': subtask.parent_id,
+                    'createdAt': subtask.created_at,
+                    'updatedAt': subtask.updated_at,
+                    'completedAt': subtask.completed_at
+                })
+            
+            status['subTasks'] = subtask_list
         
         # Update status in result
         result['status'] = status
         
         return result
+    
+    def _post_delete_side_effects(self, db: Session, user_id: int, db_resource: Kind) -> None:
+        """Perform side effects after Task deletion - delegate to task_kinds_service.delete_task"""
+        try:
+            # Call task_kinds_service's delete_task method to handle cleanup after deletion
+            task_kinds_service.delete_task(
+                db=db,
+                task_id=db_resource.id,
+                user_id=user_id
+            )
+        except Exception as e:
+            logger.error(f"Error delegating Task deletion to task_kinds_service: {str(e)}")
+    
+    def _should_delete_resource(self, db: Session, user_id: int, db_resource: Kind) -> bool:
+        return False

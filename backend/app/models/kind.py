@@ -132,6 +132,5 @@ class KTask(Base):
     team_ref_namespace = Column(String(100), nullable=False, default="default")
     workspace_ref_name = Column(String(100), nullable=False)
     workspace_ref_namespace = Column(String(100), nullable=False, default="default")
-    batch = Column(Integer, default=0)
     status = Column(JSON)
     is_active = Column(Boolean, default=True)

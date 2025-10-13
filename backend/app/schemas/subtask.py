@@ -34,7 +34,6 @@ class SubtaskBase(BaseModel):
     parent_id: Optional[int] = None
     status: SubtaskStatus = SubtaskStatus.PENDING
     progress: int = 0
-    batch: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
 

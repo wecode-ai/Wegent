@@ -536,7 +536,7 @@ class GitHubProvider(RepositoryProvider):
             page = 1
             per_page = 100
             
-            self.logger.info(f"Fetching repositories for user {user.user_name}")
+            self.logger.info(f"Fetching github all repositories for user {user.user_name}")
             
             while True:
                 response = await asyncio.to_thread(

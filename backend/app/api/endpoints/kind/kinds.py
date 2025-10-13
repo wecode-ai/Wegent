@@ -66,8 +66,8 @@ URL_KIND_MAP = {v: k for k, v in KIND_URL_MAP.items()}
 
 @router.get("/namespaces/{namespace}/{kinds}")
 async def list_resources(
-    namespace: str,
-    kinds: str,
+    namespace: str = Path(..., description="Resource namespace"),
+    kinds: str = Path(..., description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks"),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -111,9 +111,9 @@ async def list_resources(
 
 @router.get("/namespaces/{namespace}/{kinds}/{name}")
 async def get_resource(
-    namespace: str,
-    kinds: str,
-    name: str,
+    namespace: str = Path(..., description="Resource namespace"),
+    kinds: str = Path(..., description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks"),
+    name: str = Path(..., description="Resource name"),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -152,8 +152,8 @@ async def get_resource(
 
 @router.post("/namespaces/{namespace}/{kinds}", status_code=status.HTTP_201_CREATED)
 async def create_resource(
-    namespace: str,
-    kinds: str,
+    namespace: str = Path(..., description="Resource namespace"),
+    kinds: str = Path(..., description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks"),
     resource: Dict[str, Any] = None,
     current_user: User = Depends(get_current_user)
 ):
@@ -215,9 +215,9 @@ async def create_resource(
 
 @router.put("/namespaces/{namespace}/{kinds}/{name}")
 async def update_resource(
-    namespace: str,
-    kinds: str,
-    name: str,
+    namespace: str = Path(..., description="Resource namespace"),
+    kinds: str = Path(..., description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks"),
+    name: str = Path(..., description="Resource name"),
     resource: Dict[str, Any] = None,
     current_user: User = Depends(get_current_user)
 ):
@@ -286,9 +286,9 @@ async def update_resource(
 
 @router.delete("/namespaces/{namespace}/{kinds}/{name}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_resource(
-    namespace: str,
-    kinds: str,
-    name: str,
+    namespace: str = Path(..., description="Resource namespace"),
+    kinds: str = Path(..., description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks"),
+    name: str = Path(..., description="Resource name"),
     current_user: User = Depends(get_current_user)
 ):
     """
@@ -317,43 +317,3 @@ async def delete_resource(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error deleting {kind} '{name}': {str(e)}"
         )
-
-
-# Special Task endpoints
-@router.get("/namespaces/{namespace}/tasks/{name}/status")
-async def get_task_status(
-    namespace: str,
-    name: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Get the status of a Task resource"""
-    try:
-        resource = kind_service.get_resource(current_user.id, "Task", namespace, name)
-        if not resource:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task '{name}' not found in namespace '{namespace}'"
-            )
-        
-        # Get the appropriate schema class and format response
-        schema_class = KIND_SCHEMA_MAP["Task"]
-        task = schema_class.parse_obj(kind_service._format_resource("Task", resource))
-        return task.status if hasattr(task, 'status') else {"state": "Unknown"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error retrieving Task '{name}' status: {str(e)}"
-        )
-
-@router.post("/namespaces/{namespace}/tasks/{name}/cancel")
-async def cancel_task(
-    namespace: str,
-    name: str,
-    current_user: User = Depends(get_current_user)
-):
-    """Cancel a Task resource"""
-    # Implementation for canceling a task
-    # This is a placeholder and should be implemented based on your requirements
-    return {"message": f"Task '{name}' cancellation requested"}

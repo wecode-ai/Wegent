@@ -13,6 +13,7 @@ from sqlalchemy.orm.attributes import flag_modified
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInDB, TeamDetail, BotInfo
+from app.schemas.kind import Team, Bot, Ghost, Shell, Model, Task
 from app.services.base import BaseService
 
 
@@ -227,14 +228,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     )
 
         # Update team based on update_data
-        team_json = team.json
+        team_crd = Team.model_validate(team.json)
         
         if "name" in update_data:
             new_name = update_data["name"]
             old_name = team.name
             team.name = new_name
-            team_json["metadata"]["name"] = new_name
-            flag_modified(team, "json")
+            team_crd.metadata.name = new_name
             
             # Update all references to this team in tasks
             self._update_team_references_in_tasks(db, old_name, "default", new_name, "default", user_id)
@@ -244,6 +244,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             self._validate_bots(db, update_data["bots"], user_id)
             
             # Convert bots to members format
+            from app.schemas.kind import TeamMember, BotTeamRef
             members = []
             for bot_info in update_data["bots"]:
                 bot_id = bot_info.bot_id if hasattr(bot_info, 'bot_id') else bot_info['bot_id']
@@ -263,18 +264,15 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         status_code=400,
                         detail=f"Bot with id {bot_id} not found"
                     )
-                member = {
-                    "botRef": {
-                        "name": bot.name,
-                        "namespace": bot.namespace
-                    },
-                    "prompt": bot_prompt or "",
-                    "role": role or ""
-                }
+                
+                member = TeamMember(
+                    botRef=BotTeamRef(name=bot.name, namespace=bot.namespace),
+                    prompt=bot_prompt or "",
+                    role=role or ""
+                )
                 members.append(member)
             
-            team_json["spec"]["members"] = members
-            flag_modified(team, "json")
+            team_crd.spec.members = members
 
         if "workflow" in update_data:
             # Extract collaboration model from workflow
@@ -282,8 +280,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             if update_data["workflow"] and "mode" in update_data["workflow"]:
                 collaboration_model = update_data["workflow"]["mode"]
             
-            team_json["spec"]["collaborationModel"] = collaboration_model
-            flag_modified(team, "json")
+            team_crd.spec.collaborationModel = collaboration_model
+
+        # Save the updated team CRD
+        team.json = team_crd.model_dump()
+        flag_modified(team, "json")
 
         # Update timestamps
         team.updated_at = datetime.utcnow()
@@ -312,11 +313,28 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 detail="Team not found"
             )
         
-        # For now, just set is_active to False (soft delete)
-        # team.is_active = False
-        # team.updated_at = datetime.utcnow()
-        db.delete(team)
+        # Check if team is referenced in any PENDING or RUNNING task
+        tasks = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Task",
+            Kind.is_active == True
+        ).all()
         
+        team_name = team.name
+        team_namespace = team.namespace
+        
+        # Check if any task references this team with status PENDING or RUNNING
+        for task in tasks:
+            task_crd = Task.model_validate(task.json)
+            if (task_crd.spec.teamRef.name == team_name and
+                task_crd.spec.teamRef.namespace == team_namespace):
+                if task_crd.status and task_crd.status.status in ["PENDING", "RUNNING"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Team '{team_name}' is being used in a {task_crd.status.status} task. Please wait for task completion or cancel it first."
+                    )
+        
+        db.delete(team)
         db.commit()
 
     def count_user_teams(self, db: Session, *, user_id: int) -> int:
@@ -367,54 +385,38 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 status_code=400,
                 detail=f"Invalid or inactive bot_ids: {', '.join(map(str, missing_bot_ids))}"
             )
-
     def _convert_to_team_dict(self, team: Kind, db: Session, user_id: int) -> Dict[str, Any]:
         """
         Convert kinds Team to team-like dictionary
         """
-        # Extract data from team JSON
-        team_spec = team.json.get("spec", {})
-        members = team_spec.get("members", [])
-        collaboration_model = team_spec.get("collaborationModel", {})
+        team_crd = Team.model_validate(team.json)
         
         # Convert members to bots format
         bots = []
-        for member in members:
-            bot_ref = member.get("botRef", {})
-            bot_name = bot_ref.get("name")
-            bot_namespace = bot_ref.get("namespace", "default")
-            
+        for member in team_crd.spec.members:
             # Find bot in kinds table
             bot = db.query(Kind).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Bot",
-                Kind.name == bot_name,
-                Kind.namespace == bot_namespace,
+                Kind.name == member.botRef.name,
+                Kind.namespace == member.botRef.namespace,
                 Kind.is_active == True
             ).first()
             
             if bot:
                 bot_info = {
                     "bot_id": bot.id,
-                    "bot_prompt": member.get("prompt", ""),
-                    "role": member.get("role", "")
+                    "bot_prompt": member.prompt or "",
+                    "role": member.role or ""
                 }
                 bots.append(bot_info)
+        
         # Convert collaboration model to workflow format
-        workflow = {}
-        if collaboration_model:
-            if isinstance(collaboration_model, str):
-                workflow["mode"] = collaboration_model
-            else:
-                # Handle legacy format for backward compatibility
-                workflow["mode"] = collaboration_model.get("name", "pipeline")
-                if "config" in collaboration_model:
-                    workflow.update(collaboration_model["config"])
+        workflow = {"mode": team_crd.spec.collaborationModel}
         
         return {
             "id": team.id,
             "user_id": team.user_id,
-            "k_id": team.id,  # For compatibility
             "name": team.name,
             "bots": bots,
             "workflow": workflow,
@@ -427,20 +429,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Convert kinds Bot to bot-like dictionary (simplified version)
         """
-        # Extract data from bot JSON
-        bot_spec = bot.json.get("spec", {})
-        
-        # Get referenced components
-        ghost_ref = bot_spec.get("ghostRef", {})
-        shell_ref = bot_spec.get("shellRef", {})
-        model_ref = bot_spec.get("modelRef", {})
+        bot_crd = Bot.model_validate(bot.json)
         
         # Get ghost
         ghost = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Ghost",
-            Kind.name == ghost_ref.get("name"),
-            Kind.namespace == ghost_ref.get("namespace", "default"),
+            Kind.name == bot_crd.spec.ghostRef.name,
+            Kind.namespace == bot_crd.spec.ghostRef.namespace,
             Kind.is_active == True
         ).first()
         
@@ -448,8 +444,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         shell = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Shell",
-            Kind.name == shell_ref.get("name"),
-            Kind.namespace == shell_ref.get("namespace", "default"),
+            Kind.name == bot_crd.spec.shellRef.name,
+            Kind.namespace == bot_crd.spec.shellRef.namespace,
             Kind.is_active == True
         ).first()
         
@@ -457,8 +453,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         model = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Model",
-            Kind.name == model_ref.get("name"),
-            Kind.namespace == model_ref.get("namespace", "default"),
+            Kind.name == bot_crd.spec.modelRef.name,
+            Kind.namespace == bot_crd.spec.modelRef.namespace,
             Kind.is_active == True
         ).first()
         
@@ -469,17 +465,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         agent_config = {}
         
         if ghost and ghost.json:
-            ghost_spec = ghost.json.get("spec", {})
-            system_prompt = ghost_spec.get("systemPrompt", "")
-            mcp_servers = ghost_spec.get("mcpServers", {})
+            ghost_crd = Ghost.model_validate(ghost.json)
+            system_prompt = ghost_crd.spec.systemPrompt
+            mcp_servers = ghost_crd.spec.mcpServers or {}
         
         if shell and shell.json:
-            shell_spec = shell.json.get("spec", {})
-            agent_name = shell_spec.get("runtime", "")
+            shell_crd = Shell.model_validate(shell.json)
+            agent_name = shell_crd.spec.runtime
         
         if model and model.json:
-            model_spec = model.json.get("spec", {})
-            agent_config = model_spec.get("modelConfig", {})
+            model_crd = Model.model_validate(model.json)
+            agent_config = model_crd.spec.modelConfig
         
         return {
             "id": bot.id,
@@ -507,19 +503,17 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         ).all()
         
         for task in tasks:
-            task_json = task.json
-            task_spec = task_json.get("spec", {})
-            team_ref = task_spec.get("teamRef", {})
+            task_crd = Task.model_validate(task.json)
             
             # Check if this task references the old team
-            if (team_ref.get("name") == old_name and
-                team_ref.get("namespace", "default") == old_namespace):
+            if (task_crd.spec.teamRef.name == old_name and
+                task_crd.spec.teamRef.namespace == old_namespace):
                 # Update the reference
-                team_ref["name"] = new_name
-                team_ref["namespace"] = new_namespace
+                task_crd.spec.teamRef.name = new_name
+                task_crd.spec.teamRef.namespace = new_namespace
                 
                 # Save changes
-                task.json = task_json
+                task.json = task_crd.model_dump()
                 task.updated_at = datetime.utcnow()
                 flag_modified(task, "json")
 

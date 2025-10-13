@@ -21,11 +21,6 @@ class User(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
-    # Relationships
-    bots = relationship("Bot", back_populates="user")
-    tasks = relationship("Task", back_populates="user")
-    teams = relationship("Team", back_populates="user")
-
     __table_args__ = (
         {'sqlite_autoincrement': True,
          'mysql_engine': 'InnoDB',
