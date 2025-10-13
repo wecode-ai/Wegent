@@ -61,7 +61,7 @@ def apply_patch() -> None:
         if _orig_get_current_user is not None and not getattr(_orig_get_current_user, "_wecode_patched", False):
             @wraps(_orig_get_current_user)
             async def patched_get_current_user(*args, **kwargs):
-                user = await _orig_get_current_user(*args, **kwargs)
+                user = _orig_get_current_user(*args, **kwargs)
                 return await _replace_placeholders(user)
             setattr(patched_get_current_user, "_wecode_patched", True)
             setattr(security_module, "get_current_user", patched_get_current_user)
