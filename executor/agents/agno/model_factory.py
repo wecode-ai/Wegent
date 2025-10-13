@@ -84,7 +84,14 @@ class ModelFactory:
             id=env.get("model_id", os.environ.get("OPENAI_MODEL", "gpt-4")),
             api_key=env.get("api_key", os.environ.get("OPENAI_API_KEY")),
             base_url=env.get("base_url", os.environ.get("OPENAI_BASE_URL")),
-            default_headers=default_headers
+            default_headers=default_headers,
+            role_map={
+                "system": "system",
+                "user": "user",
+                "assistant": "assistant",
+                "tool": "tool",
+                "model": "assistant",
+            }
         )
     
     @staticmethod
