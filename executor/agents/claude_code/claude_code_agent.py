@@ -9,6 +9,8 @@
 import asyncio
 import os
 import json
+import random
+import string
 from typing import Dict, Any
 from pathlib import Path
 
@@ -19,6 +21,16 @@ from shared.logger import setup_logger
 from shared.status import TaskStatus
 
 logger = setup_logger("claude_code_agent")
+
+
+def _generate_user_id() -> str:
+    """
+    Generate a random 32-character userID using lowercase letters and digits
+    
+    Returns:
+        str: A 32-character random string
+    """
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=32))
 
 
 class ClaudeCodeAgent(Agent):
@@ -85,6 +97,25 @@ class ClaudeCodeAgent(Agent):
                     with open(settings_path, "w") as f:
                         json.dump(agent_config, f, indent=2)
                     logger.info(f"Saved Claude Code settings to {settings_path}")
+                    
+                    # Save claude.json config
+                    claude_json_path = os.path.expanduser("~/.claude.json")
+                    claude_json_config = {
+                        "numStartups": 2,
+                        "installMethod": "unknown",
+                        "autoUpdates": True,
+                        "sonnet45MigrationComplete": True,
+                        "userID": _generate_user_id(),
+                        "hasCompletedOnboarding": True,
+                        "lastOnboardingVersion": "2.0.14",
+                        "bypassPermissionsModeAccepted": True,
+                        "hasOpusPlanDefault": False,
+                        "lastReleaseNotesSeen": "2.0.14",
+                        "isQualifiedForDataSharing": False
+                    }
+                    with open(claude_json_path, "w") as f:
+                        json.dump(claude_json_config, f, indent=2)
+                    logger.info(f"Saved Claude Code config to {claude_json_path}")
             else:
                 logger.info("No bot config found for Claude Code Agent")
             return TaskStatus.SUCCESS
@@ -122,7 +153,6 @@ class ClaudeCodeAgent(Agent):
         
         return {
             "env": env_config,
-            "forceLoginMethod": "console",
             "includeCoAuthoredBy": False,
         }
 
