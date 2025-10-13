@@ -3,4 +3,4 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # todo: 先占位, 后续改为开源项目
-docker buildx build --network=host  --platform linux/amd64,linux/arm64 -t ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0 -f Dockerfile .
+docker buildx build --platform linux/amd64 -t registry.api.weibo.com/wecode/wegent-base-python3.12:1.0.1-java-support -f Dockerfile . --push

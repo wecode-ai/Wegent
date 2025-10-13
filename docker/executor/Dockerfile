@@ -6,7 +6,7 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
 
 WORKDIR /app/executor
 
-RUN claude update
+RUN npm update -g @anthropic-ai/claude-code
 COPY executor/requirements.txt /app/executor/requirements.txt
 
 RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \

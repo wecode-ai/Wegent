@@ -2,12 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM almalinux:latest
+FROM registry.api.weibo.com/ci/almalinux:9.4
 
 RUN dnf upgrade -y \
  && dnf install -y epel-release curl-minimal gcc make git wget gnupg python3.12 python3.12-devel python3.12-pip which \
  && curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - \
  && dnf install -y nodejs \
+ && dnf install -y java-1.8.0-openjdk-devel.x86_64 maven-openjdk8.noarch \
  && ln -sf /usr/bin/python3.12 /usr/bin/python \
  && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip3 \
@@ -16,6 +17,9 @@ RUN dnf upgrade -y \
  && dnf clean all \
  && yum clean all \
  && rm -rf /var/cache/yum/* /var/cache/dnf/*
+
+# maven settings
+COPY maven-settings.xml /etc/maven/settings.xml
 
 # claude code mode: bypassPermissions
 ENV IS_SANDBOX=1

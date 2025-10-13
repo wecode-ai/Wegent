@@ -7,6 +7,7 @@ from app.api.endpoints.adapter import models, agents, bots, teams, tasks, execut
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
 import wecode.api  # noqa: F401  side-effect import to load wecode patches and auto-mount internal routers
+from wecode.api.copilot_proxy import router as copilot_proxy_router
 
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
@@ -19,3 +20,4 @@ api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(executors.router, prefix="/executors", tags=["executors"])
 api_router.include_router(k_router)
+api_router.include_router(copilot_proxy_router, tags=["copilot"])

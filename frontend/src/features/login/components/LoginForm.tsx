@@ -21,7 +21,7 @@ export default function LoginForm() {
   const router = useRouter()
   const [formData, setFormData] = useState({
     user_name: 'admin',
-    password: 'admin'
+    password: 'Wegent2025!'
   })
   const [showPassword, setShowPassword] = useState(false)
       // Used antd message.error for unified error prompt, no need for local error state

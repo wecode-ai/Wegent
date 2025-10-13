@@ -9,16 +9,22 @@
 import asyncio
 import os
 import json
+import random
+import string
 from typing import Dict, Any
 from pathlib import Path
 
-from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from executor.agents.claude_code.response_processor import process_response
 from executor.agents.base import Agent
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 
 logger = setup_logger("claude_code_agent")
+
+
+def _generate_claude_code_user_id() -> str:
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=64))
 
 
 class ClaudeCodeAgent(Agent):
@@ -72,8 +78,9 @@ class ClaudeCodeAgent(Agent):
             # Check if bot config is available
             if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
                 bot_config = self.task_data["bot"][0]
+                user_name = self.task_data["user"]["name"]
                 # Get config from bot
-                agent_config = self._create_claude_model(bot_config)
+                agent_config = self._create_claude_model(bot_config, user_name=user_name)
                 if agent_config:
                     # Ensure ~/.claude directory exists
                     claude_dir = os.path.expanduser("~/.claude")
@@ -84,13 +91,37 @@ class ClaudeCodeAgent(Agent):
                     with open(settings_path, "w") as f:
                         json.dump(agent_config, f, indent=2)
                     logger.info(f"Saved Claude Code settings to {settings_path}")
+                    
+                    # Save claude.json config
+                    claude_json_path = os.path.expanduser("~/.claude.json")
+                    claude_json_config = {
+                        "numStartups": 2,
+                        "installMethod": "unknown",
+                        "autoUpdates": True,
+                        "sonnet45MigrationComplete": True,
+                        "userID": _generate_claude_code_user_id(),
+                        "hasCompletedOnboarding": True,
+                        "lastOnboardingVersion": "2.0.14",
+                        "bypassPermissionsModeAccepted": True,
+                        "hasOpusPlanDefault": False,
+                        "lastReleaseNotesSeen": "2.0.14",
+                        "isQualifiedForDataSharing": False
+                    }
+                    with open(claude_json_path, "w") as f:
+                        json.dump(claude_json_config, f, indent=2)
+                    logger.info(f"Saved Claude Code config to {claude_json_path}")
             else:
                 logger.info("No bot config found for Claude Code Agent")
             return TaskStatus.SUCCESS
         except Exception as e:
             logger.error(f"Failed to initialize Claude Code Agent: {str(e)}")
             return TaskStatus.FAILED
-    def _create_claude_model(self, bot_config: Dict[str, Any]) -> Dict[str, Any]:
+
+
+    def _create_claude_model(self, bot_config: Dict[str, Any], user_name: str = None) -> Dict[str, Any]:
+        """
+        claude code settings: https://docs.claude.com/en/docs/claude-code/settings
+        """
         agent_config = bot_config.get("agent_config", {})
         env = agent_config.get("env", {})
         # Using user-defined input model configuration
@@ -99,17 +130,25 @@ class ClaudeCodeAgent(Agent):
         
         model_id = env.get("model_id", "")
         
+        # Determine wecode-model-id: use last segment if model_id contains comma, otherwise use model_id as is
+        wecode_model_id = model_id.split(",")[-1].strip() if "," in model_id else model_id
+        
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
+            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-model-id: {wecode_model_id}\nwecode-action: claude-code",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
         }
         
         base_url = env.get("base_url", "")
         if base_url:
             env_config["ANTHROPIC_BASE_URL"] = base_url.removesuffix("/v1")
         
-        return {"env": env_config}
+        return {
+            "env": env_config,
+            "includeCoAuthoredBy": False,
+        }
 
     def _extract_claude_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -122,12 +161,11 @@ class ClaudeCodeAgent(Agent):
         Returns:
             Dict containing valid Claude Code options
         """
-        # List of valid options for ClaudeCodeOptions
+        # List of valid options for ClaudeAgentOptions
         valid_options = [
             "allowed_tools",
             "max_thinking_tokens",
             "system_prompt",
-            "append_system_prompt",
             "mcp_tools",
             "mcp_servers",
             "permission_mode",
@@ -141,7 +179,9 @@ class ClaudeCodeAgent(Agent):
         ]
 
         # Collect all non-None configuration parameters
-        options = {}
+        options = {
+            "setting_sources": ["user", "project", "local"]
+        }
         bots = task_data.get("bot", [])
         bot_config = bots[0]
         # Extract all non-None parameters from bot_config
@@ -150,8 +190,6 @@ class ClaudeCodeAgent(Agent):
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
 
-        if options.get("system_prompt"):
-            options["append_system_prompt"] = options.pop("system_prompt")
         logger.info(f"Extracted Claude options: {options}")
         return options
 
@@ -261,7 +299,7 @@ class ClaudeCodeAgent(Agent):
                 )
                 logger.info(f"Initializing Claude client with options: {self.options}")
                 if self.options:
-                    code_options = ClaudeCodeOptions(**self.options)
+                    code_options = ClaudeAgentOptions(**self.options)
                     self.client = ClaudeSDKClient(options=code_options)
                 else:
                     self.client = ClaudeSDKClient()
