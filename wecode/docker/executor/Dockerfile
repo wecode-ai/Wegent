@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM registry.api.weibo.com/wecode/wegent-base-python3.12:1.0.0
+FROM registry.api.weibo.com/wecode/wegent-base-python3.12:1.0.1-java-support
 
 WORKDIR /app/executor
 
