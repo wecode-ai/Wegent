@@ -60,7 +60,8 @@ class TeamBuilder:
         team_members = team_data["members"]
 
         # It is believed that the agent mode needs to be used for operation
-        if team_leader is None and len(team_members) == 1:
+        if ((team_leader is None and len(team_members) == 1)
+                or (team_leader and len(team_members) == 0)):
             logger.info("create_team fail. team_leader is None and len(team_members) == 1")
             return None
         
