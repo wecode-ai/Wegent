@@ -72,8 +72,9 @@ class ClaudeCodeAgent(Agent):
             # Check if bot config is available
             if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
                 bot_config = self.task_data["bot"][0]
+                user_name = self.task_data["user"]["name"]
                 # Get config from bot
-                agent_config = self._create_claude_model(bot_config)
+                agent_config = self._create_claude_model(bot_config, user_name=user_name)
                 if agent_config:
                     # Ensure ~/.claude directory exists
                     claude_dir = os.path.expanduser("~/.claude")
@@ -90,7 +91,9 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.error(f"Failed to initialize Claude Code Agent: {str(e)}")
             return TaskStatus.FAILED
-    def _create_claude_model(self, bot_config: Dict[str, Any]) -> Dict[str, Any]:
+
+
+    def _create_claude_model(self, bot_config: Dict[str, Any], user_name: str = None) -> Dict[str, Any]:
         agent_config = bot_config.get("agent_config", {})
         env = agent_config.get("env", {})
         # Using user-defined input model configuration
@@ -103,6 +106,7 @@ class ClaudeCodeAgent(Agent):
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
+            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-action: claude-code"
         }
         
         base_url = env.get("base_url", "")
