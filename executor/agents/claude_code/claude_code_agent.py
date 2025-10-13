@@ -23,14 +23,8 @@ from shared.status import TaskStatus
 logger = setup_logger("claude_code_agent")
 
 
-def _generate_user_id() -> str:
-    """
-    Generate a random 32-character userID using lowercase letters and digits
-    
-    Returns:
-        str: A 32-character random string
-    """
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=32))
+def _generate_claude_code_user_id() -> str:
+    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=64))
 
 
 class ClaudeCodeAgent(Agent):
@@ -105,7 +99,7 @@ class ClaudeCodeAgent(Agent):
                         "installMethod": "unknown",
                         "autoUpdates": True,
                         "sonnet45MigrationComplete": True,
-                        "userID": _generate_user_id(),
+                        "userID": _generate_claude_code_user_id(),
                         "hasCompletedOnboarding": True,
                         "lastOnboardingVersion": "2.0.14",
                         "bypassPermissionsModeAccepted": True,
@@ -185,7 +179,9 @@ class ClaudeCodeAgent(Agent):
         ]
 
         # Collect all non-None configuration parameters
-        options = {}
+        options = {
+            "setting_sources": ["user", "project", "local"]
+        }
         bots = task_data.get("bot", [])
         bot_config = bots[0]
         # Extract all non-None parameters from bot_config
