@@ -8,10 +8,10 @@
 
 from typing import Dict, Any, List, Union
 
-from claude_code_sdk import ClaudeSDKClient
+from claude_agent_sdk import ClaudeSDKClient
 from shared.status import TaskStatus
 from shared.logger import setup_logger
-from claude_code_sdk.types import (
+from claude_agent_sdk.types import (
     Message,
     SystemMessage,
     AssistantMessage,

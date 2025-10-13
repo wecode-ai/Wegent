@@ -12,7 +12,7 @@ import json
 from typing import Dict, Any
 from pathlib import Path
 
-from claude_code_sdk import ClaudeSDKClient, ClaudeCodeOptions
+from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from executor.agents.claude_code.response_processor import process_response
 from executor.agents.base import Agent
 from shared.logger import setup_logger
@@ -94,6 +94,9 @@ class ClaudeCodeAgent(Agent):
 
 
     def _create_claude_model(self, bot_config: Dict[str, Any], user_name: str = None) -> Dict[str, Any]:
+        """
+        claude code settings: https://docs.claude.com/en/docs/claude-code/settings
+        """
         agent_config = bot_config.get("agent_config", {})
         env = agent_config.get("env", {})
         # Using user-defined input model configuration
@@ -106,14 +109,19 @@ class ClaudeCodeAgent(Agent):
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
-            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-action: claude-code"
+            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-model-id: {model_id}\nwecode-action: claude-code",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
         }
         
         base_url = env.get("base_url", "")
         if base_url:
             env_config["ANTHROPIC_BASE_URL"] = base_url.removesuffix("/v1")
         
-        return {"env": env_config}
+        return {
+            "env": env_config,
+            "forceLoginMethod": "console",
+            "includeCoAuthoredBy": False,
+        }
 
     def _extract_claude_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -126,7 +134,7 @@ class ClaudeCodeAgent(Agent):
         Returns:
             Dict containing valid Claude Code options
         """
-        # List of valid options for ClaudeCodeOptions
+        # List of valid options for ClaudeAgentOptions
         valid_options = [
             "allowed_tools",
             "max_thinking_tokens",
@@ -265,7 +273,7 @@ class ClaudeCodeAgent(Agent):
                 )
                 logger.info(f"Initializing Claude client with options: {self.options}")
                 if self.options:
-                    code_options = ClaudeCodeOptions(**self.options)
+                    code_options = ClaudeAgentOptions(**self.options)
                     self.client = ClaudeSDKClient(options=code_options)
                 else:
                     self.client = ClaudeSDKClient()
