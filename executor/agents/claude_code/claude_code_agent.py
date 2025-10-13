@@ -105,11 +105,14 @@ class ClaudeCodeAgent(Agent):
         
         model_id = env.get("model_id", "")
         
+        # Determine wecode-model-id: use last segment if model_id contains comma, otherwise use model_id as is
+        wecode_model_id = model_id.split(",")[-1].strip() if "," in model_id else model_id
+        
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
-            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-model-id: {model_id}\nwecode-action: claude-code",
+            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-model-id: {wecode_model_id}\nwecode-action: claude-code",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
         }
         
@@ -139,7 +142,6 @@ class ClaudeCodeAgent(Agent):
             "allowed_tools",
             "max_thinking_tokens",
             "system_prompt",
-            "append_system_prompt",
             "mcp_tools",
             "mcp_servers",
             "permission_mode",
@@ -162,8 +164,6 @@ class ClaudeCodeAgent(Agent):
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
 
-        if options.get("system_prompt"):
-            options["append_system_prompt"] = options.pop("system_prompt")
         logger.info(f"Extracted Claude options: {options}")
         return options
 
