@@ -121,6 +121,7 @@
     "copy": "Duplicate Team",
     "more": "More Actions",
     "no_teams": "No teams available",
+    "select_team": "Select a team",
     "new_team": "New Team",
     "search_placeholder": "Search team...",
     "no_match": "No matching teams",
