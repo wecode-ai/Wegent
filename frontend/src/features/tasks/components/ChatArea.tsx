@@ -50,10 +50,23 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
 
     const matchedTeam = teams.find(team => String(team.id) === teamIdParam) || null
 
-    if (matchedTeam && (!selectedTeam || selectedTeam.id !== matchedTeam.id)) {
+    // 只在初始化时设置team，避免用户切换后被URL参数覆盖
+    if (matchedTeam && !selectedTeam) {
       setSelectedTeam(matchedTeam)
     }
-  }, [teams, searchParams, selectedTeam, setSelectedTeam])
+  }, [teams, searchParams, setSelectedTeam])
+
+  // 处理team选择变化，同时更新URL参数
+  const handleTeamChange = (team: Team | null) => {
+    setSelectedTeam(team)
+    
+    // 当用户主动选择team时，清空URL中的teamId参数
+    const params = new URLSearchParams(Array.from(searchParams.entries()))
+    if (params.has('teamId')) {
+      params.delete('teamId')
+      router.push(`?${params.toString()}`)
+    }
+  }
 
   const handleSendMessage = async () => {
     setIsLoading(true)
@@ -136,7 +149,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                   {teams.length > 0 && (
                     <TeamSelector
                       selectedTeam={selectedTeam}
-                      setSelectedTeam={setSelectedTeam}
+                      setSelectedTeam={handleTeamChange}
                       teams={teams}
                       disabled={hasMessages}
                       isLoading={isTeamsLoading}
@@ -198,7 +211,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                 {teams.length > 0 && (
                   <TeamSelector
                     selectedTeam={selectedTeam}
-                    setSelectedTeam={setSelectedTeam}
+                    setSelectedTeam={handleTeamChange}
                     teams={teams}
                     disabled={hasMessages}
                     isLoading={isTeamsLoading}
