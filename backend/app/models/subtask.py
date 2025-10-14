@@ -4,7 +4,7 @@
 
 from datetime import datetime
 from enum import Enum as PyEnum
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey
+from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
 from sqlalchemy import Enum as SQLEnum
@@ -27,7 +27,7 @@ class Subtask(Base):
     __tablename__ = "subtasks"
 
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, nullable=False)
     task_id = Column(Integer, nullable=False)
     team_id = Column(Integer, nullable=False)
     title = Column(String(256), nullable=False)
@@ -35,7 +35,7 @@ class Subtask(Base):
     role = Column(SQLEnum(SubtaskRole), nullable=False, default=SubtaskRole.ASSISTANT)
     executor_namespace = Column(String(100))
     executor_name = Column(String(100))
-    executor_deleted_at = Column(DateTime, nullable=True)
+    executor_deleted_at = Column(Boolean, nullable=False, default=False)
     prompt = Column(Text)
     message_id = Column(Integer, nullable=False, default=1)
     parent_id = Column(Integer, nullable=True)
@@ -46,9 +46,6 @@ class Subtask(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime)
-
-    # Relationships
-    user = relationship("User")
 
     __table_args__ = (
         {'sqlite_autoincrement': True,

@@ -598,9 +598,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 logger.warning(f"Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}")
         
         # Update all subtasks to DELETE status
-        now = datetime.utcnow()
         db.query(Subtask).filter(Subtask.task_id == task_id).update({
-            Subtask.executor_deleted_at: now,
+            Subtask.executor_deleted_at: True,
             Subtask.status: SubtaskStatus.DELETE,
             Subtask.updated_at: datetime.utcnow()
         })
@@ -866,7 +865,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         
         # Get the next message_id for the new subtask
         next_message_id = 1
-        parent_id = None
+        parent_id = 0
         if existing_subtasks:
             next_message_id = existing_subtasks[0].message_id + 1
             parent_id = existing_subtasks[0].message_id
@@ -879,11 +878,16 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             title=f"{task_crd.spec.title} - User",
             bot_ids=bot_ids,
             role=SubtaskRole.USER,
+            executor_namespace="",  # Add default empty string for NOT NULL constraint
+            executor_name="",       # Add default empty string for NOT NULL constraint
             prompt=user_prompt,
             status=SubtaskStatus.COMPLETED,
             progress=0,
             message_id=next_message_id,
             parent_id=parent_id,
+            error_message="",
+            completed_at=datetime.utcnow(),
+            result=None,
         )
         db.add(user_subtask)
 
@@ -923,7 +927,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         parent_id=parent_id,
                         # If executor_infos is not empty, take the i-th one, otherwise empty string
                         executor_name=executor_infos[i].get('executor_name') if len(executor_infos) > i else "",
-                        executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > i else ""
+                        executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > i else "",
+                        error_message="",
+                        completed_at=datetime.utcnow(),
+                        result=None,
                     )
 
                     # Update id of next message and parent
@@ -953,7 +960,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 message_id=next_message_id,
                 parent_id=parent_id,
                 executor_name=executor_name,
-                executor_namespace=executor_namespace
+                executor_namespace=executor_namespace,
+                error_message="",
+                completed_at=datetime.utcnow(),
+                result=None,
             )
             db.add(assistant_subtask)
 

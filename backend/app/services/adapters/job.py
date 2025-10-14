@@ -53,9 +53,7 @@ class JobService(BaseService[Kind, None, None]):
                     Kind.updated_at <= cutoff,
                     Subtask.executor_name.isnot(None),
                     Subtask.executor_name != "",
-                    Subtask.executor_namespace.isnot(None),
-                    Subtask.executor_namespace != "",
-                    Subtask.executor_deleted_at.is_(None)
+                    Subtask.executor_deleted_at == False
                 )
             ).all()
 
@@ -90,7 +88,7 @@ class JobService(BaseService[Kind, None, None]):
             # Deduplicate by (namespace, name)
             unique_executor_keys: Set[tuple[str, str]] = set()
             for s in valid_candidates:
-                if s.executor_namespace and s.executor_name:
+                if s.executor_name:
                     unique_executor_keys.add((s.executor_namespace, s.executor_name))
 
             if not unique_executor_keys:
@@ -102,13 +100,12 @@ class JobService(BaseService[Kind, None, None]):
                     logger.info(f"Scheduled deleting executor task ns={ns} name={name}")
                     res = executor_kinds_service.delete_executor_task_sync(name, ns)
                     # Mark all subtasks with this (namespace, name) accordingly
-                    now = datetime.utcnow()
                     db.query(Subtask).filter(
                         Subtask.executor_namespace == ns,
                         Subtask.executor_name == name,
-                        Subtask.executor_deleted_at.is_(None)
+                        Subtask.executor_deleted_at == False
                     ).update({
-                        Subtask.executor_deleted_at: now,
+                        Subtask.executor_deleted_at: True,
                     })
                     db.commit()
                 except Exception as e:

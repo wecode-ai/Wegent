@@ -12,6 +12,7 @@ from sqlalchemy import and_, func, text
 
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
+from app.models.user import User
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
 from app.services.base import BaseService
@@ -90,9 +91,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
 
     def _get_subtasks_for_task(self, db: Session, task_id: int, status: str, limit: int) -> List[Subtask]:
         """Get subtasks for specified task, return first one sorted by message_id"""
-        return db.query(Subtask).options(
-            selectinload(Subtask.user),
-        ).filter(
+        return db.query(Subtask).filter(
             Subtask.task_id == task_id,
             Subtask.role == SubtaskRole.ASSISTANT,
             Subtask.status == status
@@ -119,9 +118,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         # Step 2: Query first subtask with matching status for each task
         subtasks = []
         for tid in task_ids:
-            first_subtask = db.query(Subtask).options(
-                selectinload(Subtask.user),
-            ).filter(
+            first_subtask = db.query(Subtask).filter(
                 Subtask.task_id == tid,
                 Subtask.role == SubtaskRole.ASSISTANT,
                 Subtask.status == status
@@ -254,8 +251,9 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 git_domain = workspace_crd.spec.repository.gitDomain
                 branch_name = workspace_crd.spec.repository.branchName
 
-            # Build user git information
-            git_info = next((info for info in subtask.user.git_info if info.get("git_domain") == git_domain), None) if subtask.user.git_info else None
+            # Build user git information - query user by user_id
+            user = db.query(User).filter(User.id == subtask.user_id).first()
+            git_info = next((info for info in user.git_info if info.get("git_domain") == git_domain), None) if user and user.git_info else None
 
             # Get team information from kinds table
             team = db.query(Kind).filter(
@@ -395,8 +393,8 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 "subtask_title": subtask.title,
                 "task_title": task_crd.spec.title,
                 "user": {
-                    "id": subtask.user.id,
-                    "name": subtask.user.user_name,
+                    "id": user.id if user else None,
+                    "name": user.user_name if user else None,
                     "git_domain": git_info.get("git_domain") if git_info else None,
                     "git_token": git_info.get("git_token") if git_info else None,
                     "git_id": git_info.get("git_id") if git_info else None,

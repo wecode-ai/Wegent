@@ -216,7 +216,7 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
             supportModel = [str(x) for x in supportModel if x]
 
         allow_all = len(supportModel) == 0
-        models = db.query(PublicModel).filter(PublicModel.is_active == True).all()  # noqa: E712
+        models = db.query(PublicModel).filter(PublicModel.is_active == True).all()
 
         if allow_all:
             return [{"name": m.name} for m in models]
