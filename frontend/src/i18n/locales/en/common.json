@@ -69,11 +69,11 @@
   "bot": {
     "name": "Name",
     "name_placeholder": "Code Assistant",
-    "agent": "Agent",
+    "agent": "Executor",
     "agent_select": "choose an agent",
     "prompt": "Prompt",
     "prompt_placeholder": "AI-powered code review and assistance",
-    "agent_config": "Agent Config",
+    "agent_config": "Model Config",
     "mcp_config": "Mcp Config",
     "save_prompt": "Save Prompt",
     "use_custom_model": "Use Custom Model",
