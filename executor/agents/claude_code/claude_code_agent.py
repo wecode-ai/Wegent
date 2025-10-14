@@ -20,6 +20,8 @@ from executor.agents.base import Agent
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 
+from utils.mcp_utils import extract_mcp_servers_config
+
 logger = setup_logger("claude_code_agent")
 
 
@@ -203,6 +205,7 @@ class ClaudeCodeAgent(Agent):
             "system_prompt",
             "mcp_tools",
             "mcp_servers",
+            "mcpServers",
             "permission_mode",
             "continue_conversation",
             "resume",
@@ -213,6 +216,8 @@ class ClaudeCodeAgent(Agent):
             "cwd",
         ]
 
+        logger.info(f"Extracting Claude options from task data: {task_data}")
+
         # Collect all non-None configuration parameters
         options = {
             "setting_sources": ["user", "project", "local"]
@@ -221,6 +226,12 @@ class ClaudeCodeAgent(Agent):
         bot_config = bots[0]
         # Extract all non-None parameters from bot_config
         if bot_config:
+            # Extract MCP servers configuration
+            mcp_servers = extract_mcp_servers_config(bot_config)
+            if mcp_servers:
+                logger.info(f"Detected MCP servers configuration: {mcp_servers}")
+                bot_config["mcp_servers"] = mcp_servers
+
             for key in valid_options:
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
