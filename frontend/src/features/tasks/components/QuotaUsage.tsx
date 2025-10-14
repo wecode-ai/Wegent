@@ -94,9 +94,6 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
           permanent_left: permanent_quota - permanent_usage,
         })}
       </div>
-      <div>
-        {t('quota.detail_tip')}
-      </div>
     </div>
   )
 
