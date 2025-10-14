@@ -102,7 +102,6 @@ export default function TeamSelector({
       <Select
         labelInValue
         showSearch
-        allowClear
         value={selectedTeam ? { value: selectedTeam.id, label: selectedTeam.name } : undefined}
         placeholder={
           <span className="text-sx truncate h-2">

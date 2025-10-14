@@ -140,7 +140,6 @@ export default function BranchSelector({
       <Select
         labelInValue
         showSearch
-        allowClear
         value={selectedBranch ? { value: selectedBranch.name, label: selectedBranch.name + (selectedBranch.default ? ' (default)' : '') } : undefined}
         placeholder={
           <span className="text-sx truncate h-2">{t('branches.select_branch')}</span>
