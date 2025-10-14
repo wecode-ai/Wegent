@@ -55,6 +55,34 @@ class ClaudeCodeAgent(Agent):
         self.options = self._extract_claude_options(task_data)
         self.options["permission_mode"] = "bypassPermissions"
 
+        # Set git-related environment variables
+        self._set_git_env_variables(task_data)
+
+    def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
+        """
+        Extract git-related fields from task_data and set them as environment variables
+        
+        Args:
+            task_data: The task data dictionary
+        """
+        git_fields = {
+            "git_domain": "GIT_DOMAIN",
+            "git_repo": "GIT_REPO",
+            "git_repo_id": "GIT_REPO_ID",
+            "branch_name": "BRANCH_NAME",
+            "git_url": "GIT_URL"
+        }
+        
+        env_values = {}
+        for source_key, env_key in git_fields.items():
+            value = task_data.get(source_key)
+            if value is not None:
+                os.environ[env_key] = str(value)
+                env_values[env_key] = value
+                
+        if env_values:
+            logger.info(f"Set git environment variables: {env_values}")
+
     def update_prompt(self, new_prompt: str) -> None:
         """
         Update the prompt attribute while keeping other attributes unchanged
@@ -79,8 +107,9 @@ class ClaudeCodeAgent(Agent):
             if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
                 bot_config = self.task_data["bot"][0]
                 user_name = self.task_data["user"]["name"]
+                git_url = self.task_data["git_url"]
                 # Get config from bot
-                agent_config = self._create_claude_model(bot_config, user_name=user_name)
+                agent_config = self._create_claude_model(bot_config, user_name=user_name, git_url=git_url)
                 if agent_config:
                     # Ensure ~/.claude directory exists
                     claude_dir = os.path.expanduser("~/.claude")
@@ -118,7 +147,7 @@ class ClaudeCodeAgent(Agent):
             return TaskStatus.FAILED
 
 
-    def _create_claude_model(self, bot_config: Dict[str, Any], user_name: str = None) -> Dict[str, Any]:
+    def _create_claude_model(self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None) -> Dict[str, Any]:
         """
         claude code settings: https://docs.claude.com/en/docs/claude-code/settings
         """
@@ -137,18 +166,24 @@ class ClaudeCodeAgent(Agent):
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
-            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-model-id: {wecode_model_id}\nwecode-action: claude-code",
+            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-model-id: {wecode_model_id}\nwecode-action: claude-code\ngit_url: {git_url}",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
         }
+        
+        if model_id == 'wecode,sina-glm-4.5':
+            env_config["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = 96000
         
         base_url = env.get("base_url", "")
         if base_url:
             env_config["ANTHROPIC_BASE_URL"] = base_url.removesuffix("/v1")
-        
-        return {
+
+        final_claude_code_config = {
             "env": env_config,
             "includeCoAuthoredBy": False,
         }
+        logger.info(f"Created Claude Code model config: {final_claude_code_config}")
+        
+        return final_claude_code_config
 
     def _extract_claude_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """
