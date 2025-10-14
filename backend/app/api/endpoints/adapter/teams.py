@@ -29,7 +29,10 @@ def list_teams(
         skip=skip,
         limit=limit
     )
-    total = team_kinds_service.count_user_teams(db=db, user_id=current_user.id)
+    if page == 1 and len(items) < limit:
+        total = len(items)
+    else:
+        total = team_kinds_service.count_user_teams(db=db, user_id=current_user.id)
     return {"total": total, "items": items}
 
 @router.post("", response_model=TeamInDB, status_code=status.HTTP_201_CREATED)

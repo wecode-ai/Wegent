@@ -28,7 +28,10 @@ def list_bots(
         skip=skip,
         limit=limit
     )
-    total = bot_kinds_service.count_user_bots(db=db, user_id=current_user.id)
+    if page == 1 and len(bot_dicts) < limit:
+        total = len(bot_dicts)
+    else:
+        total = bot_kinds_service.count_user_bots(db=db, user_id=current_user.id)
     
     # bot_dicts are already in the correct format
     return {"total": total, "items": bot_dicts}
