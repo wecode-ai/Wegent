@@ -9,6 +9,7 @@ import json
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import or_, and_
 
 from app.models.kind import Kind
 from app.models.user import User
@@ -181,6 +182,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     ) -> List[Dict[str, Any]]:
         """
         Get user's Bot list (only active bots)
+        Optimization: avoid N+1 queries by batch-fetching Ghost/Shell/Model components to significantly reduce database round trips.
         """
         bots = db.query(Kind).filter(
             Kind.user_id == user_id,
@@ -188,10 +190,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             Kind.is_active == True
         ).order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
         
+        if not bots:
+            return []
+        
+        # Batch-fetch related components to avoid 3 separate queries per bot
+        bot_crds, ghost_map, shell_map, model_map = self._get_bot_components_batch(db, bots, user_id)
+        
         result = []
         for bot in bots:
-            # Get related Ghost, Shell, Model
-            ghost, shell, model = self._get_bot_components(db, bot, user_id)
+            bot_crd = bot_crds.get(bot.id)
+            ghost = None
+            shell = None
+            model = None
+            if bot_crd:
+                ghost = ghost_map.get((bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace))
+                shell = shell_map.get((bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace))
+                model = model_map.get((bot_crd.spec.modelRef.name, bot_crd.spec.modelRef.namespace))
             result.append(self._convert_to_bot_dict(bot, ghost, shell, model))
         
         return result
@@ -474,6 +488,59 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         ).first()
         
         return ghost, shell, model
+    
+    def _get_bot_components_batch(self, db: Session, bots: List[Kind], user_id: int):
+        """
+        Batch-fetch Ghost/Shell/Model components for multiple bots to avoid N+1 queries.
+        Returns:
+          - bot_crds: {bot.id: Bot} mapping to avoid repeated parsing
+          - ghost_map: {(name, namespace): Kind}
+          - shell_map: {(name, namespace): Kind}
+          - model_map: {(name, namespace): Kind}
+        """
+        if not bots:
+            return {}, {}, {}, {}
+        
+        ghost_keys = set()
+        shell_keys = set()
+        model_keys = set()
+        bot_crds = {}
+        
+        for bot in bots:
+            # Parse bot.json once and reuse later
+            bot_crd = Bot.model_validate(bot.json)
+            bot_crds[bot.id] = bot_crd
+            ghost_keys.add((bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace))
+            shell_keys.add((bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace))
+            model_keys.add((bot_crd.spec.modelRef.name, bot_crd.spec.modelRef.namespace))
+        
+        def build_or_filters(kind_name: str, keys: set):
+            # Compose OR of AND clauses: or_(and_(kind==X, name==N, namespace==NS), ...)
+            return or_(*[and_(Kind.kind == kind_name, Kind.name == n, Kind.namespace == ns) for (n, ns) in keys]) if keys else None
+        
+        base_filter = and_(Kind.user_id == user_id, Kind.is_active == True)
+        
+        ghosts = []
+        shells = []
+        models = []
+        
+        ghost_filter = build_or_filters("Ghost", ghost_keys)
+        if ghost_filter is not None:
+            ghosts = db.query(Kind).filter(base_filter).filter(ghost_filter).all()
+        
+        shell_filter = build_or_filters("Shell", shell_keys)
+        if shell_filter is not None:
+            shells = db.query(Kind).filter(base_filter).filter(shell_filter).all()
+        
+        model_filter = build_or_filters("Model", model_keys)
+        if model_filter is not None:
+            models = db.query(Kind).filter(base_filter).filter(model_filter).all()
+        
+        ghost_map = {(g.name, g.namespace): g for g in ghosts}
+        shell_map = {(s.name, s.namespace): s for s in shells}
+        model_map = {(m.name, m.namespace): m for m in models}
+        
+        return bot_crds, ghost_map, shell_map, model_map
 
     def _convert_to_bot_dict(self, bot: Kind, ghost: Kind = None, shell: Kind = None, model: Kind = None) -> Dict[str, Any]:
         """
