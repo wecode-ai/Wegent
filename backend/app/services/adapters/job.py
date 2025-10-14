@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Set
 import asyncio
 import logging
@@ -37,7 +37,7 @@ class JobService(BaseService[Kind, None, None]):
         After successful deletion, set executor_deleted_at.
         """
         try:
-            cutoff = datetime.utcnow() - timedelta(hours=settings.SUBTASK_EXECUTOR_DELETE_AFTER_HOURS)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.SUBTASK_EXECUTOR_DELETE_AFTER_HOURS)
             logging.info("Starting scheduled deletion of expired executors, cutoff: {}".format(cutoff))
             
             # Query candidates using kinds table
