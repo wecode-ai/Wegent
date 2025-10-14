@@ -17,12 +17,7 @@ from app.models.kind import (
     KWorkspace,
     KTask
 )
-from app.models.bot import Bot
-from app.models.task import Task
-from app.models.team import Team
 from app.models.subtask import Subtask
-from app.models.agent import Agent
-from app.models.model import Model
 
 __all__ = [
     "Base",
@@ -35,10 +30,5 @@ __all__ = [
     "KTeam",
     "KWorkspace",
     "KTask",
-    "Bot",
-    "Task",
-    "Team",
     "Subtask",
-    "Model",
-    "Agent",
 ]

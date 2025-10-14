@@ -2,23 +2,25 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from sqlalchemy import Column, Integer, String, DateTime, JSON, UniqueConstraint
+from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON, UniqueConstraint
 from sqlalchemy.sql import func
 
 from app.db.base import Base
 
 
-class Agent(Base):
-    __tablename__ = "agents"
+class PublicShell(Base):
+    __tablename__ = "public_shells"
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String(100), nullable=False)
-    config = Column(JSON, nullable=False)  # Configuration, supported protocols or other information; consistent with models.config semantics
+    namespace = Column(String(100), nullable=False, default='default')
+    json = Column(JSON, nullable=False, comment='Resource-specific data in JSON format')
+    is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        UniqueConstraint("name", name="idx_agent_name"),
+        UniqueConstraint("name", "namespace", name="idx_public_shell_name_namespace"),
         {
             "sqlite_autoincrement": True,
             "mysql_engine": "InnoDB",

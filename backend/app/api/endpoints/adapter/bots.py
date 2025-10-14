@@ -8,9 +8,8 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from app.models.bot import Bot
 from app.schemas.bot import BotCreate, BotUpdate, BotInDB, BotListResponse, BotDetail
-from app.services.bot import bot_service
+from app.services.adapters import bot_kinds_service
 
 router = APIRouter()
 
@@ -23,17 +22,19 @@ def list_bots(
 ):
     """Get current user's Bot list (paginated)"""
     skip = (page - 1) * limit
-    items = bot_service.get_user_bots(
+    bot_dicts = bot_kinds_service.get_user_bots(
         db=db,
         user_id=current_user.id,
         skip=skip,
         limit=limit
     )
-    total = db.query(Bot).filter(
-        Bot.user_id == current_user.id,
-        Bot.is_active == True
-    ).count()
-    return {"total": total, "items": items}
+    if page == 1 and len(bot_dicts) < limit:
+        total = len(bot_dicts)
+    else:
+        total = bot_kinds_service.count_user_bots(db=db, user_id=current_user.id)
+    
+    # bot_dicts are already in the correct format
+    return {"total": total, "items": bot_dicts}
 
 @router.post("", response_model=BotInDB, status_code=status.HTTP_201_CREATED)
 def create_bot(
@@ -42,7 +43,8 @@ def create_bot(
     db: Session = Depends(get_db)
 ):
     """Create new Bot"""
-    return bot_service.create_with_user(db=db, obj_in=bot_create, user_id=current_user.id)
+    bot_dict = bot_kinds_service.create_with_user(db=db, obj_in=bot_create, user_id=current_user.id)
+    return bot_dict
 
 @router.get("/{bot_id}", response_model=BotDetail)
 def get_bot(
@@ -51,7 +53,8 @@ def get_bot(
     db: Session = Depends(get_db)
 ):
     """Get specified Bot details with related user"""
-    return bot_service.get_bot_detail(db=db, bot_id=bot_id, user_id=current_user.id)
+    bot_dict = bot_kinds_service.get_bot_detail(db=db, bot_id=bot_id, user_id=current_user.id)
+    return bot_dict
 
 @router.put("/{bot_id}", response_model=BotInDB)
 def update_bot(
@@ -61,12 +64,13 @@ def update_bot(
     db: Session = Depends(get_db)
 ):
     """Update Bot information"""
-    return bot_service.update_with_user(
+    bot_dict = bot_kinds_service.update_with_user(
         db=db,
         bot_id=bot_id,
         obj_in=bot_update,
         user_id=current_user.id
     )
+    return bot_dict
 
 @router.delete("/{bot_id}")
 def delete_bot(
@@ -75,5 +79,5 @@ def delete_bot(
     db: Session = Depends(get_db)
 ):
     """Delete Bot or deactivate if used in teams"""
-    bot_service.delete_with_user(db=db, bot_id=bot_id, user_id=current_user.id)
+    bot_kinds_service.delete_with_user(db=db, bot_id=bot_id, user_id=current_user.id)
     return {"message": "Bot deleted successfully"}

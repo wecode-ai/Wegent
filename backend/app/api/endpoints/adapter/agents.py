@@ -15,7 +15,7 @@ from app.schemas.agent import (
     AgentListResponse,
     AgentDetail,
 )
-from app.services.agent import agent_service
+from app.services.adapters import public_shell_service
 
 router = APIRouter()
 
@@ -31,8 +31,9 @@ def list_agents(
     Get Agent list (paginated)
     """
     skip = (page - 1) * limit
-    items = agent_service.get_agents(db=db, skip=skip, limit=limit, current_user=current_user)
-    total = agent_service.count_agents(db=db, current_user=current_user)
+    items = public_shell_service.get_agents(db=db, skip=skip, limit=limit, current_user=current_user)
+    total = public_shell_service.count_agents(db=db, current_user=current_user)
+    
     return {"total": total, "items": items}
 
 
@@ -45,7 +46,7 @@ def create_agent(
     """
     Create new Agent
     """
-    return agent_service.create_agent(db=db, obj_in=agent_create, current_user=current_user)
+    return public_shell_service.create_agent(db=db, obj_in=agent_create, current_user=current_user)
 
 
 @router.get("/{agent_id}", response_model=AgentDetail)
@@ -57,8 +58,7 @@ def get_agent(
     """
     Get specified Agent details
     """
-    agent = agent_service.get_by_id(db=db, agent_id=agent_id, current_user=current_user)
-    return agent
+    return public_shell_service.get_by_id(db=db, agent_id=agent_id, current_user=current_user)
 
 
 @router.put("/{agent_id}", response_model=AgentInDB)
@@ -71,7 +71,7 @@ def update_agent(
     """
     Update Agent information
     """
-    return agent_service.update_agent(db=db, agent_id=agent_id, obj_in=agent_update, current_user=current_user)
+    return public_shell_service.update_agent(db=db, agent_id=agent_id, obj_in=agent_update, current_user=current_user)
 
 
 @router.delete("/{agent_id}")
@@ -83,5 +83,5 @@ def delete_agent(
     """
     Delete Agent
     """
-    agent_service.delete_agent(db=db, agent_id=agent_id, current_user=current_user)
+    public_shell_service.delete_agent(db=db, agent_id=agent_id, current_user=current_user)
     return {"message": "Agent deleted successfully"}

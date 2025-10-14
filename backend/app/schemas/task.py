@@ -22,7 +22,6 @@ class TaskStatus(str, Enum):
 
 class TaskBase(BaseModel):
     """Task base model"""
-    k_id: Optional[int] = None
     title: Optional[str] = None
     team_id: Optional[int] = None
     git_url: Optional[str] = None
@@ -33,7 +32,6 @@ class TaskBase(BaseModel):
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
     progress: int = 0
-    batch: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
 
@@ -43,7 +41,6 @@ class TaskCreate(TaskBase):
 
 class TaskUpdate(BaseModel):
     """Task update model"""
-    k_id: Optional[int] = None
     title: Optional[str] = None
     prompt: Optional[str] = None
     status: Optional[TaskStatus] = None
@@ -89,7 +86,6 @@ class TaskDetail(BaseModel):
     prompt: str
     status: TaskStatus = TaskStatus.PENDING
     progress: int = 0
-    batch: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     created_at: datetime

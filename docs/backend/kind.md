@@ -74,8 +74,9 @@ metadata:
   name: claude-shell
   namespace: default
 spec:
-  # Runtime environment
-  runtime: "claudeode"
+  runtime: "ClaudeCode"
+  supportModel:
+    - "openai" 
 status:
   state: "Available" # Available, Unavailable
 ```
@@ -127,20 +128,13 @@ spec:
         namespace: default
       # Member-specific prompt, corresponds to bot_prompt in team.bots
       prompt: "You are the developer in the team, responsible for implementing features..."
+      role: "leader"
     - name: "reviewer"
       botRef:
         name: reviewer-bot
         namespace: default
       prompt: "You are the code reviewer in the team, responsible for reviewing code quality..."
-  # Collaboration model
-  collaborationModel:
-    name: "sequential" # sequential, hybrid
-    config:
-      workflow:
-        - step: "developer"
-          nextStep: "reviewer"
-        - step: "reviewer"
-          nextStep: ""
+  collaborationModel: "pipeline" # pipeline、route、coordinate、collaborate
 status:
   state: "Available" # Available, Unavailable
 ```
@@ -160,6 +154,7 @@ spec:
   repository:
     gitUrl: "https://github.com/user/repo.git"
     gitRepo: "user/repo"
+    gitRepoId: 12345
     branchName: "main"
     gitDomain: "github.com"
 status:
@@ -179,31 +174,19 @@ metadata:
 spec:
   title: "Implement new feature"
   prompt: "Task description"
-  # Team reference
   teamRef:
     name: dev-team
     namespace: default
-  # Workspace reference
   workspaceRef:
     name: project-workspace
     namespace: default
-  # Batch number
-  batch: 0
 status:
   state: "Available" # Available, Unavailable
+  status: "PENDING" # 'PENDING','RUNNING','COMPLETED','FAILED','CANCELLED','DELETE'
   progress: 0
   result: null
   errorMessage: null
-  startedAt: null
+  createdAt: null
+  updatedAt: null
   completedAt: null
-  # Subtask status (managed internally by the system, not exposed as CRD to users)
-  subtasks:
-    - title: "developer"
-      state: "Pending"
-      progress: 0
-      result: ""
-    - title: "reviewer"
-      state: "Pending"
-      progress: 0
-      result: ""
 ```

@@ -23,7 +23,7 @@ async def proxy_copilot(
 
     # 构造目标 URL
     target_url = f"http://copilot.weibo.com/v1/{path}"
-    logger.info(f"proxy_copilot target_url: {target_url}")
+    # logger.info(f"proxy_copilot target_url: {target_url}")
 
     # 复制所有 headers，强制覆盖 wecode-user，确保 key 为 str
     headers = {str(k): str(v) for k, v in request.headers.items()}
@@ -45,8 +45,8 @@ async def proxy_copilot(
                 timeout=10
             )
         # 打印透传响应的 headers
-        logger.info(f"proxy_copilot response headers: {resp.status_code}")
-        logger.info(f"proxy_copilot response headers: {dict(resp.headers)}")
+        # logger.info(f"proxy_copilot response headers: {resp.status_code}")
+        # logger.info(f"proxy_copilot response headers: {dict(resp.headers)}")
         # 透传响应
         content_type = resp.headers.get("content-type", "")
         if content_type.startswith("application/json"):

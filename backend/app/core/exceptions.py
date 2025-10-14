@@ -5,7 +5,6 @@
 from fastapi import HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import ValidationError
 
 class NotFoundException(HTTPException):
     """Resource not found exception"""

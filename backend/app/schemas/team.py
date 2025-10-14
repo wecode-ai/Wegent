@@ -44,7 +44,6 @@ class TeamInDB(TeamBase):
     """Database team model"""
     id: int
     user_id: int
-    k_id: Optional[int] = None
     created_at: datetime
     updated_at: datetime
 

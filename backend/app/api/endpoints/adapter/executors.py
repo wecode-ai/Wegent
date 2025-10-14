@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.schemas.subtask import SubtaskExecutorUpdate
-from app.services.executor import executor_service
+from app.services.adapters.executor_kinds import executor_kinds_service
 
 router = APIRouter()
 
@@ -19,7 +19,7 @@ async def dispatch_tasks(
     task_ids: Optional[str] = Query(default=None, description="Optional task IDs to filter by, comma separated"),
     db: Session = Depends(get_db)
 ):
-    """Task dispatch interface with subtask support
+    """Task dispatch interface with subtask support using kinds table
     
     Args:
         status: Subtask status to filter by (PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, DELETE)
@@ -37,7 +37,7 @@ async def dispatch_tasks(
         except ValueError:
             task_id_list = None
     
-    return await executor_service.dispatch_tasks(
+    return await executor_kinds_service.dispatch_tasks(
         db=db,
         status=task_status,
         limit=limit,
@@ -49,7 +49,7 @@ async def update_subtask(
     subtask_update: SubtaskExecutorUpdate,
     db: Session = Depends(get_db)
 ):
-    """Update subtask status and automatically update associated task
+    """Update subtask status and automatically update associated task using kinds table
     
     Args:
         subtask_update: Subtask update information including status, progress, result, etc.
@@ -57,7 +57,7 @@ async def update_subtask(
     Returns:
         Updated subtask information and task status
     """
-    return await executor_service.update_subtask(
+    return await executor_kinds_service.update_subtask(
         db=db,
         subtask_update=subtask_update
     )

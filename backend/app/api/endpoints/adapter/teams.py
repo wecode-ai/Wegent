@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from app.models.team import Team
+from app.models.kind import Kind
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInDB, TeamListResponse, TeamDetail
-from app.services.team import team_service
+from app.services.adapters.team_kinds import team_kinds_service
 
 router = APIRouter()
 
@@ -23,16 +23,16 @@ def list_teams(
 ):
     """Get current user's Team list (paginated)"""
     skip = (page - 1) * limit
-    items = team_service.get_user_teams(
+    items = team_kinds_service.get_user_teams(
         db=db,
         user_id=current_user.id,
         skip=skip,
         limit=limit
     )
-    total = db.query(Team).filter(
-        Team.user_id == current_user.id,
-        Team.is_active == True
-    ).count()
+    if page == 1 and len(items) < limit:
+        total = len(items)
+    else:
+        total = team_kinds_service.count_user_teams(db=db, user_id=current_user.id)
     return {"total": total, "items": items}
 
 @router.post("", response_model=TeamInDB, status_code=status.HTTP_201_CREATED)
@@ -42,7 +42,7 @@ def create_team(
     db: Session = Depends(get_db)
 ):
     """Create new Team"""
-    return team_service.create_with_user(db=db, obj_in=team_create, user_id=current_user.id)
+    return team_kinds_service.create_with_user(db=db, obj_in=team_create, user_id=current_user.id)
 
 @router.get("/{team_id}", response_model=TeamDetail)
 def get_team(
@@ -51,7 +51,7 @@ def get_team(
     db: Session = Depends(get_db)
 ):
     """Get specified Team details with related user and bots"""
-    return team_service.get_team_detail(db=db, team_id=team_id, user_id=current_user.id)
+    return team_kinds_service.get_team_detail(db=db, team_id=team_id, user_id=current_user.id)
 
 @router.put("/{team_id}", response_model=TeamInDB)
 def update_team(
@@ -61,7 +61,7 @@ def update_team(
     db: Session = Depends(get_db)
 ):
     """Update Team information"""
-    return team_service.update_with_user(
+    return team_kinds_service.update_with_user(
         db=db,
         team_id=team_id,
         obj_in=team_update,
@@ -75,5 +75,5 @@ def delete_team(
     db: Session = Depends(get_db)
 ):
     """Soft delete Team (set is_active to False)"""
-    team_service.delete_with_user(db=db, team_id=team_id, user_id=current_user.id)
+    team_kinds_service.delete_with_user(db=db, team_id=team_id, user_id=current_user.id)
     return {"message": "Team deactivated successfully"}

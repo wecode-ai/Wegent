@@ -2,73 +2,65 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
-import hashlib
-import time
-from typing import Any, Optional, Dict, List
-from datetime import datetime, timedelta
+from typing import Any, Optional
+import logging
 
-class MemoryCache:
-    """In-memory cache manager for GitHub repositories"""
-    
-    def __init__(self):
-        self._cache: Dict[str, Dict[str, Any]] = {}
-        self._lock = asyncio.Lock()
-    
+from redis.asyncio import Redis
+import orjson
+
+from app.core.config import settings
+
+logger = logging.getLogger(__name__)
+
+class RedisCache:
+    """Redis-based cache manager for GitHub repositories"""
+
+    def __init__(self, url: str):
+        # Use binary responses (decode_responses=False) to store orjson bytes
+        self._client: Redis = Redis.from_url(url, encoding="utf-8", decode_responses=False)
+
     def generate_full_cache_key(self, user_id: int, git_domain: str) -> str:
         """Generate cache key for full user repositories list"""
-        key_data = f"github_repos_full:{user_id}:{git_domain}"
-        return hashlib.md5(key_data.encode()).hexdigest()
-    
+        # Keep the raw key without hashing, as requested
+        return f"git_repos:{user_id}:{git_domain}"
+
     async def get(self, key: str) -> Optional[Any]:
         """Get value from cache"""
-        async with self._lock:
-            if key in self._cache:
-                item = self._cache[key]
-                if item['expires'] > time.time():
-                    return item['value']
-                else:
-                    del self._cache[key]
+        data = await self._client.get(key)
+        if data is None:
             return None
-    
-    async def set(self, key: str, value: Any, expire: int = 3600) -> bool:
-        """Set value to cache"""
-        async with self._lock:
-            self._cache[key] = {
-                'value': value,
-                'expires': time.time() + expire
-            }
-            return True
-    
+        try:
+            return orjson.loads(data)
+        except Exception:
+            # If value was stored as plain bytes/string
+            return data
+
+    async def set(self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME) -> bool:
+        """Set value to cache with expiration (seconds)"""
+        logger.info(f"Storing {key} in cache, expire: {expire}")
+        payload = orjson.dumps(value)
+        ok = await self._client.set(key, payload, ex=expire)
+        return bool(ok)
+
     async def delete(self, key: str) -> bool:
         """Delete key from cache"""
-        async with self._lock:
-            if key in self._cache:
-                del self._cache[key]
-                return True
-            return False
-    
+        deleted = await self._client.delete(key)
+        return deleted > 0
+
     async def cleanup_expired(self):
-        """Clean up expired cache entries"""
-        async with self._lock:
-            current_time = time.time()
-            expired_keys = [
-                key for key, item in self._cache.items()
-                if item['expires'] <= current_time
-            ]
-            for key in expired_keys:
-                del self._cache[key]
-    
-    def get_cache_size(self) -> int:
-        """Get current cache size"""
-        return len(self._cache)
-    
+        """No-op: Redis handles expiration via TTL."""
+        return None
+
+    async def get_cache_size(self) -> int:
+        """Get approximate number of keys in current DB"""
+        return await self._client.dbsize()
+
     async def is_building(self, user_id: int, git_domain: str) -> bool:
         """Check if repositories are currently being built/fetched"""
         build_key = f"building:{user_id}:{git_domain}"
         result = await self.get(build_key)
         return result is True
-    
+
     async def set_building(self, user_id: int, git_domain: str, building: bool = True) -> bool:
         """Set building status for user repositories"""
         build_key = f"building:{user_id}:{git_domain}"
@@ -78,4 +70,4 @@ class MemoryCache:
             return await self.delete(build_key)
 
 # Global cache instance
-cache_manager = MemoryCache()
+cache_manager = RedisCache(settings.REDIS_URL)

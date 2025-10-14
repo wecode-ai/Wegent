@@ -90,6 +90,7 @@ class ModelRef(BaseModel):
 class ShellSpec(BaseModel):
     """Shell specification"""
     runtime: str
+    supportModel: Optional[List[str]] = None
 
 
 class ShellStatus(Status):
@@ -163,32 +164,15 @@ class BotTeamRef(BaseModel):
 
 class TeamMember(BaseModel):
     """Team member specification"""
-    name: str
     botRef: BotTeamRef
     prompt: Optional[str] = None
-
-
-class WorkflowStep(BaseModel):
-    """Individual step in collaboration workflow"""
-    step: str
-    nextStep: str = ""
-
-
-class CollaborationConfig(BaseModel):
-    """Detailed collaboration configuration"""
-    workflow: List[WorkflowStep]
-
-
-class CollaborationModel(BaseModel):
-    """Collaboration model configuration"""
-    name: str  # sequential, parallel, hybrid
-    config: Optional[CollaborationConfig] = None
+    role: Optional[str] = None
 
 
 class TeamSpec(BaseModel):
     """Team specification"""
     members: List[TeamMember]
-    collaborationModel: CollaborationModel
+    collaborationModel: str  # pipeline、route、coordinate、collaborate
 
 
 class TeamStatus(Status):
@@ -217,6 +201,7 @@ class Repository(BaseModel):
     """Repository configuration"""
     gitUrl: str
     gitRepo: str
+    gitRepoId: Optional[int] = None
     branchName: str
     gitDomain: str
 
@@ -270,10 +255,12 @@ class TaskSpec(BaseModel):
 class TaskStatus(Status):
     """Task status"""
     state: str = "Available"  # Available, Unavailable
+    status: str = "PENDING"  # PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, DELETE
     progress: int = 0
     result: Optional[Dict[str, Any]] = None
     errorMessage: Optional[str] = None
-    startedAt: Optional[datetime] = None
+    createdAt: Optional[datetime] = None
+    updatedAt: Optional[datetime] = None
     completedAt: Optional[datetime] = None
     subTasks:  Optional[List[Dict[str, Any]]] = None 
 
@@ -292,17 +279,6 @@ class TaskList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "TaskList"
     items: List[Task]
-
-
-# Batch operation schemas
-class ApplyRequest(BaseModel):
-    """Batch apply request"""
-    resources: List[Dict[str, Any]]
-
-
-class DeleteRequest(BaseModel):
-    """Batch delete request"""
-    resources: List[Dict[str, Any]]
 
 
 class BatchResponse(BaseModel):

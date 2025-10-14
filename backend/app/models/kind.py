@@ -16,14 +16,14 @@ class Kind(Base):
     __tablename__ = "kinds"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    user_id = Column(Integer, nullable=False)
     kind = Column(String(50), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     namespace = Column(String(100), nullable=False, default="default")
     json = Column(JSON, nullable=False)
     is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     __table_args__ = (
         {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
@@ -132,6 +132,5 @@ class KTask(Base):
     team_ref_namespace = Column(String(100), nullable=False, default="default")
     workspace_ref_name = Column(String(100), nullable=False)
     workspace_ref_namespace = Column(String(100), nullable=False, default="default")
-    batch = Column(Integer, default=0)
     status = Column(JSON)
     is_active = Column(Boolean, default=True)

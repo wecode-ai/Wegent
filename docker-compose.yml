@@ -26,6 +26,23 @@ services:
       retries: 5
       start_period: 30s
 
+  redis:
+    image: redis:7
+    container_name: wegent-redis
+    restart: always
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
@@ -41,8 +58,11 @@ services:
       SECRET_KEY: your-secret-key-here
       ALGORITHM: HS256
       ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      REDIS_URL: redis://redis:6379/0
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     networks:
       - wegent-network
@@ -91,6 +111,8 @@ services:
 
 volumes:
   mysql_data:
+    driver: local
+  redis_data:
     driver: local
 
 networks:

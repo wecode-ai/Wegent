@@ -34,7 +34,6 @@ class SubtaskBase(BaseModel):
     parent_id: Optional[int] = None
     status: SubtaskStatus = SubtaskStatus.PENDING
     progress: int = 0
-    batch: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
 
@@ -53,7 +52,7 @@ class SubtaskUpdate(BaseModel):
     parent_id: Optional[int] = None
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
-    executor_deleted_at: Optional[datetime] = None
+    executor_deleted_at: Optional[bool] = False
 
 class SubtaskInDB(SubtaskBase):
     """Database subtask model"""
@@ -62,7 +61,7 @@ class SubtaskInDB(SubtaskBase):
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
-    executor_deleted_at: Optional[datetime] = None
+    executor_deleted_at: Optional[bool] = False
 
     class Config:
         from_attributes = True

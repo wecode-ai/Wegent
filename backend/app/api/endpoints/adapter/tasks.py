@@ -9,7 +9,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
 from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskListResponse
-from app.services.task import task_service
+from app.services.adapters.task_kinds import task_kinds_service
 
 router = APIRouter()
 
@@ -20,7 +20,7 @@ def create_task_id(
     db: Session = Depends(get_db)
 ):
     """Create new task with session id and return task_id"""
-    return {"task_id": task_service.create_task_id(db=db)}
+    return {"task_id": task_kinds_service.create_task_id(db=db, user_id=current_user.id)}
 
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task(
@@ -30,7 +30,7 @@ def create_task(
     db: Session = Depends(get_db)
 ):
     """Create new task with specified task_id"""
-    return task_service.create_task_or_append(db=db, obj_in=task_create, user=current_user, task_id=task_id)
+    return task_kinds_service.create_task_or_append(db=db, obj_in=task_create, user=current_user, task_id=task_id)
 
 @router.get("", response_model=TaskListResponse)
 def get_tasks(
@@ -41,7 +41,7 @@ def get_tasks(
 ):
     """Get current user's task list (paginated), excluding DELETE status tasks"""
     skip = (page - 1) * limit
-    items, total = task_service.get_user_tasks_with_pagination(
+    items, total = task_kinds_service.get_user_tasks_with_pagination(
         db=db,
         user_id=current_user.id,
         skip=skip,
@@ -59,7 +59,7 @@ def search_tasks_by_title(
 ):
     """Fuzzy search tasks by title for current user (pagination), excluding DELETE status"""
     skip = (page - 1) * limit
-    items, total = task_service.get_user_tasks_by_title_with_pagination(
+    items, total = task_kinds_service.get_user_tasks_by_title_with_pagination(
         db=db,
         user_id=current_user.id,
         title=title,
@@ -75,7 +75,7 @@ def get_task(
     db: Session = Depends(get_db)
 ):
     """Get specified task details with related entities"""
-    return task_service.get_task_detail(db=db, task_id=task_id, user_id=current_user.id)
+    return task_kinds_service.get_task_detail(db=db, task_id=task_id, user_id=current_user.id)
 
 @router.put("/{task_id}", response_model=TaskInDB)
 def update_task(
@@ -85,7 +85,7 @@ def update_task(
     db: Session = Depends(get_db)
 ):
     """Update task information"""
-    return task_service.update_task(
+    return task_kinds_service.update_task(
         db=db,
         task_id=task_id,
         obj_in=task_update,
@@ -99,5 +99,5 @@ def delete_task(
     db: Session = Depends(get_db)
 ):
     """Delete task"""
-    task_service.delete_task(db=db, task_id=task_id, user_id=current_user.id)
+    task_kinds_service.delete_task(db=db, task_id=task_id, user_id=current_user.id)
     return {"message": "Task deleted successfully"}

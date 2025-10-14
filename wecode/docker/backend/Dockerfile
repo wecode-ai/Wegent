@@ -7,6 +7,12 @@ FROM registry.api.weibo.com/wecode/python:3.12-slim
 # Set working directory
 WORKDIR /app
 
+# Install tzdata and set timezone to Shanghai
+RUN apt-get update && apt-get install -y tzdata && \
+    ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
+    echo "Asia/Shanghai" > /etc/timezone && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Copy requirements.txt and install dependencies
 COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com

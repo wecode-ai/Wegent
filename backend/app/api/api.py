@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.api.endpoints import auth, users, bots, tasks, repository, executors, teams, oidc, models, agents
+from app.api.endpoints import auth, users, repository, oidc
+from app.api.endpoints.adapter import models, agents, bots, teams, tasks, executors
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
 import wecode.api  # noqa: F401  side-effect import to load wecode patches and auto-mount internal routers

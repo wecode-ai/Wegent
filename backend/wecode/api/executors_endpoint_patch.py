@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Monkey-patch app.api.endpoints.executors /tasks/dispatch endpoint to replace
+Monkey-patch app.api.endpoints.adapter.executors /tasks/dispatch endpoint to replace
 ${WECODE_USER_API_KEY} placeholder with real API keys from external service.
 
 Auto-applied on import.
@@ -16,7 +16,7 @@ from functools import wraps
 
 try:
     import httpx
-    from app.api.endpoints import executors as executors_module
+    from app.api.endpoints.adapter import executors as executors_module
 except Exception:
     # If import fails at bootstrap time, skip patching to avoid breaking startup
     executors_module = None  # type: ignore
@@ -248,7 +248,7 @@ def _wrap_dispatch_endpoint(endpoint: Callable) -> Callable:
 
 def apply_patch() -> None:
     """
-    Apply the patch to the /tasks/dispatch endpoint in executors router.
+    Apply the patch to the /tasks/dispatch endpoint in adapter executors router.
     """
     if executors_module is None or httpx is None:
         logger.warning("executors_module or httpx not available, skipping patch")
@@ -256,7 +256,7 @@ def apply_patch() -> None:
     
     router = getattr(executors_module, "router", None)
     if router is None or not hasattr(router, "routes"):
-        logger.warning("executors router not found, skipping patch")
+        logger.warning("adapter executors router not found, skipping patch")
         return
     
     for route in router.routes:
@@ -271,12 +271,12 @@ def apply_patch() -> None:
         # Target the /tasks/dispatch POST endpoint
         if path == "/tasks/dispatch" and "POST" in methods:
             try:
-                logger.info("Applying patch to /tasks/dispatch endpoint")
+                logger.info("Applying patch to adapter /tasks/dispatch endpoint")
                 wrapped = _wrap_dispatch_endpoint(endpoint)
                 route.endpoint = wrapped
-                logger.info("Successfully patched /tasks/dispatch endpoint")
+                logger.info("Successfully patched adapter /tasks/dispatch endpoint")
             except Exception as e:
-                logger.error(f"Failed to patch /tasks/dispatch endpoint: {str(e)}")
+                logger.error(f"Failed to patch adapter /tasks/dispatch endpoint: {str(e)}")
                 continue
 
 
