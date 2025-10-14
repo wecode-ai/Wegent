@@ -121,7 +121,7 @@ def _process_result_message(msg: ResultMessage, report_progress_callback) -> Tas
     logger.info(f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}")
 
     # If it's a successful result message, send the result back via callback
-    if msg.subtype == "success":
+    if msg.subtype == "success" and not msg.is_error:
         # Ensure result is string type
         result_str = str(msg.result) if msg.result is not None else "No result"
         logger.info(f"Sending successful result via callback: {result_str}")
