@@ -130,7 +130,7 @@ export default function TeamSelector({
           </div>
         }
         options={teamOptions}
-        dropdownRender={(menu) => (
+        popupRender={(menu) => (
           <div>
             {menu}
             <div

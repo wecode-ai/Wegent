@@ -37,8 +37,17 @@ function DashboardContent() {
     team: 2
   }
 
-  // Initialize tabIndex - start with 0 to avoid hydration mismatch
-  const [tabIndex, setTabIndex] = useState(0)
+  // Function to get initial tab index from URL
+  const getInitialTabIndex = () => {
+    const tabParam = searchParams.get('tab')
+    if (tabParam && tabNameToIndex.hasOwnProperty(tabParam)) {
+      return tabNameToIndex[tabParam]
+    }
+    return 0 // default to first tab
+  }
+
+  // Initialize tabIndex based on URL parameter
+  const [tabIndex, setTabIndex] = useState(getInitialTabIndex)
 
   // Detect screen size for responsive behavior
   const [isDesktop, setIsDesktop] = useState(false)
@@ -53,24 +62,7 @@ function DashboardContent() {
     return () => window.removeEventListener('resize', checkScreenSize)
   }, [])
 
-  // Handle URL parameter changes - sync tabIndex with URL on mount and URL changes
-  useLayoutEffect(() => {
-    const tab = searchParams?.get('tab')
-    if (tab && tabNameToIndex.hasOwnProperty(tab)) {
-      const newIndex = tabNameToIndex[tab]
-      setTabIndex(newIndex)
-    } else {
-      // No tab parameter or invalid tab - default to integrations
-      setTabIndex(0)
-      // Always ensure URL shows integrations tab when no tab parameter exists
-      if (typeof window !== 'undefined') {
-        router.replace('?tab=integrations')
-      }
-    }
-  }, [searchParams, router, tabNameToIndex])
-
   const handleTabChange = useCallback((idx: number) => {
-    // 立即更新状态，然后同步URL
     setTabIndex(idx)
     const tabName = tabIndexToName[idx] || 'integrations'
     router.replace(`?tab=${tabName}`)
