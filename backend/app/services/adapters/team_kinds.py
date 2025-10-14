@@ -284,7 +284,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode='json')
-        team.updated_at = datetime.utcnow()
+        team.updated_at = datetime.now()
         flag_modified(team, "json")
         
         db.commit()
@@ -512,7 +512,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 
                 # Save changes
                 task.json = task_crd.model_dump(mode='json')
-                task.updated_at = datetime.utcnow()
+                task.updated_at = datetime.now()
                 flag_modified(task, "json")
 
 

@@ -143,7 +143,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 Subtask.status == SubtaskStatus.PENDING  # Ensure only PENDING status can be updated
             ).update({
                 Subtask.status: SubtaskStatus.RUNNING,
-                Subtask.updated_at: datetime.utcnow()
+                Subtask.updated_at: datetime.now()
             })
             
             if result > 0:  # If update is successful
@@ -172,9 +172,9 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 if current_status == "PENDING":
                     if task_crd.status:
                         task_crd.status.status = "RUNNING"
-                        task_crd.status.updatedAt = datetime.utcnow()
+                        task_crd.status.updatedAt = datetime.now()
                     task.json = task_crd.model_dump(mode='json')
-                    task.updated_at = datetime.utcnow()
+                    task.updated_at = datetime.now()
                     from sqlalchemy.orm.attributes import flag_modified
                     flag_modified(task, "json")
     def _format_subtasks_response(self, db: Session, subtasks: List[Subtask]) -> Dict[str, List[Dict]]:
@@ -449,7 +449,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 task_crd = Task.model_validate(task.json)
                 task_crd.spec.title = subtask_update.task_title
                 task.json = task_crd.model_dump(mode='json')
-                task.updated_at = datetime.utcnow()
+                task.updated_at = datetime.now()
                 from sqlalchemy.orm.attributes import flag_modified
                 flag_modified(task, "json")
                 db.add(task)
@@ -464,7 +464,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         
         # Set completion time
         if subtask_update.status == SubtaskStatus.COMPLETED and not subtask.completed_at:
-            subtask.completed_at = datetime.utcnow()
+            subtask.completed_at = datetime.now()
         
         db.add(subtask)
         db.flush()  # Ensure subtask update is complete
@@ -531,7 +531,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 task_crd.status.result = last_subtask.result
                 task_crd.status.errorMessage = last_subtask.error_message
                 task_crd.status.progress = 100
-                task_crd.status.completedAt = datetime.utcnow()
+                task_crd.status.completedAt = datetime.now()
         else:
             # Update to running status
             if task_crd.status:
@@ -544,9 +544,9 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         
         # Update timestamps
         if task_crd.status:
-            task_crd.status.updatedAt = datetime.utcnow()
+            task_crd.status.updatedAt = datetime.now()
         task.json = task_crd.model_dump(mode='json')
-        task.updated_at = datetime.utcnow()
+        task.updated_at = datetime.now()
         from sqlalchemy.orm.attributes import flag_modified
         flag_modified(task, "json")
         db.add(task)

@@ -358,13 +358,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db.add(ghost)  # Add to session
 
         # Update timestamps
-        bot.updated_at = datetime.utcnow()
+        bot.updated_at = datetime.now()
         if ghost:
-            ghost.updated_at = datetime.utcnow()
+            ghost.updated_at = datetime.now()
         if shell:
-            shell.updated_at = datetime.utcnow()
+            shell.updated_at = datetime.now()
         if model:
-            model.updated_at = datetime.utcnow()
+            model.updated_at = datetime.now()
         
         db.commit()
         db.refresh(bot)
@@ -539,7 +539,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             # Save changes if any updates were made
             if updated:
                 team.json = team_crd.model_dump()
-                team.updated_at = datetime.utcnow()
+                team.updated_at = datetime.now()
                 flag_modified(team, "json")
 
 

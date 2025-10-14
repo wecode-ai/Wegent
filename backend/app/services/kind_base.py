@@ -123,7 +123,7 @@ class KindBaseService(ABC):
             
             # Update resource
             db_resource.json = resource_data
-            db_resource.updated_at = datetime.utcnow()
+            db_resource.updated_at = datetime.now()
             
             db.commit()
             db.refresh(db_resource)
@@ -155,7 +155,7 @@ class KindBaseService(ABC):
                 )
             
             db_resource.is_active = False
-            db_resource.updated_at = datetime.utcnow()
+            db_resource.updated_at = datetime.now()
             
             # Perform pre-delete side effects
             self._pre_delete_side_effects(db, user_id, db_resource)

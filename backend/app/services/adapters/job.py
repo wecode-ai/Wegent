@@ -37,7 +37,7 @@ class JobService(BaseService[Kind, None, None]):
         After successful deletion, set executor_deleted_at.
         """
         try:
-            cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.SUBTASK_EXECUTOR_DELETE_AFTER_HOURS)
+            cutoff = datetime.now() - timedelta(hours=settings.SUBTASK_EXECUTOR_DELETE_AFTER_HOURS)
             logging.info("Starting scheduled deletion of expired executors, cutoff: {}".format(cutoff))
             
             # Query candidates using kinds table

@@ -92,7 +92,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             
             # Check if task is expired
             expire_hours = settings.APPEND_TASK_EXPIRE_HOURS
-            if (datetime.utcnow() - existing_task.updated_at).total_seconds() > expire_hours * 3600:
+            if (datetime.now() - existing_task.updated_at).total_seconds() > expire_hours * 3600:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Task has expired. You can only append tasks within {expire_hours} hours after last update."
@@ -121,7 +121,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 task_crd.status.status = "PENDING"
                 task_crd.status.progress = 0
             existing_task.json = task_crd.model_dump(mode='json', exclude_none=True)
-            existing_task.updated_at = datetime.utcnow()
+            existing_task.updated_at = datetime.now()
 
             task = existing_task
         else:
@@ -223,8 +223,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "progress": obj_in.progress or 0,
                     "result": obj_in.result,
                     "errorMessage": obj_in.error_message,
-                    "createdAt": datetime.utcnow().isoformat(),
-                    "updatedAt": datetime.utcnow().isoformat(),
+                    "createdAt": datetime.now().isoformat(),
+                    "updatedAt": datetime.now().isoformat(),
                     "completedAt": None
                 },
                 "metadata": {
@@ -543,12 +543,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Update timestamps
         if task_crd.status:
-            task_crd.status.updatedAt = datetime.utcnow()
+            task_crd.status.updatedAt = datetime.now()
             if "status" in update_data and update_data["status"] in ["COMPLETED", "FAILED", "CANCELLED"]:
-                task_crd.status.completedAt = datetime.utcnow()
+                task_crd.status.completedAt = datetime.now()
 
         task.json = task_crd.model_dump()
-        task.updated_at = datetime.utcnow()
+        task.updated_at = datetime.now()
         flag_modified(task, "json")
 
         db.commit()
@@ -601,17 +601,17 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         db.query(Subtask).filter(Subtask.task_id == task_id).update({
             Subtask.executor_deleted_at: True,
             Subtask.status: SubtaskStatus.DELETE,
-            Subtask.updated_at: datetime.utcnow()
+            Subtask.updated_at: datetime.now()
         })
         
         # Update task status to DELETE
         task_crd = Task.model_validate(task.json)
         if task_crd.status:
             task_crd.status.status = "DELETE"
-            task_crd.status.updatedAt = datetime.utcnow()
+            task_crd.status.updatedAt = datetime.now()
         # Use model_dump's exclude_none and json_encoders options to ensure datetime is properly serialized
         task.json = task_crd.model_dump(mode='json', exclude_none=True)
-        task.updated_at = datetime.utcnow()
+        task.updated_at = datetime.now()
         task.is_active = False
         flag_modified(task, "json")
 
@@ -886,7 +886,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             message_id=next_message_id,
             parent_id=parent_id,
             error_message="",
-            completed_at=datetime.utcnow(),
+            completed_at=datetime.now(),
             result=None,
         )
         db.add(user_subtask)
@@ -929,7 +929,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         executor_name=executor_infos[i].get('executor_name') if len(executor_infos) > i else "",
                         executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > i else "",
                         error_message="",
-                        completed_at=datetime.utcnow(),
+                        completed_at=datetime.now(),
                         result=None,
                     )
 
@@ -962,7 +962,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 executor_name=executor_name,
                 executor_namespace=executor_namespace,
                 error_message="",
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(),
                 result=None,
             )
             db.add(assistant_subtask)
