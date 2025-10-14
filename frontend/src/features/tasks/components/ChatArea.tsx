@@ -131,7 +131,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                 isLoading={isLoading}
               />
               {/* Team Selector and Send Button */}
-              <div className="flex items-end justify-between px-3 py-2">
+              <div className="flex items-end justify-between px-3 py-0">
                 <div>
                   {teams.length > 0 && (
                     <TeamSelector
@@ -193,7 +193,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
               isLoading={isLoading}
             />
             {/* Team Selector and Send Button */}
-            <div className="flex items-end justify-between px-3 py-2">
+            <div className="flex items-end justify-between px-3 py-0">
               <div>
                 {teams.length > 0 && (
                   <TeamSelector
