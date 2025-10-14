@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS subtasks (
     id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'Primary key',
-    user_id INT NOT NULL DEFAULT 0 COMMENT 'User ID (no foreign key)',
+    user_id INT NOT NULL DEFAULT 0 COMMENT 'User ID',
     task_id INT NOT NULL DEFAULT 0 COMMENT 'Task ID',
     team_id INT NOT NULL DEFAULT 0 COMMENT 'Team ID',
     title VARCHAR(256) NOT NULL DEFAULT '' COMMENT 'Subtask title',
@@ -43,6 +43,10 @@ CREATE TABLE IF NOT EXISTS subtasks (
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time',
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Update time',
     completed_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00' COMMENT 'Completion time',
+    INDEX idx_user_id (user_id),
+    INDEX idx_task_id (task_id),
+    INDEX idx_team_id (team_id),
+    INDEX idx_created_at (created_at),
     INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
