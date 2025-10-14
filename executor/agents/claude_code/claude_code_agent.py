@@ -167,7 +167,7 @@ class ClaudeCodeAgent(Agent):
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
             "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-model-id: {wecode_model_id}\nwecode-action: claude-code\ngit_url: {git_url}",
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": 1,
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")),
         }
         
         if model_id == 'wecode,sina-glm-4.5':
@@ -179,7 +179,7 @@ class ClaudeCodeAgent(Agent):
 
         final_claude_code_config = {
             "env": env_config,
-            "includeCoAuthoredBy": False,
+            "includeCoAuthoredBy": os.getenv("CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY", "true").lower() != "false",
         }
         logger.info(f"Created Claude Code model config: {final_claude_code_config}")
         
