@@ -89,6 +89,12 @@ const themeConfigs: Record<ThemeMode, ThemeConfig> = {
         contentFontSizeLG: 16,
         contentFontSizeSM: 12,
       },
+      Tooltip: {
+        colorBgSpotlight: '#161b22',
+        colorTextLightSolid: '#f0f6fc',
+        borderRadius: 6,
+        boxShadowSecondary: '0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 9px 28px 8px rgba(0, 0, 0, 0.05)',
+      },
     },
   },
   light: {
@@ -156,6 +162,12 @@ const themeConfigs: Record<ThemeMode, ThemeConfig> = {
         contentFontSize: 14,
         contentFontSizeLG: 16,
         contentFontSizeSM: 12,
+      },
+      Tooltip: {
+        colorBgSpotlight: '#ffffff',
+        colorTextLightSolid: '#0f172a',
+        borderRadius: 6,
+        boxShadowSecondary: '0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 9px 28px 8px rgba(0, 0, 0, 0.05)',
       },
     },
   },

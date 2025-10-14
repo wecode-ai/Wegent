@@ -18,6 +18,10 @@ RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
     cd .. && \
     rm -rf sqlite-autoconf-3500400 sqlite-autoconf-3500400.tar.gz
 
+# 设置 claude code 环境变量
+ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
+ENV CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY="false"
+
 # 设置环境变量
 ENV PATH="/usr/local/bin:${PATH}"
 RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.6 && pip install -r /app/executor/requirements.txt -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com

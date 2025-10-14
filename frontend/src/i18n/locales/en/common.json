@@ -227,6 +227,13 @@
     "open_sidebar": "Open sidebar",
     "close_sidebar": "Close sidebar"
   },
+  "quota": {
+    "load_failed": "Failed to fetch quota info",
+    "brief": "WeCode quota {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
+    "detail_monthly": "Your monthly quota is {{monthly_quota}}, used {{monthly_usage}}, left {{monthly_left}}.",
+    "detail_permanent": "Permanent quota is {{permanent_quota}}, used {{permanent_usage}}, left {{permanent_left}}.",
+    "detail_tip": "Monthly quota resets at the beginning of each month, permanent quota can be obtained via activities."
+  },
   "github": {
     "error": {
       "required": "Please fill in all required fields",

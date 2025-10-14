@@ -16,6 +16,7 @@ import { sendMessage } from '../service/messageService'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useTaskContext } from '../contexts/taskContext'
 import { App, Button } from 'antd'
+import QuotaUsage from './QuotaUsage'
 
 interface ChatAreaProps {
   teams: Team[]
@@ -130,7 +131,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                 isLoading={isLoading}
               />
               {/* Team Selector and Send Button */}
-              <div className="flex items-end justify-between px-3 py-2">
+              <div className="flex items-end justify-between px-3 py-0">
                 <div>
                   {teams.length > 0 && (
                     <TeamSelector
@@ -142,18 +143,20 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                     />
                   )}
                 </div>
-                <Button
-                  type="text"
-                  onClick={handleSendMessage}
-                  disabled={isLoading}
-                  icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
-                  style={{
-                    color: 'rgb(var(--color-text-muted))',
-                    padding: '0',
-                    marginBottom: '4px',
-                    height: 'auto'
-                  }}
-                />
+                <div className="ml-auto flex items-center">
+                  <QuotaUsage className="mr-2" />
+                  <Button
+                    type="text"
+                    onClick={handleSendMessage}
+                    disabled={isLoading}
+                    icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
+                    style={{
+                      color: 'rgb(var(--color-text-muted))',
+                      padding: '0',
+                      height: 'auto'
+                    }}
+                  />
+                </div>
               </div>
             </div>
 
@@ -190,7 +193,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
               isLoading={isLoading}
             />
             {/* Team Selector and Send Button */}
-            <div className="flex items-end justify-between px-3 py-2">
+            <div className="flex items-end justify-between px-3 py-0">
               <div>
                 {teams.length > 0 && (
                   <TeamSelector
@@ -202,18 +205,20 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
                   />
                 )}
               </div>
-              <Button
-                type="text"
-                onClick={handleSendMessage}
-                disabled={isLoading}
-                icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
-                style={{
-                  color: 'rgb(var(--color-text-muted))',
-                  padding: '0',
-                  marginBottom: '4px',
-                  height: 'auto'
-                }}
-              />
+              <div className="ml-auto flex items-center">
+                <QuotaUsage className="mr-2" />
+                <Button
+                  type="text"
+                  onClick={handleSendMessage}
+                  disabled={isLoading}
+                  icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
+                  style={{
+                    color: 'rgb(var(--color-text-muted))',
+                    padding: '0',
+                    height: 'auto'
+                  }}
+                />
+              </div>
             </div>
           </div>
 

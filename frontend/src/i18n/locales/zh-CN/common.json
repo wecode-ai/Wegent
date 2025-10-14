@@ -227,6 +227,13 @@
     "open_sidebar": "打开侧边栏",
     "close_sidebar": "关闭侧边栏"
   },
+  "quota": {
+    "load_failed": "用量信息获取失败",
+    "brief": "WeCode配额 {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
+    "detail_monthly": "你的当月额度为 {{monthly_quota}}，已经使用 {{monthly_usage}}，剩余 {{monthly_left}}。",
+    "detail_permanent": "永久额度为 {{permanent_quota}}，已经使用 {{permanent_usage}}，剩余 {{permanent_left}}。",
+    "detail_tip": "当月额度每月月初重置，永久额度可参与活动获取。"
+  },
   "github": {
     "error": {
       "required": "请填写所有必填项",
