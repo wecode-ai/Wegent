@@ -892,7 +892,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         db.add(user_subtask)
 
         # Update id of next message and parent
-        if parent_id is None:
+        if parent_id == 0:
             parent_id = 1
         next_message_id = next_message_id + 1
 
