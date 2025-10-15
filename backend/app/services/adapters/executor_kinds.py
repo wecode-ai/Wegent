@@ -285,78 +285,76 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
 
             for index, bot_id in enumerate(subtask.bot_ids):
                 # Get bot from kinds table
-                for index, bot_id in enumerate(subtask.bot_ids):
-                    # Get bot from kinds table
-                    bot = db.query(Kind).filter(
-                        Kind.id == bot_id,
-                        Kind.user_id == task.user_id,
-                        Kind.kind == "Bot",
-                        Kind.is_active == True
-                    ).first()
+                bot = db.query(Kind).filter(
+                    Kind.id == bot_id,
+                    Kind.user_id == task.user_id,
+                    Kind.kind == "Bot",
+                    Kind.is_active == True
+                ).first()
+                
+                if not bot:
+                    continue
                     
-                    if not bot:
-                        continue
-                        
-                    bot_crd = Bot.model_validate(bot.json)
-                    
-                    # Get ghost for system prompt and mcp servers
-                    ghost = db.query(Kind).filter(
-                        Kind.user_id == task.user_id,
-                        Kind.kind == "Ghost",
-                        Kind.name == bot_crd.spec.ghostRef.name,
-                        Kind.namespace == bot_crd.spec.ghostRef.namespace,
-                        Kind.is_active == True
-                    ).first()
-                    
-                    # Get shell for agent name
-                    shell = db.query(Kind).filter(
-                        Kind.user_id == task.user_id,
-                        Kind.kind == "Shell",
-                        Kind.name == bot_crd.spec.shellRef.name,
-                        Kind.namespace == bot_crd.spec.shellRef.namespace,
-                        Kind.is_active == True
-                    ).first()
-                    
-                    # Get model for agent config
-                    model = db.query(Kind).filter(
-                        Kind.user_id == task.user_id,
-                        Kind.kind == "Model",
-                        Kind.name == bot_crd.spec.modelRef.name,
-                        Kind.namespace == bot_crd.spec.modelRef.namespace,
-                        Kind.is_active == True
-                    ).first()
-                    
-                    # Extract data from components
-                    system_prompt = ""
-                    mcp_servers = {}
-                    agent_name = ""
-                    agent_config = {}
-                    
-                    if ghost and ghost.json:
-                        ghost_crd = Ghost.model_validate(ghost.json)
-                        system_prompt = ghost_crd.spec.systemPrompt
-                        mcp_servers = ghost_crd.spec.mcpServers or {}
-                    
-                    if shell and shell.json:
-                        shell_crd = Shell.model_validate(shell.json)
-                        agent_name = shell_crd.spec.runtime
-                    
-                    if model and model.json:
-                        model_crd = Model.model_validate(model.json)
-                        agent_config = model_crd.spec.modelConfig
-                    
-                    # Get team member info for bot prompt and role
-                    team_member_info = None
-                    if collaboration_model == "pipeline":
-                        if pipeline_index < len(team_members):
-                            team_member_info = team_members[pipeline_index]
-                    else:
-                        if index < len(team_members):
-                            team_member_info = team_members[index]
-                    
-                    bot_prompt = system_prompt
-                    if team_member_info and team_member_info.prompt:
-                        bot_prompt += f"\n{team_member_info.prompt}"
+                bot_crd = Bot.model_validate(bot.json)
+                
+                # Get ghost for system prompt and mcp servers
+                ghost = db.query(Kind).filter(
+                    Kind.user_id == task.user_id,
+                    Kind.kind == "Ghost",
+                    Kind.name == bot_crd.spec.ghostRef.name,
+                    Kind.namespace == bot_crd.spec.ghostRef.namespace,
+                    Kind.is_active == True
+                ).first()
+                
+                # Get shell for agent name
+                shell = db.query(Kind).filter(
+                    Kind.user_id == task.user_id,
+                    Kind.kind == "Shell",
+                    Kind.name == bot_crd.spec.shellRef.name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.is_active == True
+                ).first()
+                
+                # Get model for agent config
+                model = db.query(Kind).filter(
+                    Kind.user_id == task.user_id,
+                    Kind.kind == "Model",
+                    Kind.name == bot_crd.spec.modelRef.name,
+                    Kind.namespace == bot_crd.spec.modelRef.namespace,
+                    Kind.is_active == True
+                ).first()
+                
+                # Extract data from components
+                system_prompt = ""
+                mcp_servers = {}
+                agent_name = ""
+                agent_config = {}
+                
+                if ghost and ghost.json:
+                    ghost_crd = Ghost.model_validate(ghost.json)
+                    system_prompt = ghost_crd.spec.systemPrompt
+                    mcp_servers = ghost_crd.spec.mcpServers or {}
+                
+                if shell and shell.json:
+                    shell_crd = Shell.model_validate(shell.json)
+                    agent_name = shell_crd.spec.runtime
+                
+                if model and model.json:
+                    model_crd = Model.model_validate(model.json)
+                    agent_config = model_crd.spec.modelConfig
+                
+                # Get team member info for bot prompt and role
+                team_member_info = None
+                if collaboration_model == "pipeline":
+                    if pipeline_index < len(team_members):
+                        team_member_info = team_members[pipeline_index]
+                else:
+                    if index < len(team_members):
+                        team_member_info = team_members[index]
+                
+                bot_prompt = system_prompt
+                if team_member_info and team_member_info.prompt:
+                    bot_prompt += f"\n{team_member_info.prompt}"
                 agent_config_data = agent_config
                 try:
                     if isinstance(agent_config, dict):
