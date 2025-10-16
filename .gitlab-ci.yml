@@ -34,7 +34,7 @@ wegent-executor-manager:
   script:
     - build_image
   rules:
-    - if: '$CI_COMMIT_BRANCH == "wecode_develop"'
+    - if: '$CI_COMMIT_BRANCH == "wecode"'
     - changes:
       - executor_manager/**/*
       - wecode/docker/executor_manager/**/*
@@ -66,6 +66,7 @@ wegent-executor:
   script:
     - build_image
   rules:
+    - if: '$CI_COMMIT_BRANCH == "wecode"'
     - changes:
       - executor/**/*
       - wecode/docker/executor/**/*
@@ -96,6 +97,7 @@ wegent-backend:
   script:
     - build_image
   rules:
+    - if: '$CI_COMMIT_BRANCH == "wecode"'
     - changes:
       - backend/**/*
       - wecode/docker/backend/**/*
@@ -126,6 +128,7 @@ wegent-web:
   script:
     - build_image
   rules:
+    - if: '$CI_COMMIT_BRANCH == "wecode"'
     - changes:
       - frontend/**/*
       - wecode/docker/frontend/**/*
