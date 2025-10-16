@@ -46,8 +46,8 @@ class TeamInDB(TeamBase):
     user_id: int
     created_at: datetime
     updated_at: datetime
-    is_shared: bool = False
-    is_author: bool = True
+    user: Optional[dict[str, Any]] = None
+    share_status: int = 0  # 0-隐私、1-分享中、2-来自别人分享
 
     class Config:
         from_attributes = True
@@ -63,8 +63,7 @@ class TeamDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     user: Optional[UserInDB] = None
-    is_shared: bool = False
-    is_author: bool = True
+    share_status: int = 0  # 0-隐私、1-分享中、2-来自别人分享
 
     class Config:
         from_attributes = True

@@ -128,11 +128,35 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.kind == "Team",
             Kind.is_active == True
         ).order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
-        
+
+        # Get all teams that are being shared by this user (一次性查询)
+        shared_team_ids = set()
+        if own_teams:
+            own_share_teams = db.query(SharedTeam.team_id).filter(
+                SharedTeam.original_user_id == user_id,
+                SharedTeam.is_active == True,
+                SharedTeam.team_id.in_([team.id for team in own_teams])
+            ).all()
+            shared_team_ids = {team_id for team_id, in own_share_teams}
+            
+        # Get user info for team (一次性查询)
+        own_team_user = db.query(User).filter(User.id == user_id).first()
+            
         for team in own_teams:
             team_dict = self._convert_to_team_dict(team, db, user_id)
-            team_dict["is_shared"] = False
-            team_dict["is_author"] = True
+            
+            if own_team_user:
+                team_dict["user"] = {
+                    "id": own_team_user.id,
+                    "user_name": own_team_user.user_name
+                }
+            
+            # Set share_status: 0-隐私、1-分享中、2-来自别人分享
+            if team.id in shared_team_ids:
+                team_dict["share_status"] = 1  # 分享中
+            else:
+                team_dict["share_status"] = 0  # 隐私
+            
             result.append(team_dict)
         
         # Get shared teams
@@ -147,8 +171,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         
         for shared_team, team in shared_teams:
             team_dict = self._convert_to_team_dict(team, db, shared_team.original_user_id)
-            team_dict["is_shared"] = True
-            team_dict["is_author"] = False
+            team_dict["share_status"] = 2 # 来自别人分享
+            
+            # Get user info for team
+            team_user = db.query(User).filter(User.id == team.user_id).first()
+            if team_user:
+                team_dict["user"] = {
+                    "id": team_user.id,
+                    "user_name": team_user.user_name
+                }
+            
             result.append(team_dict)
         
         # Sort by created_at desc
@@ -204,7 +236,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         
         # Check if user is the owner or has shared access
         is_author = team.user_id == user_id
-        is_shared = False
+        shared_team = None
         
         if not is_author:
             # Check if user has shared access
@@ -218,7 +250,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     status_code=403,
                     detail="Access denied to this team"
                 )
-            is_shared = True
         
         # Get team dict using the original user's context
         original_user_id = team.user_id if is_author else shared_team.original_user_id
@@ -246,13 +277,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "bot_prompt": bot_info.get("bot_prompt"),
                     "role": bot_info.get("role")
                 })
-        if is_shared:
+        
+        # Set share_status: 0-隐私、1-分享中、2-来自别人分享
+        if is_author:
+            # Check if this team is being shared with others
+            own_share_team = db.query(SharedTeam).filter(
+                SharedTeam.team_id == team_id,
+                SharedTeam.original_user_id == user_id,
+                SharedTeam.is_active == True
+            ).first()
+            
+            if own_share_team:
+                team_dict["share_status"] = 1  # 分享中
+            else:
+                team_dict["share_status"] = 0  # 隐私
+        else:
+            team_dict["share_status"] = 2  # 来自别人分享
             user.git_info = []
 
         team_dict["bots"] = detailed_bots
         team_dict["user"] = user
-        team_dict["is_shared"] = is_shared
-        team_dict["is_author"] = is_author
         
         return team_dict
 
