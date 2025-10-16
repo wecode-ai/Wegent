@@ -124,13 +124,13 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
         <>
           {/* Messages Area */}
           <div ref={scrollContainerRef} className="flex-1 overflow-y-auto custom-scrollbar">
-            <div className="w-full max-w-2xl mx-auto px-4 sm:px-6">
+            <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
               <MessagesArea />
             </div>
           </div>
 
           {/* Input Area */}
-          <div className="w-full max-w-2xl mx-auto px-4 sm:px-6">
+          <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
             {/* Error Message */}
             {/* Error prompt unified with antd message, no local rendering */}
             {/* Chat Input */}
@@ -192,7 +192,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
           </div>
         </>
       ) : (
-        <div className="w-full max-w-2xl flex flex-col justify-center h-full">
+        <div className="w-full max-w-3xl flex flex-col justify-center h-full">
           {/* Error Message */}
           {/* Error prompt unified with antd message, no local rendering */}
           {/* Chat Input */}
