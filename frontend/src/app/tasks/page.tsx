@@ -18,6 +18,7 @@ import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { DocsButton } from '@/features/layout/DocsButton'
 
 export default function TasksPage() {
   // Team state from service
@@ -53,6 +54,7 @@ export default function TasksPage() {
                 showLogo={false}
                 onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
               >
+                <DocsButton />
                 <ThemeToggle />
                 <UserMenu />
               </TopNavigation>

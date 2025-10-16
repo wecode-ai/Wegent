@@ -17,6 +17,7 @@ import TeamList from '@/features/settings/components/TeamList'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { DocsButton } from '@/features/layout/DocsButton'
 
 function DashboardContent() {
   const router = useRouter()
@@ -78,6 +79,7 @@ function DashboardContent() {
           showLogo={true}
         >
           {/* User Avatar Menu */}
+          <DocsButton />
           <ThemeToggle />
           <UserMenu />
         </TopNavigation>
