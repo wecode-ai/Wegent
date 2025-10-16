@@ -4,6 +4,7 @@
 
 import React, { useCallback, useState, useEffect, useMemo } from 'react'
 import { Button, Select, Switch } from 'antd'
+import McpConfigImportModal from './McpConfigImportModal'
 
 import { Bot } from '@/types/api'
 import { botApis } from '@/apis/bots'
@@ -73,6 +74,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   )
   const [agentConfigError, setAgentConfigError] = useState(false)
   const [mcpConfigError, setMcpConfigError] = useState(false)
+  const [importModalVisible, setImportModalVisible] = useState(false)
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -111,6 +113,37 @@ const BotEdit: React.FC<BotEditProps> = ({
       }
     })
   }, [message, t])
+
+  // Handle MCP configuration import
+  const handleImportMcpConfig = useCallback(() => {
+    setImportModalVisible(true)
+  }, [])
+
+  // Handle import configuration confirmation
+  const handleImportConfirm = useCallback((config: any, mode: 'replace' | 'append') => {
+    try {
+      // Update MCP configuration
+      if (mode === 'replace') {
+        // Replace mode: directly use new configuration
+        setMcpConfig(JSON.stringify(config, null, 2))
+        message.success(t('bot.import_success'))
+      } else {
+        // Append mode: merge existing configuration with new configuration
+        try {
+          const currentConfig = mcpConfig.trim() ? JSON.parse(mcpConfig) : {}
+          const mergedConfig = { ...currentConfig, ...config }
+          setMcpConfig(JSON.stringify(mergedConfig, null, 2))
+          message.success(t('bot.append_success'))
+        } catch (error) {
+          message.error(t('bot.errors.mcp_config_json'))
+          return
+        }
+      }
+      setImportModalVisible(false)
+    } catch (error) {
+      message.error(t('bot.errors.mcp_config_json'))
+    }
+  }, [mcpConfig, message, t])
 
     // Get agents list
   useEffect(() => {
@@ -254,11 +287,11 @@ const BotEdit: React.FC<BotEditProps> = ({
         botReq.mcp_servers = parsedMcpConfig
       }
       if (editingBotId && editingBotId > 0) {
-          // Edit
+          // Edit existing bot
         const updated = await botApis.updateBot(editingBotId, botReq)
         setBots(prev => prev.map(b => b.id === editingBotId ? updated : b))
       } else {
-          // Create
+          // Create new bot
         const created = await botApis.createBot(botReq)
         setBots(prev => [created, ...prev])
       }
@@ -416,11 +449,19 @@ const BotEdit: React.FC<BotEditProps> = ({
 
           {/* MCP Config */}
           <div className="flex flex-col flex-grow">
-            <div className="flex items-center mb-1">
-              <label className="block text-base font-medium text-text-primary">
-                {t('bot.mcp_config')}
-              </label>
-              <span className="text-xs text-text-muted ml-2">JSON format required</span>
+            <div className="flex items-center justify-between mb-1">
+              <div className="flex items-center">
+                <label className="block text-base font-medium text-text-primary">
+                  {t('bot.mcp_config')}
+                </label>
+              </div>
+              <Button
+                size="small"
+                onClick={() => handleImportMcpConfig()}
+                className="text-xs"
+              >
+                {t('bot.import_mcp_button')}
+              </Button>
             </div>
             <textarea
               value={mcpConfig}
@@ -479,6 +520,14 @@ const BotEdit: React.FC<BotEditProps> = ({
           />
         </div>
       </div>
+
+      {/* MCP Configuration Import Modal */}
+      <McpConfigImportModal
+        visible={importModalVisible}
+        onClose={() => setImportModalVisible(false)}
+        onImport={handleImportConfirm}
+        message={message}
+      />
     </div>
   )
 }
