@@ -40,7 +40,7 @@ wegent-executor-manager:
       - wecode/docker/executor_manager/**/*
       - shared/**/*
 
-trigger_update_manifest_log:
+trigger_update_executor_manager:
     stage: production
     variables:
         APP: wegent-executor-manager-web
@@ -72,7 +72,7 @@ wegent-executor:
       - wecode/docker/executor/**/*
       - shared/**/*
 
-trigger_update_manifest_log:
+trigger_update_executor:
     stage: production
     variables:
         APP: wegent-executor-manager-web
@@ -103,7 +103,7 @@ wegent-backend:
       - backend/**/*
       - wecode/docker/backend/**/*
 
-trigger_update_manifest_log:
+trigger_update_backend_web:
     stage: production
     variables:
         APP: wegent-backend-web
@@ -134,7 +134,7 @@ wegent-web:
       - frontend/**/*
       - wecode/docker/frontend/**/*
 
-trigger_update_manifest_log:
+trigger_update_backend_web:
     stage: production
     variables:
         APP: wegent-web
