@@ -50,17 +50,15 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
 
     const matchedTeam = teams.find(team => String(team.id) === teamIdParam) || null
 
-    // 只在初始化时设置team，避免用户切换后被URL参数覆盖
     if (matchedTeam && !selectedTeam) {
       setSelectedTeam(matchedTeam)
     }
   }, [teams, searchParams, setSelectedTeam])
 
-  // 处理team选择变化，同时更新URL参数
+
   const handleTeamChange = (team: Team | null) => {
     setSelectedTeam(team)
     
-    // 当用户主动选择team时，清空URL中的teamId参数
     const params = new URLSearchParams(Array.from(searchParams.entries()))
     if (params.has('teamId')) {
       params.delete('teamId')

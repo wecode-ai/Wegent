@@ -81,10 +81,6 @@ export const taskApis = {
     return apiClient.put(`/tasks/${id}`, data)
   },
 
-  getTask: async (id: number): Promise<Task> => {
-    return apiClient.get(`/tasks/${id}`)
-  },
-
   getTaskDetail: async (id: number): Promise<TaskDetail> => {
     return apiClient.get(`/tasks/${id}`)
   },
