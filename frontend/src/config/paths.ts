@@ -6,6 +6,9 @@ export const paths = {
     home: {
         getHref: () => '/',
     },
+    docs: {
+        getHref: () => process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+    },
     auth: {
         password_login: {
             getHref: () => '/login',
