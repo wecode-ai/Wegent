@@ -77,6 +77,7 @@ trigger_update_manifest_log:
     variables:
         APP: wegent-executor-manager-web
         SERVICE: wegent-executor
+        IMAGE_NAME: wegent-executor
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
