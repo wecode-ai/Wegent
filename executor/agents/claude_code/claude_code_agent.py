@@ -11,6 +11,7 @@ import os
 import json
 import random
 import string
+import subprocess
 from typing import Dict, Any
 from pathlib import Path
 
@@ -84,6 +85,25 @@ class ClaudeCodeAgent(Agent):
                 
         if env_values:
             logger.info(f"Set git environment variables: {env_values}")
+        
+        # Configure GitLab CLI authentication if git_domain is available
+        git_domain = task_data.get("git_domain")
+        if git_domain:
+            token_path = os.path.expanduser(f"~/.ssh/{git_domain}")
+            if os.path.exists(token_path):
+                try:
+                    cmd = f"glab auth login --hostname {git_domain} --token $(cat {token_path})"
+                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
+                    logger.info(f"GitLab CLI authentication successful for domain: {git_domain}")
+                    if result.stdout:
+                        logger.info(f"glab auth output: {result.stdout.strip()}")
+                except subprocess.CalledProcessError as e:
+                    error_msg = e.stderr if e.stderr else str(e)
+                    logger.warning(f"GitLab CLI authentication failed for {git_domain}: {error_msg}")
+                except Exception as e:
+                    logger.warning(f"GitLab CLI authentication failed with unexpected error for {git_domain}: {str(e)}")
+            else:
+                logger.info(f"Token file not found at {token_path}, skipping GitLab CLI authentication")
 
     def update_prompt(self, new_prompt: str) -> None:
         """
