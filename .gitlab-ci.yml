@@ -51,7 +51,7 @@ trigger_update_executor_manager:
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
     trigger:
-        project: weibo_rd/cloudnative/aigc_gitops_manifest/
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
     only:
@@ -83,7 +83,7 @@ trigger_update_executor:
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
     trigger:
-        project: weibo_rd/cloudnative/aigc_gitops_manifest/
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
     only:
@@ -114,7 +114,7 @@ trigger_update_backend_web:
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
     trigger:
-        project: weibo_rd/cloudnative/aigc_gitops_manifest/
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
     only:
@@ -145,7 +145,7 @@ trigger_update_front_web:
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
     trigger:
-        project: weibo_rd/cloudnative/aigc_gitops_manifest/
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
     only:
