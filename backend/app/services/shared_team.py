@@ -130,14 +130,10 @@ class SharedTeamService:
     
     def cleanup_shared_teams_on_team_delete(self, db: Session, team_id: int) -> None:
         """Clean up shared team relationships when team is deleted"""
-        shared_teams = db.query(SharedTeam).filter(
+        db.query(SharedTeam).filter(
             SharedTeam.team_id == team_id,
             SharedTeam.is_active == True
-        ).all()
-        
-        for shared_team in shared_teams:
-            shared_team.is_active = False
-            shared_team.updated_at = datetime.now()
+        ).delete()
         
         db.commit()
     
