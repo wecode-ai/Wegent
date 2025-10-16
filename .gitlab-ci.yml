@@ -8,7 +8,7 @@ variables:
   K8S_NAMESPACE: ci-deploy-video
   MAIL_TO: weibo_rd_video@staff.sina.com.cn
   PAAS_NAMESPACE: wb-plat-ide
-  MASTER_BRANCH: master
+  MASTER_BRANCH: wecode
 stages:
   - package
   - production
