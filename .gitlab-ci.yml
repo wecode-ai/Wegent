@@ -134,7 +134,7 @@ wegent-web:
       - frontend/**/*
       - wecode/docker/frontend/**/*
 
-trigger_update_backend_web:
+trigger_update_front_web:
     stage: production
     variables:
         APP: wegent-web
