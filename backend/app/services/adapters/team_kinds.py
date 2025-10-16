@@ -129,7 +129,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.is_active == True
         ).order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
 
-        # Get all teams that are being shared by this user (一次性查询)
+        # Get all teams that are being shared by this user (single query)
         shared_team_ids = set()
         if own_teams:
             own_share_teams = db.query(SharedTeam.team_id).filter(
@@ -139,7 +139,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             ).all()
             shared_team_ids = {team_id for team_id, in own_share_teams}
             
-        # Get user info for team (一次性查询)
+        # Get user info for team (single query)
         own_team_user = db.query(User).filter(User.id == user_id).first()
             
         for team in own_teams:
@@ -151,11 +151,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "user_name": own_team_user.user_name
                 }
             
-            # Set share_status: 0-隐私、1-分享中、2-来自别人分享
+            # Set share_status: 0-private, 1-sharing, 2-shared from others
             if team.id in shared_team_ids:
-                team_dict["share_status"] = 1  # 分享中
+                team_dict["share_status"] = 1  # sharing
             else:
-                team_dict["share_status"] = 0  # 隐私
+                team_dict["share_status"] = 0  # private
             
             result.append(team_dict)
         
@@ -171,7 +171,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         
         for shared_team, team in shared_teams:
             team_dict = self._convert_to_team_dict(team, db, shared_team.original_user_id)
-            team_dict["share_status"] = 2 # 来自别人分享
+            team_dict["share_status"] = 2 # shared from others
             
             # Get user info for team
             team_user = db.query(User).filter(User.id == team.user_id).first()
@@ -278,7 +278,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "role": bot_info.get("role")
                 })
         
-        # Set share_status: 0-隐私、1-分享中、2-来自别人分享
+        # Set share_status: 0-private, 1-sharing, 2-shared from others
         if is_author:
             # Check if this team is being shared with others
             own_share_team = db.query(SharedTeam).filter(
@@ -288,11 +288,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             ).first()
             
             if own_share_team:
-                team_dict["share_status"] = 1  # 分享中
+                team_dict["share_status"] = 1  # sharing
             else:
-                team_dict["share_status"] = 0  # 隐私
+                team_dict["share_status"] = 0  # private
         else:
-            team_dict["share_status"] = 2  # 来自别人分享
+            team_dict["share_status"] = 2  # shared from others
             user.git_info = []
 
         team_dict["bots"] = detailed_bots

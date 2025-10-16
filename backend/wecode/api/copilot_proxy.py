@@ -17,21 +17,21 @@ async def proxy_copilot(
     current_user: User = Depends(security.get_current_user)
 ):
     """
-    通用代理 copilot.weibo.com/v1/ 下所有路径，自动从系统获取当前用户 user_name 作为 wecode-user 透传
+    Generic proxy for all paths under copilot.weibo.com/v1/, automatically get current user user_name from system as wecode-user and pass through
     """
     logger = logging.getLogger("proxy_copilot")
 
-    # 构造目标 URL
+    # Construct target URL
     target_url = f"http://copilot.weibo.com/v1/{path}"
     # logger.info(f"proxy_copilot target_url: {target_url}")
 
-    # 复制所有 headers，强制覆盖 wecode-user，确保 key 为 str
+    # Copy all headers, force override wecode-user, ensure key is str
     headers = {str(k): str(v) for k, v in request.headers.items()}
-    headers.pop("host", None)  # 移除 host，避免覆盖目标 host
+    headers.pop("host", None)  # Remove host to avoid overriding target host
     headers.pop("Authorization", None)
     headers["wecode-user"] = current_user.user_name
 
-    # 读取请求体
+    # Read request body
     body = await request.body()
 
     try:
@@ -44,10 +44,10 @@ async def proxy_copilot(
                 content=body,
                 timeout=10
             )
-        # 打印透传响应的 headers
+        # Print passthrough response headers
         # logger.info(f"proxy_copilot response headers: {resp.status_code}")
         # logger.info(f"proxy_copilot response headers: {dict(resp.headers)}")
-        # 透传响应
+        # Passthrough response
         content_type = resp.headers.get("content-type", "")
         if content_type.startswith("application/json"):
             return resp.json()
