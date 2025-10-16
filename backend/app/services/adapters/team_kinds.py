@@ -12,6 +12,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.models.shared_team import SharedTeam
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInDB, TeamDetail, BotInfo
 from app.schemas.kind import Team, Bot, Ghost, Shell, Model, Task
 from app.services.base import BaseService
@@ -117,17 +118,47 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
-        Get user's Team list (only active teams)
+        Get user's Team list (only active teams) including shared teams
         """
-        teams = db.query(Kind).filter(
+        result = []
+        
+        # Get user's own teams
+        own_teams = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Team",
             Kind.is_active == True
         ).order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
         
-        result = []
-        for team in teams:
-            result.append(self._convert_to_team_dict(team, db, user_id))
+        for team in own_teams:
+            team_dict = self._convert_to_team_dict(team, db, user_id)
+            team_dict["is_shared"] = False
+            team_dict["is_author"] = True
+            result.append(team_dict)
+        
+        # Get shared teams
+        shared_teams = db.query(SharedTeam, Kind).join(
+            Kind, SharedTeam.team_id == Kind.id
+        ).filter(
+            SharedTeam.user_id == user_id,
+            SharedTeam.is_active == True,
+            Kind.is_active == True,
+            Kind.kind == "Team"
+        ).order_by(SharedTeam.created_at.desc()).offset(skip).limit(limit).all()
+        
+        for shared_team, team in shared_teams:
+            team_dict = self._convert_to_team_dict(team, db, shared_team.original_user_id)
+            team_dict["is_shared"] = True
+            team_dict["is_author"] = False
+            result.append(team_dict)
+        
+        # Sort by created_at desc
+        result.sort(key=lambda x: x["created_at"], reverse=True)
+        
+        # Apply pagination
+        if skip > 0:
+            result = result[skip:]
+        if limit > 0 and len(result) > limit:
+            result = result[:limit]
         
         return result
 
@@ -158,33 +189,70 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Get detailed team information including related user and bots
         """
-        team_dict = self.get_by_id_and_user(db, team_id=team_id, user_id=user_id)
+        # Check if user has access to this team (own or shared)
+        team = db.query(Kind).filter(
+            Kind.id == team_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).first()
         
-        # Get related user
-        user = db.query(User).filter(User.id == user_id).first()
+        if not team:
+            raise HTTPException(
+                status_code=404,
+                detail="Team not found"
+            )
+        
+        # Check if user is the owner or has shared access
+        is_author = team.user_id == user_id
+        is_shared = False
+        
+        if not is_author:
+            # Check if user has shared access
+            shared_team = db.query(SharedTeam).filter(
+                SharedTeam.user_id == user_id,
+                SharedTeam.team_id == team_id,
+                SharedTeam.is_active == True
+            ).first()
+            if not shared_team:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied to this team"
+                )
+            is_shared = True
+        
+        # Get team dict using the original user's context
+        original_user_id = team.user_id if is_author else shared_team.original_user_id
+        team_dict = self._convert_to_team_dict(team, db, original_user_id)
+        
+        # Get related user (original author)
+        user = db.query(User).filter(User.id == original_user_id).first()
         
         # Get detailed bot information
         detailed_bots = []
         for bot_info in team_dict["bots"]:
             bot_id = bot_info["bot_id"]
-            # Get bot from kinds table
+            # Get bot from kinds table using original user context
             bot = db.query(Kind).filter(
                 Kind.id == bot_id,
-                Kind.user_id == user_id,
+                Kind.user_id == original_user_id,
                 Kind.kind == "Bot",
                 Kind.is_active == True
             ).first()
             
             if bot:
-                bot_dict = self._convert_bot_to_dict(bot, db, user_id)
+                bot_dict = self._convert_bot_to_dict(bot, db, original_user_id)
                 detailed_bots.append({
                     "bot": bot_dict,
                     "bot_prompt": bot_info.get("bot_prompt"),
                     "role": bot_info.get("role")
                 })
-        
+        if is_shared:
+            user.git_info = []
+
         team_dict["bots"] = detailed_bots
         team_dict["user"] = user
+        team_dict["is_shared"] = is_shared
+        team_dict["is_author"] = is_author
         
         return team_dict
 
@@ -337,13 +405,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
     def count_user_teams(self, db: Session, *, user_id: int) -> int:
         """
-        Count user's active teams
+        Count user's active teams including shared teams
         """
-        return db.query(Kind).filter(
+        # Count user's own teams
+        own_teams_count = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Team",
             Kind.is_active == True
         ).count()
+        
+        # Count shared teams
+        shared_teams_count = db.query(SharedTeam).join(
+            Kind, SharedTeam.team_id == Kind.id
+        ).filter(
+            SharedTeam.user_id == user_id,
+            SharedTeam.is_active == True,
+            Kind.is_active == True,
+            Kind.kind == "Team"
+        ).count()
+        
+        return own_teams_count + shared_teams_count
 
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """

@@ -55,6 +55,10 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
+    # Team sharing configuration
+    TEAM_SHARE_BASE_URL: str = "http://localhost:3000"
+    TEAM_SHARE_QUERY_PARAM: str = "teamShare"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

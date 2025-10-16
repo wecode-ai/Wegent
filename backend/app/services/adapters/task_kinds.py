@@ -29,6 +29,39 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     Task service class using kinds table
     """
 
+    def _get_team_by_id_or_shared(self, db: Session, team_id: int, user_id: int) -> Optional[Kind]:
+        """
+        Get team by ID, checking both user's own teams and shared teams
+        """
+        # First check if team exists and belongs to user
+        existing_team = db.query(Kind).filter(
+            Kind.id == team_id,
+            Kind.user_id == user_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).first()
+        
+        if existing_team:
+            return existing_team
+        
+        # If not found, check if team exists in shared teams
+        from app.models.shared_team import SharedTeam
+        shared_team = db.query(SharedTeam).filter(
+            SharedTeam.user_id == user_id,
+            SharedTeam.team_id == team_id,
+            SharedTeam.is_active == True
+        ).first()
+        
+        if shared_team:
+            # Return shared team
+            return db.query(Kind).filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True
+            ).first()
+        
+        return None
+
     def create_task_or_append(
         self, db: Session, *, obj_in: TaskCreate, user: User, task_id: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -132,18 +165,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     detail="Team ID is required for creating a new task."
                 )
 
-            existing_team = db.query(Kind).filter(
-                Kind.id == obj_in.team_id,
-                Kind.user_id == user.id,
-                Kind.kind == "Team",
-                Kind.is_active == True
-            ).first()
-            if not existing_team:
+            team = self._get_team_by_id_or_shared(db, obj_in.team_id, user.id)
+            
+            if not team:
                 raise HTTPException(
                     status_code=404,
                     detail="Team not found"
                 )
-            team = existing_team
 
             # Additional business validation for prompt length
             if obj_in.prompt and len(obj_in.prompt.encode('utf-8')) > 60000:
@@ -810,9 +838,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}
 
+        # Get user info for user name
+        user = db.query(User).filter(User.id == team.user_id).first()
+        user_name = user.user_name if user else ""
+
         return {
             "id": team.id,
             "user_id": team.user_id,
+            "user_name": user_name,
             "name": team.name,
             "bots": bots,
             "workflow": workflow,
@@ -841,7 +874,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         for member in team_crd.spec.members:
             # Find bot in kinds table
             bot = db.query(Kind).filter(
-                Kind.user_id == user_id,
+                Kind.user_id == team.user_id,
                 Kind.kind == "Bot",
                 Kind.name == member.botRef.name,
                 Kind.namespace == member.botRef.namespace,
