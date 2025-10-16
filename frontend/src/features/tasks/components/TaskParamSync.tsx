@@ -39,11 +39,8 @@ export default function TaskParamSync() {
 
     // If taskId is present but doesn't match, verify and set it
     const verifyAndSetTask = async () => {
-      try {
-        // Use getTask for a lighter check to see if the task exists
-        const task = await taskApis.getTask(Number(taskId))
-        
-            // Allow completed tasks to be selected, users should be able to view details of any task
+      try {        
+        // Allow completed tasks to be selected, users should be able to view details of any task
         // If it exists, set it. The context will handle fetching the full detail.
         setSelectedTask({ id: Number(taskId) } as Task)
       } catch (err) {
