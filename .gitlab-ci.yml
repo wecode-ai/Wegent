@@ -50,6 +50,7 @@ trigger_update_executor_manager:
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        MASTER_BRANCH: master
     trigger:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
@@ -82,6 +83,7 @@ trigger_update_executor:
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        MASTER_BRANCH: master
     trigger:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
@@ -113,6 +115,7 @@ trigger_update_backend_web:
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
         UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        MASTER_BRANCH: master
     trigger:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
@@ -140,6 +143,7 @@ trigger_update_front_web:
         APP: wegent-web
         SERVICE: wegent-web
         IMAGE_NAME: wegent-web
+        MASTER_BRANCH: master
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
         UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
         UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
