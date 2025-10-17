@@ -5,6 +5,8 @@
 import base64
 import json
 import os
+import urllib.parse
+import logging
 from typing import Optional, List
 from datetime import datetime
 from sqlalchemy.orm import Session
@@ -27,6 +29,8 @@ from app.schemas.shared_team import (
 )
 from app.schemas.kind import Team
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 class SharedTeamService:
     """Service for managing team sharing functionality"""
@@ -87,13 +91,18 @@ class SharedTeamService:
         share_data = f"{user_id}#{team_id}"
         # Use AES encryption instead of base64 encoding
         share_token = self._aes_encrypt(share_data)
+        # URL encode the token before returning it
+        share_token = urllib.parse.quote(share_token)
         return share_token
+    
     def decode_share_token(self, share_token: str, db: Optional[Session] = None) -> Optional[TeamShareInfo]:
         """Decode share token to get team information using AES decryption"""
         try:
-            # Use AES decryption instead of base64 decoding
-            share_data_str = self._aes_decrypt(share_token)
+            # First URL decode the token, then use AES decryption
+            decoded_token = urllib.parse.unquote(share_token)
+            share_data_str = self._aes_decrypt(decoded_token)
             if not share_data_str:
+                logger.info("Invalid share token format: %s", share_token)
                 return None
             
             # Parse the "user_id#team_id" format
@@ -123,6 +132,7 @@ class SharedTeamService:
                 ).first()
                 
                 if not user or not team:
+                    logger.info("User or team not found in the database.")
                     return None
                 
                 return TeamShareInfo(

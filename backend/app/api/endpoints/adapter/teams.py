@@ -76,10 +76,7 @@ def delete_team(
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Soft delete Team (set is_active to False)"""
     team_kinds_service.delete_with_user(db=db, team_id=team_id, user_id=current_user.id)
-    # Clean up shared team relationships first
-    shared_team_service.cleanup_shared_teams_on_team_delete(db=db, team_id=team_id)
     return {"message": "Team deactivated successfully"}
 
 @router.post("/{team_id}/share", response_model=TeamShareResponse)

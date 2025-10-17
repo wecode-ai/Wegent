@@ -17,7 +17,6 @@ from app.schemas.team import TeamCreate, TeamUpdate, TeamInDB, TeamDetail, BotIn
 from app.schemas.kind import Team, Bot, Ghost, Shell, Model, Task
 from app.services.base import BaseService
 
-
 class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     """
     Team service class using kinds table
@@ -400,17 +399,26 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         team = db.query(Kind).filter(
             Kind.id == team_id,
-            Kind.user_id == user_id,
             Kind.kind == "Team",
             Kind.is_active == True
         ).first()
-        
+
         if not team:
             raise HTTPException(
                 status_code=404,
                 detail="Team not found"
             )
-        
+
+        # delete join shared team entry if any
+        if team.user_id != user_id:
+            db.query(SharedTeam).filter(
+                SharedTeam.team_id == team_id,
+                SharedTeam.user_id == user_id,
+                SharedTeam.is_active == True
+            ).delete()
+            db.commit()
+            return     
+            
         # Check if team is referenced in any PENDING or RUNNING task
         tasks = db.query(Kind).filter(
             Kind.user_id == user_id,
@@ -431,6 +439,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         status_code=400,
                         detail=f"Team '{team_name}' is being used in a {task_crd.status.status} task. Please wait for task completion or cancel it first."
                     )
+                
+        # delete share team
+        db.query(SharedTeam).filter(
+            SharedTeam.team_id == team_id,
+            SharedTeam.is_active == True
+        ).delete()
         
         db.delete(team)
         db.commit()
