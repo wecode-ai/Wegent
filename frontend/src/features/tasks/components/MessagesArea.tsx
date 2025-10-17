@@ -197,14 +197,14 @@ export default function MessagesArea() {
   const displayMessages = generateTaskMessages(selectedTaskDetail);
 
   return (
-    <div className="flex-1 w-full max-w-2xl mx-auto flex flex-col">
+    <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col">
       {/* Messages Area - only shown when there are messages or loading */}
       {(displayMessages.length > 0) && (
         <div className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar">
           {displayMessages.map((msg, index) => (
             <div key={index} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`relative group max-w-[80%] p-3 rounded-lg ${msg.type === 'user'
-                  ? 'bg-muted border border-border text-text-primary'
+              <div className={`relative group max-w-[100%] p-3 rounded-lg ${msg.type === 'user'
+                  ? 'bg-muted border border-border text-text-primary my-10'
                   : 'bg-surface border border-border text-text-primary'
                 }`}>
                 {/* Bot name and icon, only displayed for ai messages, and before the timestamp */}

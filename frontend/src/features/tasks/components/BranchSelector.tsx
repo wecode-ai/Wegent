@@ -88,9 +88,15 @@ export default function BranchSelector({
         return
       }
     }
-    // If there is no selectedTask or not found, select the first one by default
+    // If there is no selectedTask or not found, select the default branch by default
     if (!selectedBranch) {
-      handleBranchChange(branches[0])
+      const defaultBranch = branches.find(b => b.default)
+      if (defaultBranch) {
+        handleBranchChange(defaultBranch)
+      } else if (branches.length > 0) {
+        // Fallback to first branch if no default branch found
+        handleBranchChange(branches[0])
+      }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTaskDetail, branches, userCleared])

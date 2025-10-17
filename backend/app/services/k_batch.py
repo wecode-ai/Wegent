@@ -5,9 +5,15 @@
 """
 Batch operation service for Kubernetes-style API
 """
+import asyncio
+import json
+import logging
+import os
 from typing import Dict, Any, List
 from app.services.kind import kind_service
 from app.core.exceptions import ValidationException
+
+logger = logging.getLogger(__name__)
 
 
 class BatchService:
@@ -116,3 +122,43 @@ class BatchService:
 
 # Create service instance
 batch_service = BatchService()
+
+async def apply_default_resources_async(user_id: int):
+    """
+    Apply default resources for a user from environment variable.
+    
+    Args:
+        user_id: User ID to apply resources for
+        
+    Returns:
+        Results of resource application or None if no resources to apply
+    """
+    try:
+        resources_str = os.getenv("DEFAULT_RESOURCES")
+        if not resources_str:
+            logger.info("No default resources to apply.")
+            return None
+            
+        resources = json.loads(resources_str)
+        results = await apply_user_resources_async(user_id, resources)
+        logger.info(f"Default resources applied successfully: user_id={user_id}")
+        return results
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}")
+        return {"error": "Invalid DEFAULT_RESOURCES format", "details": str(e)}
+    except Exception as e:
+        logger.error(f"Failed to apply default resources: user_id={user_id}, error={e}")
+        return {"error": "Failed to apply default resources", "details": str(e)}
+
+
+async def apply_user_resources_async(user_id: int, resources: List[Dict[str, Any]]):
+    try:
+        results = batch_service.apply_resources(user_id, resources)
+        logger.info(f"Resources applied successfully: user_id={user_id}, count={len(resources)}")
+        return results
+    except Exception as e:
+        logger.error(f"Failed to apply resources: user_id={user_id}, error={e}")
+        return {
+            "error": "Failed to apply resources",
+            "details": str(e)
+        }

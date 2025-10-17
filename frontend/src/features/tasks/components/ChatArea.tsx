@@ -21,9 +21,10 @@ import QuotaUsage from './QuotaUsage'
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
+  selectedTeamForNewTask?: Team | null
 }
 
-export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
+export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask }: ChatAreaProps) {
   const { message } = App.useApp()
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
@@ -50,17 +51,21 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
 
     const matchedTeam = teams.find(team => String(team.id) === teamIdParam) || null
 
-    // 只在初始化时设置team，避免用户切换后被URL参数覆盖
     if (matchedTeam && !selectedTeam) {
       setSelectedTeam(matchedTeam)
     }
   }, [teams, searchParams, setSelectedTeam])
 
-  // 处理team选择变化，同时更新URL参数
+  // Handle external team selection for new tasks (from team sharing)
+  useEffect(() => {
+    if (selectedTeamForNewTask && !hasMessages) {
+      setSelectedTeam(selectedTeamForNewTask)
+    }
+  }, [selectedTeamForNewTask, hasMessages])
+
   const handleTeamChange = (team: Team | null) => {
     setSelectedTeam(team)
     
-    // 当用户主动选择team时，清空URL中的teamId参数
     const params = new URLSearchParams(Array.from(searchParams.entries()))
     if (params.has('teamId')) {
       params.delete('teamId')
@@ -126,13 +131,13 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
         <>
           {/* Messages Area */}
           <div ref={scrollContainerRef} className="flex-1 overflow-y-auto custom-scrollbar">
-            <div className="w-full max-w-2xl mx-auto px-4 sm:px-6">
+            <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
               <MessagesArea />
             </div>
           </div>
 
           {/* Input Area */}
-          <div className="w-full max-w-2xl mx-auto px-4 sm:px-6">
+          <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
             {/* Error Message */}
             {/* Error prompt unified with antd message, no local rendering */}
             {/* Chat Input */}
@@ -194,7 +199,7 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
           </div>
         </>
       ) : (
-        <div className="w-full max-w-2xl flex flex-col justify-center h-full">
+        <div className="w-full max-w-3xl flex flex-col justify-center h-full">
           {/* Error Message */}
           {/* Error prompt unified with antd message, no local rendering */}
           {/* Chat Input */}

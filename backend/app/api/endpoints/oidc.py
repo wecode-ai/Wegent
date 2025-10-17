@@ -5,6 +5,8 @@
 import secrets
 import logging
 import time
+import asyncio
+from backend.app.services.k_batch import apply_default_resources_async
 import jwt  # pip install pyjwt
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import RedirectResponse
@@ -125,6 +127,8 @@ async def oidc_callback(
             db.commit()
             db.refresh(user)
             logger.info(f"Created new OIDC user: user_id={user.id}, user_name={user.user_name}")
+            
+            asyncio.create_task(apply_default_resources_async(user.id))
         else:
             if user.email != email:
                 user.email = email

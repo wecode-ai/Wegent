@@ -3,12 +3,6 @@
     "name": "WeCode AI Assistant",
     "description": "A whole dev team of AI agents in your editor."
   },
-  "welcome": "Welcome, {{name}}! You have {{count}} notifications.",
-  "items": {
-    "zero": "No items",
-    "one": "One item",
-    "other": "{{count}} items"
-  },
   "actions": {
     "save": "Save",
     "saving": "Saving...",
@@ -29,20 +23,8 @@
     "retry": "Retry",
     "toggle_theme": "Toggle Theme"
   },
-  "status": {
-    "success": "Success",
-    "error": "Error",
-    "warning": "Warning",
-    "info": "Information",
-    "pending": "Pending",
-    "completed": "Completed",
-    "failed": "Failed"
-  },
   "validation": {
-    "required": "This field is required",
-    "invalid_email": "Please enter a valid email address",
-    "min_length": "Minimum length is {{min}} characters",
-    "max_length": "Maximum length is {{max}} characters"
+    "required": "This field is required"
   },
   "login": {
     "username": "Username",
@@ -50,13 +32,14 @@
     "enter_username": "Enter username",
     "enter_password": "Enter password",
     "logging_in": "Logging in...",
-    "test_account": "Test account: admin / admin",
+    "test_account": "Test account: admin / Wegent2025!",
     "or_continue_with": "Or continue with",
     "oidc_login": "Login with OpenID Connect"
   },
   "navigation": {
     "tasks": "Tasks",
-    "settings": "Settings"
+    "settings": "Settings",
+    "docs": "Documentation"
   },
   "user": {
     "default_name": "User",
@@ -77,6 +60,14 @@
     "mcp_config": "Mcp Config",
     "save_prompt": "Save Prompt",
     "use_custom_model": "Use Custom Model",
+    "import_mcp": "Import",
+    "import_mcp_button": "Import MCP from other platforms",
+    "import_mcp_title": "Import MCP Configuration",
+    "import_mcp_desc": "Please paste standardized MCP configuration JSON. The system will automatically add type: \"sse\" if missing or convert transport field to type field.",
+    "import_mode_replace": "Replace existing config",
+    "import_mode_append": "Append to existing config",
+    "import_success": "MCP configuration imported successfully",
+    "append_success": "MCP configuration appended successfully",
     "errors": {
       "required": "Please fill in all required fields",
       "agent_config_json": "Model configuration must be valid JSON",
@@ -106,7 +97,8 @@
     "bot": "Bot",
     "subtask_completed": "Subtask completed",
     "subtask_failed": "Subtask failed:",
-    "unknown_error": "Unknown error"
+    "unknown_error": "Unknown error",
+    "download": "Download"
   },
   "teams": {
     "title": "Team List",
@@ -127,7 +119,39 @@
     "no_match": "No matching teams",
     "manage": "Team settings",
     "delete_confirm_title": "Confirm Delete",
-    "delete_confirm_message": "Are you sure you want to delete this team? This action cannot be undone."
+    "delete_confirm_message": "Are you sure you want to delete this team? This action cannot be undone.",
+    "sharing": "Sharing",
+    "shared_by": "Shared by {{author}}",
+    "share_failed": "Failed to share team, please try again",
+    "share_success_title": "Share Success",
+    "share_success_message": "Share your {{teamName}} with your friends!",
+    "share_success_message_prefix": "Share your",
+    "share_success_message_suffix": "with your friends!",
+    "share_link": "Share Link",
+    "copy_link": "Copy Link",
+    "copy_success": "Copied successfully",
+    "share_instructions_title": "How to use the share link:",
+    "share_instructions_content": "Send this link to other users, and they can access and use your shared team to complete tasks. You can still manage and edit this team, and other users will see the latest configuration.",
+    "share": {
+      "title": "Team Share",
+      "confirm_message": "Do you want to use {{userName}}'s {{teamName}} to execute tasks?",
+      "join_description": "After confirmation, {{teamName}} will be added to your team list, and you can use this team to create and execute tasks.",
+      "joining": "Joining...",
+      "confirm_join": "Confirm",
+      "self_share_message": "{{teamName}} is your team, no need to join.",
+      "already_joined_message": "{{teamName}} is already in your team list, no need to join again.",
+      "fetch_info_failed": "Failed to fetch shared team information",
+      "join_failed": "Failed to join team",
+      "join_success": "Successfully joined team \"{{teamName}}\"",
+      "loading": "Loading team information...",
+      "self_share_suffix": " is your team, no need to join.",
+      "already_joined_suffix": " is already in your team list, no need to join again.",
+      "confirm_prefix": "Do you want to use",
+      "confirm_middle": "'s",
+      "confirm_suffix": " to execute tasks?",
+      "join_description_prefix": "After confirmation, ",
+      "join_description_suffix": " will be added to your team list, and you can use this team to create and execute tasks."
+    }
   },
   "team": {
     "name": "Name",
@@ -209,7 +233,8 @@
     "search_results": "Search Results",
     "no_search_results": "No matching tasks",
     "copy_task_id": "Copy TaskId",
-    "delete_task": "Delete Task"
+    "delete_task": "Delete Task",
+    "searching": "Searching..."
   },
   "settings": {
     "integrations": "Integrations",
