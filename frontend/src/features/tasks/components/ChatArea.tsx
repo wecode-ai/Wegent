@@ -21,9 +21,10 @@ import QuotaUsage from './QuotaUsage'
 interface ChatAreaProps {
   teams: Team[]
   isTeamsLoading: boolean
+  selectedTeamForNewTask?: Team | null
 }
 
-export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
+export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask }: ChatAreaProps) {
   const { message } = App.useApp()
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
@@ -55,6 +56,12 @@ export default function ChatArea({ teams, isTeamsLoading }: ChatAreaProps) {
     }
   }, [teams, searchParams, setSelectedTeam])
 
+  // Handle external team selection for new tasks (from team sharing)
+  useEffect(() => {
+    if (selectedTeamForNewTask && !hasMessages) {
+      setSelectedTeam(selectedTeamForNewTask)
+    }
+  }, [selectedTeamForNewTask, hasMessages])
 
   const handleTeamChange = (team: Team | null) => {
     setSelectedTeam(team)
