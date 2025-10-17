@@ -59,8 +59,12 @@ trigger_update_executor_manager:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
-    only:
-    - wecode
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "wecode"'
+        changes:
+          - executor_manager/**/*
+          - wecode/docker/executor_manager/**/*
+          - shared/**/*
 
 wegent-executor:
   stage: package
@@ -96,8 +100,12 @@ trigger_update_executor:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
-    only:
-    - wecode
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "wecode"'
+        changes:
+          - executor/**/*
+          - wecode/docker/executor/**/*
+          - shared/**/*
 
 wegent-backend:
   stage: package
@@ -131,8 +139,11 @@ trigger_update_backend_web:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
-    only:
-    - wecode
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "wecode"'
+        changes:
+          - backend/**/*
+          - wecode/docker/backend/**/*
 
 wegent-web:
   stage: package
@@ -166,5 +177,8 @@ trigger_update_front_web:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
-    only:
-    - wecode
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "wecode"'
+        changes:
+          - frontend/**/*
+          - wecode/docker/frontend/**/*
