@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import asyncio
+from backend.app.services.k_batch import apply_default_resources_async
 from fastapi import HTTPException
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
@@ -109,6 +111,9 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
+
+        asyncio.create_task(apply_default_resources_async(db_obj.id))
+
         return db_obj
     
     def update_current_user(
