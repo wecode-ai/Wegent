@@ -148,42 +148,42 @@ def load_resources_from_file(file_path: str):
 
 
 async def apply_default_resources_async(user_id: int):
-    """
-    Apply default resources for a user from a JSON file.
 
-    Args:
-        user_id: User ID to apply resources for
-
-    Returns:
-        Results of resource application or None if no resources to apply
-    """
     try:
         resource_file_path = "/app/resource.json"
+        logger.info(f"Loading resources from {resource_file_path} for user_id={user_id}")
         resources, error = load_resources_from_file(resource_file_path)
 
         if error:
+            logger.error(f"Error loading resources for user_id={user_id}: {error}")
             return error
 
         if not resources:
+            logger.info(f"No resources found in {resource_file_path} for user_id={user_id}")
             return None
+            
+        logger.info(f"Found {len(resources)} resources to apply for user_id={user_id}")
         results = await apply_user_resources_async(user_id, resources)
-        logger.info(f"Default resources applied successfully: user_id={user_id}")
+        logger.info(f"[SUCCESS] Default resources applied successfully: user_id={user_id}, results={results}")
         return results
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}")
+        logger.error(f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}", exc_info=True)
         return {"error": "Invalid DEFAULT_RESOURCES format", "details": str(e)}
     except Exception as e:
-        logger.error(f"Failed to apply default resources: user_id={user_id}, error={e}")
+        logger.error(f"[ERROR] Failed to apply default resources: user_id={user_id}, error={e}", exc_info=True)
         return {"error": "Failed to apply default resources", "details": str(e)}
 
 
 async def apply_user_resources_async(user_id: int, resources: List[Dict[str, Any]]):
+
     try:
+        # 虽然 batch_service.apply_resources 是同步函数，
+        # 但由于这个函数是通过 BackgroundTasks 调用的，不会阻塞主线程
         results = batch_service.apply_resources(user_id, resources)
-        logger.info(f"Resources applied successfully: user_id={user_id}, count={len(resources)}")
+        logger.info(f"[SUCCESS] Resources applied: user_id={user_id}, count={len(resources)}, results={results}")
         return results
     except Exception as e:
-        logger.error(f"Failed to apply resources: user_id={user_id}, error={e}")
+        logger.error(f"[ERROR] Failed to apply resources: user_id={user_id}, error={e}", exc_info=True)
         return {
             "error": "Failed to apply resources",
             "details": str(e)
