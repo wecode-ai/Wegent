@@ -6,7 +6,7 @@ import secrets
 import logging
 import time
 import asyncio
-from backend.app.services.k_batch import apply_default_resources_async
+from app.services.k_batch import apply_default_resources_async
 import jwt  # pip install pyjwt
 from fastapi import APIRouter, Depends, Query, HTTPException, Request
 from fastapi.responses import RedirectResponse

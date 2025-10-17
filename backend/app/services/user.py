@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
-from backend.app.services.k_batch import apply_default_resources_async
+from app.services.k_batch import apply_default_resources_async
 from fastapi import HTTPException
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
