@@ -321,6 +321,13 @@ class SharedTeamService:
                 detail="Invalid share token"
             )
         
+        # Check if share user is the same as current user
+        if share_info.user_id == user_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot join your own shared team"
+            )
+        
         # Validate team still exists and is active
         team = db.query(Kind).filter(
             Kind.id == share_info.team_id,
