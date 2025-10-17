@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import HTTPException
+from app.services.k_batch import apply_default_resources_async
+from fastapi import HTTPException, BackgroundTasks
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
@@ -73,7 +74,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         return validated_git_info
 
     def create_user(
-        self, db: Session, *, obj_in: UserCreate
+        self, db: Session, *, obj_in: UserCreate, background_tasks: Optional[BackgroundTasks] = None
     ) -> User:
         """
         Create new user with git token validation
@@ -109,6 +110,11 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
+
+        # Schedule the async task to run in the background using FastAPI BackgroundTasks
+        if background_tasks:
+            background_tasks.add_task(apply_default_resources_async, db_obj.id)
+
         return db_obj
     
     def update_current_user(
