@@ -12,14 +12,16 @@ import json
 import random
 import string
 import subprocess
-from typing import Dict, Any
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from executor.agents.claude_code.response_processor import process_response
 from executor.agents.base import Agent
+from executor.agents.agno.thinking_step_manager import ThinkingStepManager
 from shared.logger import setup_logger
 from shared.status import TaskStatus
+from shared.models.task import ThinkingStep, ExecutionResult
 
 from utils.mcp_utils import extract_mcp_servers_config
 
@@ -61,6 +63,9 @@ class ClaudeCodeAgent(Agent):
         # Set git-related environment variables
         self._set_git_env_variables(task_data)
 
+        # Initialize thinking step manager
+        self.thinking_manager = ThinkingStepManager(progress_reporter=self.report_progress)
+
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
         Extract git-related fields from task_data and set them as environment variables
@@ -85,7 +90,7 @@ class ClaudeCodeAgent(Agent):
                 
         if env_values:
             logger.info(f"Set git environment variables: {env_values}")
-        
+
         # Configure GitLab CLI authentication if git_domain is available
         git_domain = task_data.get("git_domain")
         if git_domain:
@@ -104,6 +109,82 @@ class ClaudeCodeAgent(Agent):
                     logger.warning(f"GitLab CLI authentication failed with unexpected error for {git_domain}: {str(e)}")
             else:
                 logger.info(f"Token file not found at {token_path}, skipping GitLab CLI authentication")
+
+    def add_thinking_step(self, title: str, action: str, reasoning: str,
+                         result: str = "", confidence: float = -1,
+                         next_action: str = "continue", report_immediately: bool = True) -> None:
+        """
+        Add a thinking step
+
+        Args:
+            title: Step title
+            action: Action description
+            reasoning: Reasoning process
+            result: Result (optional)
+            confidence: Confidence level (0.0-1.0, default -1)
+            next_action: Next action (default "continue")
+            report_immediately: Whether to report this thinking step immediately (default True)
+        """
+        self.thinking_manager.add_thinking_step(
+            title, action, reasoning, result, confidence, next_action, report_immediately
+        )
+    
+    def add_thinking_step_by_key(self, title_key: str, action_key: str, reasoning_key: str,
+                                result_key: str = "", confidence: float = -1,
+                                next_action_key: str = "thinking.continue",
+                                report_immediately: bool = True) -> None:
+        """
+        Add a thinking step using i18n key
+
+        Args:
+            title_key: i18n key for step title
+            action_key: i18n key for action description
+            reasoning_key: i18n key for reasoning process
+            result_key: i18n key for result (optional)
+            confidence: Confidence level (0.0-1.0, default -1)
+            next_action_key: i18n key for next action (default "thinking.continue")
+            report_immediately: Whether to report this thinking step immediately (default True)
+        """
+        self.thinking_manager.add_thinking_step_by_key(
+            title_key, action_key, reasoning_key, result_key,
+            confidence, next_action_key, report_immediately
+        )
+
+    def _text_to_i18n_key(self, text: str) -> str:
+        """
+        Convert text to i18n key
+
+        Args:
+            text: Text to convert
+
+        Returns:
+            str: Corresponding i18n key
+        """
+        return self.thinking_manager._text_to_i18n_key(text)
+
+    def _update_progress(self, progress: int) -> None:
+        """
+        Update current progress value for thinking steps
+
+        Args:
+            progress: Current progress value (0-100)
+        """
+        self.thinking_manager.update_progress(progress)
+
+    def get_thinking_steps(self) -> List[ThinkingStep]:
+        """
+        Get all thinking steps
+
+        Returns:
+            List[ThinkingStep]: List of thinking steps
+        """
+        return self.thinking_manager.get_thinking_steps()
+
+    def clear_thinking_steps(self) -> None:
+        """
+        Clear all thinking steps
+        """
+        self.thinking_manager.clear_thinking_steps()
 
     def update_prompt(self, new_prompt: str) -> None:
         """
@@ -125,6 +206,13 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Initialization status
         """
         try:
+            self.add_thinking_step_by_key(
+                title_key="thinking.claude.initialize_agent",
+                action_key="thinking.claude.starting_initialization",
+                reasoning_key="thinking.claude.initializing_with_config",
+                report_immediately=False
+            )
+
             # Check if bot config is available
             if "bot" in self.task_data and len(self.task_data["bot"]) > 0:
                 bot_config = self.task_data["bot"][0]
@@ -163,9 +251,27 @@ class ClaudeCodeAgent(Agent):
                     logger.info(f"Saved Claude Code config to {claude_json_path}")
             else:
                 logger.info("No bot config found for Claude Code Agent")
+
+            self.add_thinking_step_by_key(
+                title_key="thinking.claude.initialize_completed",
+                action_key="thinking.claude.initialization_success",
+                reasoning_key="thinking.claude.agent_ready",
+                result_key="thinking.claude.initialization_success",
+                confidence=0.9,
+                next_action_key="thinking.continue",
+                report_immediately=False
+            )
+
             return TaskStatus.SUCCESS
         except Exception as e:
             logger.error(f"Failed to initialize Claude Code Agent: {str(e)}")
+            self.add_thinking_step_by_key(
+                title_key="thinking.claude.initialize_failed",
+                action_key="thinking.claude.failed_initialize",
+                reasoning_key=f"${{thinking.claude.initialization_error}} {str(e)}",
+                next_action_key="thinking.exit",
+                report_immediately=False
+            )
             return TaskStatus.FAILED
 
 
@@ -266,16 +372,55 @@ class ClaudeCodeAgent(Agent):
         Returns:
             TaskStatus: Pre-execution status
         """
-        # Download code if git_url is provided
-        if "git_url" in self.task_data:
-            self.download_code()
+        try:
+            self.add_thinking_step(
+                title="Pre-execution Setup",
+                action="Starting pre-execution setup",
+                reasoning="Setting up environment",
+                report_immediately=True
+            )
 
-            # Update cwd in options if not already set
-            if "cwd" not in self.options and self.project_path is not None and os.path.exists(self.project_path):
-                self.options["cwd"] = self.project_path
-                logger.info(f"Set cwd to {self.project_path}")
+            git_url = self.task_data.get("git_url")
+            # Download code if git_url is provided
+            if git_url and git_url != "":
+                self.add_thinking_step(
+                    title="Download Code",
+                    action=f"${{thinking.downloading_code_from}} {self.task_data['git_url']}",
+                    reasoning="Code download is required for the task",
+                    report_immediately=True
+                )
+                self.download_code()
+                self.add_thinking_step(
+                    title="Download Code Completed",
+                    action="Code download completed successfully",
+                    reasoning="Code has been downloaded and is ready for execution",
+                    result="Code downloaded successfully",
+                    report_immediately=True
+                )
 
-        return TaskStatus.SUCCESS
+                # Update cwd in options if not already set
+                if "cwd" not in self.options and self.project_path is not None and os.path.exists(self.project_path):
+                    self.options["cwd"] = self.project_path
+                    logger.info(f"Set cwd to {self.project_path}")
+                    self.add_thinking_step(
+                        title="Set Working Directory",
+                        action=f"${{thinking.setting_working_directory}} {self.project_path}",
+                        reasoning="Working directory has been set to the downloaded code path",
+                        result=f"Working directory set to {self.project_path}",
+                        report_immediately=True
+                    )
+
+            return TaskStatus.SUCCESS
+        except Exception as e:
+            logger.error(f"Pre-execution failed: {str(e)}")
+            self.add_thinking_step(
+                title="Pre-execution Failed",
+                action="Pre-execution setup failed",
+                reasoning=f"Pre-execution failed with error: {str(e)}",
+                next_action="exit",
+                report_immediately=True
+            )
+            return TaskStatus.FAILED
 
     def execute(self) -> TaskStatus:
         """
@@ -285,9 +430,18 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            progress = 55
+            self.add_thinking_step(
+                title="Execute Task",
+                action="Starting task execution",
+                reasoning="Beginning the execution of the Claude Code Agent task",
+                report_immediately=False
+            )
+            # Update current progress
+            self._update_progress(progress)
             # Report starting progress
             self.report_progress(
-                55, TaskStatus.RUNNING.value, "Starting Claude Code Agent"
+                progress, TaskStatus.RUNNING.value, "${{thinking.claude.starting_agent}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
 
             # Check if currently running in coroutine
@@ -299,6 +453,12 @@ class ClaudeCodeAgent(Agent):
                 logger.info(
                     "Detected running in an async context, calling execute_async"
                 )
+                self.add_thinking_step(
+                    title="Async Execution",
+                    action="Detected async context, switching to async execution",
+                    reasoning="Running in coroutine context, will execute asynchronously",
+                    report_immediately=True
+                )
                 # Create async task to run in background, but return PENDING instead of task object
                 asyncio.create_task(self.execute_async())
                 logger.info(
@@ -308,6 +468,12 @@ class ClaudeCodeAgent(Agent):
             except RuntimeError:
                 # No running event loop, can safely use run_until_complete
                 logger.info("No running event loop detected, using new event loop")
+                self.add_thinking_step(
+                    title="Sync Execution",
+                    action="No async context detected, creating new event loop",
+                    reasoning="Not in coroutine context, will create new event loop for execution",
+                    report_immediately=False
+                )
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
@@ -315,11 +481,7 @@ class ClaudeCodeAgent(Agent):
                 finally:
                     loop.close()
         except Exception as e:
-            logger.exception(f"Error executing Claude Code Agent: {str(e)}")
-            self.report_progress(
-                100, TaskStatus.FAILED.value, f"Execution failed: {str(e)}"
-            )
-            return TaskStatus.FAILED
+            return self._handle_execution_error(e, "Claude Code Agent execution")
 
     async def execute_async(self) -> TaskStatus:
         """
@@ -330,19 +492,20 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            self.add_thinking_step(
+                title="Async Execution Started",
+                action="Starting asynchronous execution",
+                reasoning="Task is now executing in async mode",
+                report_immediately=False)
+            # Update current progress
+            self._update_progress(60)
             # Report starting progress
             self.report_progress(
-                60, TaskStatus.RUNNING.value, "Starting Claude Code Agent (async)"
+                60, TaskStatus.RUNNING.value, "${{thinking.claude.starting_agent_async}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
             return await self._async_execute()
         except Exception as e:
-            logger.exception(
-                f"Error executing Claude Code Agent asynchronously: {str(e)}"
-            )
-            self.report_progress(
-                100, TaskStatus.FAILED.value, f"Async execution failed: {str(e)}"
-            )
-            return TaskStatus.FAILED
+            return self._handle_execution_error(e, "Claude Code Agent async execution")
 
     async def _async_execute(self) -> TaskStatus:
         """
@@ -352,16 +515,32 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            progress = 65
+            # Update current progress
+            self._update_progress(progress)
+
             # Check if a client connection already exists for the corresponding task_id
             if self.session_id in self._clients:
                 logger.info(
                     f"Reusing existing Claude client for session_id: {self.session_id}"
+                )
+                self.add_thinking_step(
+                    title="Reuse Existing Client",
+                    action=f"${{thinking.claude.reusing_client_session}} {self.session_id}",
+                    reasoning="Client already exists for this session, reusing to maintain context",
+                    report_immediately=False
                 )
                 self.client = self._clients[self.session_id]
             else:
                 # Create new client connection
                 logger.info(
                     f"Creating new Claude client for session_id: {self.session_id}"
+                )
+                self.add_thinking_step(
+                    title="Create New Client",
+                    action=f"${{thinking.claude.creating_client_session}} session_id: {self.session_id}",
+                    reasoning="No existing client found for this session, creating a new one",
+                    report_immediately=False
                 )
                 logger.info(f"Initializing Claude client with options: {self.options}")
                 if self.options:
@@ -373,30 +552,145 @@ class ClaudeCodeAgent(Agent):
                 # Connect the client
                 await self.client.connect()
 
+                self.add_thinking_step(
+                    title="thinking.claude.client_created_successfully",
+                    action="thinking.claude.client_stored_reuse",
+                    reasoning="thinking.claude.client_reuse_session",
+                    result="thinking.claude.client_created_successfully",
+                    report_immediately=False
+                )
+
                 # Store client connection for reuse
                 self._clients[self.session_id] = self.client
+
+            # Prepare prompt
+            prompt = self.prompt
+            if self.options.get("cwd"):
+                prompt = prompt + "\nCurrent working directory: " + self.options.get("cwd") + "\n project url:"+ self.task_data.get("git_url")
+
+            progress = 75
+            # Update current progress
+            self._update_progress(progress)
+            self.add_thinking_step(
+                title="Prepare Prompt",
+                action="Preparing execution prompt",
+                reasoning=f"${{thinking.claude.prepared_prompt_with_info}} {prompt[:100]}...",
+                report_immediately=False
+            )
 
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
             logger.info(
                 f"Sending query with prompt (length: {len(self.prompt)}) for session_id: {self.session_id}"
             )
-            
-            prompt = self.prompt
-            if self.options.get("cwd"):
-                prompt = prompt + "\nCurrent working directory: " + self.options.get("cwd") + "\n project url:"+ self.task_data.get("git_url")
+
             await self.client.query(prompt, session_id=self.session_id)
 
             logger.info(f"Waiting for response for prompt: {prompt}")
             # Process and handle the response using the external processor
-            return await process_response(self.client, self.report_progress)
+            return await process_response(self.client, self._report_progress_with_thinking, self.thinking_manager)
 
         except Exception as e:
-            logger.exception(f"Error in async execution: {str(e)}")
+            return self._handle_execution_error(e, "async execution")
+
+    def _report_progress_with_thinking(self, progress: int, status: str, message: str, result: Dict[str, Any] = None) -> None:
+        """
+        Report progress including thinking steps
+
+        Args:
+            progress: Progress value (0-100)
+            status: Task status
+            message: Progress message
+            result: Result data (optional)
+        """
+        # If result is not None, ensure it includes thinking steps
+        if result is not None:
+            # If result doesn't have thinking, add current thinking steps
+            if "thinking" not in result:
+                result["thinking"] = [step.dict() for step in self.thinking_manager.get_thinking_steps()]
+        else:
+            # If result is None, create a result containing thinking steps
+            result = ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
+
+        self.report_progress(progress, status, message, result=result)
+
+    def _handle_execution_result(self, result_content: str, execution_type: str = "execution") -> TaskStatus:
+        """
+        Handle the execution result and report progress
+
+        Args:
+            result_content: The content to handle
+            execution_type: Type of execution for logging
+
+        Returns:
+            TaskStatus: Execution status
+        """
+        if result_content:
+            logger.info(
+                f"{execution_type} completed with content length: {len(result_content)}"
+            )
+            self.add_thinking_step(
+                title="Execution Completed",
+                action=f"Completed {execution_type}",
+                reasoning=f"{execution_type} completed successfully with content length: {len(result_content)}",
+                result=result_content[:200] + "..." if len(result_content) > 200 else result_content,
+                confidence=0.9,
+                next_action="complete",
+                report_immediately=False
+            )
             self.report_progress(
-                100, TaskStatus.FAILED.value, f"Execution failed: {str(e)}"
+                100,
+                TaskStatus.COMPLETED.value,
+                f"${{thinking.claude.execution_completed}} {execution_type}",
+                result=ExecutionResult(value=result_content, thinking=self.thinking_manager.get_thinking_steps()).dict(),
+            )
+            return TaskStatus.COMPLETED
+        else:
+            logger.warning(f"No content received from {execution_type}")
+            self.add_thinking_step(
+                title="Execution Failed",
+                action=f"{execution_type} failed - no content received",
+                reasoning=f"{execution_type} completed but no content was returned",
+                next_action="exit",
+                report_immediately=False
+            )
+            self.report_progress(
+                100,
+                TaskStatus.FAILED.value,
+                f"${{thinking.claude.failed_no_content}} {execution_type}",
+                result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict(),
             )
             return TaskStatus.FAILED
+
+    def _handle_execution_error(self, error: Exception, execution_type: str = "execution") -> TaskStatus:
+        """
+        Handle execution error and report progress
+
+        Args:
+            error: The exception to handle
+            execution_type: Type of execution for logging
+
+        Returns:
+            TaskStatus: Failed status
+        """
+        error_message = str(error)
+        logger.exception(f"Error in {execution_type}: {error_message}")
+
+        self.add_thinking_step(
+            title="Execution Error",
+            action=f"{execution_type} encountered an error",
+            reasoning=f"Error occurred during {execution_type}: {error_message}",
+            next_action="exit",
+            report_immediately=False
+        )
+
+        self.report_progress(
+            100,
+            TaskStatus.FAILED.value,
+            f"${{thinking.claude.execution_failed}} {execution_type}: {error_message}",
+            result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
+        )
+        return TaskStatus.FAILED
 
     @classmethod
     async def close_client(cls, session_id: str) -> TaskStatus:

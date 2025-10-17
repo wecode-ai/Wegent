@@ -74,6 +74,8 @@ class Agent:
                 if pre_execute_status != TaskStatus.SUCCESS:
                     error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute failed."
                     logger.error(error_msg)
+                    # 尝试记录错误 thinking
+                    # self._record_error_thinking("Pre-execution failed", error_msg)
                     return TaskStatus.FAILED, error_msg
                 logger.info(
                     f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute succeeded, starting execute."
@@ -91,6 +93,8 @@ class Agent:
         except Exception as e:
             error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: Exception during execute: {str(e)}"
             logger.exception(error_msg)
+            # 记录错误 thinking
+            # self._record_error_thinking("Execution Exception", error_msg)
             return TaskStatus.FAILED, error_msg
 
     def report_progress(
@@ -207,4 +211,26 @@ class Agent:
                 logger.error(f"Agent[{self.get_name()}][{self.task_id}] Failed to set git config: {error_msg}")
         else:
             logger.warning(f"Agent[{self.get_name()}][{self.task_id}] Missing git_login or git_email, skip git config")
+    
+    def _record_error_thinking(self, title: str, error_message: str) -> None:
+        """
+        记录错误 thinking，用于在系统报错时记录
+        
+        Args:
+            title: 错误标题
+            error_message: 错误消息
+        """
+        try:
+            # 检查是否有 thinking 记录能力
+            if hasattr(self, 'add_thinking_step'):
+                self.add_thinking_step(
+                    title=title,
+                    action=f"System encountered an error: {title}",
+                    reasoning=f"Error occurred: {error_message}",
+                    confidence=0.0,
+                    next_action="exit"
+                )
+                logger.info(f"Recorded error thinking for {title}: {error_message}")
+        except Exception as e:
+            logger.error(f"Failed to record error thinking: {str(e)}")
 

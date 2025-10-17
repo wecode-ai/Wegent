@@ -208,6 +208,7 @@ class ConfigManager:
             "mcpServers",
             "team_members",
             "team_description",
+            "stream",
         ]
 
         # Collect all non-None configuration parameters
