@@ -19,7 +19,24 @@ export interface TeamListResponse {
   items: Team[]
 }
 
+// Team Share Response Type
+export interface TeamShareResponse {
+  share_url: string
+  share_token: string
+}
 
+// Team Share Info Response Type
+export interface TeamShareInfoResponse {
+  user_id: number
+  user_name: string
+  team_id: number
+  team_name: string
+}
+
+// Team Share Join Request Type
+export interface TeamShareJoinRequest {
+  share_token: string
+}
 
 export const teamApis = {
   async getTeams(params?: PaginationParams): Promise<TeamListResponse> {
@@ -35,5 +52,14 @@ export const teamApis = {
   },
   async updateTeam(id: number, data: CreateTeamRequest): Promise<Team> {
     return apiClient.put(`/teams/${id}`, data)
+  },
+  async shareTeam(id: number): Promise<TeamShareResponse> {
+    return apiClient.post(`/teams/${id}/share`)
+  },
+  async getTeamShareInfo(shareToken: string): Promise<TeamShareInfoResponse> {
+    return apiClient.get(`/teams/share/info?share_token=${shareToken}`)
+  },
+  async joinSharedTeam(data: TeamShareJoinRequest): Promise<void> {
+    return apiClient.post('/teams/share/join', data)
   },
 }

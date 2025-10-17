@@ -3,12 +3,6 @@
     "name": "WeCode AI 助手",
     "description": "编辑器中的完整 AI 开发团队。"
   },
-  "welcome": "欢迎，{{name}}！您有 {{count}} 条通知。",
-  "items": {
-    "zero": "没有项目",
-    "one": "1个项目",
-    "other": "{{count}} 个项目"
-  },
   "actions": {
     "save": "保存",
     "saving": "保存中...",
@@ -29,20 +23,8 @@
     "retry": "重试",
     "toggle_theme": "切换主题"
   },
-  "status": {
-    "success": "成功",
-    "error": "错误",
-    "warning": "警告",
-    "info": "信息",
-    "pending": "待处理",
-    "completed": "已完成",
-    "failed": "失败"
-  },
   "validation": {
-    "required": "此字段为必填项",
-    "invalid_email": "请输入有效的邮箱地址",
-    "min_length": "最少需要 {{min}} 个字符",
-    "max_length": "最多允许 {{max}} 个字符"
+    "required": "此字段为必填项"
   },
   "login": {
     "username": "用户名",
@@ -50,13 +32,14 @@
     "enter_username": "请输入用户名",
     "enter_password": "请输入密码",
     "logging_in": "登录中...",
-    "test_account": "测试账号：admin / admin",
+    "test_account": "测试账号：admin / Wegent2025!",
     "or_continue_with": "或继续使用",
     "oidc_login": "使用 OpenID Connect 登录"
   },
   "navigation": {
     "tasks": "任务",
-    "settings": "设置"
+    "settings": "设置",
+    "docs": "文档"
   },
   "user": {
     "default_name": "用户",
@@ -114,7 +97,8 @@
     "bot": "机器人",
     "subtask_completed": "子任务已完成",
     "subtask_failed": "子任务失败：",
-    "unknown_error": "未知错误"
+    "unknown_error": "未知错误",
+    "download": "下载"
   },
   "teams": {
     "title": "团队列表",
@@ -134,7 +118,39 @@
     "no_match": "没有匹配的团队",
     "manage": "团队设置",
     "delete_confirm_title": "确认删除",
-    "delete_confirm_message": "确定要删除这个团队吗？此操作无法撤销。"
+    "delete_confirm_message": "确定要删除这个团队吗？此操作无法撤销。",
+    "sharing": "共享中",
+    "shared_by": "{{author}}共享",
+    "share_failed": "分享失败，请重试",
+    "share_success_title": "分享成功",
+    "share_success_message": "分享团队\"{{teamName}}\"",
+    "share_success_message_prefix": "分享团队",
+    "share_success_message_suffix": "给你的朋友！",
+    "share_link": "分享链接",
+    "copy_link": "复制链接",
+    "copy_success": "复制成功",
+    "share_instructions_content1": "复制链接发送给其他人，他们可以通过链接使用你分享的团队来直接完成任务。 ",
+    "share_instructions_content2": "团队共享后，你仍然可以管理和编辑这个团队，其他人可以应用最新的团队配置但不能编辑团队设置。",
+    "share": {
+      "title": "团队分享",
+      "confirm_message": "确定要使用 {{userName}} 的 {{teamName}} 执行任务吗？",
+      "join_description": "确定加入后，{{teamName}} 将添加到您的团队列表中，您可以使用该团队创建和执行任务。",
+      "joining": "加入中...",
+      "confirm_join": "确认",
+      "self_share_message": "{{teamName}} 是您的团队，无须加入。",
+      "already_joined_message": "{{teamName}} 已经在您的团队列表中，无须重复加入。",
+      "fetch_info_failed": "获取共享团队信息失败",
+      "join_failed": "加入团队失败",
+      "join_success": "团队{{teamName}}加入成功",
+      "loading": "正在加载团队信息...",
+      "self_share_suffix": " 是您的团队，无须加入。",
+      "already_joined_suffix": " 已经在您的团队列表中，无须重复加入。",
+      "confirm_prefix": "使用用户",
+      "confirm_middle": "分享的团队",
+      "confirm_suffix": "执行任务吗？",
+      "join_description_prefix": "确定加入后，",
+      "join_description_suffix": " 将添加到您的团队列表中，您可以使用该团队创建和执行任务。"
+    }
   },
   "team": {
     "name": "名称",
@@ -216,7 +232,8 @@
     "search_results": "搜索结果",
     "no_search_results": "没有匹配的任务",
     "copy_task_id": "复制任务ID",
-    "delete_task": "删除任务"
+    "delete_task": "删除任务",
+    "searching": "搜索中..."
   },
   "settings": {
     "integrations": "集成",
