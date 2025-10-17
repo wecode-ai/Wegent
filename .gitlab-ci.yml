@@ -182,3 +182,16 @@ trigger_update_front_web:
         changes:
           - frontend/**/*
           - wecode/docker/frontend/**/*
+
+wegent-preview-web:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-preview-web
+    DOCKERFILE_PATH: wecode/docker/frontend_preview
+  script:
+    - build_image
+  rules:
+    - changes:
+      - frontend/**/*
+      - wecode/docker/frontend/**/*

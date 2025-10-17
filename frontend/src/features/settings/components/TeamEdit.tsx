@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Radio, Transfer, Select, Button, Tooltip, Tag } from 'antd'
+import { Radio, Transfer, Select, Button, Tooltip, Tag, theme } from 'antd'
 import type { TransferDirection } from 'antd/es/transfer'
 import type { MessageInstance } from 'antd/es/message/interface'
 import Image from 'next/image'
@@ -16,6 +16,7 @@ import { Bot, Team } from '@/types/api'
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles'
 
 interface TeamEditProps {
   teams: Team[]
@@ -41,6 +42,7 @@ export default function TeamEdit(props: TeamEditProps) {
   } = props
 
   const { t } = useTranslation('common')
+  const { token } = theme.useToken()
     // Current editing object (0 means create new)
   const editingTeam: Team | null = editingTeamId === 0
     ? null
@@ -84,7 +86,7 @@ export default function TeamEdit(props: TeamEditProps) {
     return map
   }, [editingTeam, unsavedPrompts])
 
-  const promptSummary = useMemo(() => {
+  const promptSummary = useMemo<{ label: string; variant: PromptBadgeVariant }>(() => {
     let configuredCount = 0
     teamPromptMap.forEach(value => {
       if (value) configuredCount += 1
@@ -97,25 +99,31 @@ export default function TeamEdit(props: TeamEditProps) {
         : ''
       return {
         label: `${t('team.prompts_tag_pending')}${countText}`,
-        color: 'gold' as const,
-        count: configuredCount,
+        variant: 'pending',
       }
     }
 
     if (configuredCount > 0) {
       return {
         label: t('team.prompts_tag_configured', { count: configuredCount }),
-        color: 'blue' as const,
-        count: configuredCount,
+        variant: 'configured',
       }
     }
 
     return {
       label: t('team.prompts_tag_none'),
-      color: undefined,
-      count: 0,
+      variant: 'none',
     }
   }, [teamPromptMap, unsavedPrompts, t])
+
+  const configuredPromptBadgeStyle = useMemo(
+    () => getPromptBadgeStyle(token, 'configured'),
+    [token],
+  )
+  const promptSummaryStyle = useMemo(
+    () => getPromptBadgeStyle(token, promptSummary.variant),
+    [token, promptSummary.variant],
+  )
 
   const handleBack = useCallback(() => {
     setEditingTeamId(null)
@@ -567,7 +575,10 @@ export default function TeamEdit(props: TeamEditProps) {
                         </Tooltip>
                         {teamPromptMap.get(b.id) && (
                           <Tooltip title={t('team.prompts_badge_tooltip')}>
-                            <Tag color="blue" className="!m-0 !ml-1 !px-1.5 !py-0 text-[11px] leading-4">
+                            <Tag
+                              className="!m-0 !ml-1 !px-1.5 !py-0 text-[11px] leading-4"
+                              style={configuredPromptBadgeStyle}
+                            >
                               {t('team.prompts_badge')}
                             </Tag>
                           </Tooltip>
@@ -633,8 +644,8 @@ export default function TeamEdit(props: TeamEditProps) {
                   </Button>
                 </Tooltip>
                 <Tag
-                  color={promptSummary.color}
                   className="!m-0 !px-2 !py-0 text-xs leading-5"
+                  style={promptSummaryStyle}
                 >
                   {promptSummary.label}
                 </Tag>
@@ -659,7 +670,10 @@ export default function TeamEdit(props: TeamEditProps) {
                     <div className="flex items-center">
                       {teamPromptMap.get(Number(item.key)) && (
                         <Tooltip title={t('team.prompts_badge_tooltip')}>
-                          <Tag color="blue" className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4">
+                          <Tag
+                            className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
+                            style={configuredPromptBadgeStyle}
+                          >
                             {t('team.prompts_badge')}
                           </Tag>
                         </Tooltip>

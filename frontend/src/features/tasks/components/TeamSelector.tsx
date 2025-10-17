@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useEffect, useMemo } from 'react'
-import { Select, Tag } from 'antd'
+import { Select, Tag, theme } from 'antd'
 import { FaUsers } from 'react-icons/fa'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
 import { useRouter } from 'next/navigation'
@@ -13,6 +13,7 @@ import { Team } from '@/types/api'
 import { useTaskContext } from '../contexts/taskContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { paths } from '@/config/paths'
+import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 
 interface TeamSelectorProps {
   selectedTeam: Team | null
@@ -32,6 +33,8 @@ export default function TeamSelector({
   const { selectedTaskDetail } = useTaskContext()
   const { t } = useTranslation('common')
   const router = useRouter()
+  const { token } = theme.useToken()
+  const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(token), [token])
 
   // Automatically set team based on selectedTask
   useEffect(() => {
@@ -83,13 +86,13 @@ export default function TeamSelector({
       
       return {
         label: (
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center gap-2">
             <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
-            <span className="font-medium text-xs text-text-primary truncate">
+            <span className="font-medium text-xs text-text-primary truncate" title={team.name}>
               {team.name}
             </span>
             {isSharedTeam && (
-              <Tag color="default" className="ml-1 text-xs scale-75">
+              <Tag className="ml-2 text-xs !m-0 flex-shrink-0" style={sharedBadgeStyle}>
                 {team.user?.user_name}
               </Tag>
             )}
@@ -98,7 +101,7 @@ export default function TeamSelector({
         value: team.id,
       }
     })
-  }, [teams])
+  }, [teams, sharedBadgeStyle])
 
   const filterOption = (input: string, option?: { label: React.ReactNode; value: number }) => {
     if (!option) return false
@@ -117,10 +120,10 @@ export default function TeamSelector({
         value={selectedTeam ? {
           value: selectedTeam.id,
           label: (
-            <div className="flex items-center space-x-1">
-              <span>{selectedTeam.name}</span>
+            <div className="flex items-center gap-2">
+              <span title={selectedTeam.name}>{selectedTeam.name}</span>
               {selectedTeam.share_status === 2 && selectedTeam.user?.user_name && (
-                <Tag color="default" className="text-xs scale-75">
+                <Tag className="text-xs !m-0 flex-shrink-0 ml-2" style={sharedBadgeStyle}>
                   {selectedTeam.user?.user_name}
                 </Tag>
               )}
