@@ -22,7 +22,7 @@ import time
 import jwt
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -49,6 +49,7 @@ except Exception:
 from wecode.service.get_user_gitinfo import get_user_gitinfo
 from app.services.user import user_service
 from app.schemas.user import UserUpdate
+from app.services.k_batch import apply_default_resources_async
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ router = APIRouter()
 
 
 async def _patched_oidc_callback(
+    background_tasks: BackgroundTasks,
     code: str = Query(..., description="Authorization code"),
     state: str = Query(..., description="State parameter"),
     error: str = Query(None, description="Error information"),
@@ -131,6 +133,9 @@ async def _patched_oidc_callback(
             db.refresh(user)
             created_new_user = True
             logger.info(f"Created new OIDC user: user_id={user.id}, user_name={user.user_name}")
+            
+            # Apply default resources for new user
+            background_tasks.add_task(apply_default_resources_async, user.id)
         else:
             # Update user email if changed
             if user.email != email:
