@@ -15,6 +15,7 @@ from sqlalchemy import func, text
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.models.shared_team import SharedTeam
 from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
 from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskStatus
 from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
@@ -29,38 +30,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     Task service class using kinds table
     """
 
-    def _get_team_by_id_or_shared(self, db: Session, team_id: int, user_id: int) -> Optional[Kind]:
-        """
-        Get team by ID, checking both user's own teams and shared teams
-        """
-        # First check if team exists and belongs to user
-        existing_team = db.query(Kind).filter(
-            Kind.id == team_id,
-            Kind.user_id == user_id,
-            Kind.kind == "Team",
-            Kind.is_active == True
-        ).first()
-        
-        if existing_team:
-            return existing_team
-        
-        # If not found, check if team exists in shared teams
-        from app.models.shared_team import SharedTeam
-        shared_team = db.query(SharedTeam).filter(
-            SharedTeam.user_id == user_id,
-            SharedTeam.team_id == team_id,
-            SharedTeam.is_active == True
-        ).first()
-        
-        if shared_team:
-            # Return shared team
-            return db.query(Kind).filter(
-                Kind.id == team_id,
-                Kind.kind == "Team",
-                Kind.is_active == True
-            ).first()
-        
-        return None
+   
 
     def create_task_or_append(
         self, db: Session, *, obj_in: TaskCreate, user: User, task_id: Optional[int] = None
@@ -135,19 +105,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             team_name = task_crd.spec.teamRef.name
             team_namespace = task_crd.spec.teamRef.namespace
             
-            existing_team = db.query(Kind).filter(
-                Kind.name == team_name,
-                Kind.namespace == team_namespace,
-                Kind.user_id == user.id,
-                Kind.kind == "Team",
-                Kind.is_active == True
-            ).first()
-            if not existing_team:
+            team = self._get_team_by_name_and_namespace(db, team_name, team_namespace, user.id)
+            if not team:
                 raise HTTPException(
                     status_code=404,
-                    detail=f"Team '{team_name}' not found, it may be deleted"
+                    detail=f"Team '{team_name}' not found, it may be deleted or not shared"
                 )
-            team = existing_team
 
             # Update existing task status to PENDING
             if task_crd.status:
@@ -165,12 +128,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     detail="Team ID is required for creating a new task."
                 )
 
-            team = self._get_team_by_id_or_shared(db, obj_in.team_id, user.id)
+            team = self._get_team_by_id_or_join_team(db, obj_in.team_id, user.id)
             
             if not team:
                 raise HTTPException(
                     status_code=404,
-                    detail="Team not found"
+                    detail="Team not found, it may be deleted or not shared"
                 )
 
             # Additional business validation for prompt length
@@ -281,7 +244,69 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         db.flush()
 
         return self._convert_to_task_dict(task, db, user.id)
+    
 
+    def _get_team_by_name_and_namespace(self, db: Session, team_name: str, team_namespace: str, user_id: int) -> Optional[Kind]:
+        existing_team = db.query(Kind).filter(
+            Kind.name == team_name,
+            Kind.namespace == team_namespace,
+            Kind.user_id == user_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).first()
+
+        if existing_team:
+            return existing_team
+
+        join_share_teams = db.query(SharedTeam).filter(
+            SharedTeam.user_id == user_id,
+            SharedTeam.is_active == True
+        ).all()
+
+        for join_team in join_share_teams:
+            team = db.query(Kind).filter(
+                Kind.name == team_name,
+                Kind.namespace == team_namespace,
+                Kind.user_id == join_team.original_user_id,
+                Kind.kind == "Team",
+                Kind.is_active == True
+            ).first()
+            if team:
+                return team
+
+        return None
+
+    def _get_team_by_id_or_join_team(self, db: Session, team_id: int, user_id: int) -> Optional[Kind]:
+        """
+        Get team by ID, checking both user's own teams and shared teams
+        """
+        # First check if team exists and belongs to user
+        existing_team = db.query(Kind).filter(
+            Kind.id == team_id,
+            Kind.user_id == user_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).first()
+        
+        if existing_team:
+            return existing_team
+        
+        # If not found, check if team exists in shared teams
+        shared_team = db.query(SharedTeam).filter(
+            SharedTeam.user_id == user_id,
+            SharedTeam.team_id == team_id,
+            SharedTeam.is_active == True
+        ).first()
+        
+        if shared_team:
+            # Return shared team
+            return db.query(Kind).filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True
+            ).first()
+        
+        return None
     def get_user_tasks_with_pagination(
         self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -938,39 +963,41 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             for i, member in enumerate(team_crd.spec.members):
                 # Find bot in kinds table
                 bot = db.query(Kind).filter(
-                    Kind.user_id == user_id,
+                    Kind.user_id == team.user_id,
                     Kind.kind == "Bot",
                     Kind.name == member.botRef.name,
                     Kind.namespace == member.botRef.namespace,
                     Kind.is_active == True
                 ).first()
-                
-                if bot:
-                    subtask = Subtask(
-                        user_id=user_id,
-                        task_id=task.id,
-                        team_id=team.id,
-                        title=f"{task_crd.spec.title} - {bot.name}",
-                        bot_ids=[bot.id],
-                        role=SubtaskRole.ASSISTANT,
-                        prompt="",
-                        status=SubtaskStatus.PENDING,
-                        progress=0,
-                        message_id=next_message_id,
-                        parent_id=parent_id,
-                        # If executor_infos is not empty, take the i-th one, otherwise empty string
-                        executor_name=executor_infos[i].get('executor_name') if len(executor_infos) > i else "",
-                        executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > i else "",
-                        error_message="",
-                        completed_at=datetime.now(),
-                        result=None,
-                    )
 
-                    # Update id of next message and parent
-                    next_message_id = next_message_id + 1
-                    parent_id = parent_id + 1
-                    
-                    db.add(subtask)
+                if bot is None:
+                    raise Exception(f"Bot {member.botRef.name} not found in kinds table")
+                
+                subtask = Subtask(
+                    user_id=user_id,
+                    task_id=task.id,
+                    team_id=team.id,
+                    title=f"{task_crd.spec.title} - {bot.name}",
+                    bot_ids=[bot.id],
+                    role=SubtaskRole.ASSISTANT,
+                    prompt="",
+                    status=SubtaskStatus.PENDING,
+                    progress=0,
+                    message_id=next_message_id,
+                    parent_id=parent_id,
+                    # If executor_infos is not empty, take the i-th one, otherwise empty string
+                    executor_name=executor_infos[i].get('executor_name') if len(executor_infos) > i else "",
+                    executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > i else "",
+                    error_message="",
+                    completed_at=datetime.now(),
+                    result=None,
+                )
+
+                # Update id of next message and parent
+                next_message_id = next_message_id + 1
+                parent_id = parent_id + 1
+                
+                db.add(subtask)
         else:
             # For other collaboration models, create a single assistant subtask
             executor_name = ""

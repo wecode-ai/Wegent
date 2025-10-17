@@ -151,8 +151,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             
             result.append(team_dict)
         
-        # Get shared teams
-        shared_teams = db.query(SharedTeam, Kind).join(
+        # Get joined teams
+        join_shared_teams = db.query(SharedTeam, Kind).join(
             Kind, SharedTeam.team_id == Kind.id
         ).filter(
             SharedTeam.user_id == user_id,
@@ -161,7 +161,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.kind == "Team"
         ).order_by(SharedTeam.created_at.desc()).offset(skip).limit(limit).all()
         
-        for shared_team, team in shared_teams:
+        for shared_team, team in join_shared_teams:
             team_dict = self._convert_to_team_dict(team, db, shared_team.original_user_id)
             team_dict["share_status"] = 2 # shared from others
             
