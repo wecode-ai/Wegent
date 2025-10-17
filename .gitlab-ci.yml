@@ -35,6 +35,10 @@ wegent-executor-manager:
     - build_image
   rules:
     - if: '$CI_COMMIT_BRANCH == "wecode"'
+      changes:
+        - executor_manager/**/*
+        - wecode/docker/executor_manager/**/*
+        - shared/**/*
     - changes:
       - executor_manager/**/*
       - wecode/docker/executor_manager/**/*
@@ -68,6 +72,10 @@ wegent-executor:
     - build_image
   rules:
     - if: '$CI_COMMIT_BRANCH == "wecode"'
+      changes:
+        - executor/**/*
+        - wecode/docker/executor/**/*
+        - shared/**/*
     - changes:
       - executor/**/*
       - wecode/docker/executor/**/*
@@ -101,6 +109,9 @@ wegent-backend:
     - build_image
   rules:
     - if: '$CI_COMMIT_BRANCH == "wecode"'
+      changes:
+        - backend/**/*
+        - wecode/docker/backend/**/*
     - changes:
       - backend/**/*
       - wecode/docker/backend/**/*
@@ -133,6 +144,9 @@ wegent-web:
     - build_image
   rules:
     - if: '$CI_COMMIT_BRANCH == "wecode"'
+      changes:
+        - frontend/**/*
+        - wecode/docker/frontend/**/*
     - changes:
       - frontend/**/*
       - wecode/docker/frontend/**/*
