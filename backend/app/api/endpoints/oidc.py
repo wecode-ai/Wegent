@@ -5,10 +5,9 @@
 import secrets
 import logging
 import time
-import asyncio
 from app.services.k_batch import apply_default_resources_async
 import jwt  # pip install pyjwt
-from fastapi import APIRouter, Depends, Query, HTTPException, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select

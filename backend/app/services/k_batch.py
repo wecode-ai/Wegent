@@ -155,7 +155,7 @@ async def apply_default_resources_async(user_id: int):
         resources, error = load_resources_from_file(resource_file_path)
 
         if error:
-            logger.error(f"Error loading resources for user_id={user_id}: {error}")
+            logger.warning(f"Error loading resources for user_id={user_id}: {error}")
             return error
 
         if not resources:
