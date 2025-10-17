@@ -18,7 +18,7 @@ from app.models.kind import (
     KTask
 )
 from app.models.subtask import Subtask
-
+from app.models.shared_team import SharedTeam
 __all__ = [
     "Base",
     "User",
@@ -31,4 +31,5 @@ __all__ = [
     "KWorkspace",
     "KTask",
     "Subtask",
+    "SharedTeam",
 ]

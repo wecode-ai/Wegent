@@ -257,10 +257,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
 
             # Get team information from kinds table
             team = db.query(Kind).filter(
-                Kind.user_id == task.user_id,
-                Kind.kind == "Team",
-                Kind.name == task_crd.spec.teamRef.name,
-                Kind.namespace == task_crd.spec.teamRef.namespace,
+                Kind.id == subtask.team_id,
                 Kind.is_active == True
             ).first()
             
@@ -287,8 +284,6 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 # Get bot from kinds table
                 bot = db.query(Kind).filter(
                     Kind.id == bot_id,
-                    Kind.user_id == task.user_id,
-                    Kind.kind == "Bot",
                     Kind.is_active == True
                 ).first()
                 
@@ -299,7 +294,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 
                 # Get ghost for system prompt and mcp servers
                 ghost = db.query(Kind).filter(
-                    Kind.user_id == task.user_id,
+                    Kind.user_id == team.user_id,
                     Kind.kind == "Ghost",
                     Kind.name == bot_crd.spec.ghostRef.name,
                     Kind.namespace == bot_crd.spec.ghostRef.namespace,
@@ -308,7 +303,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 
                 # Get shell for agent name
                 shell = db.query(Kind).filter(
-                    Kind.user_id == task.user_id,
+                    Kind.user_id == team.user_id,
                     Kind.kind == "Shell",
                     Kind.name == bot_crd.spec.shellRef.name,
                     Kind.namespace == bot_crd.spec.shellRef.namespace,
@@ -317,7 +312,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 
                 # Get model for agent config
                 model = db.query(Kind).filter(
-                    Kind.user_id == task.user_id,
+                    Kind.user_id == team.user_id,
                     Kind.kind == "Model",
                     Kind.name == bot_crd.spec.modelRef.name,
                     Kind.namespace == bot_crd.spec.modelRef.namespace,
