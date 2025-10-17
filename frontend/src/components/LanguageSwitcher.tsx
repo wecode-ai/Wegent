@@ -43,15 +43,9 @@ export default function LanguageSwitcher({
       
       {isOpen && (
         <>
-          {/* Background overlay */}
-          <div 
-            className="fixed inset-0 z-10" 
-            onClick={() => setIsOpen(false)}
-          />
-          
-          {/* Dropdown menu */}
+          {/* Dropdown menu with higher z-index to ensure it's above the overlay */}
           <div
-            className="absolute right-0 z-20 mt-2 w-48 bg-surface border border-border rounded-md shadow-lg max-h-60 overflow-y-auto"
+            className="absolute right-0 z-30 mt-2 w-48 bg-surface border border-border rounded-md shadow-lg max-h-60 overflow-y-auto"
             style={{ boxShadow: 'var(--shadow-popover)' }}
           >
             <div className="py-1">

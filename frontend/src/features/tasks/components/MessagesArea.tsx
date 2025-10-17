@@ -301,6 +301,13 @@ export default function MessagesArea() {
                                           source={normalizedResult}
                                           style={{ background: 'transparent' }}
                                           wrapperElement={{ 'data-color-mode': theme }}
+                                          components={{
+                                            a: ({ href, children, ...props }) => (
+                                              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                                                {children}
+                                              </a>
+                                            )
+                                          }}
                                         />
                                         {/* ★ Top floating toolbar: copy + extensible tools */}
                                         <BubbleTools

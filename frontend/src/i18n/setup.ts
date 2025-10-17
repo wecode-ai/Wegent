@@ -40,7 +40,7 @@ export async function initI18n() {
   const resources = await loadTranslations()
   
   await i18next.use(initReactI18next).init({
-    lng: process.env.I18N_LNG || "en", // 默认语言设为中文
+    lng: process.env.I18N_LNG || "en", // default language is English
     fallbackLng: "en", // 回退语言为英文
     resources,
     interpolation: {
