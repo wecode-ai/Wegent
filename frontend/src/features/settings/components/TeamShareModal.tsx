@@ -25,6 +25,7 @@ export default function TeamShareModal({ visible, onClose, teamName, shareUrl }:
     try {
       await navigator.clipboard.writeText(shareUrl)
       message.success(t('teams.copy_success'))
+      onClose()
     } catch (error) {
       // Fallback to traditional method if clipboard API is not available
       const textArea = document.createElement('textarea')
@@ -34,6 +35,7 @@ export default function TeamShareModal({ visible, onClose, teamName, shareUrl }:
       document.execCommand('copy')
       document.body.removeChild(textArea)
       message.success(t('teams.copy_success'))
+      onClose()
     }
   }
 

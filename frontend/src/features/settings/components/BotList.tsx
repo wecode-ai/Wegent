@@ -5,21 +5,22 @@
 'use client'
 import '@/features/common/scrollbar.css'
 
-import { useCallback, useEffect, useState } from 'react'
-import { Button } from 'antd'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { App, Button, Dropdown, Modal, Tag, theme } from 'antd'
 import { PencilIcon, TrashIcon, PlusIcon, DocumentDuplicateIcon, ChatBubbleLeftEllipsisIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline'
 import { RiRobot2Line } from 'react-icons/ri'
 import LoadingState from '@/features/common/LoadingState'
 import { Bot } from '@/types/api'
 import { fetchBotsList, deleteBot, isPredefinedModel, getModelFromConfig } from '../services/bots'
-import { App, Dropdown, Modal } from 'antd'
 import BotEdit from './BotEdit'
 import { useTranslation } from '@/hooks/useTranslation'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
+import { getSubtleBadgeStyle } from '@/utils/styles'
 
 export default function BotList() {
   const { t } = useTranslation('common')
   const { message } = App.useApp()
+  const { token } = theme.useToken()
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
   // Unified error prompt using antd message.error, no local error state needed
@@ -28,6 +29,7 @@ export default function BotList() {
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
   const [botToDelete, setBotToDelete] = useState<number | null>(null)
   const isEditing = editingBotId !== null
+  const subtleBadgeStyle = useMemo(() => getSubtleBadgeStyle(token), [token])
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>((updater) => {
     setBots(prev => {
@@ -149,13 +151,21 @@ export default function BotList() {
                                     <span className="text-xs text-text-muted flex items-center justify-center">{bot.is_active ? t('bots.active') : t('bots.inactive')}</span>
                                   </div>
                                 </div>
-                                <div className="flex items-center space-x-1 mt-1 min-w-0">
-                                  <span className="inline-block px-1 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize self-start">{bot.agent_name}</span>
-                                  <span className="hidden sm:inline-block px-1 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize self-start">
+                                <div className="flex flex-wrap items-center gap-1 mt-1 min-w-0">
+                                  <Tag
+                                    className="!m-0 !px-1.5 !py-0 text-xs leading-4 capitalize self-start"
+                                    style={subtleBadgeStyle}
+                                  >
+                                    {bot.agent_name}
+                                  </Tag>
+                                  <Tag
+                                    className="hidden sm:inline-block !m-0 !px-1.5 !py-0 text-xs leading-4 capitalize self-start"
+                                    style={subtleBadgeStyle}
+                                  >
                                     {isPredefinedModel(bot.agent_config)
                                       ? getModelFromConfig(bot.agent_config)
                                       : 'CustomModel'}
-                                  </span>
+                                  </Tag>
                                 </div>
                               </div>
                             </div>

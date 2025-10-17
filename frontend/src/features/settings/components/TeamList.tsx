@@ -4,7 +4,7 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import '@/features/common/scrollbar.css'
 import { RiRobot2Line } from 'react-icons/ri'
@@ -17,16 +17,17 @@ import { fetchTeamsList, deleteTeam, shareTeam } from '../services/teams'
 import { fetchBotsList } from '../services/bots'
 import TeamEdit from './TeamEdit'
 import TeamShareModal from './TeamShareModal'
-import { App, Dropdown, Modal, Tag } from 'antd'
-import { Button } from 'antd'
+import { App, Button, Dropdown, Modal, Tag, theme } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
+import { getSharedTagStyle as getStatusTagStyle, getWorkflowTagStyle } from '@/utils/styles'
 
 export default function TeamList() {
   const { t } = useTranslation('common')
   const { message } = App.useApp()
+  const { token } = theme.useToken()
   const [teams, setTeams] = useState<Team[]>([])
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -42,6 +43,8 @@ export default function TeamList() {
   const router = useRouter()
   const isEditing = editingTeamId !== null
   const isDesktop = useMediaQuery('(min-width: 640px)')
+  const statusTagStyle = useMemo<React.CSSProperties>(() => getStatusTagStyle(token), [token])
+  const workflowTagStyle = useMemo<React.CSSProperties>(() => getWorkflowTagStyle(token), [token])
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>((updater) => {
     setTeams(prev => {
@@ -163,13 +166,13 @@ export default function TeamList() {
   const getTeamStatusLabel = (team: Team) => {
     if (team.share_status === 1) {
       return (
-        <Tag color="primary" style={{ fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
+        <Tag className="!m-0" style={statusTagStyle}>
           {t('teams.sharing')}
         </Tag>
       )
     } else if (team.share_status === 2 && team.user?.user_name) {
       return (
-        <Tag color="primary" style={{ fontSize: '11px', padding: '0 4px', lineHeight: '16px' }}>
+        <Tag className="!m-0" style={statusTagStyle}>
           {t('teams.shared_by', { author: team.user.user_name })}
         </Tag>
       )
@@ -247,7 +250,10 @@ export default function TeamList() {
                                   <div className="flex items-center space-x-1 mt-0 min-w-0">
                                     {team.workflow?.mode && (
                                       <>
-                                        <span className="inline-block max-w-full truncate px-2 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize">
+                                        <span
+                                          className="inline-block max-w-full truncate px-2 py-0.5 text-xs rounded-full capitalize"
+                                          style={workflowTagStyle}
+                                        >
                                           {t(`team_model.${team.workflow.mode}`)}
                                         </span>
                                         <span className="mx-2 hidden sm:inline"></span>

@@ -132,6 +132,8 @@
     "copy_success": "Copied successfully",
     "share_instructions_title": "How to use the share link:",
     "share_instructions_content": "Send this link to other users, and they can access and use your shared team to complete tasks. You can still manage and edit this team, and other users will see the latest configuration.",
+    "share_instructions_content1": "Copy and send this link to others, they can use your shared team to complete tasks directly through the link.",
+    "share_instructions_content2": "After sharing the team, you can still manage and edit this team, and others can apply the latest team configuration but cannot edit the team settings.",
     "share": {
       "title": "Team Share",
       "confirm_message": "Do you want to use {{userName}}'s {{teamName}} to execute tasks?",
