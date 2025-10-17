@@ -4,56 +4,141 @@
 
 import base64
 import json
+import os
 from typing import Optional, List
 from datetime import datetime
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 from fastapi import HTTPException
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives import padding
+from cryptography.hazmat.backends import default_backend
 
 from app.models.shared_team import SharedTeam
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.shared_team import (
-    SharedTeamCreate, 
-    SharedTeamInDB, 
+    SharedTeamCreate,
+    SharedTeamInDB,
     TeamShareInfo,
     JoinSharedTeamRequest,
     TeamShareResponse,
     JoinSharedTeamResponse
 )
+from app.schemas.kind import Team
 from app.core.config import settings
 
 class SharedTeamService:
     """Service for managing team sharing functionality"""
-    
     def __init__(self):
-        pass
+        # Initialize AES key and IV from settings
+        self.aes_key = settings.SHARE_TOKEN_AES_KEY.encode('utf-8')
+        self.aes_iv = settings.SHARE_TOKEN_AES_IV.encode('utf-8')
     
-    def generate_share_token(self, user_id: int, user_name: str, team_id: int, team_name: str) -> str:
-        """Generate share token based on user and team information"""
-        share_data = {
-            "user_id": user_id,
-            "user_name": user_name,
-            "team_id": team_id,
-            "team_name": team_name,
-            "timestamp": int(datetime.now().timestamp())
-        }
-        share_json = json.dumps(share_data, ensure_ascii=False)
-        share_token = base64.b64encode(share_json.encode('utf-8')).decode('utf-8')
-        return share_token
+    def _aes_encrypt(self, data: str) -> str:
+        """Encrypt data using AES-256-CBC"""
+        # Create cipher object
+        cipher = Cipher(
+            algorithms.AES(self.aes_key),
+            modes.CBC(self.aes_iv),
+            backend=default_backend()
+        )
+        encryptor = cipher.encryptor()
+        
+        # Pad the data to 16-byte boundary (AES block size)
+        padder = padding.PKCS7(128).padder()
+        padded_data = padder.update(data.encode('utf-8')) + padder.finalize()
+        
+        # Encrypt the data
+        encrypted_bytes = encryptor.update(padded_data) + encryptor.finalize()
+        
+        # Return base64 encoded encrypted data
+        return base64.b64encode(encrypted_bytes).decode('utf-8')
     
-    def decode_share_token(self, share_token: str) -> Optional[TeamShareInfo]:
-        """Decode share token to get team information"""
+    def _aes_decrypt(self, encrypted_data: str) -> Optional[str]:
+        """Decrypt data using AES-256-CBC"""
         try:
-            decoded_bytes = base64.b64decode(share_token.encode('utf-8'))
-            share_json = decoded_bytes.decode('utf-8')
-            share_data = json.loads(share_json)
+            # Decode base64 encrypted data
+            encrypted_bytes = base64.b64decode(encrypted_data.encode('utf-8'))
             
-            return TeamShareInfo(
-                user_id=share_data["user_id"],
-                user_name=share_data["user_name"],
-                team_id=share_data["team_id"],
-                team_name=share_data["team_name"]
+            # Create cipher object
+            cipher = Cipher(
+                algorithms.AES(self.aes_key),
+                modes.CBC(self.aes_iv),
+                backend=default_backend()
             )
+            decryptor = cipher.decryptor()
+            
+            # Decrypt the data
+            decrypted_padded_bytes = decryptor.update(encrypted_bytes) + decryptor.finalize()
+            
+            # Unpad the data
+            unpadder = padding.PKCS7(128).unpadder()
+            decrypted_bytes = unpadder.update(decrypted_padded_bytes) + unpadder.finalize()
+            
+            # Return decrypted string
+            return decrypted_bytes.decode('utf-8')
+        except Exception:
+            return None
+    
+    def generate_share_token(self, user_id: int, team_id: int) -> str:
+        """Generate share token based on user and team information using AES encryption"""
+        # Only store user_id and team_id in the format "user_id#team_id"
+        share_data = f"{user_id}#{team_id}"
+        # Use AES encryption instead of base64 encoding
+        share_token = self._aes_encrypt(share_data)
+        return share_token
+    def decode_share_token(self, share_token: str, db: Optional[Session] = None) -> Optional[TeamShareInfo]:
+        """Decode share token to get team information using AES decryption"""
+        try:
+            # Use AES decryption instead of base64 decoding
+            share_data_str = self._aes_decrypt(share_token)
+            if not share_data_str:
+                return None
+            
+            # Parse the "user_id#team_id" format
+            if "#" not in share_data_str:
+                return None
+            
+            user_id_str, team_id_str = share_data_str.split("#", 1)
+            try:
+                user_id = int(user_id_str)
+                team_id = int(team_id_str)
+            except ValueError:
+                return None
+            
+            # If database session is provided, query user_name and team_name from database
+            if db is not None:
+                # Query user name
+                user = db.query(User).filter(
+                    User.id == user_id,
+                    User.is_active == True
+                ).first()
+                
+                # Query team name
+                team = db.query(Kind).filter(
+                    Kind.id == team_id,
+                    Kind.kind == "Team",
+                    Kind.is_active == True
+                ).first()
+                
+                if not user or not team:
+                    return None
+                
+                return TeamShareInfo(
+                    user_id=user_id,
+                    user_name=user.user_name,
+                    team_id=team_id,
+                    team_name=team.name
+                )
+            else:
+                # Without database session, return basic info with placeholder names
+                return TeamShareInfo(
+                    user_id=user_id,
+                    user_name=f"User_{user_id}",
+                    team_id=team_id,
+                    team_name=f"Team_{team_id}"
+                )
         except Exception:
             return None
     
@@ -148,14 +233,8 @@ class SharedTeamService:
         
         return team is not None
     
-    def share_team(self, db: Session, team_id: int, user_id: int, user_name: str) -> TeamShareResponse:
+    def share_team(self, db: Session, team_id: int, user_id: int) -> TeamShareResponse:
         """Generate team share link"""
-        # Validate team exists and belongs to user
-        if not self.validate_team_exists(db=db, team_id=team_id, user_id=user_id):
-            raise HTTPException(
-                status_code=404,
-                detail="Team not found"
-            )
         
         # Get team name
         team = db.query(Kind).filter(
@@ -164,13 +243,37 @@ class SharedTeamService:
             Kind.kind == "Team",
             Kind.is_active == True
         ).first()
+
+        if team is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Team not found"
+            )
+        else:
+            # 更新team，在labels中记录为分享状态 share_status = 1 （0-private, 1-sharing, 2-shared from others）
+            # 解析 team 的 JSON 数据
+            team_crd = Team.model_validate(team.json)
+            
+            # 确保 metadata 中有 labels 字段
+            if team_crd.metadata.labels is None:
+                team_crd.metadata.labels = {}
+            
+            # 设置分享状态为 1 (sharing)
+            team_crd.metadata.labels["share_status"] = "1"
+            
+            # 保存更新后的 team JSON
+            team.json = team_crd.model_dump(mode='json')
+            team.updated_at = datetime.now()
+            flag_modified(team, "json")
+            
+            # 提交数据库更新
+            db.commit()
+            db.refresh(team)
         
         # Generate share token
         share_token = self.generate_share_token(
             user_id=user_id,
-            user_name=user_name,
             team_id=team_id,
-            team_name=team.name
         )
         
         # Generate share URL
@@ -183,7 +286,7 @@ class SharedTeamService:
     
     def get_share_info(self, db: Session, share_token: str) -> TeamShareInfo:
         """Get team share information from token"""
-        share_info = self.decode_share_token(share_token)
+        share_info = self.decode_share_token(share_token, db)
         
         if not share_info:
             raise HTTPException(
@@ -210,7 +313,7 @@ class SharedTeamService:
     def join_shared_team(self, db: Session, share_token: str, user_id: int) -> JoinSharedTeamResponse:
         """Join a shared team"""
         # Decode share token
-        share_info = self.decode_share_token(share_token)
+        share_info = self.decode_share_token(share_token, db)
         
         if not share_info:
             raise HTTPException(

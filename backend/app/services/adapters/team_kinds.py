@@ -128,16 +128,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.kind == "Team",
             Kind.is_active == True
         ).order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
-
-        # Get all teams that are being shared by this user (single query)
-        shared_team_ids = set()
-        if own_teams:
-            own_share_teams = db.query(SharedTeam.team_id).filter(
-                SharedTeam.original_user_id == user_id,
-                SharedTeam.is_active == True,
-                SharedTeam.team_id.in_([team.id for team in own_teams])
-            ).all()
-            shared_team_ids = {team_id for team_id, in own_share_teams}
             
         # Get user info for team (single query)
         own_team_user = db.query(User).filter(User.id == user_id).first()
@@ -151,11 +141,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "user_name": own_team_user.user_name
                 }
             
-            # Set share_status: 0-private, 1-sharing, 2-shared from others
-            if team.id in shared_team_ids:
-                team_dict["share_status"] = 1  # sharing
-            else:
-                team_dict["share_status"] = 0  # private
+            team_crd = Team.model_validate(team.json)
+            share_status = "0"  # 默认为 private
+            
+            if team_crd.metadata.labels and "share_status" in team_crd.metadata.labels:
+                share_status = team_crd.metadata.labels["share_status"]
+            
+            team_dict["share_status"] = int(share_status)
             
             result.append(team_dict)
         
@@ -280,17 +272,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         
         # Set share_status: 0-private, 1-sharing, 2-shared from others
         if is_author:
-            # Check if this team is being shared with others
-            own_share_team = db.query(SharedTeam).filter(
-                SharedTeam.team_id == team_id,
-                SharedTeam.original_user_id == user_id,
-                SharedTeam.is_active == True
-            ).first()
+            # 通过 team 的 labels 判断分享状态
+            team_crd = Team.model_validate(team.json)
+            share_status = "0"  # 默认为 private
             
-            if own_share_team:
-                team_dict["share_status"] = 1  # sharing
-            else:
-                team_dict["share_status"] = 0  # private
+            if team_crd.metadata.labels and "share_status" in team_crd.metadata.labels:
+                share_status = team_crd.metadata.labels["share_status"]
+            
+            team_dict["share_status"] = int(share_status)
         else:
             team_dict["share_status"] = 2  # shared from others
             user.git_info = []
