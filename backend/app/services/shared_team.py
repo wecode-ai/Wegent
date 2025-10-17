@@ -250,23 +250,18 @@ class SharedTeamService:
                 detail="Team not found"
             )
         else:
-            # 更新team，在labels中记录为分享状态 share_status = 1 （0-private, 1-sharing, 2-shared from others）
-            # 解析 team 的 JSON 数据
+            # Update team, record sharing status in labels as share_status = 1 (0-private, 1-sharing, 2-shared from others)
             team_crd = Team.model_validate(team.json)
             
-            # 确保 metadata 中有 labels 字段
             if team_crd.metadata.labels is None:
                 team_crd.metadata.labels = {}
             
-            # 设置分享状态为 1 (sharing)
             team_crd.metadata.labels["share_status"] = "1"
             
-            # 保存更新后的 team JSON
             team.json = team_crd.model_dump(mode='json')
             team.updated_at = datetime.now()
             flag_modified(team, "json")
             
-            # 提交数据库更新
             db.commit()
             db.refresh(team)
         

@@ -142,7 +142,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 }
             
             team_crd = Team.model_validate(team.json)
-            share_status = "0"  # 默认为 private
+            share_status = "0"  # Default to private
             
             if team_crd.metadata.labels and "share_status" in team_crd.metadata.labels:
                 share_status = team_crd.metadata.labels["share_status"]
@@ -272,9 +272,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         
         # Set share_status: 0-private, 1-sharing, 2-shared from others
         if is_author:
-            # 通过 team 的 labels 判断分享状态
             team_crd = Team.model_validate(team.json)
-            share_status = "0"  # 默认为 private
+            share_status = "0"  # Default to private
             
             if team_crd.metadata.labels and "share_status" in team_crd.metadata.labels:
                 share_status = team_crd.metadata.labels["share_status"]
