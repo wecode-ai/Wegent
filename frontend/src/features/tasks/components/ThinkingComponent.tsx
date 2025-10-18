@@ -33,6 +33,9 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   const [dragStartY, setDragStartY] = useState(0);
   const [dragCurrentY, setDragCurrentY] = useState(0);
   const [translateY, setTranslateY] = useState(0);
+  const [modalWidth, setModalWidth] = useState<number | null>(null);
+  const [modalCenterX, setModalCenterX] = useState<number | null>(null);
+  const triggerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation('chat');
 
@@ -113,6 +116,64 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       document.removeEventListener('click', handleClickOutside);
     };
   }, [isExpanded, isMobile]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const computeDimensions = () => {
+      const fallbackMaxWidth = 768; // matches Tailwind's max-w-3xl
+      const sidePadding = 32;
+      const triggerElement = triggerRef.current;
+      const chatContainer = triggerElement?.closest('[data-chat-container]') as HTMLElement | null;
+      let measuredWidth = fallbackMaxWidth;
+      let centerX = typeof window !== 'undefined' ? window.innerWidth / 2 : fallbackMaxWidth / 2;
+
+      if (chatContainer) {
+        const rect = chatContainer.getBoundingClientRect();
+        measuredWidth = rect.width;
+        centerX = rect.left + rect.width / 2;
+      }
+
+      const viewportAllowance = window.innerWidth > sidePadding
+        ? window.innerWidth - sidePadding
+        : window.innerWidth;
+
+      if (viewportAllowance > 0) {
+        measuredWidth = Math.min(measuredWidth, viewportAllowance);
+      }
+
+      const halfWidth = measuredWidth / 2;
+      const minMargin = sidePadding / 2;
+      if (centerX - halfWidth < minMargin) {
+        centerX = halfWidth + minMargin;
+      } else if (centerX + halfWidth > window.innerWidth - minMargin) {
+        centerX = window.innerWidth - halfWidth - minMargin;
+      }
+
+      setModalWidth(measuredWidth);
+      setModalCenterX(centerX);
+    };
+
+    computeDimensions();
+    window.addEventListener('resize', computeDimensions);
+
+    const chatContainer = triggerRef.current?.closest('[data-chat-container]') as HTMLElement | null;
+    let resizeObserver: ResizeObserver | null = null;
+
+    if (chatContainer && typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => computeDimensions());
+      resizeObserver.observe(chatContainer);
+    }
+
+    return () => {
+      window.removeEventListener('resize', computeDimensions);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
+    };
+  }, []);
 
   // Handle ESC key to close expanded panel
   useEffect(() => {
@@ -231,7 +292,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Desktop view
   if (!isMobile) {
     return (
-      <div className="absolute top-2 right-2 z-20 thinking-component">
+      <div ref={triggerRef} className="absolute top-2 right-2 z-20 thinking-component">
         <Button
           type="text"
           size="small"
@@ -250,7 +311,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         
         {isExpanded && createPortal(
           <div
-            className="thinking-modal fixed top-1/2 left-1/2 w-80 sm:w-96 max-w-[90vw] max-h-[70vh] sm:max-h-96 overflow-y-auto bg-surface border border-border rounded-lg shadow-lg p-4"
+            className="thinking-modal fixed top-1/2 max-h-[70vh] sm:max-h-[80vh] overflow-y-auto bg-surface border border-border rounded-lg shadow-lg p-4"
             style={{
               zIndex: 9999,
               // iOS Safari specific fix for stacking context issues
@@ -259,7 +320,10 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               // Ensure proper positioning on iOS
               position: 'fixed',
               // Fix for iOS viewport issues
-              maxHeight: '-webkit-fill-available'
+              maxHeight: '-webkit-fill-available',
+              width: modalWidth ? `${modalWidth}px` : undefined,
+              maxWidth: 'calc(100vw - 32px)',
+              left: modalCenterX ? `${modalCenterX}px` : '50%'
             }}
           >
             <div className={`font-semibold text-sm mb-3 text-blue-400 ${isTaskInProgress ? 'thinking-text-flow-text' : ''}`}>{t('messages.thinking_process') || 'Thinking Process'}</div>
@@ -300,7 +364,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Mobile view
   return (
     <>
-      <div className="absolute top-2 right-2 z-20 thinking-component">
+      <div ref={triggerRef} className="absolute top-2 right-2 z-20 thinking-component">
         <Button
           type="text"
           size="small"

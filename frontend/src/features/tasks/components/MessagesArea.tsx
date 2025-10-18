@@ -230,7 +230,7 @@ export default function MessagesArea() {
   const displayMessages = generateTaskMessages(selectedTaskDetail);
 
   return (
-    <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col">
+    <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
       {/* Messages Area - only shown when there are messages or loading */}
       {(displayMessages.length > 0) && (
         <div className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar">
@@ -440,4 +440,3 @@ export default function MessagesArea() {
     </div>
   )
 }
-
