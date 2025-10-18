@@ -10,7 +10,9 @@ from app.core import security
 from app.models.user import User
 from app.models.kind import Kind
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInDB, TeamListResponse, TeamDetail
+from app.schemas.shared_team import TeamShareRequest, TeamShareResponse, JoinSharedTeamRequest, JoinSharedTeamResponse
 from app.services.adapters.team_kinds import team_kinds_service
+from app.services.shared_team import shared_team_service
 
 router = APIRouter()
 
@@ -74,6 +76,39 @@ def delete_team(
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Soft delete Team (set is_active to False)"""
     team_kinds_service.delete_with_user(db=db, team_id=team_id, user_id=current_user.id)
     return {"message": "Team deactivated successfully"}
+
+@router.post("/{team_id}/share", response_model=TeamShareResponse)
+def share_team(
+    team_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Generate team share link"""
+    return shared_team_service.share_team(
+        db=db,
+        team_id=team_id,
+        user_id=current_user.id,
+    )
+
+@router.get("/share/info")
+def get_share_info(
+    share_token: str = Query(..., description="Share token"),
+    db: Session = Depends(get_db)
+):
+    """Get team share information from token"""
+    return shared_team_service.get_share_info(db=db, share_token=share_token)
+
+@router.post("/share/join", response_model=JoinSharedTeamResponse)
+def join_shared_team(
+    request: JoinSharedTeamRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Join a shared team"""
+    return shared_team_service.join_shared_team(
+        db=db,
+        share_token=request.share_token,
+        user_id=current_user.id
+    )

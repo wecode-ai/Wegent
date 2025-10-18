@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { teamApis } from '@/apis/team'
+import { teamApis, TeamShareResponse } from '@/apis/team'
 import { Team } from '@/types/api'
 
 /**
@@ -32,4 +32,11 @@ export async function deleteTeam(teamId: number): Promise<void> {
  */
 export async function updateTeam(teamId: number, teamData: any): Promise<Team> {
   return await teamApis.updateTeam(teamId, teamData)
+}
+
+/**
+ * Share team
+ */
+export async function shareTeam(teamId: number): Promise<TeamShareResponse> {
+  return await teamApis.shareTeam(teamId)
 }

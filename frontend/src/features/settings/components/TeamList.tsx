@@ -4,28 +4,30 @@
 
 'use client'
 
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import '@/features/common/scrollbar.css'
 import { RiRobot2Line } from 'react-icons/ri'
 import { FiArrowRight } from 'react-icons/fi'
 import { AiOutlineTeam } from 'react-icons/ai'
 import LoadingState from '@/features/common/LoadingState'
-import { PencilIcon, TrashIcon, DocumentDuplicateIcon, ChatBubbleLeftEllipsisIcon, EllipsisVerticalIcon } from '@heroicons/react/24/outline'
+import { PencilIcon, TrashIcon, DocumentDuplicateIcon, ChatBubbleLeftEllipsisIcon, EllipsisVerticalIcon, ShareIcon } from '@heroicons/react/24/outline'
 import { Bot, Team } from '@/types/api'
-import { fetchTeamsList, deleteTeam } from '../services/teams'
+import { fetchTeamsList, deleteTeam, shareTeam } from '../services/teams'
 import { fetchBotsList } from '../services/bots'
 import TeamEdit from './TeamEdit'
-import { App, Dropdown, Modal } from 'antd'
-import { Button } from 'antd'
+import TeamShareModal from './TeamShareModal'
+import { App, Button, Dropdown, Modal, Tag, theme } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import { sortTeamsByUpdatedAt } from '@/utils/team'
 import { sortBotsByUpdatedAt } from '@/utils/bot'
 import { useRouter } from 'next/navigation'
+import { getSharedTagStyle as getStatusTagStyle, getWorkflowTagStyle } from '@/utils/styles'
 
 export default function TeamList() {
   const { t } = useTranslation('common')
   const { message } = App.useApp()
+  const { token } = theme.useToken()
   const [teams, setTeams] = useState<Team[]>([])
   const [bots, setBots] = useState<Bot[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -35,9 +37,14 @@ export default function TeamList() {
   const [prefillTeam, setPrefillTeam] = useState<Team | null>(null)
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
   const [teamToDelete, setTeamToDelete] = useState<number | null>(null)
+  const [shareModalVisible, setShareModalVisible] = useState(false)
+  const [shareData, setShareData] = useState<{ teamName: string; shareUrl: string } | null>(null)
+  const [sharingId, setSharingId] = useState<number | null>(null)
   const router = useRouter()
   const isEditing = editingTeamId !== null
   const isDesktop = useMediaQuery('(min-width: 640px)')
+  const statusTagStyle = useMemo<React.CSSProperties>(() => getStatusTagStyle(token), [token])
+  const workflowTagStyle = useMemo<React.CSSProperties>(() => getWorkflowTagStyle(token), [token])
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>((updater) => {
     setTeams(prev => {
@@ -130,6 +137,59 @@ export default function TeamList() {
     setTeamToDelete(null)
   }
 
+  const handleShareTeam = async (team: Team) => {
+    setSharingId(team.id)
+    try {
+      const response = await shareTeam(team.id)
+      setShareData({
+        teamName: team.name,
+        shareUrl: response.share_url
+      })
+      setShareModalVisible(true)
+      // Update team status to sharing
+      setTeamsSorted(prev => prev.map(t =>
+        t.id === team.id ? { ...t, share_status: 1 } : t
+      ))
+    } catch (e) {
+      message.error(t('teams.share_failed'))
+    } finally {
+      setSharingId(null)
+    }
+  }
+
+  const handleCloseShareModal = () => {
+    setShareModalVisible(false)
+    setShareData(null)
+  }
+
+  // Get team status label
+  const getTeamStatusLabel = (team: Team) => {
+    if (team.share_status === 1) {
+      return (
+        <Tag className="!m-0" style={statusTagStyle}>
+          {t('teams.sharing')}
+        </Tag>
+      )
+    } else if (team.share_status === 2 && team.user?.user_name) {
+      return (
+        <Tag className="!m-0" style={statusTagStyle}>
+          {t('teams.shared_by', { author: team.user.user_name })}
+        </Tag>
+      )
+    }
+    return null
+  }
+
+  // Check if edit and delete buttons should be shown
+  const shouldShowEditDelete = (team: Team) => {
+    return team.share_status !== 2 // Shared teams don't show edit and delete buttons
+  }
+
+  // Check if share button should be shown
+  const shouldShowShare = (team: Team) => {
+    return !team.share_status || team.share_status === 0 || team.share_status === 1 // Personal teams (no share_status or share_status=0) show share button
+  }
+
   return (
     <>
       <div className="space-y-3">
@@ -179,12 +239,21 @@ export default function TeamList() {
                                         style={{ backgroundColor: team.is_active ? 'rgb(var(--color-success))' : 'rgb(var(--color-border))' }}
                                       ></div>
                                       <span className="text-xs text-text-muted flex items-center justify-center">{team.is_active ? t('teams.active') : t('teams.inactive')}</span>
+                                      {getTeamStatusLabel(team) && (
+                                        <>
+                                          <span className="text-xs text-text-muted mx-1">•</span>
+                                          {getTeamStatusLabel(team)}
+                                        </>
+                                      )}
                                     </div>
                                   </div>
                                   <div className="flex items-center space-x-1 mt-0 min-w-0">
                                     {team.workflow?.mode && (
                                       <>
-                                        <span className="inline-block max-w-full truncate px-2 py-0.5 text-xs rounded-full bg-muted text-text-secondary capitalize">
+                                        <span
+                                          className="inline-block max-w-full truncate px-2 py-0.5 text-xs rounded-full capitalize"
+                                          style={workflowTagStyle}
+                                        >
                                           {t(`team_model.${team.workflow.mode}`)}
                                         </span>
                                         <span className="mx-2 hidden sm:inline"></span>
@@ -193,7 +262,7 @@ export default function TeamList() {
                                     {team.bots.length > 0 ? (
                                       <div className="flex items-center min-w-0 flex-1">
                                         <div className="flex items-center overflow-hidden whitespace-nowrap text-ellipsis">
-                                          {/* 限制显示的机器人数量，移动端显示1个，桌面端显示3个 */}
+                                          {/* Limit the number of bots displayed: 1 on mobile, 3 on desktop */}
                                           {team.bots.slice(0, isDesktop ? 3 : 1).map((bot, idx) => (
                                             <span
                                               key={`${bot.bot_id}-${idx}`}
@@ -213,7 +282,7 @@ export default function TeamList() {
                                               }
                                             </span>
                                           ))}
-                                          {/* 显示省略号 */}
+                                          {/* Show ellipsis */}
                                           {(isDesktop ? team.bots.length > 3 : team.bots.length > 1) && (
                                             <span className="text-xs text-text-muted ml-1">
                                               +{team.bots.length - (isDesktop ? 3 : 1)}
@@ -228,7 +297,7 @@ export default function TeamList() {
                                 </div>
                               </div>
                               <div className="flex items-center space-x-1 flex-shrink-0">
-                                {/* 主要操作按钮 - 始终显示 */}
+                                {/* Primary action buttons - always visible */}
                                 <Button
                                   type="text"
                                   size="small"
@@ -238,15 +307,17 @@ export default function TeamList() {
                                   style={{ padding: '2px' }}
                                   className="!text-text-muted hover:!text-text-primary"
                                 />
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
-                                  onClick={() => handleEditTeam(team)}
-                                  title={t('teams.edit')}
-                                  style={{ padding: '2px' }}
-                                  className="!text-text-muted hover:!text-text-primary"
-                                />
+                                {shouldShowEditDelete(team) && (
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
+                                    onClick={() => handleEditTeam(team)}
+                                    title={t('teams.edit')}
+                                    style={{ padding: '2px' }}
+                                    className="!text-text-muted hover:!text-text-primary"
+                                  />
+                                )}
                                 <Button
                                   type="text"
                                   size="small"
@@ -256,8 +327,20 @@ export default function TeamList() {
                                   style={{ padding: '2px' }}
                                   className="!text-text-muted hover:!text-text-primary"
                                 />
+                                {shouldShowShare(team) && (
+                                  <Button
+                                    type="text"
+                                    size="small"
+                                    icon={<ShareIcon className="w-4 h-4 text-text-muted" />}
+                                    onClick={() => handleShareTeam(team)}
+                                    title={t('teams.share')}
+                                    style={{ padding: '2px' }}
+                                    className="!text-text-muted hover:!text-text-primary"
+                                    loading={sharingId === team.id}
+                                  />
+                                )}
 
-                                {/* 次要操作按钮 - 下拉菜单 */}
+                                {/* Secondary action buttons - dropdown menu */}
                                 <Dropdown
                                   menu={{
                                     items: [
@@ -321,7 +404,7 @@ export default function TeamList() {
         </div>
       </div>
 
-      {/* 删除确认对话框 */}
+      {/* Delete confirmation dialog */}
       <Modal
         title={t('teams.delete_confirm_title')}
         open={deleteConfirmVisible}
@@ -334,6 +417,16 @@ export default function TeamList() {
       >
         <p>{t('teams.delete_confirm_message')}</p>
       </Modal>
+
+      {/* Share success dialog */}
+      {shareData && (
+        <TeamShareModal
+          visible={shareModalVisible}
+          onClose={handleCloseShareModal}
+          teamName={shareData.teamName}
+          shareUrl={shareData.shareUrl}
+        />
+      )}
       {/* Error prompt unified with antd message, no local rendering */}
     </>
   )

@@ -55,6 +55,14 @@ class Settings(BaseSettings):
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
+    # Team sharing configuration
+    TEAM_SHARE_BASE_URL: str = "http://localhost:3000"
+    TEAM_SHARE_QUERY_PARAM: str = "teamShare"
+    
+    # AES encryption configuration for share tokens
+    SHARE_TOKEN_AES_KEY: str = "12345678901234567890123456789012"  # 32 bytes for AES-256
+    SHARE_TOKEN_AES_IV: str = "1234567890123456"  # 16 bytes for AES IV
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

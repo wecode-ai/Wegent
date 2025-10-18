@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useEffect, useMemo } from 'react'
-import { Select } from 'antd'
+import { Select, Tag, theme } from 'antd'
 import { FaUsers } from 'react-icons/fa'
 import { Cog6ToothIcon } from '@heroicons/react/24/outline'
 import { useRouter } from 'next/navigation'
@@ -13,6 +13,7 @@ import { Team } from '@/types/api'
 import { useTaskContext } from '../contexts/taskContext'
 import { useTranslation } from '@/hooks/useTranslation'
 import { paths } from '@/config/paths'
+import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 
 interface TeamSelectorProps {
   selectedTeam: Team | null
@@ -32,6 +33,8 @@ export default function TeamSelector({
   const { selectedTaskDetail } = useTaskContext()
   const { t } = useTranslation('common')
   const router = useRouter()
+  const { token } = theme.useToken()
+  const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(token), [token])
 
   // Automatically set team based on selectedTask
   useEffect(() => {
@@ -73,20 +76,32 @@ export default function TeamSelector({
   }
 
   const handleSearch = (query: string) => {
-    // 搜索功能由 antd Select 内置的 filterOption 处理
+    // Search functionality is handled by antd Select's built-in filterOption
   }
 
   const teamOptions = useMemo(() => {
-    return teams.map(team => ({
-      label: (
-        <div className="flex items-center space-x-2">
-          <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
-          <span className="font-medium text-xs text-text-primary truncate">{team.name}</span>
-        </div>
-      ),
-      value: team.id,
-    }))
-  }, [teams])
+    return teams.map(team => {
+      // Check if it's a shared team from others (share_status === 2 means shared team)
+      const isSharedTeam = team.share_status === 2 && team.user?.user_name
+      
+      return {
+        label: (
+          <div className="flex items-center gap-2">
+            <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
+            <span className="font-medium text-xs text-text-primary truncate" title={team.name}>
+              {team.name}
+            </span>
+            {isSharedTeam && (
+              <Tag className="ml-2 text-xs !m-0 flex-shrink-0" style={sharedBadgeStyle}>
+                {t('teams.shared_by', { author: team.user?.user_name })}
+              </Tag>
+            )}
+          </div>
+        ),
+        value: team.id,
+      }
+    })
+  }, [teams, sharedBadgeStyle])
 
   const filterOption = (input: string, option?: { label: React.ReactNode; value: number }) => {
     if (!option) return false
@@ -102,7 +117,19 @@ export default function TeamSelector({
       <Select
         labelInValue
         showSearch
-        value={selectedTeam ? { value: selectedTeam.id, label: selectedTeam.name } : undefined}
+        value={selectedTeam ? {
+          value: selectedTeam.id,
+          label: (
+            <div className="flex items-center gap-2">
+              <span title={selectedTeam.name}>{selectedTeam.name}</span>
+              {selectedTeam.share_status === 2 && selectedTeam.user?.user_name && (
+                <Tag className="text-xs !m-0 flex-shrink-0 ml-2" style={sharedBadgeStyle}>
+                  {selectedTeam.user?.user_name}
+                </Tag>
+              )}
+            </div>
+          )
+        } : undefined}
         placeholder={
           <span className="text-sx truncate h-2">
             {isLoading ? 'Loading...' : t('teams.select_team')}
@@ -113,10 +140,10 @@ export default function TeamSelector({
           width: 'auto',
           maxWidth: 200,
           display: 'inline-block',
-          paddingRight: 8,
+          paddingRight: 20,
         }}
         popupMatchSelectWidth={false}
-        styles={{ popup: { root: { maxWidth: 160 } } }}
+        styles={{ popup: { root: { maxWidth: 280 } } }}
         classNames={{ popup: { root: "repository-selector-dropdown custom-scrollbar" } }}
         disabled={disabled || isLoading}
         loading={isLoading}

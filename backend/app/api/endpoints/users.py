@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks
 from sqlalchemy.orm import Session
 
 from app.core import security
@@ -43,7 +43,8 @@ async def update_current_user_endpoint(
 @router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)
 def create_user(
     user_create: UserCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db)
 ):
     """Create new user"""
-    return user_service.create_user(db=db, obj_in=user_create)
+    return user_service.create_user(db=db, obj_in=user_create, background_tasks=background_tasks)

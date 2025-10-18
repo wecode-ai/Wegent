@@ -5,8 +5,9 @@
 import secrets
 import logging
 import time
+from app.services.k_batch import apply_default_resources_async
 import jwt  # pip install pyjwt
-from fastapi import APIRouter, Depends, Query, HTTPException, Request
+from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import select
@@ -52,6 +53,7 @@ async def oidc_login():
 
 @router.get("/callback")
 async def oidc_callback(
+    background_tasks: BackgroundTasks,
     code: str = Query(..., description="Authorization code"),
     state: str = Query(..., description="State parameter"),
     error: str = Query(None, description="Error information"),
@@ -125,6 +127,8 @@ async def oidc_callback(
             db.commit()
             db.refresh(user)
             logger.info(f"Created new OIDC user: user_id={user.id}, user_name={user.user_name}")
+            
+            background_tasks.add_task(apply_default_resources_async, user.id)
         else:
             if user.email != email:
                 user.email = email

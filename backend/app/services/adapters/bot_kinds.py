@@ -292,45 +292,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Update components based on update_data
         if "name" in update_data:
             new_name = update_data["name"]
-            old_name = bot.name
             # Update bot
             bot.name = new_name
-            bot_crd = Bot.model_validate(bot.json)
-            bot_crd.metadata.name = new_name
-            
-            # Update references in bot spec
-            bot_crd.spec.ghostRef.name = f"{new_name}-ghost"
-            bot_crd.spec.shellRef.name = f"{new_name}-shell"
-            bot_crd.spec.modelRef.name = f"{new_name}-model"
-            bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")  # Mark JSON field as modified
-            
-            # Update ghost
-            if ghost:
-                ghost.name = f"{new_name}-ghost"
-                ghost_crd = Ghost.model_validate(ghost.json)
-                ghost_crd.metadata.name = f"{new_name}-ghost"
-                ghost.json = ghost_crd.model_dump()
-                flag_modified(ghost, "json")  # Mark JSON field as modified
-            
-            # Update shell
-            if shell:
-                shell.name = f"{new_name}-shell"
-                shell_crd = Shell.model_validate(shell.json)
-                shell_crd.metadata.name = f"{new_name}-shell"
-                shell.json = shell_crd.model_dump()
-                flag_modified(shell, "json")  # Mark JSON field as modified
-            
-            # Update model
-            if model:
-                model.name = f"{new_name}-model"
-                model_crd = Model.model_validate(model.json)
-                model_crd.metadata.name = f"{new_name}-model"
-                model.json = model_crd.model_dump()
-                flag_modified(model, "json")  # Mark JSON field as modified
-            
-            # Update all references to this bot in teams
-            self._update_bot_references_in_teams(db, old_name, "default", new_name, "default", user_id)
 
         if "agent_name" in update_data and shell:
             # Query public_shells table to get supportModel based on new agent_name
@@ -577,37 +541,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "created_at": bot.created_at,
             "updated_at": bot.updated_at,
         }
-
-    def _update_bot_references_in_teams(self, db: Session, old_name: str, old_namespace: str,
-                                       new_name: str, new_namespace: str, user_id: int) -> None:
-        """
-        Update all references to this bot in teams when bot name/namespace changes
-        """
-        # Find all teams that reference this bot
-        teams = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Team",
-            Kind.is_active == True
-        ).all()
-        
-        for team in teams:
-            team_crd = Team.model_validate(team.json)
-            
-            # Check if any member references the old bot
-            updated = False
-            for member in team_crd.spec.members:
-                if (member.botRef.name == old_name and
-                    member.botRef.namespace == old_namespace):
-                    # Update the reference
-                    member.botRef.name = new_name
-                    member.botRef.namespace = new_namespace
-                    updated = True
-            
-            # Save changes if any updates were made
-            if updated:
-                team.json = team_crd.model_dump()
-                team.updated_at = datetime.now()
-                flag_modified(team, "json")
 
 
 bot_kinds_service = BotKindsService(Kind)

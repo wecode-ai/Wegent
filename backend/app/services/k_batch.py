@@ -5,9 +5,15 @@
 """
 Batch operation service for Kubernetes-style API
 """
+import asyncio
+import json
+import logging
+import os
 from typing import Dict, Any, List
 from app.services.kind import kind_service
 from app.core.exceptions import ValidationException
+
+logger = logging.getLogger(__name__)
 
 
 class BatchService:
@@ -116,3 +122,69 @@ class BatchService:
 
 # Create service instance
 batch_service = BatchService()
+
+def load_resources_from_file(file_path: str):
+    try:
+        if not os.path.exists(file_path):
+            logger.info(f"Resource file not found: {file_path}")
+            return None, None
+
+        with open(file_path, 'r') as file:
+            resources = json.load(file)
+
+        if not resources:
+            logger.info("No resources to apply (empty file).")
+            return None, None
+
+        logger.info(f"Loaded resources from {file_path}")
+        return resources, None
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse resource file: {file_path}, error={e}")
+        return None, {"error": "Invalid resource file format", "details": str(e)}
+    except Exception as e:
+        logger.error(f"Failed to read resource file: {file_path}, error={e}")
+        return None, {"error": "Failed to read resource file", "details": str(e)}
+
+
+async def apply_default_resources_async(user_id: int):
+
+    try:
+        resource_file_path = "/app/resource.json"
+        logger.info(f"Loading resources from {resource_file_path} for user_id={user_id}")
+        resources, error = load_resources_from_file(resource_file_path)
+
+        if error:
+            logger.warning(f"Error loading resources for user_id={user_id}: {error}")
+            return error
+
+        if not resources:
+            logger.info(f"No resources found in {resource_file_path} for user_id={user_id}")
+            return None
+            
+        logger.info(f"Found {len(resources)} resources to apply for user_id={user_id}")
+        results = await apply_user_resources_async(user_id, resources)
+        logger.info(f"[SUCCESS] Default resources applied successfully: user_id={user_id}, results={results}")
+        return results
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}", exc_info=True)
+        return {"error": "Invalid DEFAULT_RESOURCES format", "details": str(e)}
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to apply default resources: user_id={user_id}, error={e}", exc_info=True)
+        return {"error": "Failed to apply default resources", "details": str(e)}
+
+
+async def apply_user_resources_async(user_id: int, resources: List[Dict[str, Any]]):
+
+    try:
+        # 虽然 batch_service.apply_resources 是同步函数，
+        # 但由于这个函数是通过 BackgroundTasks 调用的，不会阻塞主线程
+        results = batch_service.apply_resources(user_id, resources)
+        logger.info(f"[SUCCESS] Resources applied: user_id={user_id}, count={len(resources)}, results={results}")
+        return results
+    except Exception as e:
+        logger.error(f"[ERROR] Failed to apply resources: user_id={user_id}, error={e}", exc_info=True)
+        return {
+            "error": "Failed to apply resources",
+            "details": str(e)
+        }

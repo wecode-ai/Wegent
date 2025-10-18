@@ -14,7 +14,7 @@ class ObjectMeta(BaseModel):
     """Standard Kubernetes object metadata"""
     name: str
     namespace: str = "default"
-    # labels: Optional[Dict[str, str]] = None
+    labels: Optional[Dict[str, str]] = None
     # annotations: Optional[Dict[str, str]] = None
 
 

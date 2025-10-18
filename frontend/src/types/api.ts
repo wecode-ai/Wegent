@@ -48,6 +48,10 @@ export interface Team {
   user_id: number
   created_at: string
   updated_at: string
+  share_status?: number // 0: 个人团队, 1: 分享中, 2: 共享团队
+  user?: {
+    user_name: string
+  }
 }
 
 

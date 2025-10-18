@@ -86,7 +86,7 @@ def apply_patch() -> None:
     _orig_update_current_user = UserService.update_current_user
 
     # Monkey-patched create_user
-    def patched_create_user(self, db, *, obj_in: UserCreate):
+    def patched_create_user(self, db, *, obj_in: UserCreate, background_tasks=None):
         # 0) validate obj_in for gitlab domain constraints first
         _ensure_valid_gitlab_domains(getattr(obj_in, "git_info", None))
 
@@ -106,7 +106,7 @@ def apply_patch() -> None:
             )
 
         # 2) run original logic first (includes validation)
-        created_user = _orig_create_user(self, db, obj_in=obj_in)
+        created_user = _orig_create_user(self, db, obj_in=obj_in, background_tasks=background_tasks)
 
         # 3) mask gitlab tokens in DB immediately
         try:
