@@ -93,7 +93,7 @@ export default function TeamSelector({
             </span>
             {isSharedTeam && (
               <Tag className="ml-2 text-xs !m-0 flex-shrink-0" style={sharedBadgeStyle}>
-                {team.user?.user_name}
+                {t('teams.shared_by', { author: team.user?.user_name })}
               </Tag>
             )}
           </div>
