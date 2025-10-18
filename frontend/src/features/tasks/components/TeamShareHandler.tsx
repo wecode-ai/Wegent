@@ -48,7 +48,7 @@ export default function TeamShareHandler({ teams, onTeamSelected, onRefreshTeams
     const fetchShareInfo = async () => {
       setIsLoading(true)
       try {
-        const info = await teamApis.getTeamShareInfo(teamShareToken)
+        const info = await teamApis.getTeamShareInfo(encodeURIComponent(teamShareToken))
         setShareInfo(info)
         setIsModalOpen(true)
       } catch (error) {
