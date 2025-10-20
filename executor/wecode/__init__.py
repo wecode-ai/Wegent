@@ -2,5 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-cp -r ../../../executor ./executor
-cp -r ../../../shared ./shared
+"""
+WeCode-specific extensions for executor
+"""
+
