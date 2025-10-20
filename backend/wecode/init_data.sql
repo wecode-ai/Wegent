@@ -1,4 +1,4 @@
-update users set password_hash = '$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW' where user_name = 'admin';
+update users set password_hash = '$2b$12$BuUTKl5ag2FeLbLabUG6t.B7QQsj4pqAWVtdNCRg7pv012Ol0lvXO' where user_name = 'admin';
 
 INSERT INTO `public_shells` (`id`, `name`, `namespace`, `json`, `is_active`, `created_at`, `updated_at`)
 VALUES
