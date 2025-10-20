@@ -18,6 +18,13 @@ RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
     cd .. && \
     rm -rf sqlite-autoconf-3500400 sqlite-autoconf-3500400.tar.gz
 
+# 配置 DNF 使用阿里云镜像源加速
+RUN sed -e 's|^mirrorlist=|#mirrorlist=|g' \
+        -e 's|^#baseurl=https://repo.almalinux.org|baseurl=https://mirrors.aliyun.com|g' \
+        -i.bak \
+        /etc/yum.repos.d/almalinux*.repo \
+ && dnf makecache
+
 # 安装 glab 命令行工具
 RUN wget -O glab_1.74.0_linux_amd64.rpm "https://gitlab.com/gitlab-org/cli/-/releases/v1.74.0/downloads/glab_1.74.0_linux_amd64.rpm" \
  && dnf install -y glab_1.74.0_linux_amd64.rpm \
