@@ -4,3 +4,4 @@
 
 cp -r ../../../executor ./executor
 cp -r ../../../shared ./shared
+cp -r ../../../backend/wecode ./wecode
