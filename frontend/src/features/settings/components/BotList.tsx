@@ -231,7 +231,7 @@ export default function BotList() {
         </div>
       </div>
 
-      {/* 删除确认对话框 */}
+      {/* Delete confirmation dialog */}
       <Modal
         title={t('bots.delete_confirm_title')}
         open={deleteConfirmVisible}

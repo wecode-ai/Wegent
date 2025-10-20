@@ -2,8 +2,8 @@ import type { CSSProperties } from 'react'
 import type { GlobalToken } from 'antd/es/theme/interface'
 
 /**
- * 获取共享标签样式
- * 用于状态标签、共享徽章等通用标签样式
+ * Get shared tag style
+ * Used for status tags, share badges and other common tag styles
  */
 export const getSharedTagStyle = (token: GlobalToken): CSSProperties => ({
   fontSize: 11,
@@ -15,7 +15,7 @@ export const getSharedTagStyle = (token: GlobalToken): CSSProperties => ({
 })
 
 /**
- * 获取工作流标签样式
+ * Get workflow tag style
  */
 export const getWorkflowTagStyle = (token: GlobalToken): CSSProperties => ({
   backgroundColor: token.colorFillSecondary,
@@ -25,7 +25,7 @@ export const getWorkflowTagStyle = (token: GlobalToken): CSSProperties => ({
 })
 
 /**
- * 获取 subtle 徽章样式
+ * Get subtle badge style
  */
 export const getSubtleBadgeStyle = (token: GlobalToken): CSSProperties => ({
   backgroundColor: token.colorFillTertiary,
@@ -35,12 +35,12 @@ export const getSubtleBadgeStyle = (token: GlobalToken): CSSProperties => ({
 })
 
 /**
- * 提示徽章变体类型
+ * Prompt badge variant type
  */
 export type PromptBadgeVariant = 'configured' | 'pending' | 'none'
 
 /**
- * 获取提示徽章样式
+ * Get prompt badge style
  */
 export const getPromptBadgeStyle = (
   token: GlobalToken,
