@@ -9,6 +9,7 @@
 import asyncio
 import os
 import json
+import importlib
 import random
 import string
 import subprocess
@@ -39,9 +40,49 @@ class ClaudeCodeAgent(Agent):
 
     # Static dictionary for storing client connections to enable connection reuse
     _clients: Dict[str, ClaudeSDKClient] = {}
+    
+    # Static dictionary for storing hook functions
+    _hooks: Dict[str, Any] = {}
 
     def get_name(self) -> str:
         return "ClaudeCode"
+
+    @classmethod
+    def _load_hooks(cls):
+        """
+        Load hook configuration if available
+        This method loads hooks from /app/config/claude_hooks.json if it exists.
+        Hooks are loaded once and stored in the class variable _hooks.
+        """
+        if cls._hooks:
+            # Hooks already loaded
+            return
+            
+        hook_config_path = Path("/app/config/claude_hooks.json")
+        if not hook_config_path.exists():
+            logger.debug("No hook configuration file found at /app/config/claude_hooks.json")
+            return
+            
+        try:
+            with open(hook_config_path, 'r') as f:
+                hook_config = json.load(f)
+                logger.info(f"Loading hook configuration from {hook_config_path}")
+                
+                for hook_name, hook_path in hook_config.items():
+                    try:
+                        # Parse module path and function name
+                        module_path, func_name = hook_path.rsplit('.', 1)
+                        # Dynamically import the module
+                        module = importlib.import_module(module_path)
+                        # Get the function from the module
+                        hook_func = getattr(module, func_name)
+                        # Store the hook function
+                        cls._hooks[hook_name] = hook_func
+                        logger.info(f"Successfully loaded hook: {hook_name} from {hook_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to load hook {hook_name} from {hook_path}: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to load hook configuration from {hook_config_path}: {e}")
 
     def __init__(self, task_data: Dict[str, Any]):
         """
@@ -55,6 +96,9 @@ class ClaudeCodeAgent(Agent):
         self.session_id = self.task_id
         self.prompt = task_data.get("prompt", "")
         self.project_path = None
+
+        # Load hooks on first initialization
+        self._load_hooks()
 
         # Extract Claude Code options from task_data
         self.options = self._extract_claude_options(task_data)
@@ -287,23 +331,26 @@ class ClaudeCodeAgent(Agent):
         
         model_id = env.get("model_id", "")
         
-        # Determine wecode-model-id: use last segment if model_id contains comma, otherwise use model_id as is
-        wecode_model_id = model_id.split(",")[-1].strip() if "," in model_id else model_id
-        
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
-            "ANTHROPIC_CUSTOM_HEADERS": f"wecode-user: {user_name}\nwecode-model-id: {wecode_model_id}\nwecode-action: claude-code\ngit_url: {git_url}",
             "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")),
         }
-        
-        if model_id == 'wecode,sina-glm-4.5':
-            env_config["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = 96000
         
         base_url = env.get("base_url", "")
         if base_url:
             env_config["ANTHROPIC_BASE_URL"] = base_url.removesuffix("/v1")
+        
+        # Apply post-creation hook if available
+        if "post_create_claude_model" in self._hooks:
+            try:
+                env_config = self._hooks["post_create_claude_model"](
+                    env_config, model_id, bot_config, user_name, git_url
+                )
+                logger.info("Applied post_create_claude_model hook")
+            except Exception as e:
+                logger.warning(f"Hook execution failed: {e}")
 
         final_claude_code_config = {
             "env": env_config,

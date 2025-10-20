@@ -34,6 +34,7 @@ ENV PATH="/usr/local/bin:${PATH}"
 RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.6 && pip install -r /app/executor/requirements.txt -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com
 ENV PORT=10001
 ENV PYTHONPATH=/app
+COPY claude_hooks.json /app/config/claude_hooks.json
 COPY executor /app/executor
 COPY shared /app/shared
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --reload"]
