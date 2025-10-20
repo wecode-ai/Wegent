@@ -9,22 +9,24 @@ import { useTaskContext } from '../contexts/taskContext'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
 import { RiRobot2Line } from 'react-icons/ri'
 import { FiCopy, FiCheck, FiTool, FiExternalLink, FiDownload } from 'react-icons/fi'
-import { Button } from 'antd'
+import { Button, Collapse } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import MarkdownEditor from '@uiw/react-markdown-editor'
 import { useTheme } from '@/features/theme/ThemeProvider'
+import ThinkingComponent from './ThinkingComponent'
 
 interface Message {
   type: 'user' | 'ai'
   content: string
   timestamp: number
   botName?: string
+  thinking?: any[] | null
 }
 
 // CopyButton component for copying markdown content
 const CopyButton = ({ content, className }: { content: string, className?: string }) => {
   const [copied, setCopied] = useState(false);
-  const { t } = useTranslation();
+  const { t } = useTranslation('chat');
 
   const handleCopy = async () => {
         // Prefer using Clipboard API
@@ -112,8 +114,9 @@ const BubbleTools = ({
     </div>
   );
 }
+
 export default function MessagesArea() {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('chat')
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext()
   const { theme } = useTheme()
 
@@ -142,6 +145,7 @@ export default function MessagesArea() {
         const promptContent = sub.prompt || '';
         let content;
         let msgType: 'user' | 'ai';
+        let thinkingData = null;
 
         if (sub.role === 'USER') {
           msgType = 'user';
@@ -159,11 +163,39 @@ export default function MessagesArea() {
           // Generate aiContent
           let aiContent;
           const result = sub.result;
+          
+          // Debug: log the result structure
+          console.log('Subtask result:', result);
+          
           if (result) {
             if (typeof result === 'object') {
-              aiContent = result && Object.keys(result).length === 1 && 'value' in result
-                ? String(result.value)
-                : JSON.stringify(result);
+              // Check for new data structure with thinking and value
+              if (result.thinking && Array.isArray(result.thinking)) {
+                thinkingData = result.thinking;
+              }
+              // Also check if thinking might be in a nested structure
+              else if (result.value && typeof result.value === 'object' && result.value.thinking) {
+                thinkingData = result.value.thinking;
+              }
+              // Check if thinking is in a string that needs to be parsed
+              else if (typeof result.value === 'string') {
+                try {
+                  const parsedValue = JSON.parse(result.value);
+                  if (parsedValue.thinking && Array.isArray(parsedValue.thinking)) {
+                    thinkingData = parsedValue.thinking;
+                  }
+                } catch (e) {
+                  // Not valid JSON, ignore
+                }
+              }
+              
+              aiContent = result && 'value' in result
+                ? (result.value !== null && result.value !== undefined && result.value !== ''
+                  ? String(result.value)
+                  : `__PROGRESS_BAR__:${sub.status}:${sub.progress}`)
+                : result && 'thinking' in result
+                  ? `__PROGRESS_BAR__:${sub.status}:${sub.progress}`
+                  : JSON.stringify(result);
             } else {
               aiContent = String(result);
             }
@@ -188,6 +220,7 @@ export default function MessagesArea() {
           content: content,
           timestamp: new Date(sub.updated_at).getTime(),
           botName: (detail?.team?.workflow?.mode !== "pipeline" && detail?.team?.name?.trim()) ? detail.team.name : (sub?.bots?.[0]?.name?.trim() || 'Bot'),
+          thinking: thinkingData,
         });
       });
     }
@@ -197,7 +230,7 @@ export default function MessagesArea() {
   const displayMessages = generateTaskMessages(selectedTaskDetail);
 
   return (
-    <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col">
+    <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
       {/* Messages Area - only shown when there are messages or loading */}
       {(displayMessages.length > 0) && (
         <div className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar">
@@ -209,7 +242,7 @@ export default function MessagesArea() {
                 }`}>
                 {/* Bot name and icon, only displayed for ai messages, and before the timestamp */}
                 {msg.type === 'ai' && (
-                  <div className="flex items-center mb-1 text-xs opacity-80">
+                  <div className="flex items-center mb-1 text-xs opacity-80 pr-40">
                     <RiRobot2Line className="w-5 h-5 mr-1" />
                     <span className="font-semibold mr-2">{msg.botName || t('messages.bot')}</span>
                     <span>
@@ -223,6 +256,8 @@ export default function MessagesArea() {
                     </span>
                   </div>
                 )}
+                {/* Thinking component for AI messages */}
+                {msg.type === 'ai' && msg.thinking && <ThinkingComponent thinking={msg.thinking} taskStatus={selectedTaskDetail?.status} />}
                 {/* Multi-line content support, split by ${$$}$ and render each line intelligently */}
                 {/* Bot messages distinguish between Prompt and Result, Result is rendered with Markdown */}
                 {msg.type === 'ai' && msg.content?.includes('${$$}$') ? (() => {
