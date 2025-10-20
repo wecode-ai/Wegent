@@ -1,0 +1,4 @@
+{
+  "post_create_claude_model": "wecode.api.claude_hooks.post_create_claude_model_hook"
+}
+
