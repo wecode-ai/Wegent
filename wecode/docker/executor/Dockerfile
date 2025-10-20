@@ -35,7 +35,7 @@ RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.
 ENV PORT=10001
 ENV PYTHONPATH=/app
 COPY backend/wecode /app/wecode
-COPY wecode/docker/executor/claude_hooks.json /app/config/claude_hooks.json
+COPY executor/claude_hooks.json /app/config/claude_hooks.json
 COPY executor /app/executor
 COPY shared /app/shared
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --reload"]
