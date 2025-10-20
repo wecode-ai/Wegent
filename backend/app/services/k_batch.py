@@ -177,8 +177,8 @@ async def apply_default_resources_async(user_id: int):
 async def apply_user_resources_async(user_id: int, resources: List[Dict[str, Any]]):
 
     try:
-        # 虽然 batch_service.apply_resources 是同步函数，
-        # 但由于这个函数是通过 BackgroundTasks 调用的，不会阻塞主线程
+        # Although batch_service.apply_resources is a synchronous function,
+        # it won't block the main thread since this function is called through BackgroundTasks
         results = batch_service.apply_resources(user_id, resources)
         logger.info(f"[SUCCESS] Resources applied: user_id={user_id}, count={len(resources)}, results={results}")
         return results

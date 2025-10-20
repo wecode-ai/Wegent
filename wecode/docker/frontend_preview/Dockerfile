@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# ---- 构建阶段 ----
+# ---- Build stage ----
 FROM registry.api.weibo.com/wecode/node:22-slim AS builder
 
 WORKDIR /app
@@ -14,7 +14,7 @@ RUN npm ci
 COPY frontend .
 RUN npm run build
 
-# ---- 生产运行阶段 ----
+# ---- Production runtime stage ----
 FROM registry.api.weibo.com/wecode/node:22-slim
 
 WORKDIR /app

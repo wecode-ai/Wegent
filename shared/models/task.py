@@ -52,8 +52,8 @@ class ThinkingStep(BaseModel):
     next_action: str = Field(default="continue", description="Next action to take")
     
     def dict(self, **kwargs) -> Dict[str, Any]:
-        """重写 dict 方法，排除 None 值"""
-        # 默认排除 None 值
+        """Override dict method to exclude None values"""
+        # Exclude None values by default
         kwargs.setdefault('exclude_none', True)
         return super().dict(**kwargs)
 
@@ -63,8 +63,8 @@ class ExecutionResult(BaseModel):
     thinking: List[ThinkingStep] = []
     
     def dict(self, **kwargs) -> Dict[str, Any]:
-        """重写 dict 方法，排除 None 值"""
-        # 默认排除 None 值
+        """Override dict method to exclude None values"""
+        # Exclude None values by default
         kwargs.setdefault('exclude_none', True)
         return super().dict(**kwargs)
 

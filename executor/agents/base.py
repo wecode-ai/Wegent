@@ -74,7 +74,7 @@ class Agent:
                 if pre_execute_status != TaskStatus.SUCCESS:
                     error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: pre_execute failed."
                     logger.error(error_msg)
-                    # 尝试记录错误 thinking
+                    # Try to record error thinking
                     # self._record_error_thinking("Pre-execution failed", error_msg)
                     return TaskStatus.FAILED, error_msg
                 logger.info(
@@ -93,7 +93,7 @@ class Agent:
         except Exception as e:
             error_msg = f"Agent[{self.get_name()}][{self.task_id}] handle: Exception during execute: {str(e)}"
             logger.exception(error_msg)
-            # 记录错误 thinking
+            # Record error thinking
             # self._record_error_thinking("Execution Exception", error_msg)
             return TaskStatus.FAILED, error_msg
 
@@ -214,14 +214,14 @@ class Agent:
     
     def _record_error_thinking(self, title: str, error_message: str) -> None:
         """
-        记录错误 thinking，用于在系统报错时记录
-        
+        Record error thinking for logging system errors
+
         Args:
-            title: 错误标题
-            error_message: 错误消息
+            title: Error title
+            error_message: Error message
         """
         try:
-            # 检查是否有 thinking 记录能力
+            # Check if thinking recording capability is available
             if hasattr(self, 'add_thinking_step'):
                 self.add_thinking_step(
                     title=title,

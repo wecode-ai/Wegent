@@ -12,7 +12,7 @@ export function DocsButton({ className = '' }: { className?: string }) {
   const { t } = useTranslation('common')
 
   const navigateToDocs = () => {
-    // 使用window.open在新标签页打开文档
+    // Use window.open to open documentation in new tab
     window.open(paths.docs.getHref(), '_blank')
   }
 

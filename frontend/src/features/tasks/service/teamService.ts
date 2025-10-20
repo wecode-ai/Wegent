@@ -43,12 +43,12 @@ export const teamService = {
 
     const addTeam = (newTeam: Team) => {
       setTeams(prevTeams => {
-        // 检查团队是否已存在
+        // Check if team already exists
         const exists = prevTeams.some(team => team.id === newTeam.id)
         if (exists) {
           return prevTeams
         }
-        // 添加新团队并重新排序
+        // Add new team and re-sort
         const updatedTeams = [...prevTeams, newTeam]
         return sortTeamsByUpdatedAt(updatedTeams)
       })

@@ -123,7 +123,7 @@ class K8sExecutor(Executor):
                     )
                     callback_status = TaskStatus.FAILED.value
                 else:
-                    # 需要把内部的git_token 通过 secret 挂在到 pod 里 
+                    # Need to mount the internal git_token to the pod via secret 
                     pod = build_pod_configuration(
                         user_name,
                         executor_name,

@@ -46,7 +46,7 @@ export default function TaskSidebar({
   const scrollRef = useRef<HTMLDivElement>(null)
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm)
 
-  // 自定义 debounce
+  // Custom debounce
   const useDebounce = (callback: Function, delay: number) => {
     const timeoutRef = useRef<NodeJS.Timeout | null>(null)
     const debouncedFn = useCallback((...args: any[]) => {
@@ -67,20 +67,20 @@ export default function TaskSidebar({
     return debouncedFn
   }
 
-  // debounce 搜索
+  // Debounce search
   const debouncedSearch = useDebounce(async (term: string) => {
     setSearchTerm(term)
     await searchTasks(term)
   }, 500)
 
-  // 搜索输入变化
+  // Search input change
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value
     setLocalSearchTerm(value)
     debouncedSearch(value)
   }
 
-  // 清除搜索
+  // Clear search
   const handleClearSearch = () => {
     setLocalSearchTerm('')
     setSearchTerm('')
