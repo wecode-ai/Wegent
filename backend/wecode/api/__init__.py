@@ -14,5 +14,6 @@ import wecode.api.models_endpoint_patch # noqa: F401  patch app.api.endpoints.mo
 import wecode.api.agents_endpoint_patch # noqa: F401  patch app.api.endpoints.agents to enforce admin-only endpoints
 import wecode.api.oidc_endpoint_patch   # noqa: F401  patch app.api.endpoints.oidc OIDC callback for wecode-specific git_info handling
 import wecode.api.executors_endpoint_patch # noqa: F401  patch app.api.endpoints.executors /tasks/dispatch to replace API key placeholders
+import wecode.api.quota_endpoint_patch  # noqa: F401  patch app.api.endpoints.quota to proxy quota requests to external service
 
 api_router.include_router(auth_router, prefix="/internal/auth", tags=["internal"])

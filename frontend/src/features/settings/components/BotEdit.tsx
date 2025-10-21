@@ -175,9 +175,18 @@ const BotEdit: React.FC<BotEditProps> = ({
       try {
         const response = await modelApis.getModelNames(agentName)
         setModels(response.data)
+        
+        // When models list is empty, automatically switch to custom model mode
+        if (!response.data || response.data.length === 0) {
+          setIsCustomModel(true)
+          setSelectedModel('')
+        }
       } catch (error) {
         console.error('Failed to fetch models:', error)
         message.error(t('bot.errors.fetch_models_failed'))
+        // On error, also switch to custom model mode
+        setIsCustomModel(true)
+        setSelectedModel('')
       } finally {
         setLoadingModels(false)
       }

@@ -1,10 +1,12 @@
 import { apiClient } from './client'
 
 export type QuotaData = {
+  open?: boolean
   quota: number
   remaining: number
   usage: number
   user: string
+  quota_source?: string
   user_quota_detail: {
     demand_quota: number
     monthly_quota: number
@@ -18,10 +20,19 @@ export type QuotaData = {
 export const quotaApis = {
   async fetchQuota(): Promise<QuotaData | null> {
     try {
-      const json = await apiClient.get<any>('/copilot/claude/quota')
-      if (json.status === 'success') {
-        return json.data
+      const response = await apiClient.get<any>('/quota/claude/quota')
+      
+      // Check response structure and extract actual data from data field
+      const data = response?.data
+      if (data) {
+        // Merge quota_source from response root level to data, return QuotaData compliant object
+        return {
+          ...data,
+          quota_source: response.quota_source || data.quota_source
+        }
       }
+      
+      // Return null for empty object or missing required fields
       return null
     } catch (e) {
       return null

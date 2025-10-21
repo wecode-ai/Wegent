@@ -1,10 +1,6 @@
-update users set password_hash = '$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW' where user_name = 'admin';
+update users set password_hash = '$2b$12$BuUTKl5ag2FeLbLabUG6t.B7QQsj4pqAWVtdNCRg7pv012Ol0lvXO' where user_name = 'admin';
 
-INSERT INTO `public_shells` (`id`, `name`, `namespace`, `json`, `is_active`, `created_at`, `updated_at`)
-VALUES
-	('1', 'ClaudeCode', 'default', '{\"kind\": \"Shell\", \"spec\": {\"runtime\": \"ClaudeCode\", \"supportModel\": [\"claude\"]}, \"status\": {\"state\": \"Available\"}, \"metadata\": {\"name\": \"ClaudeCode\", \"namespace\": \"default\"}, \"apiVersion\": \"agent.wecode.io/v1\"}', '1', '2025-10-12 11:16:31', '2025-10-12 11:16:31'),
-	('2', 'Agno', 'default', '{\"kind\": \"Shell\", \"spec\": {\"runtime\": \"Agno\", \"supportModel\": []}, \"status\": {\"state\": \"Available\"}, \"metadata\": {\"name\": \"Agno\", \"namespace\": \"default\"}, \"apiVersion\": \"agent.wecode.io/v1\"}', '1', '2025-10-12 11:16:54', '2025-10-12 11:16:54');
-
+update public_shells set json = '{\"kind\": \"Shell\", \"spec\": {\"runtime\": \"ClaudeCode\", \"supportModel\": [\"claude\"]}, \"status\": {\"state\": \"Available\"}, \"metadata\": {\"name\": \"ClaudeCode\", \"namespace\": \"default\"}, \"apiVersion\": \"agent.wecode.io/v1\"}' where name = 'ClaudeCode' and namespace = 'default';
 
 INSERT INTO `public_models` (`id`, `name`, `namespace`, `json`, `is_active`, `created_at`, `updated_at`)
 VALUES
