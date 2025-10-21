@@ -58,7 +58,7 @@ def _wrap_quota_endpoint(endpoint: Callable) -> Callable:
             if content_type.startswith("application/json"):
                 json_data = resp.json()
                 if isinstance(json_data, dict):
-                    json_data["quota_source"] = "wecode"
+                    json_data["quota_source"] = "WeCode"
                 return json_data
             return resp.text
             
