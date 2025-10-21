@@ -68,7 +68,7 @@ export default function LoginForm() {
       })
       router.replace(paths.task.getHref())
     } catch (error: any) {
-      message.error(error.message || t('validation.required'))
+      // Error handling is already done in UserContext.login, no need to show error message here
     } finally {
       setIsLoading(false)
     }
