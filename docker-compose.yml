@@ -80,12 +80,14 @@ services:
       - NODE_ENV=production
       - NEXT_PUBLIC_API_URL=http://backend:8000
     working_dir: /app
-    command: npm start
     depends_on:
       - backend
     networks:
       - wegent-network
+
   executor_manager:
+    #build:
+      #dockerfile: docker/frontend/Dockerfile
     image: ghcr.io/wecode-ai/wegent-executor-manager:1.0.0
     extra_hosts:
       - "host.docker.internal:host-gateway"
