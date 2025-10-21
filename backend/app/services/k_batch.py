@@ -128,17 +128,17 @@ def load_resources_from_file(file_path: str):
         if not os.path.exists(file_path):
             logger.info(f"Resource file not found: {file_path}")
             return None, None
-            
+
         with open(file_path, 'r') as file:
             resources = json.load(file)
-            
+
         if not resources:
             logger.info("No resources to apply (empty file).")
             return None, None
-            
+
         logger.info(f"Loaded resources from {file_path}")
         return resources, None
-        
+
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse resource file: {file_path}, error={e}")
         return None, {"error": "Invalid resource file format", "details": str(e)}
@@ -148,42 +148,42 @@ def load_resources_from_file(file_path: str):
 
 
 async def apply_default_resources_async(user_id: int):
-    """
-    Apply default resources for a user from a JSON file.
-    
-    Args:
-        user_id: User ID to apply resources for
-        
-    Returns:
-        Results of resource application or None if no resources to apply
-    """
+
     try:
         resource_file_path = "/app/resource.json"
+        logger.info(f"Loading resources from {resource_file_path} for user_id={user_id}")
         resources, error = load_resources_from_file(resource_file_path)
-        
+
         if error:
+            logger.warning(f"Error loading resources for user_id={user_id}: {error}")
             return error
-            
+
         if not resources:
+            logger.info(f"No resources found in {resource_file_path} for user_id={user_id}")
             return None
+            
+        logger.info(f"Found {len(resources)} resources to apply for user_id={user_id}")
         results = await apply_user_resources_async(user_id, resources)
-        logger.info(f"Default resources applied successfully: user_id={user_id}")
+        logger.info(f"[SUCCESS] Default resources applied successfully: user_id={user_id}, results={results}")
         return results
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}")
+        logger.error(f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}", exc_info=True)
         return {"error": "Invalid DEFAULT_RESOURCES format", "details": str(e)}
     except Exception as e:
-        logger.error(f"Failed to apply default resources: user_id={user_id}, error={e}")
+        logger.error(f"[ERROR] Failed to apply default resources: user_id={user_id}, error={e}", exc_info=True)
         return {"error": "Failed to apply default resources", "details": str(e)}
 
 
 async def apply_user_resources_async(user_id: int, resources: List[Dict[str, Any]]):
+
     try:
+        # Although batch_service.apply_resources is a synchronous function,
+        # it won't block the main thread since this function is called through BackgroundTasks
         results = batch_service.apply_resources(user_id, resources)
-        logger.info(f"Resources applied successfully: user_id={user_id}, count={len(resources)}")
+        logger.info(f"[SUCCESS] Resources applied: user_id={user_id}, count={len(resources)}, results={results}")
         return results
     except Exception as e:
-        logger.error(f"Failed to apply resources: user_id={user_id}, error={e}")
+        logger.error(f"[ERROR] Failed to apply resources: user_id={user_id}, error={e}", exc_info=True)
         return {
             "error": "Failed to apply resources",
             "details": str(e)

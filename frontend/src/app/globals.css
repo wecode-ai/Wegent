@@ -282,3 +282,70 @@ button:focus-visible {
 .custom-message-notice-content .ant-message-custom-content > span {
   flex: 1 1 auto;
 }
+
+/* Thinking text flow animation for active tasks */
+@keyframes thinkingTextFlow {
+  0% {
+    color: rgb(var(--color-primary));
+    opacity: 0.7;
+  }
+  20% {
+    color: rgb(var(--color-text-primary));
+    opacity: 1;
+  }
+  40% {
+    color: rgb(var(--color-text-secondary));
+    opacity: 0.9;
+  }
+  60% {
+    color: rgb(var(--color-text-muted));
+    opacity: 0.8;
+  }
+  80% {
+    color: rgb(var(--color-primary));
+    opacity: 0.9;
+  }
+  100% {
+    color: rgb(var(--color-primary));
+    opacity: 0.7;
+  }
+}
+
+.thinking-text-flow {
+  animation: thinkingTextFlow 2s ease-in-out infinite;
+  background: linear-gradient(90deg,
+    rgb(var(--color-primary)),
+    rgb(var(--color-text-primary)),
+    rgb(var(--color-primary))
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinkingTextFlow 2s ease-in-out infinite, thinkingGradient 3s linear infinite;
+}
+
+/* Gradient animation for flowing effect */
+@keyframes thinkingGradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+/* Dark mode specific colors for the animation */
+[data-theme='dark'] .thinking-text-flow {
+  background: linear-gradient(90deg,
+    rgb(var(--color-primary)),
+    rgb(var(--color-text-primary)),
+    rgb(var(--color-primary))
+  );
+  background-size: 200% 100%;
+}
+
+/* Text-only animation for thinking text without gradient background */
+.thinking-text-flow-text {
+  animation: thinkingTextFlow 2s ease-in-out infinite;
+}

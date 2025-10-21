@@ -2,12 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import hashlib
 import json
 import os
-import re
-import uuid
-import yaml
 from typing import Any, Dict, Optional
 
 import requests
@@ -21,6 +17,7 @@ from executor_manager.wecode.config.config import (
     EXECUTOR_DEFAULT_MAGE,
     K8S_NAMESPACE,
     MAX_USER_TASKS,
+    USER_WHITELIST_TASK_LIMIT_MAP,
 )
 from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
 from kubernetes import client, config
@@ -114,7 +111,7 @@ class K8sExecutor(Executor):
 
                 user_pod_count = self.get_user_pods(user_name=user_name)
                 logger.info(f"User {user_name} has {user_pod_count} pods.")
-                if user_pod_count >= MAX_USER_TASKS:
+                if user_pod_count >= self.get_user_max_tasks(user_name):
                     logger.info(f"User {user_name} has reached the pod limit.")
                     status = "failed"
                     progress = 100
@@ -123,7 +120,7 @@ class K8sExecutor(Executor):
                     )
                     callback_status = TaskStatus.FAILED.value
                 else:
-                    # 需要把内部的git_token 通过 secret 挂在到 pod 里 
+                    # Need to mount the internal git_token to the pod via secret 
                     pod = build_pod_configuration(
                         user_name,
                         executor_name,
@@ -370,3 +367,19 @@ class K8sExecutor(Executor):
         except Exception as e:
             logger.error(f"Error listing pods for executor '{executor_name}': {e}")
             return {"status": "failed", "error_msg": f"Error: {e}", "pods": []}
+    
+    @staticmethod
+    def get_user_max_tasks(user_name: str) -> int:
+        if not hasattr(K8sExecutor, '_user_task_limit_cache'):
+            K8sExecutor._user_task_limit_cache = {}
+        
+        if not K8sExecutor._user_task_limit_cache:
+            if USER_WHITELIST_TASK_LIMIT_MAP:
+                try:
+                    K8sExecutor._user_task_limit_cache = json.loads(USER_WHITELIST_TASK_LIMIT_MAP)
+                    logger.info("Successfully parsed user whitelist task limit map")
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.error(f"Error parsing user whitelist task limit map: {e}")
+                    K8sExecutor._user_task_limit_cache = {}
+        
+        return K8sExecutor._user_task_limit_cache.get(user_name, MAX_USER_TASKS)

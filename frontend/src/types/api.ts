@@ -106,7 +106,7 @@ export interface TaskDetailSubtask {
   status: TaskStatus
   progress: number
   batch: number
-  result: Record<string, any>
+  result: Record<string, any> | { thinking?: any[], value?: string }
   error_message: string
   id: number
   user_id: number

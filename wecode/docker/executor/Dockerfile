@@ -18,22 +18,23 @@ RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
     cd .. && \
     rm -rf sqlite-autoconf-3500400 sqlite-autoconf-3500400.tar.gz
 
-# 安装 glab 命令行工具
+# Install glab command line tool
 RUN wget -O glab_1.74.0_linux_amd64.rpm "https://gitlab.com/gitlab-org/cli/-/releases/v1.74.0/downloads/glab_1.74.0_linux_amd64.rpm" \
  && dnf install -y glab_1.74.0_linux_amd64.rpm \
  && rm -rf glab_1.74.0_linux_amd64.rpm \
  && dnf clean all \
  && glab --version
 
-# 设置 claude code 环境变量
+# Set claude code environment variables
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENV CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY="false"
 
-# 设置环境变量
+# Set environment variables
 ENV PATH="/usr/local/bin:${PATH}"
 RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.6 && pip install -r /app/executor/requirements.txt -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com
 ENV PORT=10001
 ENV PYTHONPATH=/app
+COPY claude_hooks.json /app/config/claude_hooks.json
 COPY executor /app/executor
 COPY shared /app/shared
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --reload"]

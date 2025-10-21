@@ -48,7 +48,7 @@ export default function TeamShareHandler({ teams, onTeamSelected, onRefreshTeams
     const fetchShareInfo = async () => {
       setIsLoading(true)
       try {
-        const info = await teamApis.getTeamShareInfo(teamShareToken)
+        const info = await teamApis.getTeamShareInfo(encodeURIComponent(teamShareToken))
         setShareInfo(info)
         setIsModalOpen(true)
       } catch (error) {
@@ -94,10 +94,10 @@ export default function TeamShareHandler({ teams, onTeamSelected, onRefreshTeams
       
       message.success(t('teams.share.join_success', { teamName: shareInfo?.team_name || '' }))
       
-      // 先刷新团队列表，等待刷新完成并获取最新的团队列表
+      // First refresh team list, wait for refresh to complete and get latest team list
       const updatedTeams = await onRefreshTeams()
-      
-      // 从刷新后的团队列表中找到新加入的团队并选中
+
+      // Find the newly joined team from the refreshed team list and select it
       const newTeam = updatedTeams.find(team => team.id === shareInfo.team_id)
       if (newTeam) {
         onTeamSelected(newTeam)

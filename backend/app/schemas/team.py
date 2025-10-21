@@ -46,6 +46,8 @@ class TeamInDB(TeamBase):
     user_id: int
     created_at: datetime
     updated_at: datetime
+    user: Optional[dict[str, Any]] = None
+    share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
 
     class Config:
         from_attributes = True
@@ -61,6 +63,7 @@ class TeamDetail(BaseModel):
     created_at: datetime
     updated_at: datetime
     user: Optional[UserInDB] = None
+    share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
 
     class Config:
         from_attributes = True

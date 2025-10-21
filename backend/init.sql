@@ -92,6 +92,23 @@ CREATE TABLE IF NOT EXISTS public_shells (
     UNIQUE KEY `uniq_public_shell_name_namespace` (`name`, `namespace`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- Create shared_teams table for team sharing functionality
+CREATE TABLE IF NOT EXISTS shared_teams (
+    id INT AUTO_INCREMENT PRIMARY KEY COMMENT 'Primary key',
+    user_id INT NOT NULL DEFAULT 0 COMMENT 'User ID who joined the shared team',
+    original_user_id INT NOT NULL DEFAULT 0 COMMENT 'Original user ID who created the team',
+    team_id INT NOT NULL DEFAULT 0 COMMENT 'Team ID that was shared',
+    is_active BOOLEAN NOT NULL DEFAULT TRUE COMMENT 'Active flag',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation time',
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Update time',
+    UNIQUE KEY `uniq_user_team` (`user_id`, `team_id`),
+    INDEX `idx_user_id` (`user_id`),
+    INDEX `idx_original_user_id` (`original_user_id`),
+    INDEX `idx_team_id` (`team_id`),
+    INDEX `idx_created_at` (`created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+
 -- Initialize user data (admin/Wegent2025!)
 INSERT INTO `users` (`user_name`, `password_hash`, `email`, `git_info`) VALUES ('admin', '$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW', 'admin@example.com', '[]');
 INSERT INTO `kinds` (`id`, `user_id`, `kind`, `name`, `namespace`, `json`, `is_active`, `created_at`, `updated_at`)

@@ -185,23 +185,23 @@ class TeamBuilder:
             Mode configuration dictionary
         """
         if mode == "coordinate":
-            # 协调：队长拆分→选择性指派→汇总
+            # Coordination: Leader splits tasks → selective assignment → summary
             return {
                 "reasoning": True,
             }
         elif mode == "collaborate":
-            # 协作：所有成员并行，队长汇总
+            # Collaboration: All members work in parallel, leader summarizes
             return {
                 "delegate_task_to_all_members": True,
                 "reasoning": True,
             }
         elif mode == "route":
-            # 路由：只选最合适的一个成员
+            # Routing: Select only the most suitable member
             return {
                 "respond_directly": True
             }
         else:
-            # 默认走协调语义更稳
+            # Default to coordination mode for stability
             return {
                 "delegate_task_to_all_members": False,
                 "respond_directly": False,

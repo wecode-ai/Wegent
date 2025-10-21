@@ -5,27 +5,27 @@
 import i18next from "i18next"
 import { initReactI18next } from "react-i18next"
 
-// 支持的语言列表
+// Supported languages list
 export const supportedLanguages = [
   'en', 'zh-CN'
 ]
 
-// 动态导入翻译资源的函数
+// Function to dynamically import translation resources
 async function loadTranslations() {
   const resources: Record<string, Record<string, any>> = {}
   
-  // 命名空间列表
+  // Namespace list
   const namespaces = ['common', 'chat', 'settings', 'history', 'prompts']
   
   for (const lng of supportedLanguages) {
     resources[lng] = {}
     for (const ns of namespaces) {
       try {
-        // 动态导入 JSON 文件
+        // Dynamically import JSON file
         const module = await import(`./locales/${lng}/${ns}.json`)
         resources[lng][ns] = module.default
       } catch (error) {
-        // 如果文件不存在，使用空对象
+        // If file doesn't exist, use empty object
         console.warn(`Translation file not found: ./locales/${lng}/${ns}.json`)
         resources[lng][ns] = {}
       }
@@ -35,20 +35,20 @@ async function loadTranslations() {
   return resources
 }
 
-// 初始化 i18next
+// Initialize i18next
 export async function initI18n() {
   const resources = await loadTranslations()
   
   await i18next.use(initReactI18next).init({
-    lng: process.env.I18N_LNG || "en", // 默认语言设为中文
-    fallbackLng: "en", // 回退语言为英文
+    lng: process.env.I18N_LNG || "en", // default language is English
+    fallbackLng: "en", // fallback language is English
     resources,
     interpolation: {
-      escapeValue: false // React 已经处理了 XSS 防护
+      escapeValue: false // React already handles XSS protection
     },
-    // 开发模式下显示调试信息
+    // Show debug info in development mode
     debug: process.env.NODE_ENV === 'development',
-    // 命名空间配置
+    // Namespace configuration
     defaultNS: 'common',
     ns: ['common', 'chat', 'settings', 'history', 'prompts'],
   })

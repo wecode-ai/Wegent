@@ -35,6 +35,10 @@ wegent-executor-manager:
     - build_image
   rules:
     - if: '$CI_COMMIT_BRANCH == "wecode"'
+      changes:
+        - executor_manager/**/*
+        - wecode/docker/executor_manager/**/*
+        - shared/**/*
     - changes:
       - executor_manager/**/*
       - wecode/docker/executor_manager/**/*
@@ -55,8 +59,12 @@ trigger_update_executor_manager:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
-    only:
-    - wecode
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "wecode"'
+        changes:
+          - executor_manager/**/*
+          - wecode/docker/executor_manager/**/*
+          - shared/**/*
 
 wegent-executor:
   stage: package
@@ -68,6 +76,10 @@ wegent-executor:
     - build_image
   rules:
     - if: '$CI_COMMIT_BRANCH == "wecode"'
+      changes:
+        - executor/**/*
+        - wecode/docker/executor/**/*
+        - shared/**/*
     - changes:
       - executor/**/*
       - wecode/docker/executor/**/*
@@ -88,8 +100,12 @@ trigger_update_executor:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
-    only:
-    - wecode
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "wecode"'
+        changes:
+          - executor/**/*
+          - wecode/docker/executor/**/*
+          - shared/**/*
 
 wegent-backend:
   stage: package
@@ -101,6 +117,9 @@ wegent-backend:
     - build_image
   rules:
     - if: '$CI_COMMIT_BRANCH == "wecode"'
+      changes:
+        - backend/**/*
+        - wecode/docker/backend/**/*
     - changes:
       - backend/**/*
       - wecode/docker/backend/**/*
@@ -120,8 +139,11 @@ trigger_update_backend_web:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
-    only:
-    - wecode
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "wecode"'
+        changes:
+          - backend/**/*
+          - wecode/docker/backend/**/*
 
 wegent-web:
   stage: package
@@ -133,6 +155,9 @@ wegent-web:
     - build_image
   rules:
     - if: '$CI_COMMIT_BRANCH == "wecode"'
+      changes:
+        - frontend/**/*
+        - wecode/docker/frontend/**/*
     - changes:
       - frontend/**/*
       - wecode/docker/frontend/**/*
@@ -152,5 +177,21 @@ trigger_update_front_web:
         project: weibo_rd/cloudnative/aigc_gitops_manifest
         branch: master
         strategy: depend
-    only:
-    - wecode
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "wecode"'
+        changes:
+          - frontend/**/*
+          - wecode/docker/frontend/**/*
+
+wegent-preview-web:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-preview-web
+    DOCKERFILE_PATH: wecode/docker/frontend_preview
+  script:
+    - build_image
+  rules:
+    - changes:
+      - frontend/**/*
+      - wecode/docker/frontend/**/*

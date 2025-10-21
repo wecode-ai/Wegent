@@ -5,7 +5,7 @@
 'use client'
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Radio, Transfer, Select, Button, Tooltip, Tag } from 'antd'
+import { Radio, Transfer, Select, Button, Tooltip, Tag, theme } from 'antd'
 import type { TransferDirection } from 'antd/es/transfer'
 import type { MessageInstance } from 'antd/es/message/interface'
 import Image from 'next/image'
@@ -16,6 +16,7 @@ import { Bot, Team } from '@/types/api'
 import { createTeam, updateTeam } from '../services/teams'
 import TeamEditDrawer from './TeamEditDrawer'
 import { useTranslation } from '@/hooks/useTranslation'
+import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles'
 
 interface TeamEditProps {
   teams: Team[]
@@ -41,6 +42,7 @@ export default function TeamEdit(props: TeamEditProps) {
   } = props
 
   const { t } = useTranslation('common')
+  const { token } = theme.useToken()
     // Current editing object (0 means create new)
   const editingTeam: Team | null = editingTeamId === 0
     ? null
@@ -84,7 +86,7 @@ export default function TeamEdit(props: TeamEditProps) {
     return map
   }, [editingTeam, unsavedPrompts])
 
-  const promptSummary = useMemo(() => {
+  const promptSummary = useMemo<{ label: string; variant: PromptBadgeVariant }>(() => {
     let configuredCount = 0
     teamPromptMap.forEach(value => {
       if (value) configuredCount += 1
@@ -97,25 +99,31 @@ export default function TeamEdit(props: TeamEditProps) {
         : ''
       return {
         label: `${t('team.prompts_tag_pending')}${countText}`,
-        color: 'gold' as const,
-        count: configuredCount,
+        variant: 'pending',
       }
     }
 
     if (configuredCount > 0) {
       return {
         label: t('team.prompts_tag_configured', { count: configuredCount }),
-        color: 'blue' as const,
-        count: configuredCount,
+        variant: 'configured',
       }
     }
 
     return {
       label: t('team.prompts_tag_none'),
-      color: undefined,
-      count: 0,
+      variant: 'none',
     }
   }, [teamPromptMap, unsavedPrompts, t])
+
+  const configuredPromptBadgeStyle = useMemo(
+    () => getPromptBadgeStyle(token, 'configured'),
+    [token],
+  )
+  const promptSummaryStyle = useMemo(
+    () => getPromptBadgeStyle(token, promptSummary.variant),
+    [token, promptSummary.variant],
+  )
 
   const handleBack = useCallback(() => {
     setEditingTeamId(null)
@@ -567,7 +575,10 @@ export default function TeamEdit(props: TeamEditProps) {
                         </Tooltip>
                         {teamPromptMap.get(b.id) && (
                           <Tooltip title={t('team.prompts_badge_tooltip')}>
-                            <Tag color="blue" className="!m-0 !ml-1 !px-1.5 !py-0 text-[11px] leading-4">
+                            <Tag
+                              className="!m-0 !ml-1 !px-1.5 !py-0 text-[11px] leading-4"
+                              style={configuredPromptBadgeStyle}
+                            >
                               {t('team.prompts_badge')}
                             </Tag>
                           </Tooltip>
@@ -633,8 +644,8 @@ export default function TeamEdit(props: TeamEditProps) {
                   </Button>
                 </Tooltip>
                 <Tag
-                  color={promptSummary.color}
                   className="!m-0 !px-2 !py-0 text-xs leading-5"
+                  style={promptSummaryStyle}
                 >
                   {promptSummary.label}
                 </Tag>
@@ -659,7 +670,10 @@ export default function TeamEdit(props: TeamEditProps) {
                     <div className="flex items-center">
                       {teamPromptMap.get(Number(item.key)) && (
                         <Tooltip title={t('team.prompts_badge_tooltip')}>
-                          <Tag color="blue" className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4">
+                          <Tag
+                            className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
+                            style={configuredPromptBadgeStyle}
+                          >
                             {t('team.prompts_badge')}
                           </Tag>
                         </Tooltip>
@@ -718,7 +732,7 @@ export default function TeamEdit(props: TeamEditProps) {
               </div>
             </div>
           </div>
-          {/* 移动端 Transfer 布局优化样式 */}
+          {/* Mobile Transfer layout optimization styles */}
           <style dangerouslySetInnerHTML={{
             __html: `
               @media (max-width: 640px) {
@@ -746,21 +760,21 @@ export default function TeamEdit(props: TeamEditProps) {
             `
           }} />
 
-          {/* 额外的滚动和宽度修复样式 */}
+          {/* Additional scroll and width fix styles */}
           <style dangerouslySetInnerHTML={{
             __html: `
-      /* 确保 Transfer 组件在移动端不会横向撑爆 */
+      /* Ensure Transfer component doesn't overflow horizontally on mobile */
       @media (max-width: 640px) {
         .ant-transfer-list {
           max-width: 100% !important;
           overflow-x: hidden !important;
         }
-        /* 移动端：限制列表体高度，避免占满屏 */
+        /* Mobile: Limit list body height to avoid taking full screen */
         .ant-transfer-list-body {
           overflow-y: auto !important;
           max-height: 250px !important;
         }
-        /* 确保Transfer容器的最小高度 */
+        /* Ensure minimum height for Transfer container */
         .transfer-fill {
           min-height: 400px !important;
         }
@@ -779,9 +793,9 @@ export default function TeamEdit(props: TeamEditProps) {
           .ant-transfer .ant-transfer-list-header { padding: 6px 10px !important; }
         }
 
-        /* PC端 Transfer 固定高度和滚动 */
+        /* PC Transfer fixed height and scroll */
         @media (min-width: 641px) {
-          /* 给 Transfer 组件设置固定高度 */
+          /* Set fixed height for Transfer component */
           .transfer-fill .ant-transfer {
             height: 350px !important;
             display: flex !important;
@@ -794,13 +808,13 @@ export default function TeamEdit(props: TeamEditProps) {
             border: 1px solid rgb(var(--color-border)) !important;
             border-radius: 6px !important;
           }
-          /* 确保列表头部固定高度 */
+          /* Ensure list header has fixed height */
           .transfer-fill .ant-transfer-list-header {
             flex-shrink: 0 !important;
             height: 40px !important;
             padding: 8px 12px !important;
           }
-          /* 列表体设置固定高度并滚动 */
+          /* Set fixed height and scroll for list body */
           .transfer-fill .ant-transfer-list-body {
             flex: 1 !important;
             overflow-y: auto !important;
@@ -808,7 +822,7 @@ export default function TeamEdit(props: TeamEditProps) {
             min-height: 200px !important;
             max-height: 360px !important;
           }
-          /* 确保列表底部固定高度（如果有） */
+          /* Ensure list footer has fixed height (if any) */
           .transfer-fill .ant-transfer-list-footer {
             flex-shrink: 0 !important;
             padding: 8px 12px !important;

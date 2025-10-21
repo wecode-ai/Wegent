@@ -1,39 +1,39 @@
 const fs = require('fs');
 const path = require('path');
 
-// 支持的语言列表（除了已有的 en 和 zh-CN）
+// Supported languages list (excluding existing en and zh-CN)
 const languages = [
   'ca', 'de', 'es', 'fr', 'hi', 'id', 'it', 'ja', 'ko', 
   'nl', 'pl', 'pt-BR', 'ru', 'tr', 'vi', 'zh-TW'
 ];
 
-// 命名空间列表
+// Namespace list
 const namespaces = ['common', 'chat', 'settings', 'history', 'prompts'];
 
-// 基础目录
+// Base directory
 const localesDir = path.join(__dirname, '../src/i18n/locales');
 const enDir = path.join(localesDir, 'en');
 
-// 确保 locales 目录存在
+// Ensure locales directory exists
 if (!fs.existsSync(localesDir)) {
   fs.mkdirSync(localesDir, { recursive: true });
 }
 
-// 为每种语言创建目录和文件
+// Create directory and files for each language
 languages.forEach(lang => {
   const langDir = path.join(localesDir, lang);
   
-  // 创建语言目录
+  // Create language directory
   if (!fs.existsSync(langDir)) {
     fs.mkdirSync(langDir, { recursive: true });
   }
   
-  // 为每个命名空间创建文件
+  // Create file for each namespace
   namespaces.forEach(ns => {
     const enFilePath = path.join(enDir, `${ns}.json`);
     const langFilePath = path.join(langDir, `${ns}.json`);
     
-    // 如果英文文件存在且目标文件不存在，则复制英文文件作为模板
+    // If English file exists and target file doesn't exist, copy English file as template
     if (fs.existsSync(enFilePath) && !fs.existsSync(langFilePath)) {
       const enContent = fs.readFileSync(enFilePath, 'utf8');
       fs.writeFileSync(langFilePath, enContent);
