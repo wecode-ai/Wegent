@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { Tooltip, Spin, Button } from 'antd'
 
-import { copilotApis, QuotaData } from '@/apis/copilot'
+import { quotaApis, QuotaData } from '@/apis/quota'
 import { App } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 
@@ -24,15 +24,9 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
   const handleLoadQuota = () => {
     setLoading(true)
     setError(null)
-    copilotApis.fetchQuota()
+    quotaApis.fetchQuota()
       .then((data) => {
-        if (data) {
-          setQuota(data)
-          setError(null)
-        } else {
-          setError(t('quota.load_failed'))
-          message.error(t('quota.load_failed'))
-        }
+        setQuota(data)
       })
       .catch(() => {
         setError(t('quota.load_failed'))
@@ -45,11 +39,17 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
 
   useEffect(() => {
     handleLoadQuota()
-    const timer = setInterval(() => {
-      handleLoadQuota()
-    }, 5000)
-    return () => clearInterval(timer)
-  }, [])
+    // Only start polling when valid data is obtained
+    let timer: NodeJS.Timeout | null = null
+    if (quota && Object.keys(quota).length > 0) {
+      timer = setInterval(() => {
+        handleLoadQuota()
+      }, 5000)
+    }
+    return () => {
+      if (timer) clearInterval(timer)
+    }
+  }, [quota])
 
   if (loading && !quota) {
     return (
@@ -60,6 +60,10 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
   }
 
   if (error || !quota) {
+    // Don't render anything when there's no data or error (empty objects are handled as null in API)
+    if (!quota && !error) {
+      return null
+    }
     return (
       <div className={`text-xs text-text-muted mt-1 mb-2 ${className ?? ''}`}>{error || t('quota.load_failed')}</div>
     )
@@ -73,6 +77,7 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
   } = quota.user_quota_detail
 
   const brief = t('quota.brief', {
+    quota_source: quota.quota_source,
     monthly_usage,
     monthly_quota: monthly_quota.toLocaleString(),
     permanent_quota: permanent_quota.toLocaleString(),
