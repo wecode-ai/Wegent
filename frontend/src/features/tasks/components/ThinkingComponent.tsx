@@ -292,7 +292,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Desktop view
   if (!isMobile) {
     return (
-      <div ref={triggerRef} className="absolute top-2 right-2 z-20 thinking-component">
+      <div ref={triggerRef} className="relative z-20 thinking-component ml-2 flex items-center">
         <Button
           type="text"
           size="small"
@@ -364,7 +364,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Mobile view
   return (
     <>
-      <div ref={triggerRef} className="absolute top-2 right-2 z-20 thinking-component">
+      <div ref={triggerRef} className="relative z-20 thinking-component ml-2 flex items-center">
         <Button
           type="text"
           size="small"

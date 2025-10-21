@@ -242,22 +242,24 @@ export default function MessagesArea() {
                 }`}>
                 {/* Bot name and icon, only displayed for ai messages, and before the timestamp */}
                 {msg.type === 'ai' && (
-                  <div className="flex items-center mb-1 text-xs opacity-80 pr-40">
-                    <RiRobot2Line className="w-5 h-5 mr-1" />
-                    <span className="font-semibold mr-2">{msg.botName || t('messages.bot')}</span>
-                    <span>
-                      {new Date(msg.timestamp ?? 0).toLocaleTimeString(navigator.language, {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                        hour12: false,
-                        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-                      })}
-                    </span>
+                  <div className="flex justify-between items-center mb-1">
+                    <div className="flex items-center text-xs opacity-80">
+                      <RiRobot2Line className="w-5 h-5 mr-1" />
+                      <span className="font-semibold mr-2">{msg.botName || t('messages.bot')}</span>
+                      <span>
+                        {new Date(msg.timestamp ?? 0).toLocaleTimeString(navigator.language, {
+                          hour: '2-digit',
+                          minute: '2-digit',
+                          second: '2-digit',
+                          hour12: false,
+                          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+                        })}
+                      </span>
+                    </div>
+                    {/* Thinking component for AI messages */}
+                    {msg.thinking && <ThinkingComponent thinking={msg.thinking} taskStatus={selectedTaskDetail?.status} />}
                   </div>
                 )}
-                {/* Thinking component for AI messages */}
-                {msg.type === 'ai' && msg.thinking && <ThinkingComponent thinking={msg.thinking} taskStatus={selectedTaskDetail?.status} />}
                 {/* Multi-line content support, split by ${$$}$ and render each line intelligently */}
                 {/* Bot messages distinguish between Prompt and Result, Result is rendered with Markdown */}
                 {msg.type === 'ai' && msg.content?.includes('${$$}$') ? (() => {
