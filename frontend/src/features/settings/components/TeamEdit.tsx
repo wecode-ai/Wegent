@@ -237,6 +237,30 @@ export default function TeamEdit(props: TeamEditProps) {
     return null;
   }, [mode, leaderBotId, selectedBotKeys, bots]);
 
+  const isClaudeCodeAgent = useCallback((agentName?: string | null) => {
+    if (!agentName) return false
+    const normalized = agentName.trim().toLowerCase()
+    return normalized === 'claudecode' || normalized === 'claude_code_agent' || normalized === 'claudecodeagent'
+  }, [])
+
+  const hasClaudeCodeBot = useMemo(() => {
+    const leaderBot = leaderBotId != null ? bots.find(b => b.id === leaderBotId) : null
+    if (leaderBot && isClaudeCodeAgent(leaderBot.agent_name)) {
+      return true
+    }
+    return selectedBotKeys.some(key => {
+      const bot = bots.find(b => String(b.id) === key)
+      return bot ? isClaudeCodeAgent(bot.agent_name) : false
+    })
+  }, [bots, leaderBotId, selectedBotKeys, isClaudeCodeAgent])
+
+  useEffect(() => {
+    if (hasClaudeCodeBot && mode !== 'pipeline') {
+      setMode('pipeline')
+    }
+  }, [hasClaudeCodeBot, mode])
+
+
     // Data source for Transfer
   const transferData = useMemo(
     () => {
@@ -488,6 +512,7 @@ export default function TeamEdit(props: TeamEditProps) {
                   options={['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => ({
                     label: t(`team_model.${opt}`),
                     value: opt as any,
+                    disabled: hasClaudeCodeBot && opt !== 'pipeline',
                     style: { minWidth: 20, padding: '0 12px', textAlign: 'center' }
                   }))}
                   className="w-full"

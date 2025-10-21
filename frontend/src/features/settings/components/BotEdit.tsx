@@ -365,7 +365,16 @@ const BotEdit: React.FC<BotEditProps> = ({
             </div>
             <Select
               value={agentName}
-              onChange={setAgentName}
+              onChange={(value) => {
+                if (value !== agentName) {
+                  setIsCustomModel(false)
+                  setSelectedModel('')
+                  setAgentConfig('')
+                  setAgentConfigError(false)
+                  setModels([])
+                }
+                setAgentName(value)
+              }}
               placeholder="choose an agent"
               style={{ width: '100%' }}
               options={agentOptions}
@@ -421,18 +430,19 @@ const BotEdit: React.FC<BotEditProps> = ({
                   agentName === 'ClaudeCode'
                     ? `{
   "env": {
-    "ANTHROPIC_MODEL": "xxxxx",
-    "ANTHROPIC_SMALL_FAST_MODEL": "xxxxx",
-    "ANTHROPIC_API_KEY": "xxxxxx",
-    "ANTHROPIC_BASE_URL": "xxxxxx"
+    "model": "claude",
+    "model_id": "xxxxx",
+    "api_key": "xxxxxx",
+    "base_url": "xxxxxx"
   }
 }`
                     : agentName === 'Agno'
                       ? `{
   "env": {
-    "AGNO_MODEL": "xxxxx",
-    "AGNO_API_KEY": "xxxxxx",
-    "AGNO_BASE_URL": "xxxxxx"
+    "model": "openai",
+    "model_id": "xxxxxx",
+    "api_key": "xxxxxx",
+    "base_url": "xxxxxx"
   }
 }`
                       : ''

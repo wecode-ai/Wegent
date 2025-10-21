@@ -10,8 +10,8 @@ type QuotaUsageProps = {
 }
 
 export default function QuotaUsage({ className }: QuotaUsageProps) {
-  const deployMode = process.env.NEXT_PUBLIC_FRONTEND_DEPLOY_MODE
-  if (deployMode !== 'weibo') {
+  const deployMode = process.env.NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS
+  if (deployMode !== 'enable') {
     return null
   }
 
@@ -83,7 +83,7 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
     quota_source: quota.quota_source,
     monthly_usage,
     monthly_quota: monthly_quota.toLocaleString(),
-    permanent_quota: permanent_quota.toLocaleString(),
+    permanent_quota: (permanent_quota - permanent_usage).toLocaleString(),
   })
 
   const detail = (
