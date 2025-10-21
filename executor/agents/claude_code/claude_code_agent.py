@@ -342,6 +342,12 @@ class ClaudeCodeAgent(Agent):
         if base_url:
             env_config["ANTHROPIC_BASE_URL"] = base_url.removesuffix("/v1")
         
+        # Add other environment variables except model_id, api_key, base_url
+        excluded_keys = {"model_id", "api_key", "base_url", "model", "small_model"}
+        for key, value in env.items():
+            if key not in excluded_keys and value is not None:
+                env_config[key] = value
+        
         # Apply post-creation hook if available
         if "post_create_claude_model" in self._hooks:
             try:
