@@ -39,7 +39,10 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
 
   useEffect(() => {
     handleLoadQuota()
-    // Only start polling when valid data is obtained
+  }, [])
+
+  // Separate effect for polling when quota data is available
+  useEffect(() => {
     let timer: NodeJS.Timeout | null = null
     if (quota && Object.keys(quota).length > 0) {
       timer = setInterval(() => {
