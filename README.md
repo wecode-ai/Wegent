@@ -1,5 +1,7 @@
 # Wegent
 
+English | [简体中文](README_zh.md)
+
 [![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.68+-green.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
