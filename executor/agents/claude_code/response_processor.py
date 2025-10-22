@@ -303,7 +303,7 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
         return TaskStatus.COMPLETED
 
     if msg.is_error:
-        logger.error("processor error")
+        logger.error(f"Received error from Claude SDK: {msg.result}")
         result_str = str(msg.result) if msg.result is not None else "No result"
         
         # Add thinking step for error result
@@ -323,6 +323,7 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
             message=result_str,
             result=result_dict,
         )
+        return TaskStatus.FAILED  # CRITICAL FIX: Return FAILED status to stop task execution
 
     # If it's not a successful result message, return None to let caller continue processing
     return None
