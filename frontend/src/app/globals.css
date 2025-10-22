@@ -1,0 +1,351 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Weibo, Inc.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+  --color-bg-base: 255 255 255;
+  --color-bg-surface: 248 250 252;
+  --color-bg-muted: 241 245 249;
+  --color-border: 226 232 240;
+  --color-border-strong: 203 213 225;
+  --color-text-primary: 17 24 39;
+  --color-text-secondary: 71 85 105;
+  --color-text-muted: 100 116 139;
+  --color-text-inverted: 255 255 255;
+  --color-primary: 37 99 235;
+  --color-primary-contrast: 255 255 255;
+  --color-focus-ring: 96 165 250;
+  --color-scrollbar-track: 226 232 240;
+  --color-scrollbar-thumb: 148 163 184;
+  --color-success: 34 197 94;
+  --color-error: 239 68 68;
+  --shadow-popover: 0 12px 32px rgba(15, 23, 42, 0.12);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg-base: 13 17 23;
+  --color-bg-surface: 22 27 34;
+  --color-bg-muted: 33 38 45;
+  --color-border: 48 54 61;
+  --color-border-strong: 63 68 76;
+  --color-text-primary: 240 246 252;
+  --color-text-secondary: 201 209 217;
+  --color-text-muted: 156 163 175;
+  --color-text-inverted: 13 17 23;
+  --color-primary: 112 167 215;
+  --color-primary-contrast: 13 17 23;
+  --color-focus-ring: 112 167 215;
+  --color-scrollbar-track: 33 38 45;
+  --color-scrollbar-thumb: 48 54 61;
+  --color-success: 86 211 100;
+  --color-error: 248 81 73;
+  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+body {
+  color: rgb(var(--color-text-primary));
+  background-color: rgb(var(--color-bg-base));
+  background-image: linear-gradient(
+      to bottom,
+      transparent,
+      rgb(var(--color-bg-base))
+    );
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+/* 100vh fallback for better mobile compatibility */
+html {
+  height: 100%;
+}
+
+body {
+  min-height: min(100vh, 100dvh); /* Use the smaller of 100vh or 100dvh for better compatibility */
+  box-sizing: border-box;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Smart height that works on both mobile and desktop */
+  .smart-h-screen {
+    height: min(100vh, 100dvh);
+  }
+
+  /* Touch-friendly optimizations */
+  .touch-target {
+    min-height: 44px;
+    min-width: 44px;
+  }
+
+  /* Mobile-specific styles */
+  @media (max-width: 768px) {
+    .mobile-padding {
+      padding-left: 1rem;
+      padding-right: 1rem;
+    }
+
+    .mobile-text {
+      font-size: 1rem;
+      line-height: 1.5;
+    }
+
+    .mobile-button {
+      min-height: 44px;
+      padding: 0.75rem 1rem;
+    }
+  }
+
+  /* Optimize touch interactions */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Improve scrolling on mobile */
+  .custom-scrollbar {
+    -webkit-overflow-scrolling: touch;
+  }
+}
+
+/* Remove default blue outline from Headless UI */
+[data-headlessui-state~="open"] {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+button:focus,
+button:focus,
+button:focus-visible {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Custom toast styles */
+.Toastify__toast {
+  background-color: rgb(var(--color-bg-surface));
+  color: rgb(var(--color-text-primary));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 6px;
+  font-size: 14px;
+  min-height: 40px;
+  padding: 8px 12px;
+}
+
+.Toastify__toast--success {
+  color: rgb(var(--color-success));
+  border-color: rgb(var(--color-border));
+}
+
+.Toastify__toast--error {
+  color: rgb(var(--color-error));
+  border-color: rgb(var(--color-border));
+}
+
+.Toastify__toast-body {
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+}
+
+.Toastify__close-button {
+  color: rgb(var(--color-text-secondary));
+  opacity: 0.7;
+}
+
+.Toastify__close-button:hover {
+  opacity: 1;
+}
+
+.Toastify__progress-bar {
+  display: none;
+}
+
+/* Custom styles for RepositorySelector antd Select */
+.repository-selector.ant-select .ant-select-selector {
+  background-color: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+.repository-selector.ant-select .ant-select-selection-placeholder,
+.repository-selector.ant-select .ant-select-selection-item {
+  color: rgb(var(--color-text-muted));
+  display: flex;
+  align-items: center;
+  flex-grow: 1;
+  min-width: 0;
+}
+
+.repository-selector.ant-select:hover .ant-select-selection-placeholder,
+.repository-selector.ant-select:hover .ant-select-selection-item {
+  color: rgb(var(--color-text-secondary));
+}
+
+.repository-selector.ant-select .ant-select-selection-item .truncate {
+  overflow: hidden !important;
+  white-space: nowrap !important;
+  text-overflow: ellipsis !important;
+  max-width: 120px !important;
+  display: inline-block;
+}
+
+.repository-selector.ant-select .ant-select-arrow {
+  color: rgb(var(--color-text-muted));
+}
+
+.repository-selector-dropdown.ant-select-dropdown {
+  background-color: rgb(var(--color-bg-surface)) !important;
+  border: 1px solid rgb(var(--color-border)) !important;
+  box-shadow: var(--shadow-popover) !important;
+  padding-top: 4px !important;
+  padding-bottom: 4px !important;
+}
+
+.repository-selector-dropdown .ant-select-item {
+  color: rgb(var(--color-text-primary)) !important;
+  font-size: 12px !important;
+  padding: 6px 10px !important;
+  border-radius: 4px;
+  margin: 0 4px;
+  width: calc(100% - 8px);
+}
+
+.repository-selector-dropdown .ant-select-item-option-selected {
+  background-color: rgb(var(--color-bg-muted)) !important;
+  color: rgb(var(--color-text-primary)) !important;
+}
+
+.repository-selector-dropdown .ant-select-item-option-active:not(.ant-select-item-option-selected) {
+  background-color: rgb(var(--color-primary) / 0.15) !important;
+  color: rgb(var(--color-text-primary)) !important;
+}
+
+.repository-selector-dropdown .ant-select-item-empty {
+  color: rgb(var(--color-text-muted));
+  font-size: 12px;
+  text-align: center;
+}
+
+/* Custom antd message style for prefixCls="custom-message" */
+.custom-message {
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.custom-message-notice {
+  width: 100%;
+}
+
+.custom-message-notice-content {
+  display: block;
+  max-width: 640px;
+  min-width: 320px;
+  width: auto;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin-left: auto;
+  margin-right: auto;
+  text-align: left;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  pointer-events: all;
+  background-color: rgb(var(--color-bg-surface));
+  border: 1px solid rgb(var(--color-border));
+  color: rgb(var(--color-text-primary));
+}
+
+.custom-message-notice-content .ant-message-custom-content {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.custom-message-notice-content .ant-message-custom-content .anticon {
+  line-height: 1.2;
+  margin-top: 2px;
+}
+
+.custom-message-notice-content .ant-message-custom-content > span {
+  flex: 1 1 auto;
+}
+
+/* Thinking text flow animation for active tasks */
+@keyframes thinkingTextFlow {
+  0% {
+    color: rgb(var(--color-primary));
+    opacity: 0.7;
+  }
+  20% {
+    color: rgb(var(--color-text-primary));
+    opacity: 1;
+  }
+  40% {
+    color: rgb(var(--color-text-secondary));
+    opacity: 0.9;
+  }
+  60% {
+    color: rgb(var(--color-text-muted));
+    opacity: 0.8;
+  }
+  80% {
+    color: rgb(var(--color-primary));
+    opacity: 0.9;
+  }
+  100% {
+    color: rgb(var(--color-primary));
+    opacity: 0.7;
+  }
+}
+
+.thinking-text-flow {
+  animation: thinkingTextFlow 2s ease-in-out infinite;
+  background: linear-gradient(90deg,
+    rgb(var(--color-primary)),
+    rgb(var(--color-text-primary)),
+    rgb(var(--color-primary))
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: thinkingTextFlow 2s ease-in-out infinite, thinkingGradient 3s linear infinite;
+}
+
+/* Gradient animation for flowing effect */
+@keyframes thinkingGradient {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 200% 50%;
+  }
+}
+
+/* Dark mode specific colors for the animation */
+[data-theme='dark'] .thinking-text-flow {
+  background: linear-gradient(90deg,
+    rgb(var(--color-primary)),
+    rgb(var(--color-text-primary)),
+    rgb(var(--color-primary))
+  );
+  background-size: 200% 100%;
+}
+
+/* Text-only animation for thinking text without gradient background */
+.thinking-text-flow-text {
+  animation: thinkingTextFlow 2s ease-in-out infinite;
+}

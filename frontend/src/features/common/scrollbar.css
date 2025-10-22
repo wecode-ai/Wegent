@@ -1,0 +1,31 @@
+/*
+ * Custom scrollbar styles for global reuse
+ * SPDX-FileCopyrightText: 2025 Weibo, Inc.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Custom scrollbar styles (for ChatInput, main area, etc.) */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgb(var(--color-scrollbar-track));
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-scrollbar-thumb));
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-border-strong));
+}
+
+/* Firefox support */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) rgb(var(--color-scrollbar-track));
+}

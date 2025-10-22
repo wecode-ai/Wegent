@@ -1,0 +1,166 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: developer-ghost
+  namespace: default
+spec:
+  systemPrompt: |
+    You are a senior software engineer, proficient in Git, GitHub MCP, branch management, and code submission workflows. You will use the specified programming language to generate executable code and complete the branch submission and MR (Merge Request) process. Please follow the steps strictly:
+
+    Input Parameters
+    - `language`: The programming language (e.g., Python, Java, Go, JavaScript, etc.)
+    - `code_requirements`: Description or requirements of the code functionality to be implemented
+
+    Steps
+
+    1. Create a New Branch
+    - The branch name must start with weagent/
+    - Ensure the branch exists both locally and remotely
+
+    2. Generate Code
+    - Write executable code using the specified language.
+    - The code must follow syntax rules and meet the code_requirements.
+    - Do not explain the code logic, only provide executable code.
+
+    3. Commit Code to Remote Repository
+    - Use Git Bash commands to commit the new branch code.
+    - The commit message should be concise, descriptive, and follow conventional commit standards.
+
+    4. Create MR (Merge Request)
+    - Use GitHub MCP to create an MR.
+    - The MR title should be automatically generated from the branch name.
+    - The MR description should automatically include the commit summary.
+
+    5. Output MR Information
+    - Must return in JSON format:
+    ```
+    {
+      "mr_id": "<MR ID>",
+      "mr_url": "<MR Link>",
+      "status": "<Operation status, e.g., success/failure>"
+    }
+    ```
+
+    Requirements
+    - The branch name must be generated automatically, without user input.
+    - Follow each step in sequence without skipping.
+    - Output must contain only JSON, with no additional text or explanation.
+    - The generated code must use the specified `language`, comply with syntax rules, and meet the implementation requirements.
+  mcpServers:
+    github:
+      env:
+        GITHUB_PERSONAL_ACCESS_TOKEN: ghp_xxxxx
+      args:
+        - run
+        - -i
+        - --rm
+        - -e
+        - GITHUB_PERSONAL_ACCESS_TOKEN
+        - -e
+        - GITHUB_TOOLSETS
+        - -e
+        - GITHUB_READ_ONLY
+        - ghcr.io/github/github-mcp-server
+      command: docker
+status:
+  state: "Available"
+---
+apiVersion: agent.wecode.io/v1
+kind: Model
+metadata:
+  name: claude-model
+  namespace: default
+spec:
+  modelConfig:
+    env:
+      ANTHROPIC_MODEL: "claude-4.1-opus"
+      ANTHROPIC_API_KEY: "xxxxxx"
+      ANTHROPIC_BASE_URL: "sk-xxxxxx"
+      ANTHROPIC_SMALL_FAST_MODEL: "claude-3.5-haiku"
+status:
+  state: "Available"
+---
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: claude-shell
+  namespace: default
+spec:
+  runtime: "ClaudeCode"
+status:
+  state: "Available"
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: developer-bot
+  namespace: default
+spec:
+  ghostRef:
+    name: developer-ghost
+    namespace: default
+  shellRef:
+    name: claude-shell
+    namespace: default
+  modelRef:
+    name: claude-model
+    namespace: default
+status:
+  state: "Available"
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: dev-team
+  namespace: default
+spec:
+  members:
+    - role: "leader"
+      botRef:
+        name: developer-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: "pipeline"
+status:
+  state: "Available"
+---
+apiVersion: agent.wecode.io/v1
+kind: Workspace
+metadata:
+  name: project-workspace
+  namespace: default
+spec:
+  repository:
+    gitUrl: "https://github.com/user/repo.git"
+    gitRepo: "{user}/{repo}"
+    branchName: "main"
+    gitDomain: "github.com"
+status:
+  state: "Available"
+---
+apiVersion: agent.wecode.io/v1
+kind: Task
+metadata:
+  name: implement-feature
+  namespace: default
+spec:
+  title: "Implement new feature"
+  prompt: "Task description"
+  teamRef:
+    name: dev-team
+    namespace: default
+  workspaceRef:
+    name: project-workspace
+    namespace: default
+status:
+  state: "Available"
+  status: "PENDING"
+  progress: 0
+  result: null
+  errorMessage: null
+  startedAt: null
+  completedAt: null

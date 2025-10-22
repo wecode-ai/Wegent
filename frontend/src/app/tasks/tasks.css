@@ -1,0 +1,54 @@
+/*
+ * SPDX-FileCopyrightText: 2025 Weibo, Inc.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Auto-resize textarea styles for chat input */
+.auto-resize-textarea {
+  min-height: 72px; /* Default height for about 3 lines */
+  max-height: 144px; /* Maximum height for about 6 lines (double the original) */
+  overflow-y: auto;
+  resize: none;
+  transition: height 0.2s ease;
+}
+
+/* Custom scrollbar styles (for ChatInput, main area, etc.) */
+.auto-resize-textarea::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.auto-resize-textarea::-webkit-scrollbar-track {
+  background: rgb(var(--color-scrollbar-track));
+  border-radius: 3px;
+}
+
+.auto-resize-textarea::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-scrollbar-thumb));
+  border-radius: 3px;
+}
+
+.auto-resize-textarea::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-border-strong));
+}
+
+/* Bot selector styles */
+.bot-selector-container {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+/* Message area scrollbar styles */
+.messages-container {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) rgb(var(--color-scrollbar-track));
+}
+/* Fix markdown code/pre overflow issue */
+.markdown-body pre, .markdown-body code {
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  box-sizing: border-box;
+}

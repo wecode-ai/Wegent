@@ -1,0 +1,297 @@
+{
+  "extension": {
+    "name": "WeCode AI 助手",
+    "description": "编辑器中的完整 AI 开发团队。"
+  },
+  "actions": {
+    "save": "保存",
+    "saving": "保存中...",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "create": "创建",
+    "creating": "创建中...",
+    "start": "开始!",
+    "confirm": "确认",
+    "close": "关闭",
+    "submit": "提交",
+    "reset": "重置",
+    "search": "搜索",
+    "filter": "筛选",
+    "refresh": "刷新",
+    "loading": "加载中...",
+    "retry": "重试",
+    "toggle_theme": "切换主题"
+  },
+  "validation": {
+    "required": "此字段为必填项"
+  },
+  "login": {
+    "username": "用户名",
+    "password": "密码",
+    "enter_username": "请输入用户名",
+    "enter_password": "请输入密码",
+    "logging_in": "登录中...",
+    "test_account": "测试账号：admin / Wegent2025!",
+    "or_continue_with": "或继续使用",
+    "oidc_login": "使用 OpenID Connect 登录"
+  },
+  "navigation": {
+    "tasks": "任务",
+    "settings": "设置",
+    "docs": "文档"
+  },
+  "user": {
+    "default_name": "用户",
+    "logout": "退出登录",
+    "login": "登录"
+  },
+  "chat": {
+    "placeholder": "让团队构建、修复错误、探索"
+  },
+  "bots": {
+    "title": "机器人",
+    "description": "配置您的 AI 驱动开发助手",
+    "loading": "加载机器人中...",
+    "active": "活跃",
+    "inactive": "非活跃",
+    "edit": "编辑机器人",
+    "delete": "删除机器人",
+    "no_bots": "没有可用的机器人",
+    "new_bot": "新建机器人",
+    "copy": "复制机器人",
+    "delete_confirm_title": "确认删除",
+    "delete_confirm_message": "确定要删除这个机器人吗？此操作无法撤销。"
+  },
+  "bot": {
+    "name": "名称",
+    "name_placeholder": "输入机器人名称",
+    "agent": "执行器",
+    "agent_select": "选择执行器",
+    "prompt": "提示词",
+    "prompt_placeholder": "你是一个 [身份/角色定位] 助手。\n你的角色是 [能力/专长/风格]。\n你的任务是 [要完成的具体目标]。",
+    "agent_config": "模型配置",
+    "mcp_config": "MCP配置",
+    "save_prompt": "保存提示词",
+    "use_custom_model": "自定义配置",
+    "import_mcp": "导入",
+    "import_mcp_button": "导入或追加其他平台的MCP",
+    "import_mcp_title": "导入MCP配置",
+    "import_mcp_desc": "请粘贴标准化的MCP配置JSON，系统将自动添加type: \"sse\"（如果缺失）或将transport字段转换为type字段",
+    "import_mode_replace": "替换现有配置",
+    "import_mode_append": "追加到现有配置",
+    "import_success": "MCP配置导入成功",
+    "append_success": "MCP配置追加成功",
+    "errors": {
+      "required": "请填写所有必填项",
+      "agent_config_json": "模型配置必须是合法 JSON 格式",
+      "mcp_config_json": "MCP 配置必须是合法 JSON 格式",
+      "fetch_agents_failed": "获取 Agent 列表失败",
+      "fetch_models_failed": "获取模型列表失败",
+      "save_failed": "保存失败"
+    }
+  },
+  "messages": {
+    "copy_markdown": "复制 Markdown 内容",
+    "task_status": "任务状态：",
+    "bot": "机器人",
+    "subtask_completed": "子任务已完成",
+    "subtask_failed": "子任务失败：",
+    "unknown_error": "未知错误",
+    "download": "下载"
+  },
+  "teams": {
+    "title": "团队列表",
+    "description": "查看所有团队及其机器人",
+    "loading": "加载团队中...",
+    "active": "活跃",
+    "inactive": "非活跃",
+    "no_bots": "没有机器人",
+    "edit": "编辑团队",
+    "chat": "发送任务",
+    "delete": "删除团队",
+    "copy": "复制团队",
+    "more": "更多操作",
+    "no_teams": "没有可用的团队",
+    "new_team": "新建团队",
+    "search_placeholder": "搜索团队...",
+    "no_match": "没有匹配的团队",
+    "manage": "团队设置",
+    "delete_confirm_title": "确认删除",
+    "delete_confirm_message": "确定要删除这个团队吗？此操作无法撤销。",
+    "sharing": "共享中",
+    "shared_by": "{{author}}共享",
+    "share_failed": "分享失败，请重试",
+    "share_success_title": "分享成功",
+    "share_success_message": "分享团队\"{{teamName}}\"",
+    "share_success_message_prefix": "分享团队",
+    "share_success_message_suffix": "给你的朋友！",
+    "share_link": "分享链接",
+    "copy_link": "复制链接",
+    "copy_success": "复制成功",
+    "share_instructions_content1": "复制链接发送给其他人，他们可以通过链接使用你分享的团队来直接完成任务。 ",
+    "share_instructions_content2": "团队共享后，你仍然可以管理和编辑这个团队，其他人可以应用最新的团队配置但不能编辑团队设置。",
+    "share": {
+      "title": "团队分享",
+      "confirm_message": "确定要使用 {{userName}} 的 {{teamName}} 执行任务吗？",
+      "join_description": "确定加入后，{{teamName}} 将添加到您的团队列表中，您可以使用该团队创建和执行任务。",
+      "joining": "加入中...",
+      "confirm_join": "确认",
+      "self_share_message": "{{teamName}} 是您的团队，无须加入。",
+      "already_joined_message": "{{teamName}} 已经在您的团队列表中，无须重复加入。",
+      "fetch_info_failed": "获取共享团队信息失败",
+      "join_failed": "加入团队失败",
+      "join_success": "团队{{teamName}}加入成功",
+      "loading": "正在加载团队信息...",
+      "self_share_suffix": " 是您的团队，无须加入。",
+      "already_joined_suffix": " 已经在您的团队列表中，无须重复加入。",
+      "confirm_prefix": "使用用户",
+      "confirm_middle": "分享的团队",
+      "confirm_suffix": "执行任务吗？",
+      "join_description_prefix": "确定加入后，",
+      "join_description_suffix": " 将添加到您的团队列表中，您可以使用该团队创建和执行任务。"
+    }
+  },
+  "team": {
+    "name": "名称",
+    "name_placeholder": "团队名称",
+    "leader": "领导者",
+    "model": "模式",
+    "bots": "候选人列表",
+    "select_leader": "选择领导者",
+    "candidates": "候选人",
+    "in_team": "团队成员",
+    "no_data": "没有数据",
+    "bot_prompt": "追加提示词",
+    "input_bot_prompt": "追加提示词",
+    "prompts_link": "团队专属提示词",
+    "prompts_tooltip": "为团队内的机器人补充了仅限该团队使用的提示词",
+    "prompts_tag_configured": "已追加 {{count}} 个",
+    "prompts_tag_none": "未设置",
+    "prompts_tag_pending": "待保存",
+    "prompts_drawer_title_new": "新团队的提示词",
+    "prompts_drawer_title_existing": "团队「{{name}}」的提示词",
+    "prompts_drawer_title_generic": "团队提示词",
+    "prompts_scope_hint": "添加在这里的提示词会追加到机器人基础 Prompt 之后，仅在当前团队生效。",
+    "prompts_scope_sub": "其他团队仍会使用它们自己的配置。",
+    "prompts_placeholder": "填写团队级的说明，帮助机器人在本团队中更好地工作。",
+    "prompts_base_button": "查看基础 Prompt",
+    "prompts_badge": "团队提示词",
+    "prompts_badge_tooltip": "该机器人在当前团队设置了追加提示词。",
+    "prompts_save_success": "已保存！在保存团队后会生效。",
+    "prompts_update_success": "提示词已更新！",
+    "prompts_update_error": "更新提示词失败。"
+  },
+  "team_model": {
+    "pipeline": "顺序",
+    "route": "路由",
+    "coordinate": "协作",
+    "collaborate": "并发"
+  },
+  "team_model_desc": {
+    "pipeline": "多个智能体按顺序串联，每一步在上一结果上继续加工或改写。",
+    "route": "由一个中枢智能体作为路由，根据上下文把消息分发给合适的智能体，彼此不直接通信。",
+    "coordinate": "网络式协作结构，定义智能体之间如何连接、交换信息并进行协调。",
+    "collaborate": "多个智能体并行处理任务，并共享中间结果以加速产出。"
+  },
+  "integrations": {
+    "title": "集成",
+    "description": "设置外部服务以增强您的工作流程",
+    "loading": "加载 Git 集成中...",
+    "edit_token": "编辑令牌",
+    "delete": "删除",
+    "no_tokens": "没有配置 Git 令牌",
+    "new_token": "新建令牌"
+  },
+  "auth": {
+    "login_title": "登录 WeCode AI",
+    "login_subtitle": "您的开发者 AI 助手",
+    "oidc_login_failed": "OIDC 登录失败：",
+    "login_success": "登录成功",
+    "loading": "加载中..."
+  },
+  "branches": {
+    "load_failed": "加载分支失败",
+    "select_repository": "选择仓库",
+    "select_branch": "选择分支",
+    "loading": "加载分支中...",
+    "no_branch": "未找到分支",
+    "default": "(默认)",
+    "set_token": "设置token"
+  },
+  "tasks": {
+    "search_placeholder": "搜索任务...",
+    "new_task": "新建任务",
+    "no_tasks": "没有任务",
+    "today": "今天",
+    "this_week": "本周",
+    "earlier": "更早",
+    "loading": "加载中...",
+    "no_more_tasks": "没有更多任务",
+    "settings": "设置",
+    "search_results": "搜索结果",
+    "no_search_results": "没有匹配的任务",
+    "copy_task_id": "复制任务ID",
+    "delete_task": "删除任务",
+    "searching": "搜索中..."
+  },
+  "settings": {
+    "integrations": "集成",
+    "bot": "机器人",
+    "team": "团队"
+  },
+  "guide": {
+    "title": "欢迎",
+    "description": "在开始使用此应用之前，请先完成下面的设置！",
+    "create_team": "创建团队"
+  },
+  "common": {
+    "back": "返回",
+    "cancel": "取消",
+    "confirm": "确认",
+    "open_sidebar": "打开侧边栏",
+    "close_sidebar": "关闭侧边栏"
+  },
+  "quota": {
+    "load_failed": "用量信息获取失败",
+    "brief": "{{quota_source}}配额 {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
+    "detail_monthly": "你的当月额度为 {{monthly_quota}}，已经使用 {{monthly_usage}}，剩余 {{monthly_left}}。",
+    "detail_permanent": "永久额度为 {{permanent_quota}}，已经使用 {{permanent_usage}}，剩余 {{permanent_left}}。",
+    "detail_tip": "当月额度每月月初重置，永久额度可参与活动获取。"
+  },
+  "github": {
+    "error": {
+      "required": "请填写所有必填项",
+      "save_failed": "保存失败",
+      "invalid_domain": "请输入有效的域名（如 gitlab.example.com），不要包含协议或结尾斜杠"
+    },
+    "modal": {
+      "title_edit": "编辑令牌",
+      "title_add": "新增 Git 令牌"
+    },
+    "platform": "平台",
+    "platform_github": "GitHub",
+    "platform_gitlab": "GitLab",
+    "domain": "平台域名",
+    "token": {
+      "title": "个人访问令牌",
+      "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx"
+    },
+    "howto": {
+      "step1_visit": "1. 访问",
+      "github": {
+        "title": "如何获取 GitHub 令牌：",
+        "step2": "2. 点击“Generate new token (classic)”",
+        "step3": "3. 选择合适的权限范围并复制生成的令牌"
+      },
+      "gitlab": {
+        "title": "如何获取 GitLab 令牌：",
+        "step2": "2. 点击“Add new token”",
+        "step3": "3. 选择合适的权限范围并复制生成的令牌"
+      }
+    },
+    "saving": "保存中...",
+    "save_token": "保存令牌"
+  }
+}

@@ -1,0 +1,146 @@
+#!/usr/bin/env python
+
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# -*- coding: utf-8 -*-
+
+"""
+API routes module, defines FastAPI routes and models
+"""
+
+import os
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
+from fastapi import FastAPI, HTTPException, APIRouter
+from pydantic import BaseModel
+from typing import Optional
+
+from shared.logger import setup_logger
+from executor_manager.tasks.task_processor import TaskProcessor
+from executor_manager.clients.task_api_client import TaskApiClient
+from shared.models.task import TasksRequest
+from executor_manager.executors.dispatcher import ExecutorDispatcher
+
+# Setup logger
+logger = setup_logger(__name__)
+
+# Create FastAPI app
+app = FastAPI(
+    title="Executor Manager API",
+    description="API for managing executor tasks and callbacks",
+)
+
+# Create task processor for handling callbacks
+task_processor = TaskProcessor()
+# Create API client for direct API calls
+api_client = TaskApiClient()
+
+
+from typing import Optional, Dict, Any
+
+
+# Define callback request model
+class CallbackRequest(BaseModel):
+    task_id: int
+    subtask_id: int
+    task_title: Optional[str] = None
+    progress: int
+    executor_name: Optional[str] = None
+    executor_namespace: Optional[str] = None
+    status: Optional[str] = None
+    error_message: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+
+
+@app.post("/executor-manager/callback")
+async def callback_handler(request: CallbackRequest):
+    """
+    Receive callback interface for executor task progress and completion.
+
+    Args:
+        request: Request body containing task ID, pod name, and progress.
+
+    Returns:
+        dict: Processing result
+    """
+    try:
+        logger.info(f"Received callback: body={request}")
+        # Directly call the API client to update task status
+        success, result = api_client.update_task_status_by_fields(
+            task_id=request.task_id,
+            subtask_id=request.subtask_id,
+            progress=request.progress,
+            executor_name=request.executor_name,
+            executor_namespace=request.executor_namespace,
+            status=request.status,
+            error_message=request.error_message,
+            title=request.task_title,
+            result=request.result,
+        )
+        if not success:
+            logger.warning(f"Failed to update status for task {request.task_id}: {result}")
+        logger.info(f"Successfully processed callback for task {request.task_id}")
+        return {
+            "status": "success",
+            "message": f"Successfully processed callback for task {request.task_id}",
+        }
+    except Exception as e:
+        logger.error(f"Error processing callback: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/executor-manager/tasks/receive")
+async def receive_tasks(request: TasksRequest):
+    """
+    Receive tasks in batch via POST.
+    Args:
+        request: TasksRequest containing a list of tasks.
+    Returns:
+        dict: result code
+    """
+    try:
+        logger.info(
+            f"Received {len(request.tasks)} tasks, first task: {request.tasks[0].task_title if request.tasks else 'None'}"
+        )
+        # Call the task processor to handle the tasks
+        task_processor.process_tasks([task.dict() for task in request.tasks])
+        return {"code": 0}
+    except Exception as e:
+        logger.error(f"Error processing tasks: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint"""
+    return {"status": "healthy"}
+
+
+class DeleteExecutorRequest(BaseModel):
+    executor_name: str
+
+
+@app.post("/executor-manager/executor/delete")
+async def delete_executor(request: DeleteExecutorRequest):
+    try:
+        logger.info(f"Received request to delete executor: {request.executor_name}")
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        result = executor.delete_executor(request.executor_name)
+        return result
+    except Exception as e:
+        logger.error(f"Error deleting executor '{request.executor_name}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/executor-manager/executor/load")
+async def get_executor_load():
+    try:
+        logger.info("Received request to get executor load")
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        result = executor.get_executor_count()
+        result["total"] = int(os.getenv("MAX_CONCURRENT_TASKS", "5"))
+        return result
+    except Exception as e:
+        logger.error(f"Error getting executor load: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
