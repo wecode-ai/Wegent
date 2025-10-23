@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM registry.api.weibo.com/wecode/wegent-base-python3.12:1.0.1-java-support
+FROM registry.api.weibo.com/wecode/wegent-base-python3.12:1.0.2-cc-2.0.25
 
 WORKDIR /app/executor
 
@@ -35,6 +35,7 @@ RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.
 ENV PORT=10001
 ENV PYTHONPATH=/app
 COPY claude_hooks.json /app/config/claude_hooks.json
+COPY file_change_sender.py /app/scripts/file_change_sender.py
 COPY executor /app/executor
 COPY shared /app/shared
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT} --reload"]
