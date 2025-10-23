@@ -5,19 +5,20 @@
 """
 WeCode-specific hooks for Claude Code Agent configuration
 """
-
+import os
 from typing import Dict, Any, Optional
+
 from shared.logger import setup_logger
 
 logger = setup_logger("claude_hooks")
 
 
 def post_create_claude_model_hook(
-    env_config: Dict[str, Any],
-    model_id: str,
-    bot_config: Dict[str, Any],
-    user_name: Optional[str] = None,
-    git_url: Optional[str] = None
+        env_config: Dict[str, Any],
+        model_id: str,
+        bot_config: Dict[str, Any],
+        user_name: Optional[str] = None,
+        git_url: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Hook function to modify Claude model configuration after creation
@@ -34,10 +35,10 @@ def post_create_claude_model_hook(
         Modified environment configuration with WeCode enhancements
     """
     logger.info(f"Applying WeCode-specific configuration for model: {model_id}")
-    
+
     # Determine wecode-model-id: use last segment if model_id contains comma, otherwise use model_id as is
     wecode_model_id = model_id.split(",")[-1].strip() if "," in model_id else model_id
-    
+
     # Add wecode-specific custom headers
     env_config["ANTHROPIC_CUSTOM_HEADERS"] = (
         f"wecode-user: {user_name}\n"
@@ -46,11 +47,28 @@ def post_create_claude_model_hook(
         f"git_url: {git_url}"
     )
     logger.debug(f"Added custom headers with wecode-user: {user_name}, wecode-model-id: {wecode_model_id}")
-    
+
     # Add wecode-specific model configurations
     if model_id == 'wecode,sina-glm-4.5':
         env_config["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = 96000
         logger.info(f"Applied special configuration for {model_id}: CLAUDE_CODE_MAX_OUTPUT_TOKENS=96000")
-    
-    return env_config
 
+    final_claude_code_config = {
+        "env": env_config,
+        "includeCoAuthoredBy": os.getenv("CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY", "true").lower() != "false",
+        "hooks": {
+            "PostToolUse": [
+                {
+                    "matcher": "Edit|Write",
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "/app/scripts/file_change_sender.py"
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+
+    return final_claude_code_config
