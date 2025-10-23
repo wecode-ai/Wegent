@@ -35,9 +35,32 @@ class TaskBase(BaseModel):
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
 
-class TaskCreate(TaskBase):
+class TaskCreate(BaseModel):
     """Task creation model"""
-    pass
+    title: Optional[str] = None
+    team_id: Optional[int] = None
+    git_url: Optional[str] = None
+    git_repo: Optional[str] = None
+    git_repo_id: Optional[int] = None
+    git_domain: Optional[str] = None
+    branch_name: Optional[str] = None
+    prompt: str
+    type: Optional[str] = None
+    auto_delete_executor: Optional[str] = "false"
+
+class TaskCreateToUser(BaseModel):
+    """Task base model"""
+    team_name: str
+    team_namespace: str
+    prompt: str
+    title: Optional[str] = None
+    git_url: Optional[str] = None
+    git_repo: Optional[str] = None
+    git_repo_id: Optional[int] = None
+    git_domain: Optional[str] = None
+    branch_name: Optional[str] = None
+    type: Optional[str] = None
+    auto_delete_executor: Optional[str] = "false"
 
 class TaskUpdate(BaseModel):
     """Task update model"""

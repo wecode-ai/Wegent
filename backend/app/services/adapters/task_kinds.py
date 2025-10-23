@@ -29,9 +29,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     """
     Task service class using kinds table
     """
-
-   
-
     def create_task_or_append(
         self, db: Session, *, obj_in: TaskCreate, user: User, task_id: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -41,19 +38,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         logger.info(f"create_task_or_append called with task_id={task_id}, user_id={user.id}")
         task = None
         team = None
-
-        # Limit running tasks per user
-        running_count = db.query(Kind).filter(
-            Kind.user_id == user.id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') IN ('PENDING', 'RUNNING')")
-        ).count()
-        if running_count >= settings.MAX_RUNNING_TASKS_PER_USER:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Maximum number of running tasks per user ({settings.MAX_RUNNING_TASKS_PER_USER}) exceeded."
-            )
 
         # Set task ID
         if task_id is None:
@@ -91,6 +75,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 raise HTTPException(
                     status_code=400,
                     detail="Task is in progress, please wait for it to complete"
+                )
+            
+            if task_crd.metadata.labels and task_crd.metadata.labels["type"] == "offline" :
+                raise HTTPException(
+                    status_code=400,
+                    detail="task is offline, not allowed to append to it"
                 )
             
             # Check if task is expired
@@ -210,17 +200,21 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 },
                 "status": {
                     "state": "Available",
-                    "status": obj_in.status.value if obj_in.status else "PENDING",
-                    "progress": obj_in.progress or 0,
-                    "result": obj_in.result,
-                    "errorMessage": obj_in.error_message,
+                    "status": "PENDING",
+                    "progress": 0,
+                    "result": None,
+                    "errorMessage": "",
                     "createdAt": datetime.now().isoformat(),
                     "updatedAt": datetime.now().isoformat(),
                     "completedAt": None
                 },
                 "metadata": {
                     "name": f"task-{task_id}",
-                    "namespace": "default"
+                    "namespace": "default",
+                    "labels": {
+                        "type": obj_in.type or "online", # "online" or "offline"
+                        "autoDeleteExecutor": obj_in.auto_delete_executor or "false",
+                    }
                 },
                 "apiVersion": "agent.wecode.io/v1"
             }
@@ -244,7 +238,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         db.flush()
 
         return self._convert_to_task_dict(task, db, user.id)
-    
 
     def _get_team_by_name_and_namespace(self, db: Session, team_name: str, team_namespace: str, user_id: int) -> Optional[Kind]:
         existing_team = db.query(Kind).filter(
@@ -339,8 +332,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             Kind.user_id == user_id,
             Kind.kind == "Task",
             Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
-            text("JSON_EXTRACT(json, '$.spec.title') LIKE :title")
+            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE' and JSON_EXTRACT(json, '$.spec.title') LIKE :title")
         ).params(title=f"%{title}%")
 
         total = query.with_entities(func.count(Kind.id)).scalar()
@@ -637,7 +629,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Collect unique executor keys to avoid duplicate calls (namespace + name)
         unique_executor_keys = set()
         for subtask in task_subtasks:
-            if subtask.executor_name:
+            if subtask.executor_name and not subtask.executor_deleted_at:
                 unique_executor_keys.add((subtask.executor_namespace, subtask.executor_name))
         
         # Stop running subtasks on executor (deduplicated by (namespace, name))

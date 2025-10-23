@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 import httpx
 import logging
+import asyncio
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_, func, text
@@ -17,6 +18,7 @@ from app.schemas.subtask import SubtaskExecutorUpdate
 from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
 from app.services.base import BaseService
 from app.core.config import settings
+from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +29,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
     """
 
     async def dispatch_tasks(
-        self, db: Session, *, status: str = "PENDING", limit: int = 1, task_ids: Optional[List[int]] = None
+        self, db: Session, *, status: str = "PENDING", limit: int = 1, task_ids: Optional[List[int]] = None, type: str = "online"
     ) -> Dict[str, List[Dict]]:
         """
         Task dispatch logic with subtask support using kinds table
@@ -36,6 +38,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             status: Subtask status to filter by
             limit: Maximum number of subtasks to return (only used when task_ids is None)
             task_ids: Optional list of task IDs to filter by
+            type: Task type to filter by (default: "online")
         """
         if task_ids:
             # Scenario 1: Specify task ID list, query subtasks for these tasks
@@ -48,7 +51,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     Kind.id == task_id,
                     Kind.kind == "Task",
                     Kind.is_active == True
-                ).first()
+                ).params(type=type).first()
                 if not task:
                     # Task doesn't exist, skip
                     continue
@@ -74,7 +77,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     subtasks.extend(task_subtasks)
         else:
             # Scenario 2: No task_ids, first query tasks, then query first subtask for each task
-            subtasks = self._get_first_subtasks_for_tasks(db, status, limit)
+            subtasks = self._get_first_subtasks_for_tasks(db, status, limit, type)
         
         if not subtasks:
             return {
@@ -100,16 +103,26 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             Subtask.created_at.asc()
         ).limit(limit).all()
 
-    def _get_first_subtasks_for_tasks(self, db: Session, status: str, limit: int) -> List[Subtask]:
+    def _get_first_subtasks_for_tasks(self, db: Session, status: str, limit: int, type: str) -> List[Subtask]:
         """Get first subtask for multiple tasks using kinds table"""
         # Step 1: First query kinds table to get limit tasks
-        tasks = db.query(Kind).filter(
-            Kind.kind == "Task",
-            Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') = :status")
-        ).params(status=status).order_by(
-            Kind.created_at.desc()  # Sort by creation time descending, prioritize latest tasks
-        ).limit(limit).all()
+        tasks = None
+        if type == "offline":
+            tasks = db.query(Kind).filter(
+                Kind.kind == "Task",
+                Kind.is_active == True,
+                text("JSON_EXTRACT(json, '$.metadata.labels.type') = 'offline' and JSON_EXTRACT(json, '$.status.status') = :status")
+            ).params(status=status).order_by(
+                Kind.created_at.desc()
+            ).limit(limit).all()
+        else :
+            tasks = db.query(Kind).filter(
+                Kind.kind == "Task",
+                Kind.is_active == True,
+                text("(JSON_EXTRACT(json, '$.metadata.labels.type') IS NULL OR JSON_EXTRACT(json, '$.metadata.labels.type') = 'online') and JSON_EXTRACT(json, '$.status.status') = :status")
+            ).params(status=status).order_by(
+                Kind.created_at.desc()
+            ).limit(limit).all()
         
         if not tasks:
             return []
@@ -175,7 +188,6 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                         task_crd.status.updatedAt = datetime.now()
                     task.json = task_crd.model_dump(mode='json')
                     task.updated_at = datetime.now()
-                    from sqlalchemy.orm.attributes import flag_modified
                     flag_modified(task, "json")
     def _format_subtasks_response(self, db: Session, subtasks: List[Subtask]) -> Dict[str, List[Dict]]:
         """Format subtask response data using kinds table for task information"""
@@ -377,10 +389,13 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     "role": team_member_info.role if team_member_info else ''
                 })
 
+            type = task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+
             formatted_subtasks.append({
                 "subtask_id": subtask.id,
                 "subtask_next_id": next_subtask.id if next_subtask else None,
                 "task_id": subtask.task_id,
+                "type": type,
                 "executor_name": subtask.executor_name,
                 "executor_namespace": subtask.executor_namespace,
                 "subtask_title": subtask.title,
@@ -443,7 +458,6 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 task_crd.spec.title = subtask_update.task_title
                 task.json = task_crd.model_dump(mode='json')
                 task.updated_at = datetime.now()
-                from sqlalchemy.orm.attributes import flag_modified
                 flag_modified(task, "json")
                 db.add(task)
         
@@ -540,9 +554,48 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             task_crd.status.updatedAt = datetime.now()
         task.json = task_crd.model_dump(mode='json')
         task.updated_at = datetime.now()
-        from sqlalchemy.orm.attributes import flag_modified
         flag_modified(task, "json")
+
+        # auto delete executor
+        self._auto_delete_executors_if_enabled(db, task_id, task_crd, subtasks)
+        
         db.add(task)
+
+    def _auto_delete_executors_if_enabled(self, db: Session, task_id: int, task_crd: Task, subtasks: List[Subtask]) -> None:
+        """Auto delete executors if enabled and task is in completed status"""
+        # Check if auto delete executor is enabled and task is in completed status
+        if (task_crd.metadata and task_crd.metadata.labels and task_crd.metadata.labels.get("autoDeleteExecutor") == "true" and
+            task_crd.status and task_crd.status.status in ["COMPLETED", "FAILED"]):
+            
+            # Filter subtasks with valid executor information and deduplicate
+            unique_executor_keys = set()
+            executors_to_delete = []
+            
+            for subtask in subtasks:
+                if subtask.executor_name:
+                    subtask.executor_deleted_at = True
+                    db.add(subtask)
+                    executor_key = (subtask.executor_namespace, subtask.executor_name)
+                    if executor_key not in unique_executor_keys:
+                        unique_executor_keys.add(executor_key)
+                        executors_to_delete.append(subtask)
+                
+            async def delete_executors_async():
+                """Asynchronously delete all executors for the task"""
+                for subtask in executors_to_delete:
+                    try:
+                        logger.info(f"Auto deleting executor for task {task_id}: ns={subtask.executor_namespace} name={subtask.executor_name}")
+                        result = self.delete_executor_task_sync(
+                            subtask.executor_name,
+                            subtask.executor_namespace
+                        )
+                        logger.info(f"Successfully auto deleted executor: {result}")
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to auto delete executor ns={subtask.executor_namespace} name={subtask.executor_name}: {e}")
+            
+            # Schedule async execution
+            asyncio.create_task(delete_executors_async())
 
     def delete_executor_task_sync(self, executor_name: str, executor_namespace: str) -> Dict:
         """

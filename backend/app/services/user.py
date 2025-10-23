@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from app.services.k_batch import apply_default_resources_async
-from fastapi import HTTPException, BackgroundTasks
+from fastapi import HTTPException, BackgroundTasks, status
 from typing import Any, Dict, List, Optional
 from sqlalchemy.orm import Session
 
@@ -160,6 +160,28 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.add(user)
         db.commit()
         db.refresh(user)
+        return user
+    
+    def get_user_by_id(self, db: Session, user_id: int) -> User:
+        """
+        根据用户ID获取用户对象
+        
+        Args:
+            db: 数据库会话
+            user_id: 用户ID
+            
+        Returns:
+            用户对象
+            
+        Raises:
+            HTTPException: 如果用户不存在
+        """
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with id {user_id} not found"
+            )
         return user
 
 
