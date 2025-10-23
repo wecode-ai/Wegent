@@ -18,6 +18,7 @@ metadata:
     aigc.weibo.com/executor-task-id: "{{ task_id }}"
     aigc.weibo.com/user: "{{ username }}"
     aigc.weibo.com/proxy-user: "{{ username }}"
+    aigc.weibo.com/task-type: "{{ task_type }}"
     krs.weibo.com/managed-by: "krs"
     kubus.weibo.com/qos-class: "dlc"
     krs.weibo.com/type: "online"

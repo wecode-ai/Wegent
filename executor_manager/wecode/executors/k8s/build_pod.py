@@ -56,6 +56,7 @@ def build_pod_configuration(
         'task_str': json.dumps(task),
         'image': image,
         'task_id': task_id,
+        'task_type': task.get("type", "online"),
         'mode': mode,
         'executor_env': EXECUTOR_ENV,
         'volumes': volumes_info.get("volumes", []),
