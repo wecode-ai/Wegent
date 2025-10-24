@@ -39,6 +39,19 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         task = None
         team = None
 
+        # Limit running tasks per user
+        running_count = db.query(Kind).filter(
+            Kind.user_id == user.id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+            text("JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) IN ('PENDING', 'RUNNING') and (JSON_EXTRACT(json, '$.metadata.labels.type') is null or JSON_EXTRACT(json, '$.metadata.labels.type') = 'online')")
+        ).count()
+        if running_count >= settings.MAX_RUNNING_TASKS_PER_USER:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Maximum number of running tasks per user ({settings.MAX_RUNNING_TASKS_PER_USER}) exceeded."
+            )
+
         # Set task ID
         if task_id is None:
             task_id = self.create_task_id(db, user.id)
@@ -805,8 +818,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         user = db.query(User).filter(User.id == user_id).first()
         user_name = user.user_name if user else ""
 
+        type = task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+
         return {
             "id": task.id,
+            "type": type,
             "user_id": task.user_id,
             "user_name": user_name,
             "title": task_crd.spec.title,
