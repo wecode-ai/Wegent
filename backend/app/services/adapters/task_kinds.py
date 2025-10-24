@@ -90,10 +90,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     detail="Task is in progress, please wait for it to complete"
                 )
             
-            if task_crd.metadata.labels and task_crd.metadata.labels["type"] == "offline" :
+            if task_crd.metadata.labels and task_crd.metadata.labels["autoDeleteExecutor"] == "true" :
                 raise HTTPException(
                     status_code=400,
-                    detail="task is offline, not allowed to append to it"
+                    detail="offline task already clear, please create a new task"
                 )
             
             # Check if task is expired
