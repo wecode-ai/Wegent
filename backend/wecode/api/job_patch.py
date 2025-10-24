@@ -59,7 +59,7 @@ async def acquire_lock() -> bool:
         acquired = await cache_manager.set(
             GIT_REPOSITORIES_UPDATE_LOCK_KEY,
             True,
-            expire=GIT_REPOSITORIES_UPDATE_INTERVAL_SECONDS
+            expire=GIT_REPOSITORIES_UPDATE_INTERVAL_SECONDS - 10
         )
         if acquired:
             logger.info(f"[job] 成功获取分布式锁: {GIT_REPOSITORIES_UPDATE_LOCK_KEY}")
