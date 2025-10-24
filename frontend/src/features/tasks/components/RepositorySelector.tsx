@@ -170,7 +170,7 @@ export default function RepositorySelector({
             </div>
           ) : !loading ? (
             <div className="px-3 py-2 text-sm text-text-muted">
-              {repos.length === 0 ? 'Select Repository<' : 'No repositories found'}
+              {'No repositories found'}
             </div>
           ) : null
         }
