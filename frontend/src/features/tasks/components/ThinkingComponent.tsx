@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { RiBrainLine } from 'react-icons/ri'
 import { FiChevronDown, FiChevronUp } from 'react-icons/fi'
@@ -35,9 +35,78 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   const [translateY, setTranslateY] = useState(0);
   const [modalWidth, setModalWidth] = useState<number | null>(null);
   const [modalCenterX, setModalCenterX] = useState<number | null>(null);
+  
+  // 滚动相关状态
+  const [hasScrolled, setHasScrolled] = useState(false);
+  const [mouseMoved, setMouseMoved] = useState(false);
+  const [hasTextSelection, setHasTextSelection] = useState(false);
+  const [hasUpdate, setHasUpdate] = useState(false);
+  const [updateCount, setUpdateCount] = useState(0);
+  
   const triggerRef = useRef<HTMLDivElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation('chat');
+  
+  // 用于追踪上一次的 thinking 内容，检测真实变化
+  const prevThinkingLengthRef = useRef<number>(0);
+  
+  // 滚动阈值
+  const SCROLL_THRESHOLD = 24;
+
+  // 检查是否在底部的函数
+  const isAtBottom = useCallback((element: HTMLElement): boolean => {
+    const { scrollHeight, scrollTop, clientHeight } = element;
+    return scrollHeight - (scrollTop + clientHeight) <= SCROLL_THRESHOLD;
+  }, []);
+
+  // 滚动到底部的函数
+  const scrollToBottom = useCallback((element: HTMLElement) => {
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior: 'smooth'
+    });
+  }, []);
+
+  // 处理滚动事件
+  const handleScroll = useCallback((e: Event) => {
+    const target = e.target as HTMLElement;
+    
+    // 标记用户已滚动
+    if (!isAtBottom(target)) {
+      setHasScrolled(true);
+    }
+    
+    // 如果滚回底部，清除更新提示
+    if (isAtBottom(target)) {
+      setHasUpdate(false);
+      setUpdateCount(0);
+    }
+  }, [isAtBottom]);
+
+  // 处理鼠标移动事件
+  const handleMouseMove = useCallback(() => {
+    if (!mouseMoved) {
+      setMouseMoved(true);
+    }
+  }, [mouseMoved]);
+
+  // 处理文本选择变化事件
+  // 处理文本选择变化事件
+  const handleSelectionChange = useCallback(() => {
+    if (typeof window !== 'undefined' && window.getSelection) {
+      const selection = window.getSelection();
+      setHasTextSelection((selection?.toString() || '').length > 0);
+    }
+  }, []);
+  // 处理更新按钮点击
+  const handleUpdateButtonClick = useCallback(() => {
+    if (contentRef.current) {
+      scrollToBottom(contentRef.current);
+      setHasUpdate(false);
+      setUpdateCount(0);
+    }
+  }, [scrollToBottom]);
 
   // Get corresponding text based on key
   const getThinkingText = (key: string): string => {
@@ -102,8 +171,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       const target = event.target as Element;
-      // Only close on desktop when clicking outside
-      if (!isMobile && isExpanded && !target.closest('.thinking-component') && !target.closest('.thinking-modal')) {
+      // Only close on desktop when clicking outside, and not on update button
+      if (
+        !isMobile &&
+        isExpanded &&
+        !target.closest('.thinking-component') &&
+        !target.closest('.thinking-modal') &&
+        !target.closest('[data-thinking-update-button]')
+      ) {
         setIsExpanded(false);
       }
     };
@@ -195,12 +270,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Handle drag start
   const handleDragStart = (e: React.TouchEvent | React.MouseEvent) => {
     if (!isMobile) return;
-    
+
     setIsDragging(true);
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     setDragStartY(clientY);
     setDragCurrentY(clientY);
-    
+
     // Prevent default to avoid scrolling
     if ('touches' in e) {
       e.preventDefault();
@@ -210,10 +285,10 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Handle drag move
   const handleDragMove = (e: React.TouchEvent | React.MouseEvent) => {
     if (!isDragging || !isMobile) return;
-    
+
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
     setDragCurrentY(clientY);
-    
+
     const deltaY = clientY - dragStartY;
     if (deltaY > 0) {
       setTranslateY(deltaY);
@@ -223,14 +298,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Handle drag end
   const handleDragEnd = () => {
     if (!isDragging || !isMobile) return;
-    
+
     setIsDragging(false);
-    
+
     // If dragged down more than 100px, close the panel
     if (translateY > 100) {
       setIsExpanded(false);
     }
-    
+
     // Reset translation
     setTranslateY(0);
     setDragStartY(0);
@@ -240,31 +315,31 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Add global touch/mouse event listeners for dragging
   useEffect(() => {
     if (!isDragging || !isMobile) return;
-    
+
     const handleMove = (e: TouchEvent | MouseEvent) => {
       const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
       setDragCurrentY(clientY);
-      
+
       const deltaY = clientY - dragStartY;
       if (deltaY > 0) {
         setTranslateY(deltaY);
       }
     };
-    
+
     const handleEnd = () => {
       setIsDragging(false);
-      
+
       // If dragged down more than 100px, close the panel
       if (translateY > 100) {
         setIsExpanded(false);
       }
-      
+
       // Reset translation
       setTranslateY(0);
       setDragStartY(0);
       setDragCurrentY(0);
     };
-    
+
     if ('touches' in navigator) {
       document.addEventListener('touchmove', handleMove, { passive: false });
       document.addEventListener('touchend', handleEnd);
@@ -272,7 +347,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       document.addEventListener('mousemove', handleMove);
       document.addEventListener('mouseup', handleEnd);
     }
-    
+
     return () => {
       if ('touches' in navigator) {
         document.removeEventListener('touchmove', handleMove);
@@ -283,7 +358,88 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       }
     };
   }, [isDragging, isMobile, dragStartY, translateY]);
-  
+
+  // 内容更新时的自动滚动逻辑
+  useEffect(() => {
+    if (!isExpanded || !contentRef.current || !thinking) return;
+
+    const currentLength = thinking.length;
+    const prevLength = prevThinkingLengthRef.current;
+
+    // 只有当内容真正增加时才处理（新增了条目）
+    if (currentLength <= prevLength) {
+      prevThinkingLengthRef.current = currentLength;
+      return;
+    }
+
+    prevThinkingLengthRef.current = currentLength;
+
+    const element = contentRef.current;
+    const atBottom = isAtBottom(element);
+
+    // 判断是否应该自动滚动
+    const shouldAutoScroll =
+      atBottom &&                    // 在底部
+      !hasScrolled &&                // 从未滚动过
+      !mouseMoved &&                 // 鼠标未移动
+      !hasTextSelection;             // 无文本选中
+
+    if (shouldAutoScroll) {
+      // 静默追新：自动滚到底部
+      scrollToBottom(element);
+    } else if (!atBottom && hasScrolled) {
+      // 用户离开底部后才显示更新提示
+      setHasUpdate(true);
+      setUpdateCount(prev => prev + 1);
+    }
+  }, [thinking, isExpanded, isAtBottom, hasScrolled, mouseMoved, hasTextSelection, scrollToBottom]);
+
+  // 管理事件监听器
+  useEffect(() => {
+    if (!isExpanded) {
+      // 面板关闭时重置所有状态
+      setHasScrolled(false);
+      setMouseMoved(false);
+      setHasTextSelection(false);
+      setHasUpdate(false);
+      setUpdateCount(0);
+      prevThinkingLengthRef.current = 0;
+      return;
+    }
+
+    // 面板打开时初始化 thinking 长度
+    if (thinking) {
+      prevThinkingLengthRef.current = thinking.length;
+    }
+
+    // 面板打开时：初始滚动到底部
+    if (contentRef.current) {
+      // 使用 setTimeout 确保 DOM 更新完成后再滚动
+      setTimeout(() => {
+        if (contentRef.current) {
+          scrollToBottom(contentRef.current);
+        }
+      }, 100);
+    }
+
+    // 添加事件监听器
+    const element = contentRef.current;
+    if (element) {
+      element.addEventListener('scroll', handleScroll);
+      element.addEventListener('mousemove', handleMouseMove);
+    }
+    document.addEventListener('selectionchange', handleSelectionChange);
+
+    // 清理函数
+    return () => {
+      if (element) {
+        element.removeEventListener('scroll', handleScroll);
+        element.removeEventListener('mousemove', handleMouseMove);
+      }
+      document.removeEventListener('selectionchange', handleSelectionChange);
+    };
+  }, [isExpanded, handleScroll, handleMouseMove, handleSelectionChange, scrollToBottom]);
+
   if (!thinking || thinking.length === 0) {
     console.log('ThinkingComponent: No thinking data or empty array');
     return null;
@@ -308,53 +464,75 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
           </span>
           {isExpanded ? <FiChevronUp className="w-3 h-3" /> : <FiChevronDown className="w-3 h-3" />}
         </Button>
-        
+
         {isExpanded && createPortal(
-          <div
-            className="thinking-modal fixed top-1/2 max-h-[70vh] sm:max-h-[80vh] overflow-y-auto bg-surface border border-border rounded-lg shadow-lg p-4"
-            style={{
-              zIndex: 9999,
-              // iOS Safari specific fix for stacking context issues
-              transform: 'translate(-50%, -50%) translateZ(0)',
-              WebkitTransform: 'translate(-50%, -50%) translateZ(0)',
-              // Ensure proper positioning on iOS
-              position: 'fixed',
-              // Fix for iOS viewport issues
-              maxHeight: '-webkit-fill-available',
-              width: modalWidth ? `${modalWidth}px` : undefined,
-              maxWidth: 'calc(100vw - 32px)',
-              left: modalCenterX ? `${modalCenterX}px` : '50%'
-            }}
-          >
-            <div className={`font-semibold text-sm mb-3 text-blue-400 ${isTaskInProgress ? 'thinking-text-flow-text' : ''}`}>{t('messages.thinking_process') || 'Thinking Process'}</div>
-            {thinking.map((item, index) => (
-              <Card key={index} size="small" className="mb-2 sm:mb-3 bg-surface/50 border border-border/50">
-                <div className="text-xs font-medium text-blue-300 mb-1">{getThinkingText(item.title)}</div>
-                <div className="text-xs text-text-secondary mb-1 sm:mb-2">{getThinkingText(item.action)}</div>
-                {item.result && (
-                  <div className="text-xs text-text-tertiary mb-1 sm:mb-2">
-                    <span className="font-medium">{t('messages.result') || 'Result'}: </span>
-                    {getThinkingText(item.result)}
-                  </div>
-                )}
-                <div className="text-xs text-text-tertiary mb-2">
-                  <span className="font-medium">{t('messages.reasoning') || 'Reasoning'}: </span>
-                  {getThinkingText(item.reasoning)}
-                </div>
-                <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1 sm:gap-0">
-                  {(item.confidence !== undefined && item.confidence >= 0) && (
-                    <div className="text-xs text-text-tertiary">
-                      <span className="font-medium">{t('messages.confidence') || 'Confidence'}: </span>
-                      {Math.round(item.confidence * 100)}%
+          <>
+            <div
+              ref={contentRef}
+              className={`thinking-modal fixed top-1/2 max-h-[70vh] sm:max-h-[80vh] overflow-y-auto bg-surface border border-border rounded-lg shadow-lg p-4 ${hasUpdate ? 'pb-16' : ''}`}
+              style={{
+                zIndex: 9999,
+                // iOS Safari specific fix for stacking context issues
+                transform: 'translate(-50%, -50%) translateZ(0)',
+                WebkitTransform: 'translate(-50%, -50%) translateZ(0)',
+                // Ensure proper positioning on iOS
+                position: 'fixed',
+                // Fix for iOS viewport issues
+                maxHeight: '-webkit-fill-available',
+                width: modalWidth ? `${modalWidth}px` : undefined,
+                maxWidth: 'calc(100vw - 32px)',
+                left: modalCenterX ? `${modalCenterX}px` : '50%'
+              }}
+            >
+              <div className={`font-semibold text-sm mb-3 text-blue-400 ${isTaskInProgress ? 'thinking-text-flow-text' : ''}`}>{t('messages.thinking_process') || 'Thinking Process'}</div>
+              {thinking.map((item, index) => (
+                <Card key={index} size="small" className="mb-2 sm:mb-3 bg-surface/50 border border-border/50">
+                  <div className="text-xs font-medium text-blue-300 mb-1">{getThinkingText(item.title)}</div>
+                  <div className="text-xs text-text-secondary mb-1 sm:mb-2">{getThinkingText(item.action)}</div>
+                  {item.result && (
+                    <div className="text-xs text-text-tertiary mb-1 sm:mb-2">
+                      <span className="font-medium">{t('messages.result') || 'Result'}: </span>
+                      {getThinkingText(item.result)}
                     </div>
                   )}
-                  <div className="text-xs px-2 py-1 rounded bg-blue-500/10 text-blue-400 text-right sm:ml-auto">
-                    {getThinkingText(item.next_action)}
+                  <div className="text-xs text-text-tertiary mb-2">
+                    <span className="font-medium">{t('messages.reasoning') || 'Reasoning'}: </span>
+                    {getThinkingText(item.reasoning)}
                   </div>
-                </div>
-              </Card>
-            ))}
-          </div>,
+                  <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-1 sm:gap-0">
+                    {(item.confidence !== undefined && item.confidence >= 0) && (
+                      <div className="text-xs text-text-tertiary">
+                        <span className="font-medium">{t('messages.confidence') || 'Confidence'}: </span>
+                        {Math.round(item.confidence * 100)}%
+                      </div>
+                    )}
+                    <div className="text-xs px-2 py-1 rounded bg-blue-500/10 text-blue-400 text-right sm:ml-auto">
+                      {getThinkingText(item.next_action)}
+                    </div>
+                  </div>
+                </Card>
+              ))}
+            </div>
+
+            {/* 桌面端更新按钮 - 浮动居中且不会关闭面板 */}
+            {hasUpdate && contentRef.current && !isAtBottom(contentRef.current) && createPortal(
+              <div data-thinking-update-button className="sticky bottom-2 w-full flex justify-center z-10 pointer-events-none">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleUpdateButtonClick();
+                  }}
+                  className="pointer-events-auto bg-blue-500 text-white px-4 py-2 rounded-full shadow-lg hover:bg-blue-600 transition-colors flex items-center gap-2"
+                >
+                  <FiChevronDown className="w-4 h-4" />
+                  {updateCount > 0 && (
+                    <span className="text-xs">有新内容</span>
+                  )}
+                </button>
+              </div>,
+              contentRef.current
+            )}
+          </>,
           document.body
         )}
       </div>
@@ -407,11 +585,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               onTouchStart={handleDragStart}
               onMouseDown={handleDragStart}
             >
-              <div className="w-10 h-1 bg-gray-400 rounded-full"></div>
+              <div className="w-12 h-1 bg-gray-300 dark:bg-gray-600 rounded-full"></div>
             </div>
             
             {/* Content */}
-            <div className="h-full overflow-y-auto px-4 pb-4">
+            <div
+              ref={contentRef}
+              className="h-full overflow-y-auto px-4 pb-4"
+            >
               <div className={`font-semibold text-sm mb-3 text-blue-400 ${isTaskInProgress ? 'thinking-text-flow-text' : ''}`}>{t('messages.thinking_process') || 'Thinking Process'}</div>
               {thinking.map((item, index) => (
                 <Card key={index} size="small" className="mb-3 bg-surface/50 border border-border/50">
@@ -441,6 +622,20 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                 </Card>
               ))}
             </div>
+            
+            {/* 移动端更新按钮 - 相对于内容容器定位 */}
+            {hasUpdate && contentRef.current && !isAtBottom(contentRef.current) && createPortal(
+              <button
+                onClick={handleUpdateButtonClick}
+                className="sticky bottom-4 left-full -ml-20 bg-blue-500 text-white px-4 py-2 rounded-full shadow-lg hover:bg-blue-600 transition-colors flex items-center gap-2 z-10"
+              >
+                <FiChevronDown className="w-4 h-4" />
+                {updateCount > 0 && (
+                  <span className="text-xs">{updateCount} 条新更新</span>
+                )}
+              </button>,
+              contentRef.current
+            )}
           </div>
         </>,
         document.body
