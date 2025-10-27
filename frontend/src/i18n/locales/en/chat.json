@@ -196,6 +196,26 @@
     "continue": "continue",
     "validate": "validate",
     "complete": "complete",
-    "exit": "exit"
+    "exit": "exit",
+    "agno": {
+      "team_tool_started_title": "Team Tool Started",
+      "team_tool_started_action": "Starting team tool",
+      "team_tool_started_reasoning": "Tool arguments",
+      "team_tool_started_next_action": "Waiting for tool execution to complete",
+      "team_using_tool": "Team is using tool",
+      "team_tool_completed_title": "Team Tool Completed",
+      "team_tool_completed_action": "Team tool execution completed",
+      "team_tool_completed_reasoning": "Tool execution result",
+      "team_tool_completed_next_action": "Continue with next step",
+      "member_tool_started_title": "Member Tool Started",
+      "member_tool_started_action": "Starting member tool",
+      "member_tool_started_reasoning": "Tool arguments",
+      "member_tool_started_next_action": "Waiting for tool execution to complete",
+      "member_tool_completed_title": "Member Tool Completed",
+      "member_tool_completed_action": "Member tool execution completed",
+      "member_tool_completed_reasoning": "Tool execution result",
+      "member_tool_completed_next_action": "Continue with next step"
+    },
+    "new_content": "View new content"
   }
 }
