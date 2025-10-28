@@ -437,6 +437,8 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         """
         Update subtask and automatically update associated task status using kinds table
         """
+        logger.info(f"update subtask subtask_id={subtask_update.subtask_id}, subtask_status={subtask_update.status}, subtask_progress={subtask_update.progress}")
+        
         # Get subtask
         subtask = db.query(Subtask).get(subtask_update.subtask_id)
         if not subtask:
@@ -567,9 +569,10 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         if (task_crd.metadata and task_crd.metadata.labels and task_crd.metadata.labels.get("autoDeleteExecutor") == "true" and
             task_crd.status and task_crd.status.status in ["COMPLETED", "FAILED"]):
             
+            # Prepare data for async execution - extract needed values before async execution
             # Filter subtasks with valid executor information and deduplicate
             unique_executor_keys = set()
-            executors_to_delete = []
+            executors_data = []
             
             for subtask in subtasks:
                 if subtask.executor_name:
@@ -578,21 +581,24 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     executor_key = (subtask.executor_namespace, subtask.executor_name)
                     if executor_key not in unique_executor_keys:
                         unique_executor_keys.add(executor_key)
-                        executors_to_delete.append(subtask)
-                
+                        executors_data.append({
+                            "name": subtask.executor_name,
+                            "namespace": subtask.executor_namespace
+                        })
+            
             async def delete_executors_async():
                 """Asynchronously delete all executors for the task"""
-                for subtask in executors_to_delete:
+                for executor in executors_data:
                     try:
-                        logger.info(f"Auto deleting executor for task {task_id}: ns={subtask.executor_namespace} name={subtask.executor_name}")
-                        result = self.delete_executor_task_sync(
-                            subtask.executor_name,
-                            subtask.executor_namespace
+                        logger.info(f"Auto deleting executor for task {task_id}: ns={executor['namespace']} name={executor['name']}")
+                        result = await self.delete_executor_task_async(
+                            executor['name'],
+                            executor['namespace']
                         )
                         logger.info(f"Successfully auto deleted executor: {result}")
                         
                     except Exception as e:
-                        logger.error(f"Failed to auto delete executor ns={subtask.executor_namespace} name={subtask.executor_name}: {e}")
+                        logger.error(f"Failed to auto delete executor ns={executor['namespace']} name={executor['name']}: {e}")
             
             # Schedule async execution
             asyncio.create_task(delete_executors_async())
@@ -624,6 +630,37 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             response.raise_for_status()
             return response.json()
         except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error deleting executor task: {str(e)}"
+            )
+    
+    async def delete_executor_task_async(self, executor_name: str, executor_namespace: str) -> Dict:
+        """
+        Asynchronous version of delete_executor_task
+        
+        Args:
+            executor_name: The executor task name to delete
+            executor_namespace: Executor namespace (required)
+        """
+        if not executor_name:
+            raise HTTPException(status_code=400, detail="executor_name are required")
+        try:
+            payload = {
+                "executor_name": executor_name,
+                "executor_namespace": executor_namespace,
+            }
+            logger.info(f"executor.delete async request url={settings.EXECUTOR_DELETE_TASK_URL} {payload}")
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    settings.EXECUTOR_DELETE_TASK_URL,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError as e:
             raise HTTPException(
                 status_code=500,
                 detail=f"Error deleting executor task: {str(e)}"
