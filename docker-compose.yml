@@ -57,7 +57,7 @@ services:
       EXECUTOR_DELETE_TASK_URL: http://executor_manager:8001/executor-manager/executor/delete
       SECRET_KEY: your-secret-key-here
       ALGORITHM: HS256
-      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      ACCESS_TOKEN_EXPIRE_MINUTES: 10080
       REDIS_URL: redis://redis:6379/0
     depends_on:
       mysql:

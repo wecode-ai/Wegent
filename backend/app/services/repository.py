@@ -80,11 +80,7 @@ class RepositoryService:
                 repos = await provider.get_repositories(user, page=1, limit=100)
                 all_repos.extend(repos)
             except Exception as e:
-                try:
-                    repos = await provider.get_repositories(user, page=1, limit=100)
-                    all_repos.extend(repos)
-                except Exception as e:
-                    self.logger.error(f"Retrying fetching repositories from {provider_type}: {e}")
+                self.logger.error(f"Retrying fetching repositories from {provider_type}: {e}")
                 continue
 
         # Sort by last updated (simulated with basic sorting)
