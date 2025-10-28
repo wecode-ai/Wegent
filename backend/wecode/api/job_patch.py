@@ -15,6 +15,7 @@ import logging
 import threading
 import time
 import asyncio
+from app.core.config import settings
 from sqlalchemy.orm import Session
 
 # Import our custom job
@@ -23,13 +24,13 @@ from app.core.cache import cache_manager
 
 logger = logging.getLogger(__name__)
 
-# 使用现有的 REPO_CACHE_EXPIRED_TIME 作为更新间隔
-from app.core.config import settings
-# 使用缓存过期时间作为更新间隔 和 lockkey过期时间
-GIT_REPOSITORIES_UPDATE_INTERVAL_SECONDS = settings.REPO_CACHE_EXPIRED_TIME
+
+# 更新间隔
+GIT_REPOSITORIES_UPDATE_INTERVAL_SECONDS = settings.REPO_UPDATE_INTERVAL_SECONDS
 
 # Redis 锁的键名和过期时间
 GIT_REPOSITORIES_UPDATE_LOCK_KEY = "git_repositories_update_lock"
+GIT_REPOSITORIES_UPDATE_LOCK_KEY_EXPIRES_SECONDS = settings.REPO_UPDATE_INTERVAL_SECONDS - 10
 
 # 停止事件，用于控制线程的停止
 git_update_stop_event = None
@@ -59,7 +60,7 @@ async def acquire_lock() -> bool:
         acquired = await cache_manager.setnx(
             GIT_REPOSITORIES_UPDATE_LOCK_KEY,
             True,
-            expire=GIT_REPOSITORIES_UPDATE_INTERVAL_SECONDS - 10
+            expire=GIT_REPOSITORIES_UPDATE_LOCK_KEY_EXPIRES_SECONDS
         )
         if acquired:
             logger.info(f"[job] 成功获取分布式锁: {GIT_REPOSITORIES_UPDATE_LOCK_KEY}")
