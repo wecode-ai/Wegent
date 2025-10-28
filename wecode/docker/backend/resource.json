@@ -83,6 +83,27 @@
   },
   {
     "apiVersion": "agent.wecode.io/v1",
+    "kind": "Team",
+    "metadata": {
+      "name": "开发团队(示例)",
+      "namespace": "default"
+    },
+    "spec": {
+      "members": [
+        {
+          "botRef": {
+            "name": "开发bot(示例)",
+            "namespace": "default"
+          },
+          "prompt": "",
+          "role": "leader"
+        }
+      ],
+      "collaborationModel": "pipeline"
+    }
+  },
+  {
+    "apiVersion": "agent.wecode.io/v1",
     "kind": "Model",
     "metadata": {
       "name": "sina-glm-4.5",
