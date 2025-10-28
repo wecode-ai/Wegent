@@ -351,10 +351,13 @@ class ClaudeCodeAgent(Agent):
         # Apply post-creation hook if available
         if "post_create_claude_model" in self._hooks:
             try:
-                env_config = self._hooks["post_create_claude_model"](
+                final_claude_code_config_with_hook = self._hooks["post_create_claude_model"](
                     env_config, model_id, bot_config, user_name, git_url
                 )
                 logger.info("Applied post_create_claude_model hook")
+                logger.info(f"Created Claude Code model config with hook: {final_claude_code_config_with_hook}")
+        
+                return final_claude_code_config_with_hook
             except Exception as e:
                 logger.warning(f"Hook execution failed: {e}")
 

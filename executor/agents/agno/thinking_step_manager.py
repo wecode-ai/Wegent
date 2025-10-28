@@ -64,13 +64,21 @@ class ThinkingStepManager:
             result_key = self._text_to_i18n_key(result) if result else ""
             next_action_key = self._text_to_i18n_key(next_action)
         
+        # Handle None values to prevent Pydantic validation errors
+        safe_title = title_key if title_key is not None else ""
+        safe_action = action_key if action_key is not None else ""
+        safe_reasoning = reasoning_key if reasoning_key is not None else ""
+        safe_result = result_key if result_key is not None else ""
+        safe_confidence = confidence if confidence is not None else 0.5
+        safe_next_action = next_action_key if next_action_key is not None else "continue"
+        
         thinking_step = ThinkingStep(
-            title=title_key,
-            action=action_key,
-            reasoning=reasoning_key,
-            result=result_key,
-            confidence=confidence,
-            next_action=next_action_key
+            title=safe_title,
+            action=safe_action,
+            reasoning=safe_reasoning,
+            result=safe_result,
+            confidence=safe_confidence,
+            next_action=safe_next_action
         )
         self.thinking_steps.append(thinking_step)
         logger.info(f"Added thinking step: {title}")

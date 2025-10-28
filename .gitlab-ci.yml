@@ -8,7 +8,7 @@ variables:
   K8S_NAMESPACE: ci-deploy-video
   MAIL_TO: weibo_rd_video@staff.sina.com.cn
   PAAS_NAMESPACE: wb-plat-ide
-  MASTER_BRANCH: wecode
+  MASTER_BRANCH: main
 stages:
   - package
   - production
@@ -34,7 +34,7 @@ wegent-executor-manager:
   script:
     - build_image
   rules:
-    - if: '$CI_COMMIT_BRANCH == "wecode"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - executor_manager/**/*
         - wecode/docker/executor_manager/**/*
@@ -60,7 +60,7 @@ trigger_update_executor_manager:
         branch: master
         strategy: depend
     rules:
-      - if: '$CI_COMMIT_BRANCH == "wecode"'
+      - if: '$CI_COMMIT_BRANCH == "main"'
         changes:
           - executor_manager/**/*
           - wecode/docker/executor_manager/**/*
@@ -75,7 +75,7 @@ wegent-executor:
   script:
     - build_image
   rules:
-    - if: '$CI_COMMIT_BRANCH == "wecode"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - executor/**/*
         - wecode/docker/executor/**/*
@@ -101,7 +101,7 @@ trigger_update_executor:
         branch: master
         strategy: depend
     rules:
-      - if: '$CI_COMMIT_BRANCH == "wecode"'
+      - if: '$CI_COMMIT_BRANCH == "main"'
         changes:
           - executor/**/*
           - wecode/docker/executor/**/*
@@ -116,7 +116,7 @@ wegent-backend:
   script:
     - build_image
   rules:
-    - if: '$CI_COMMIT_BRANCH == "wecode"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - backend/**/*
         - wecode/docker/backend/**/*
@@ -140,7 +140,7 @@ trigger_update_backend_web:
         branch: master
         strategy: depend
     rules:
-      - if: '$CI_COMMIT_BRANCH == "wecode"'
+      - if: '$CI_COMMIT_BRANCH == "main"'
         changes:
           - backend/**/*
           - wecode/docker/backend/**/*
@@ -154,7 +154,7 @@ wegent-web:
   script:
     - build_image
   rules:
-    - if: '$CI_COMMIT_BRANCH == "wecode"'
+    - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - frontend/**/*
         - wecode/docker/frontend/**/*
@@ -178,7 +178,7 @@ trigger_update_front_web:
         branch: master
         strategy: depend
     rules:
-      - if: '$CI_COMMIT_BRANCH == "wecode"'
+      - if: '$CI_COMMIT_BRANCH == "main"'
         changes:
           - frontend/**/*
           - wecode/docker/frontend/**/*

@@ -847,12 +847,17 @@ class AgnoAgent(Agent):
             reasoning = run_response_event.content
             # Convert team reasoning step to ThinkingStep format
             if reasoning:
+                # Handle None values to prevent Pydantic validation errors
+                action_value = reasoning.action if reasoning.action is not None else ""
+                confidence_value = reasoning.confidence if reasoning.confidence is not None else 0.5
+                next_action_value = reasoning.next_action if reasoning.next_action is not None else "continue"
+                
                 self.add_thinking_step(
                     title=reasoning.title,
-                    action=reasoning.action,
+                    action=action_value,
                     reasoning=reasoning.reasoning,
-                    confidence=reasoning.confidence,
-                    next_action=reasoning.next_action,
+                    confidence=confidence_value,
+                    next_action=next_action_value,
                     report_immediately=False
                 )
 
@@ -871,12 +876,26 @@ class AgnoAgent(Agent):
         if run_response_event.event in [TeamRunEvent.tool_call_started]:
             logger.info(f"\n🔧 TEAM TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
+            self.add_thinking_step_by_key(
+                title_key=f"{{thinking.agno.team_tool_started_title}}: {run_response_event.tool.tool_name}",
+                action_key="thinking.agno.team_tool_started_action",
+                reasoning_key=f"${{thinking.agno.team_tool_started_reasoning}}: {json.dumps(run_response_event.tool.tool_args, ensure_ascii=False)}",
+                next_action_key="thinking.agno.team_tool_started_next_action",
+                report_immediately=False
+            )
             self.report_progress(
                 80, TaskStatus.RUNNING.value, f"${{thinking.team_using_tool}} {run_response_event.tool.tool_name}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
 
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
             logger.info(f"\n✅ TEAM TOOL COMPLETED: {run_response_event.tool.tool_name}")
+            self.add_thinking_step_by_key(
+                title_key=f"{{thinking.agno.team_tool_completed_title}}: {run_response_event.tool.tool_name}",
+                action_key="thinking.agno.team_tool_completed_action",
+                reasoning_key=f"${{thinking.agno.team_tool_completed_reasoning}}: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}...",
+                next_action_key="thinking.agno.team_tool_completed_next_action",
+                report_immediately=False
+            )
             logger.info(f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}...")
 
         # Handle member-level events
@@ -884,12 +903,26 @@ class AgnoAgent(Agent):
             logger.info(f"\n🤖 MEMBER TOOL STARTED: {run_response_event.agent_id}")
             logger.info(f"   Tool: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
+            self.add_thinking_step_by_key(
+                title_key=f"{{thinking.agno.member_tool_started_title}}: {run_response_event.tool.tool_name}",
+                action_key="thinking.agno.member_tool_started_action",
+                reasoning_key=f"${{thinking.agno.member_tool_started_reasoning}}: {json.dumps(run_response_event.tool.tool_args, ensure_ascii=False)}",
+                next_action_key="thinking.agno.member_tool_started_next_action",
+                report_immediately=False
+            )
 
         if run_response_event.event in [RunEvent.tool_call_completed]:
             logger.info(f"\n✅ MEMBER TOOL COMPLETED: {run_response_event.agent_id}")
             logger.info(f"   Tool: {run_response_event.tool.tool_name}")
             logger.info(
                 f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..."
+            )
+            self.add_thinking_step_by_key(
+                title_key=f"{{thinking.agno.member_tool_completed_title}}: {run_response_event.tool.tool_name}",
+                action_key="thinking.agno.member_tool_completed_action",
+                reasoning_key=f"${{thinking.agno.member_tool_completed_reasoning}}: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..",
+                next_action_key="thinking.agno.member_tool_completed_next_action",
+                report_immediately=False
             )
 
         # Handle content generation

@@ -1,5 +1,7 @@
 # Wegent
 
+English | [简体中文](README_zh.md)
+
 [![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.68+-green.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
@@ -79,6 +81,22 @@ graph LR
 - **Multi-Model Support**: Currently supports Claude Code, with plans for Codex and Gemini
 - **Flexible Configuration**: Customizable agent personalities and capabilities
 - **Task Orchestration**: Intelligent scheduling and execution
+
+### Demo & Screenshots
+
+#### Demo Video
+
+> A quick preview of Wegent in action, showcasing agent creation and team collaboration.
+
+<img src="./docs/assets/example.gif" width="75%" alt="Demo Video"/>
+
+### Screenshots
+
+#### 🤖 New Bot
+<img src="./docs/assets/cc-glm4.6.png" width="75%" alt="ClaudeCode-GLM4.6"/>
+
+#### 👥 New Team
+<img src="./docs/assets/cc-team.png" width="75%" alt="ClaudeCode-Team"/>
 
 ## 🚀 Quick Start
 
@@ -220,6 +238,57 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 ## 📞 Support
 
 - 🐛 Issues: [GitHub Issues](https://github.com/wecode-ai/wegent/issues)
+
+## 👥 Contributors
+
+Thanks to the following developers for their contributions and efforts to make this project better. 💪
+
+<table>
+  <tr>
+    <td align="center">
+      <a href="https://github.com/qdaxb">
+        <img src="https://avatars.githubusercontent.com/qdaxb" width="80px;" alt="qdaxb"/>
+        <br />
+        <sub><b>qdaxb</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/cc-yafei">
+        <img src="https://avatars.githubusercontent.com/cc-yafei" width="80px;" alt="cc-yafei"/>
+        <br />
+        <sub><b>cc-yafei</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/fengkuizhi">
+        <img src="https://avatars.githubusercontent.com/fengkuizhi" width="80px;" alt="fengkuizhi"/>
+        <br />
+        <sub><b>fengkuizhi</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/feifei325">
+        <img src="https://avatars.githubusercontent.com/feifei325" width="80px;" alt="feifei325"/>
+        <br />
+        <sub><b>feifei325</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/Micro66">
+        <img src="https://avatars.githubusercontent.com/Micro66" width="80px;" alt="Micro66"/>
+        <br />
+        <sub><b>Micro66</b></sub>
+      </a>
+    </td>
+    <td align="center">
+      <a href="https://github.com/moqimoqidea">
+        <img src="https://avatars.githubusercontent.com/moqimoqidea" width="80px;" alt="moqimoqidea"/>
+        <br />
+        <sub><b>moqimoqidea</b></sub>
+      </a>
+    </td>
+  </tr>
+</table>
 
 ---
 
