@@ -56,7 +56,7 @@ async def acquire_lock() -> bool:
         bool: 是否成功获取锁
     """
     try:
-        acquired = await cache_manager.set(
+        acquired = await cache_manager.setnx(
             GIT_REPOSITORIES_UPDATE_LOCK_KEY,
             True,
             expire=GIT_REPOSITORIES_UPDATE_INTERVAL_SECONDS - 10

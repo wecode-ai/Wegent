@@ -42,6 +42,13 @@ class RedisCache:
         ok = await self._client.set(key, payload, ex=expire)
         return bool(ok)
 
+    async def setnx(self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME) -> bool:
+        """Set value to cache only if key doesn't exist (SETNX operation)"""
+        logger.info(f"Storing {key} in cache if not exists, expire: {expire}")
+        payload = orjson.dumps(value)
+        ok = await self._client.set(key, payload, ex=expire, nx=True)
+        return bool(ok)
+    
     async def delete(self, key: str) -> bool:
         """Delete key from cache"""
         deleted = await self._client.delete(key)
