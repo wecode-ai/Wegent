@@ -196,6 +196,26 @@
     "continue": "继续",
     "validate": "验证",
     "complete": "完成",
-    "exit": "退出"
+    "exit": "退出",
+    "agno": {
+      "team_tool_started_title": "团队工具启动",
+      "team_tool_started_action": "正在启动团队工具",
+      "team_tool_started_reasoning": "工具参数",
+      "team_tool_started_next_action": "等待工具执行完成",
+      "team_using_tool": "团队正在使用工具",
+      "team_tool_completed_title": "团队工具完成",
+      "team_tool_completed_action": "团队工具执行完成",
+      "team_tool_completed_reasoning": "工具执行结果",
+      "team_tool_completed_next_action": "继续执行下一步",
+      "member_tool_started_title": "成员工具启动",
+      "member_tool_started_action": "正在启动成员工具",
+      "member_tool_started_reasoning": "工具参数",
+      "member_tool_started_next_action": "等待工具执行完成",
+      "member_tool_completed_title": "成员工具完成",
+      "member_tool_completed_action": "成员工具执行完成",
+      "member_tool_completed_reasoning": "工具执行结果",
+      "member_tool_completed_next_action": "继续执行下一步"
+    },
+    "new_content": "有新内容"
   }
 }
