@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 
 from pydantic import BaseModel, EmailStr
 
@@ -61,3 +61,8 @@ class LoginRequest(BaseModel):
 class LoginResponse(BaseModel):
     access_token: str
     token_type: str
+
+class UserInfo(BaseModel):
+    """User info model for admin list"""
+    id: int
+    user_name: str

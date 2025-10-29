@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.api.endpoints import auth, users, repository, oidc, quota
+from app.api.endpoints import auth, users, repository, oidc, quota, admin
 from app.api.endpoints.adapter import models, agents, bots, teams, tasks, executors
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
@@ -11,6 +11,7 @@ import wecode.api  # noqa: F401  side-effect import to load wecode patches and a
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
+api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["models"])
 api_router.include_router(agents.router, prefix="/agents", tags=["agents"])

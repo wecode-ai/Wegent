@@ -5,6 +5,7 @@
 from fastapi import FastAPI, Request
 import time
 import logging
+import uuid
 from fastapi.middleware.cors import CORSMiddleware
 import threading
 
@@ -51,6 +52,10 @@ def create_app():
         if request.url.path == "/":
             return await call_next(request)
 
+        # Generate a unique request ID
+        request_id = str(uuid.uuid4())[:8]  # 使用UUID的前8位作为请求ID
+        request.state.request_id = request_id
+        
         start_time = time.time()
         
         # Extract username from Authorization header
@@ -59,15 +64,19 @@ def create_app():
         
         client_ip = request.client.host if request.client else "Unknown"
         
-        # Pre-request logging
-        logger.info(f"request : {request.method} {request.url.path} {request.query_params} {client_ip} [{username}]")
+        # Pre-request logging with request ID
+        logger.info(f"request : {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}]")
         
         # Process request
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
         
-        # Post-request logging
-        logger.info(f"response: {request.method} {request.url.path} {request.query_params} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms")
+        # Post-request logging with request ID
+        logger.info(f"response: {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms")
+        
+        # Add request ID to response headers for client-side tracking
+        response.headers["X-Request-ID"] = request_id
+        
         return response
 
     # Setup CORS
