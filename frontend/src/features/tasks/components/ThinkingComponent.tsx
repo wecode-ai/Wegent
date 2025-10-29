@@ -36,7 +36,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   const [modalWidth, setModalWidth] = useState<number | null>(null);
   const [modalCenterX, setModalCenterX] = useState<number | null>(null);
   
-  // 滚动相关状态
+  // Scroll-related states
   const [hasScrolled, setHasScrolled] = useState(false);
   const [mouseMoved, setMouseMoved] = useState(false);
   const [hasTextSelection, setHasTextSelection] = useState(false);
@@ -48,19 +48,19 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   const contentRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation('chat');
   
-  // 用于追踪上一次的 thinking 内容，检测真实变化
+  // Used to track previous thinking content to detect real changes
   const prevThinkingLengthRef = useRef<number>(0);
   
-  // 滚动阈值
+  // Scroll threshold
   const SCROLL_THRESHOLD = 24;
 
-  // 检查是否在底部的函数
+  // Function to check if at bottom
   const isAtBottom = useCallback((element: HTMLElement): boolean => {
     const { scrollHeight, scrollTop, clientHeight } = element;
     return scrollHeight - (scrollTop + clientHeight) <= SCROLL_THRESHOLD;
   }, []);
 
-  // 滚动到底部的函数
+  // Function to scroll to bottom
   const scrollToBottom = useCallback((element: HTMLElement) => {
     element.scrollTo({
       top: element.scrollHeight,
@@ -68,38 +68,38 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     });
   }, []);
 
-  // 处理滚动事件
+  // Handle scroll event
   const handleScroll = useCallback((e: Event) => {
     const target = e.target as HTMLElement;
     
-    // 标记用户已滚动
+    // Mark user as scrolled
     if (!isAtBottom(target)) {
       setHasScrolled(true);
     }
     
-    // 如果滚回底部，清除更新提示
+    // If scrolled back to bottom, clear update notification
     if (isAtBottom(target)) {
       setHasUpdate(false);
       setUpdateCount(0);
     }
   }, [isAtBottom]);
 
-  // 处理鼠标移动事件
+  // Handle mouse move event
   const handleMouseMove = useCallback(() => {
     if (!mouseMoved) {
       setMouseMoved(true);
     }
   }, [mouseMoved]);
 
-  // 处理文本选择变化事件
-  // 处理文本选择变化事件
+  // Handle text selection change event
+  // Handle text selection change event
   const handleSelectionChange = useCallback(() => {
     if (typeof window !== 'undefined' && window.getSelection) {
       const selection = window.getSelection();
       setHasTextSelection((selection?.toString() || '').length > 0);
     }
   }, []);
-  // 处理更新按钮点击
+  // Handle update button click
   const handleUpdateButtonClick = useCallback(() => {
     if (contentRef.current) {
       scrollToBottom(contentRef.current);
@@ -359,14 +359,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     };
   }, [isDragging, isMobile, dragStartY, translateY]);
 
-  // 内容更新时的自动滚动逻辑
+  // Auto-scroll logic when content updates
   useEffect(() => {
     if (!isExpanded || !contentRef.current || !thinking) return;
 
     const currentLength = thinking.length;
     const prevLength = prevThinkingLengthRef.current;
 
-    // 只有当内容真正增加时才处理（新增了条目）
+    // Only process when content actually increases (new items added)
     if (currentLength <= prevLength) {
       prevThinkingLengthRef.current = currentLength;
       return;
@@ -377,27 +377,27 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     const element = contentRef.current;
     const atBottom = isAtBottom(element);
 
-    // 判断是否应该自动滚动
+    // Determine if should auto-scroll
     const shouldAutoScroll =
-      atBottom &&                    // 在底部
-      !hasScrolled &&                // 从未滚动过
-      !mouseMoved &&                 // 鼠标未移动
-      !hasTextSelection;             // 无文本选中
+      atBottom &&                    // At bottom
+      !hasScrolled &&                // Never scrolled
+      !mouseMoved &&                 // Mouse not moved
+      !hasTextSelection;             // No text selected
 
     if (shouldAutoScroll) {
-      // 静默追新：自动滚到底部
+      // Silent follow: auto-scroll to bottom
       scrollToBottom(element);
     } else if (!atBottom && hasScrolled) {
-      // 用户离开底部后才显示更新提示
+      // Show update notification only after user leaves bottom
       setHasUpdate(true);
       setUpdateCount(prev => prev + 1);
     }
   }, [thinking, isExpanded, isAtBottom, hasScrolled, mouseMoved, hasTextSelection, scrollToBottom]);
 
-  // 管理事件监听器
+  // Manage event listeners
   useEffect(() => {
     if (!isExpanded) {
-      // 面板关闭时重置所有状态
+      // Reset all states when panel is closed
       setHasScrolled(false);
       setMouseMoved(false);
       setHasTextSelection(false);
@@ -407,14 +407,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       return;
     }
 
-    // 面板打开时初始化 thinking 长度
+    // Initialize thinking length when panel is opened
     if (thinking) {
       prevThinkingLengthRef.current = thinking.length;
     }
 
-    // 面板打开时：初始滚动到底部
+    // When panel is opened: initial scroll to bottom
     if (contentRef.current) {
-      // 使用 setTimeout 确保 DOM 更新完成后再滚动
+      // Use setTimeout to ensure DOM updates are complete before scrolling
       setTimeout(() => {
         if (contentRef.current) {
           scrollToBottom(contentRef.current);
@@ -422,7 +422,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       }, 100);
     }
 
-    // 添加事件监听器
+    // Add event listeners
     const element = contentRef.current;
     if (element) {
       element.addEventListener('scroll', handleScroll);
@@ -430,7 +430,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     }
     document.addEventListener('selectionchange', handleSelectionChange);
 
-    // 清理函数
+    // Cleanup function
     return () => {
       if (element) {
         element.removeEventListener('scroll', handleScroll);
@@ -514,7 +514,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               ))}
             </div>
 
-            {/* 桌面端更新按钮 - 浮动居中且不会关闭面板 */}
+            {/* Desktop update button - floating centered and won't close panel */}
             {hasUpdate && contentRef.current && !isAtBottom(contentRef.current) && createPortal(
               <div data-thinking-update-button className="sticky bottom-2 w-full flex justify-center z-10 pointer-events-none">
                 <button
@@ -526,7 +526,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                 >
                   <FiChevronDown className="w-4 h-4" />
                   {updateCount > 0 && (
-                    <span className="text-xs">有新内容</span>
+                    <span className="text-xs">{t('thinking.new_content') || 'New content available'}</span>
                   )}
                 </button>
               </div>,
@@ -623,7 +623,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               ))}
             </div>
             
-            {/* 移动端更新按钮 - 相对于内容容器定位 */}
+            {/* Mobile update button - positioned relative to content container */}
             {hasUpdate && contentRef.current && !isAtBottom(contentRef.current) && createPortal(
               <button
                 onClick={handleUpdateButtonClick}
@@ -631,7 +631,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               >
                 <FiChevronDown className="w-4 h-4" />
                 {updateCount > 0 && (
-                  <span className="text-xs">{updateCount} 条新更新</span>
+                  <span className="text-xs">{t('thinking.new_content') || `new content updates`}</span>
                 )}
               </button>,
               contentRef.current
