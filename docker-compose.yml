@@ -95,6 +95,7 @@ services:
     ports:
       - "8001:8001"
     environment:
+      - TZ=Asia/Shanghai
       - TASK_API_DOMAIN=http://backend:8000
       - MAX_CONCURRENT_TASKS=5
       - PORT=8001

@@ -22,6 +22,7 @@ from executor_manager.config.config import (
     FETCH_TASK_API_BASE_URL,
     TASK_FETCH_LIMIT,
     TASK_FETCH_STATUS,
+    OFFLINE_TASK_FETCH_LIMIT,
     API_TIMEOUT,
     API_MAX_RETRIES,
     API_RETRY_DELAY,
@@ -43,11 +44,13 @@ class TaskApiClient:
         retry_backoff=API_RETRY_BACKOFF,
         limit=TASK_FETCH_LIMIT,
         task_status=TASK_FETCH_STATUS,
+        offline_limit=OFFLINE_TASK_FETCH_LIMIT,
     ):
         self.fetch_task_api_base_url = FETCH_TASK_API_BASE_URL
         self.callback_task_api_url = CALLBACK_TASK_API_URL
         self.limit = limit
         self.task_status = task_status
+        self.offline_limit = offline_limit
         self.timeout = timeout
         self.max_retries = max_retries
         self.retry_delay = retry_delay
@@ -199,3 +202,31 @@ class TaskApiClient:
         return self._handle_response(
             response, expect_json=True, context=f"fetching subtasks for task {task_id}"
         )
+    
+    def fetch_offline_tasks(self):
+        """Fetch offline tasks from API"""
+        logger.info("Fetching offline tasks...")
+        try:
+            return self._request_with_retry(self._do_fetch_offline_tasks, max_retries=1)
+        except json.JSONDecodeError as e:
+            logger.error(f"Failed to parse response data: {e}")
+            return False, str(e)
+        except Exception as e:
+            logger.error(f"Unexpected error during fetch_offline_tasks: {e}")
+            return False, str(e)
+    
+    def _do_fetch_offline_tasks(self):
+        """Execute the API request to fetch offline tasks"""
+        # Build URL with query parameters for offline tasks
+        url = f"{self.fetch_task_api_base_url}?limit={self.offline_limit}&task_status={self.task_status}&type=offline"
+        logger.info(f"Fetching offline tasks from: {url}")
+        response = requests.post(url, timeout=self.timeout)
+        return self._handle_response(
+            response, expect_json=True, context="fetching offline tasks"
+        )
+    
+    def update_offline_fetch_params(self, limit=None):
+        """Update offline task fetch parameters"""
+        if limit is not None:
+            self.offline_limit = limit
+        logger.info(f"Updated offline fetch parameters: limit={self.offline_limit}")
