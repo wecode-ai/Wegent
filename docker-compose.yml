@@ -57,8 +57,10 @@ services:
       EXECUTOR_DELETE_TASK_URL: http://executor_manager:8001/executor-manager/executor/delete
       SECRET_KEY: your-secret-key-here
       ALGORITHM: HS256
-      ACCESS_TOKEN_EXPIRE_MINUTES: 30
+      ACCESS_TOKEN_EXPIRE_MINUTES: 10080
       REDIS_URL: redis://redis:6379/0
+      APPEND_TASK_EXPIRE_HOURS: 2
+      SUBTASK_EXECUTOR_DELETE_AFTER_HOURS: 2
     depends_on:
       mysql:
         condition: service_healthy
@@ -95,6 +97,7 @@ services:
     ports:
       - "8001:8001"
     environment:
+      - TZ=Asia/Shanghai
       - TASK_API_DOMAIN=http://backend:8000
       - MAX_CONCURRENT_TASKS=5
       - PORT=8001
