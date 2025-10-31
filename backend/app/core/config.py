@@ -28,7 +28,8 @@ class Settings(BaseSettings):
     OIDC_STATE_EXPIRE_SECONDS: int = 10*60  # 10 minutes, unit: seconds
     
     # Cache configuration
-    REPO_CACHE_EXPIRED_TIME: int = 300  # 5 minutes in seconds
+    REPO_CACHE_EXPIRED_TIME: int = 7200  # 2 hour in seconds
+    REPO_UPDATE_INTERVAL_SECONDS: int = 3600  # 1 hour in seconds
 
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10

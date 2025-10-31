@@ -5,6 +5,7 @@
 import secrets
 import logging
 import time
+import uuid
 from app.services.k_batch import apply_default_resources_async
 import jwt  # pip install pyjwt
 from fastapi import APIRouter, Depends, Query, HTTPException, BackgroundTasks
@@ -120,7 +121,7 @@ async def oidc_callback(
                 user_name=user_name,
                 email=email,
                 is_active=True,
-                password_hash=security.get_password_hash("oidc_user"),
+                password_hash=security.get_password_hash(str(uuid.uuid4())),
                 git_info=[]
             )
             db.add(user)
