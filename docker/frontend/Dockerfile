@@ -10,7 +10,7 @@ WORKDIR /app
 
 # 复制依赖文件并安装依赖
 COPY frontend/package.json frontend/package-lock.json ./
-RUN npm ci --only=production && npm cache clean --force
+RUN npm ci && npm cache clean --force
 
 # 复制源码并构建
 COPY frontend .

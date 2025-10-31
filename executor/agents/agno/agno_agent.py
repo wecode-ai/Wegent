@@ -847,12 +847,17 @@ class AgnoAgent(Agent):
             reasoning = run_response_event.content
             # Convert team reasoning step to ThinkingStep format
             if reasoning:
+                # Handle None values to prevent Pydantic validation errors
+                action_value = reasoning.action if reasoning.action is not None else ""
+                confidence_value = reasoning.confidence if reasoning.confidence is not None else 0.5
+                next_action_value = reasoning.next_action if reasoning.next_action is not None else "continue"
+                
                 self.add_thinking_step(
                     title=reasoning.title,
-                    action=reasoning.action,
+                    action=action_value,
                     reasoning=reasoning.reasoning,
-                    confidence=reasoning.confidence,
-                    next_action=reasoning.next_action,
+                    confidence=confidence_value,
+                    next_action=next_action_value,
                     report_immediately=False
                 )
 

@@ -11,8 +11,9 @@ API routes module, defines FastAPI routes and models
 """
 
 import os
+import time
 from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
-from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
 from typing import Optional
 
@@ -21,6 +22,7 @@ from executor_manager.tasks.task_processor import TaskProcessor
 from executor_manager.clients.task_api_client import TaskApiClient
 from shared.models.task import TasksRequest
 from executor_manager.executors.dispatcher import ExecutorDispatcher
+from typing import Optional, Dict, Any
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -36,8 +38,26 @@ task_processor = TaskProcessor()
 # Create API client for direct API calls
 api_client = TaskApiClient()
 
-
-from typing import Optional, Dict, Any
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Middleware: Log request duration and source IP"""
+    start_time = time.time()
+    client_ip = request.client.host if request.client else "unknown"
+    
+    # Log request start
+    logger.info(f"Request started: {request.method} {request.url.path} from {client_ip}")
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Calculate duration in milliseconds
+    process_time_ms = (time.time() - start_time) * 1000
+    
+    # Log request completion with duration and IP
+    logger.info(f"Request completed: {request.method} {request.url.path} from {client_ip} - "
+                f"Status: {response.status_code} - Time: {process_time_ms:.0f}ms")
+    
+    return response
 
 
 # Define callback request model
@@ -54,7 +74,7 @@ class CallbackRequest(BaseModel):
 
 
 @app.post("/executor-manager/callback")
-async def callback_handler(request: CallbackRequest):
+async def callback_handler(request: CallbackRequest, http_request: Request):
     """
     Receive callback interface for executor task progress and completion.
 
@@ -65,7 +85,8 @@ async def callback_handler(request: CallbackRequest):
         dict: Processing result
     """
     try:
-        logger.info(f"Received callback: body={request}")
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(f"Received callback: body={request} from {client_ip}")
         # Directly call the API client to update task status
         success, result = api_client.update_task_status_by_fields(
             task_id=request.task_id,
@@ -91,7 +112,7 @@ async def callback_handler(request: CallbackRequest):
 
 
 @app.post("/executor-manager/tasks/receive")
-async def receive_tasks(request: TasksRequest):
+async def receive_tasks(request: TasksRequest, http_request: Request):
     """
     Receive tasks in batch via POST.
     Args:
@@ -100,8 +121,9 @@ async def receive_tasks(request: TasksRequest):
         dict: result code
     """
     try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(
-            f"Received {len(request.tasks)} tasks, first task: {request.tasks[0].task_title if request.tasks else 'None'}"
+            f"Received {len(request.tasks)} tasks, first task: {request.tasks[0].task_title if request.tasks else 'None'} from {client_ip}"
         )
         # Call the task processor to handle the tasks
         task_processor.process_tasks([task.dict() for task in request.tasks])
@@ -122,9 +144,10 @@ class DeleteExecutorRequest(BaseModel):
 
 
 @app.post("/executor-manager/executor/delete")
-async def delete_executor(request: DeleteExecutorRequest):
+async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:
-        logger.info(f"Received request to delete executor: {request.executor_name}")
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(f"Received request to delete executor: {request.executor_name} from {client_ip}")
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.delete_executor(request.executor_name)
         return result
@@ -134,9 +157,10 @@ async def delete_executor(request: DeleteExecutorRequest):
 
 
 @app.get("/executor-manager/executor/load")
-async def get_executor_load():
+async def get_executor_load(http_request: Request):
     try:
-        logger.info("Received request to get executor load")
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(f"Received request to get executor load from {client_ip}")
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.get_executor_count()
         result["total"] = int(os.getenv("MAX_CONCURRENT_TASKS", "5"))
