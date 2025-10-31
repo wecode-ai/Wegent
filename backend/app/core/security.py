@@ -177,3 +177,25 @@ def get_username_from_request(request) -> str:
         return token_data.get("username", "anonymous")
     except Exception:
         return "invalid_token"
+
+def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
+    """
+    Verify if current user is admin user
+    
+    Args:
+        current_user: Currently logged in user
+        
+    Returns:
+        Current user object
+        
+    Raises:
+        HTTPException: If user is not admin
+    """
+    # Here we assume users with username 'admin' are administrators
+    # Actual projects may require more complex permission management
+    if current_user.user_name != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Permission denied. Admin access required."
+        )
+    return current_user
