@@ -134,8 +134,13 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
     "remote-server": {
       "url": "http://127.0.0.1:9099/sse"
     },
-    "search-mcp": {
+    "weibo-search-mcp": {
       "transport": "streamable_http"
+    },
+    "EcoMCP-server": {
+      "url": "http://example.com:9999/sse",
+      "disabled": false,
+      "alwaysAllow": []
     }
   }
 }`}

@@ -157,7 +157,7 @@ export default function TeamEdit(props: TeamEditProps) {
   }, [editingTeamId, initialTeam])
 
 
-    // Each Mode's "description" and "boundary", including text and assets (i18n)
+    // Each Mode's "description" and "boundary", including text and images (i18n)
     const MODE_INFO = useMemo(() => {
     // i18n keys
     const titleKey = `team_model.${mode}`;

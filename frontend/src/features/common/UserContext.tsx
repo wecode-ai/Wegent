@@ -32,11 +32,9 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
 
   const fetchUser = async () => {
     setIsLoading(true)
-    console.log('UserContext: Starting to fetch user information')
 
     try {
       const isAuth = userApis.isAuthenticated()
-      console.log('UserContext: Authentication status check:', isAuth)
 
       if (!isAuth) {
         console.log('UserContext: User not authenticated, clearing user state and redirecting to login')
