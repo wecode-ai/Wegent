@@ -9,6 +9,8 @@ import { Button } from 'antd'
 
 import { useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
+import { DocsButton } from '@/features/layout/DocsButton'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
 
 type UserMenuProps = {
   className?: string
@@ -22,13 +24,18 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
   return (
     <div className={className}>
       <Menu as="div" className="relative">
-        <Menu.Button className="px-3 py-1 bg-muted border border-border rounded-full flex items-center justify-center text-sm font-medium text-text-primary hover:bg-border/40 transition-colors duration-200">
+        <Menu.Button className="px-4 py-1.5 bg-muted border border-border rounded-full flex items-center justify-center text-base font-semibold text-text-primary hover:bg-border/40 transition-colors duration-200">
           {userDisplayName}
         </Menu.Button>
         <Menu.Items
           className="absolute top-full right-0 mt-2 min-w-[120px] rounded-lg border border-border bg-surface py-1 z-30 focus:outline-none"
           style={{ boxShadow: 'var(--shadow-popover)' }}
         >
+          <div className="flex flex-col gap-2 px-2 pb-1.5">
+            <DocsButton className="w-full justify-center" />
+            <ThemeToggle className="w-full justify-center" />
+          </div>
+          <div className="my-1 h-px bg-border/60" />
           <Menu.Item>
             {({ active }) => (
               <Button

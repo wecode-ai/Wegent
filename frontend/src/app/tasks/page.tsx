@@ -18,8 +18,7 @@ import TeamShareHandler from '@/features/tasks/components/TeamShareHandler'
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
 import '@/app/tasks/tasks.css'
 import '@/features/common/scrollbar.css'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
-import { DocsButton } from '@/features/layout/DocsButton'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
 import { Team } from '@/types/api'
 export default function TasksPage() {
   // Team state from service
@@ -69,8 +68,7 @@ export default function TasksPage() {
                 showLogo={false}
                 onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
               >
-                <DocsButton />
-                <ThemeToggle />
+                <GithubStarButton />
                 <UserMenu />
               </TopNavigation>
               {/* Chat area */}

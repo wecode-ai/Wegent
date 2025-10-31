@@ -16,8 +16,7 @@ import BotList from '@/features/settings/components/BotList'
 import TeamList from '@/features/settings/components/TeamList'
 import { UserProvider, useUser } from '@/features/common/UserContext'
 import { useTranslation } from '@/hooks/useTranslation'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
-import { DocsButton } from '@/features/layout/DocsButton'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
 
 function DashboardContent() {
   const router = useRouter()
@@ -78,9 +77,7 @@ function DashboardContent() {
           activePage="dashboard"
           showLogo={true}
         >
-          {/* User Avatar Menu */}
-          <DocsButton />
-          <ThemeToggle />
+          <GithubStarButton />
           <UserMenu />
         </TopNavigation>
 

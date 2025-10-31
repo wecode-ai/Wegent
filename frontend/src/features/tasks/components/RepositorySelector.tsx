@@ -35,7 +35,7 @@ export default function RepositorySelector({
   const router = useRouter()
   const [repos, setRepos] = useState<GitRepoInfo[]>([])
   const [loading, setLoading] = useState<boolean>(false)
-      // Used antd message.error for unified error prompt, no need for local error state
+  // Used antd message.error for unified error prompt, no need for local error state
   const [error, setError] = useState<string | null>(null)
   const [isModalOpen, setIsModalOpen] = useState(false)
   const searchTimeout = useRef<NodeJS.Timeout | null>(null)
@@ -44,7 +44,7 @@ export default function RepositorySelector({
     return user && user.git_info && user.git_info.length > 0
   }
 
-      // Repository loading function, called when button is clicked
+  // Repository loading function, called when button is clicked
   const handleLoadRepos = () => {
     if (!hasGitInfo()) {
       return
@@ -55,10 +55,6 @@ export default function RepositorySelector({
       .then((data) => {
         setRepos(data)
         setError(null)
-            // Automatically select the first repository only on initial load
-        if (data.length > 0 && !selectedRepo) {
-          handleRepoChange(data[0])
-        }
       })
       .catch(() => {
         setError('Failed to load repositories')
@@ -98,48 +94,69 @@ export default function RepositorySelector({
     value: repo.git_repo_id,
   }))
 
-
-      // Automatically load repositories on first mount (when git_info exists and repos is empty)
+  // Listen to selectedTaskDetail, auto-locate repository
   useEffect(() => {
-    if (hasGitInfo() && repos.length === 0) {
-      handleLoadRepos()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user])
+    let canceled = false
 
-      // Listen to selectedTaskDetail, auto-locate repository
-  useEffect(() => {
-    if (selectedTaskDetail?.git_repo) {
-          // Find the repository object in the list that matches git_repo
-      const repo = repos.find(r => r.git_repo === selectedTaskDetail.git_repo)
-      if (repo) {
-        handleRepoChange(repo)
+    const tryLocateRepo = async () => {
+      if (selectedTaskDetail?.git_repo) {
+        // First, try to find in existing list
+        const repo = repos.find(r => r.git_repo === selectedTaskDetail.git_repo)
+        if (repo) {
+          handleRepoChange(repo)
+          return
+        }
+        // Fallback: precise search via fullmatch when not found locally
+        try {
+          setLoading(true)
+          const result = await githubApis.searchRepositories(selectedTaskDetail.git_repo, { fullmatch: true })
+          if (canceled) return
+          if (result && result.length > 0) {
+            const matched = result.find(r => r.git_repo === selectedTaskDetail.git_repo) ?? result[0]
+            handleRepoChange(matched)
+            setError(null)
+          } else {
+            message.error('No repositories found')
+          }
+        } catch {
+          setError('Failed to search repositories')
+          message.error('Failed to search repositories')
+        } finally {
+          if (!canceled) setLoading(false)
+        }
+      } else {
+        handleRepoChange(null)
       }
-    } else {
-      handleRepoChange(null)
+    }
+
+    tryLocateRepo()
+    return () => {
+      canceled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTaskDetail?.git_repo, repos])
 
-      // Extract onOpenChange logic
+  // Extract onOpenChange logic
+  // load git repositories on first open
   const handleOpenChange = (visible: boolean) => {
     if (!hasGitInfo() && visible) {
       setIsModalOpen(true)
     }
-        // If repository not loaded and git_info exists, load repositories on first dropdown open
-    if (visible && hasGitInfo() && repos.length === 0 && !loading) {
+    // If repository not loaded and git_info exists, load repositories on first dropdown open
+    // fisrt click
+    if (visible && repos.length == 0 && hasGitInfo() && !loading) {
       handleLoadRepos()
+      return
     }
   }
 
-      // Extract onClick logic
+  // Extract onClick logic
   const handleModalClick = () => {
     setIsModalOpen(false)
     router.push(paths.settings.integrations.getHref())
   }
 
   const { t } = useTranslation()
-      // Git icon is independent of Select, no longer needs renderLabel
 
   return (
     <div className="flex items-center space-x-1 min-w-0">
@@ -157,7 +174,7 @@ export default function RepositorySelector({
         popupMatchSelectWidth={false}
         styles={{ popup: { root: { maxWidth: 200 } } }}
         classNames={{ popup: { root: "repository-selector-dropdown custom-scrollbar" } }}
-        disabled={disabled || loading}
+        disabled={disabled}
         loading={loading}
         filterOption={false}
         onSearch={handleSearch}
@@ -170,14 +187,15 @@ export default function RepositorySelector({
             </div>
           ) : !loading ? (
             <div className="px-3 py-2 text-sm text-text-muted">
-              {'No repositories found'}
+              {repos.length === 0 ? 'Select Repository' : 'No repositories found'}
             </div>
           ) : null
         }
         options={repoOptions}
-            // Disable dropdown selection and search (when no git_info)
+        // Disable dropdown selection and search (when no git_info)
         open={hasGitInfo() ? undefined : false}
         onOpenChange={handleOpenChange}
+        onClear={handleLoadRepos}
       />
       <Modal
         isOpen={isModalOpen}
