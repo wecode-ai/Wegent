@@ -2,11 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-fastapi==0.104.1
-uvicorn==0.24.0
-pydantic==2.4.2
+fastapi==0.119.1
+uvicorn==0.31.1
+pydantic==2.11.2
+anyio>=4.5
 requests==2.31.0
-schedule==1.2.1
+APScheduler==3.10.4
+pytz==2024.1
 PyJWT==2.8.0
 cryptography==41.0.5
 requests-oauthlib==2.0.0
