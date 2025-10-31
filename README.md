@@ -73,6 +73,9 @@ graph LR
 - **💼 Workspace**: Isolated work environments for tasks and projects
 - **🎯 Task**: Executable units of work assigned to teams
 
+> 💡 **Detailed YAML Configuration Documentation**:
+- [Complete YAML configuration examples and field descriptions](docs/en/resource-definition-formats.md)
+
 ### ✨ Why Wegent?
 
 - **Standardized**: Universal AI agent runtime specifications, like Kubernetes for containers
@@ -122,21 +125,23 @@ graph LR
 4. **Configure GitHub Access Tokens**
    - Follow the page instructions to configure your GitHub access token
 5. **Configure Bot**
-   
-   Wegent comes with a built-in development bot. Simply configure your Claude API key to start using it:
-   
-   ```bash
-    {
-        "env": {
-            "ANTHROPIC_MODEL": "claude-4.1-opus",
-            "ANTHROPIC_API_KEY": "xxxxxx",
-            "ANTHROPIC_BASE_URL": "sk-xxxxxx",
-            "ANTHROPIC_SMALL_FAST_MODEL": "claude-3.5-haiku"
-        }
-    }
-   ```bash
 
-5. **Run task**
+   Wegent ships with a built-in development bot. For the Claude Code runtime, set the following environment variables:
+
+   ```json
+   {
+     "env": {
+       "ANTHROPIC_MODEL": "openrouter,anthropic/claude-sonnet-4",
+       "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxx",
+       "ANTHROPIC_BASE_URL": "http://xxxxx",
+       "ANTHROPIC_SMALL_FAST_MODEL": "openrouter,anthropic/claude-3.5-haiku"
+     }
+   }
+   ```
+
+   Note: Some runtimes may use `ANTHROPIC_API_KEY` instead of `ANTHROPIC_AUTH_TOKEN`. See docs for details.
+
+6. **Run task**
 
    On the task page, select your project and branch, describe your development requirements, such as implementing a bubble sort algorithm using Python
 
