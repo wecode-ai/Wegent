@@ -17,6 +17,7 @@ async def dispatch_tasks(
     task_status: str = Query(default="PENDING", description="Subtask status to filter by"),
     limit: int = Query(default=1, ge=1, description="Maximum number of subtasks to return"),
     task_ids: Optional[str] = Query(default=None, description="Optional task IDs to filter by, comma separated"),
+    type: str = Query(default="online", description="online or offline"),
     db: Session = Depends(get_db)
 ):
     """Task dispatch interface with subtask support using kinds table
@@ -25,6 +26,7 @@ async def dispatch_tasks(
         status: Subtask status to filter by (PENDING, RUNNING, COMPLETED, FAILED, CANCELLED, DELETE)
         limit: Maximum number of subtasks to return
         task_ids: Optional task IDs to filter by, comma separated. If not provided, will search across all tasks
+        type: Task type to filter by (default: "online")
     
     Returns:
         List of subtasks with aggregated context from previous subtasks
@@ -41,7 +43,8 @@ async def dispatch_tasks(
         db=db,
         status=task_status,
         limit=limit,
-        task_ids=task_id_list
+        task_ids=task_id_list,
+        type=type
     )
 
 @router.put("/tasks")
