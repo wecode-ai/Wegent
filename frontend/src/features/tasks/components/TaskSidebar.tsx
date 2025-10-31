@@ -33,7 +33,6 @@ export default function TaskSidebar({
   const router = useRouter()
   const {
     tasks,
-    setSelectedTask,
     loadMore,
     hasMore,
     loadingMore,
@@ -105,7 +104,6 @@ export default function TaskSidebar({
 
   // New task
   const handleNewAgentClick = () => {
-    setSelectedTask(null)
     if (typeof window !== 'undefined') {
       router.replace(paths.task.getHref())
     }

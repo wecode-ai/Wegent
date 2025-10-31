@@ -44,10 +44,12 @@ export default function BranchSelector({
 
   // Fetch branch list
   useEffect(() => {
+    handleBranchChange(null)
     if (!selectedRepo) {
       setBranches([])
       setError(null)
       setLoading(false)
+      
       return
     }
     let ignore = false
@@ -93,9 +95,8 @@ export default function BranchSelector({
       const defaultBranch = branches.find(b => b.default)
       if (defaultBranch) {
         handleBranchChange(defaultBranch)
-      } else if (branches.length > 0) {
-        // Fallback to first branch if no default branch found
-        handleBranchChange(branches[0])
+      } else {
+        handleBranchChange(null)
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -155,7 +156,7 @@ export default function BranchSelector({
         popupMatchSelectWidth={false}
         styles={{ popup: { root: { maxWidth: 200 } } }}
         classNames={{ popup: { root: "repository-selector-dropdown custom-scrollbar" } }}
-        disabled={disabled || showLoading || showError || showNoBranch}
+        disabled={disabled || showError || showNoBranch}
         loading={showLoading}
         optionFilterProp="value"
         filterOption={(input, option) => {
