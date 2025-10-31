@@ -38,7 +38,7 @@ class JobService(BaseService[Kind, None, None]):
         """
         try:
             cutoff = datetime.now() - timedelta(hours=settings.SUBTASK_EXECUTOR_DELETE_AFTER_HOURS)
-            logging.info("Starting scheduled deletion of expired executors, cutoff: {}".format(cutoff))
+            logging.info("[executor_job] Starting scheduled deletion of expired executors, cutoff: {}".format(cutoff))
             
             # Query candidates using kinds table
             # Join with kinds table to check task status
@@ -58,7 +58,7 @@ class JobService(BaseService[Kind, None, None]):
             ).all()
 
             if not candidates:
-                logger.info("No expired executor to clean up")
+                logger.info("[executor_job] No expired executor to clean up")
                 return
 
             # Filter candidates by checking task status from JSON
@@ -82,7 +82,7 @@ class JobService(BaseService[Kind, None, None]):
                     valid_candidates.append(subtask)
 
             if not valid_candidates:
-                logger.info("No valid expired executor to clean up after task status check")
+                logger.info("[executor_job] No valid expired executor to clean up after task status check")
                 return
 
             # Deduplicate by (namespace, name)
@@ -97,7 +97,7 @@ class JobService(BaseService[Kind, None, None]):
             # Use sync version to avoid event loop issues
             for ns, name in unique_executor_keys:
                 try:
-                    logger.info(f"Scheduled deleting executor task ns={ns} name={name}")
+                    logger.info(f"[executor_job] Scheduled deleting executor task ns={ns} name={name}")
                     res = executor_kinds_service.delete_executor_task_sync(name, ns)
                     # Mark all subtasks with this (namespace, name) accordingly
                     db.query(Subtask).filter(
@@ -110,9 +110,9 @@ class JobService(BaseService[Kind, None, None]):
                     db.commit()
                 except Exception as e:
                     # Log but continue
-                    logger.warning(f"Failed to scheduled delete executor task ns={ns} name={name}: {e}")
+                    logger.warning(f"[executor_job] Failed to scheduled delete executor task ns={ns} name={name}: {e}")
         except Exception as e:
-            logger.error(f"cleanup_stale_executors error: {e}")
+            logger.error(f"[executor_job] cleanup_stale_executors error: {e}")
 
 
 job_service = JobService(Kind)

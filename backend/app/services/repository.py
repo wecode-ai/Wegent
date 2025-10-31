@@ -66,7 +66,7 @@ class RepositoryService:
             Combined repository list from all providers
         """
         user_providers = self._get_user_providers(user)
-        if not user_providers:
+        if not user_providers or user_providers == []:
             raise HTTPException(
                 status_code=400,
                 detail="No git token configured. Please add your git token."
@@ -74,34 +74,15 @@ class RepositoryService:
         
         all_repos = []
         
-        # Fetch repositories from all configured providers concurrently
-        tasks = []
         for provider_type in user_providers:
-            provider = self.providers[provider_type]
-            task = provider.get_repositories(user, page=1, limit=100)  # Get more to ensure pagination
-            tasks.append(task)
-        
-        try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for idx, result in enumerate(results):
-                provider_type = user_providers[idx]
-                if isinstance(result, Exception):
-                    self.logger.error(f"Error fetching repositories from {provider_type}: {result}")
-                    raise HTTPException(
-                        status_code=502,
-                        detail="Failed to fetch repositories. Please check if your token is correct or has expired."
-                    )
-                
-                all_repos.extend(result)
-            
-        except Exception as e:
-            self.logger.error(f"Error fetching repositories: {e}")
-            raise HTTPException(
-                status_code=502,
-                detail=f"Error fetching repositories: {str(e)}"
-            )
-        
+            try:
+                provider = self.providers[provider_type]
+                repos = await provider.get_repositories(user, page=1, limit=100)
+                all_repos.extend(repos)
+            except Exception as e:
+                self.logger.error(f"Retrying fetching repositories from {provider_type}: {e}")
+                continue
+
         # Sort by last updated (simulated with basic sorting)
         all_repos.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
         
@@ -186,7 +167,8 @@ class RepositoryService:
         self,
         user: User,
         query: str,
-        timeout: int = 30
+        timeout: int = 30,
+        fullmatch: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Search repositories across all configured providers
@@ -195,6 +177,7 @@ class RepositoryService:
             user: User object
             query: Search keyword
             timeout: Timeout in seconds
+            fullmatch: Enable exact match (true) or partial match (false)
             
         Returns:
             Combined search results from all providers
@@ -205,30 +188,14 @@ class RepositoryService:
         
         all_results = []
         
-        # Search in all configured providers concurrently
-        tasks = []
         for provider_type in user_providers:
-            provider = self.providers[provider_type]
-            task = provider.search_repositories(user, query, timeout)
-            tasks.append(task)
-        
-        try:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            
-            for idx, result in enumerate(results):
-                provider_type = user_providers[idx]
-                if isinstance(result, Exception):
-                    self.logger.error(f"Error searching repositories in {provider_type}: {result}")
-                    continue
-                
-                all_results.extend(result)
-            
-        except Exception as e:
-            self.logger.error(f"Error searching repositories: {e}")
-            raise HTTPException(
-                status_code=502,
-                detail=f"Error searching repositories: {str(e)}"
-            )
+            try:
+                provider = self.providers[provider_type]
+                results = await provider.search_repositories(user, query, timeout, fullmatch)
+                all_results.extend(results)
+            except Exception as e:
+                self.logger.error(f"Error searching repositories in {provider_type}: {e}")
+                continue
         
         # Sort by relevance (basic sorting by name match)
         query_lower = query.lower()

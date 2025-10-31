@@ -346,7 +346,8 @@ class GitHubProvider(RepositoryProvider):
         self,
         user: User,
         query: str,
-        timeout: int = 30
+        timeout: int = 30,
+        fullmatch: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Search user's GitHub repositories across all configured GitHub domains
@@ -355,6 +356,7 @@ class GitHubProvider(RepositoryProvider):
             user: User object
             query: Search keyword
             timeout: Timeout in seconds
+            fullmatch: Enable exact match (true) or partial match (false)
             
         Returns:
             Aggregated search results from all configured GitHub domains
@@ -379,10 +381,16 @@ class GitHubProvider(RepositoryProvider):
             # 1) Try to get from full cache first (per domain)
             full_cached = await self._get_all_repositories_from_cache(user, git_domain)
             if full_cached:
-                filtered_repos = [
-                    repo for repo in full_cached
-                    if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
-                ]
+                if fullmatch:
+                    filtered_repos = [
+                        repo for repo in full_cached
+                        if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                    ]
+                else:
+                    filtered_repos = [
+                        repo for repo in full_cached
+                        if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                    ]
                 all_results.extend([
                     Repository(
                         id=repo["id"],
@@ -411,10 +419,16 @@ class GitHubProvider(RepositoryProvider):
                 # try cache again
                 full_cached = await self._get_all_repositories_from_cache(user, git_domain)
                 if full_cached:
-                    filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
-                    ]
+                    if fullmatch:
+                        filtered_repos = [
+                            repo for repo in full_cached
+                            if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                        ]
+                    else:
+                        filtered_repos = [
+                            repo for repo in full_cached
+                            if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                        ]
                     all_results.extend([
                         Repository(
                             id=repo["id"],
@@ -434,10 +448,16 @@ class GitHubProvider(RepositoryProvider):
             # 4) Try cache after building
             full_cached = await self._get_all_repositories_from_cache(user, git_domain)
             if full_cached:
-                filtered_repos = [
-                    repo for repo in full_cached
-                    if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
-                ]
+                if fullmatch:
+                    filtered_repos = [
+                        repo for repo in full_cached
+                        if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                    ]
+                else:
+                    filtered_repos = [
+                        repo for repo in full_cached
+                        if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                    ]
                 all_results.extend([
                     Repository(
                         id=repo["id"],
@@ -481,10 +501,16 @@ class GitHubProvider(RepositoryProvider):
                     }
                     for repo in repos
                 ]
-                filtered_repos = [
-                    r for r in mapped
-                    if query_lower in r["name"].lower() or query_lower in r["full_name"].lower()
-                ]
+                if fullmatch:
+                    filtered_repos = [
+                        r for r in mapped
+                        if query_lower == r["name"].lower() or query_lower == r["full_name"].lower()
+                    ]
+                else:
+                    filtered_repos = [
+                        r for r in mapped
+                        if query_lower in r["name"].lower() or query_lower in r["full_name"].lower()
+                    ]
                 all_results.extend([
                     Repository(
                         id=r["id"],
@@ -584,9 +610,9 @@ class GitHubProvider(RepositoryProvider):
             self.logger.info(f"Cache complete repository list for user github {user.user_name}")
             
             
-        except Exception:
+        except Exception as e:
             # Background task fails silently
-            self.logger.error(f"Failed to fetch repositories for user {user.user_name}")
+            self.logger.error(f"Failed to fetch github repositories for user {user.user_name}: {str(e)}")
             pass
         finally:
             # Always clear build status

@@ -29,9 +29,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     """
     Task service class using kinds table
     """
-
-   
-
     def create_task_or_append(
         self, db: Session, *, obj_in: TaskCreate, user: User, task_id: Optional[int] = None
     ) -> Dict[str, Any]:
@@ -47,7 +44,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             Kind.user_id == user.id,
             Kind.kind == "Task",
             Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') IN ('PENDING', 'RUNNING')")
+            text("JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) IN ('PENDING', 'RUNNING') and (JSON_EXTRACT(json, '$.metadata.labels.type') is null or JSON_EXTRACT(json, '$.metadata.labels.type') = 'online')")
         ).count()
         if running_count >= settings.MAX_RUNNING_TASKS_PER_USER:
             raise HTTPException(
@@ -91,6 +88,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 raise HTTPException(
                     status_code=400,
                     detail="Task is in progress, please wait for it to complete"
+                )
+            
+            if task_crd.metadata.labels and task_crd.metadata.labels["autoDeleteExecutor"] == "true" :
+                raise HTTPException(
+                    status_code=400,
+                    detail="offline task already clear, please create a new task"
                 )
             
             # Check if task is expired
@@ -210,17 +213,21 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 },
                 "status": {
                     "state": "Available",
-                    "status": obj_in.status.value if obj_in.status else "PENDING",
-                    "progress": obj_in.progress or 0,
-                    "result": obj_in.result,
-                    "errorMessage": obj_in.error_message,
+                    "status": "PENDING",
+                    "progress": 0,
+                    "result": None,
+                    "errorMessage": "",
                     "createdAt": datetime.now().isoformat(),
                     "updatedAt": datetime.now().isoformat(),
                     "completedAt": None
                 },
                 "metadata": {
                     "name": f"task-{task_id}",
-                    "namespace": "default"
+                    "namespace": "default",
+                    "labels": {
+                        "type": obj_in.type or "online", # "online" or "offline"
+                        "autoDeleteExecutor": obj_in.auto_delete_executor or "false",
+                    }
                 },
                 "apiVersion": "agent.wecode.io/v1"
             }
@@ -244,7 +251,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         db.flush()
 
         return self._convert_to_task_dict(task, db, user.id)
-    
 
     def _get_team_by_name_and_namespace(self, db: Session, team_name: str, team_namespace: str, user_id: int) -> Optional[Kind]:
         existing_team = db.query(Kind).filter(
@@ -312,6 +318,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's Task list with pagination (only active tasks, excluding DELETE status)
+        Optimized version using batch queries to reduce database calls
         """
         query = db.query(Kind).filter(
             Kind.user_id == user_id,
@@ -323,9 +330,17 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         total = query.with_entities(func.count(Kind.id)).scalar()
         tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
 
+        if not tasks:
+            return [], total
+
+        # Get all related data in batch to avoid N+1 queries
+        related_data_batch = self._get_tasks_related_data_batch(db, tasks, user_id)
+        
         result = []
         for task in tasks:
-            result.append(self._convert_to_task_dict(task, db, user_id))
+            task_crd = Task.model_validate(task.json)
+            task_related_data = related_data_batch.get(str(task.id), {})
+            result.append(self._convert_to_task_dict_optimized(task, task_related_data, task_crd))
 
         return result, total
 
@@ -334,21 +349,29 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Fuzzy search tasks by title for current user (pagination), excluding DELETE status
+        Optimized version using batch queries to reduce database calls
         """
         query = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Task",
             Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
-            text("JSON_EXTRACT(json, '$.spec.title') LIKE :title")
+            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE' and JSON_EXTRACT(json, '$.spec.title') LIKE :title")
         ).params(title=f"%{title}%")
 
         total = query.with_entities(func.count(Kind.id)).scalar()
         tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
 
+        if not tasks:
+            return [], total
+
+        # Get all related data in batch to avoid N+1 queries
+        related_data_batch = self._get_tasks_related_data_batch(db, tasks, user_id)
+        
         result = []
         for task in tasks:
-            result.append(self._convert_to_task_dict(task, db, user_id))
+            task_crd = Task.model_validate(task.json)
+            task_related_data = related_data_batch.get(str(task.id), {})
+            result.append(self._convert_to_task_dict_optimized(task, task_related_data, task_crd))
 
         return result, total
 
@@ -637,7 +660,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Collect unique executor keys to avoid duplicate calls (namespace + name)
         unique_executor_keys = set()
         for subtask in task_subtasks:
-            if subtask.executor_name:
+            if subtask.executor_name and not subtask.executor_deleted_at:
                 unique_executor_keys.add((subtask.executor_namespace, subtask.executor_name))
         
         # Stop running subtasks on executor (deduplicated by (namespace, name))
@@ -813,8 +836,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         user = db.query(User).filter(User.id == user_id).first()
         user_name = user.user_name if user else ""
 
+        type = task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+
         return {
             "id": task.id,
+            "type": type,
             "user_id": task.user_id,
             "user_name": user_name,
             "title": task_crd.spec.title,
@@ -1043,6 +1069,161 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         first_group_assistants.reverse()
         return first_group_assistants
+
+
+    def _get_tasks_related_data_batch(
+        self, db: Session, tasks: List[Kind], user_id: int
+    ) -> Dict[str, Dict[str, Any]]:
+        """
+        Batch get workspace and team data for multiple tasks to reduce database queries
+        """
+        if not tasks:
+            return {}
+        
+        # Extract workspace and team references from all tasks
+        workspace_refs = set()
+        team_refs = set()
+        task_crd_map = {}
+        
+        for task in tasks:
+            task_crd = Task.model_validate(task.json)
+            task_crd_map[task.id] = task_crd
+            
+            if hasattr(task_crd.spec, 'workspaceRef') and task_crd.spec.workspaceRef:
+                workspace_refs.add((task_crd.spec.workspaceRef.name, task_crd.spec.workspaceRef.namespace))
+            
+            if hasattr(task_crd.spec, 'teamRef') and task_crd.spec.teamRef:
+                team_refs.add((task_crd.spec.teamRef.name, task_crd.spec.teamRef.namespace))
+        
+        # Batch query workspaces
+        workspace_data = {}
+        if workspace_refs:
+            workspace_names, workspace_namespaces = zip(*workspace_refs)
+            workspaces = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Workspace",
+                Kind.name.in_(workspace_names),
+                Kind.namespace.in_(workspace_namespaces),
+                Kind.is_active == True
+            ).all()
+            
+            for workspace in workspaces:
+                key = f"{workspace.name}:{workspace.namespace}"
+                if workspace.json:
+                    workspace_crd = Workspace.model_validate(workspace.json)
+                    workspace_data[key] = {
+                        "git_url": workspace_crd.spec.repository.gitUrl,
+                        "git_repo": workspace_crd.spec.repository.gitRepo,
+                        "git_repo_id": workspace_crd.spec.repository.gitRepoId or 0,
+                        "git_domain": workspace_crd.spec.repository.gitDomain,
+                        "branch_name": workspace_crd.spec.repository.branchName,
+                    }
+                else:
+                    workspace_data[key] = {
+                        "git_url": "",
+                        "git_repo": "",
+                        "git_repo_id": 0,
+                        "git_domain": "",
+                        "branch_name": "",
+                    }
+        
+        # Batch query teams
+        team_data = {}
+        if team_refs:
+            team_names, team_namespaces = zip(*team_refs)
+            teams = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Team",
+                Kind.name.in_(team_names),
+                Kind.namespace.in_(team_namespaces),
+                Kind.is_active == True
+            ).all()
+            
+            for team in teams:
+                key = f"{team.name}:{team.namespace}"
+                team_data[key] = team
+        
+        # Get user info once
+        user = db.query(User).filter(User.id == user_id).first()
+        user_name = user.user_name if user else ""
+        
+        # Build result mapping
+        result = {}
+        for task in tasks:
+            task_crd = task_crd_map[task.id]
+            
+            # Get workspace data
+            workspace_key = f"{task_crd.spec.workspaceRef.name}:{task_crd.spec.workspaceRef.namespace}"
+            task_workspace_data = workspace_data.get(workspace_key, {
+                "git_url": "",
+                "git_repo": "",
+                "git_repo_id": 0,
+                "git_domain": "",
+                "branch_name": "",
+            })
+            
+            # Get team data
+            team_key = f"{task_crd.spec.teamRef.name}:{task_crd.spec.teamRef.namespace}"
+            task_team = team_data.get(team_key)
+            team_id = task_team.id if task_team else None
+            
+            # Parse timestamps
+            created_at = None
+            updated_at = None
+            completed_at = None
+            
+            if task_crd.status:
+                try:
+                    if task_crd.status.createdAt:
+                        created_at = task_crd.status.createdAt
+                    if task_crd.status.updatedAt:
+                        updated_at = task_crd.status.updatedAt
+                    if task_crd.status.completedAt:
+                        completed_at = task_crd.status.completedAt
+                except:
+                    # Fallback to task timestamps
+                    created_at = task.created_at
+                    updated_at = task.updated_at
+            
+            result[str(task.id)] = {
+                "workspace_data": task_workspace_data,
+                "team_id": team_id,
+                "user_name": user_name,
+                "created_at": created_at or task.created_at,
+                "updated_at": updated_at or task.updated_at,
+                "completed_at": completed_at,
+            }
+        
+        return result
+
+    def _convert_to_task_dict_optimized(
+        self, task: Kind, related_data: Dict[str, Any], task_crd: Task
+    ) -> Dict[str, Any]:
+        """
+        Optimized version of _convert_to_task_dict that uses pre-fetched related data
+        """
+        workspace_data = related_data.get("workspace_data", {})
+        
+        return {
+            "id": task.id,
+            "user_id": task.user_id,
+            "user_name": related_data.get("user_name", ""),
+            "title": task_crd.spec.title,
+            "team_id": related_data.get("team_id"),
+            "git_url": workspace_data.get("git_url", ""),
+            "git_repo": workspace_data.get("git_repo", ""),
+            "git_repo_id": workspace_data.get("git_repo_id", 0),
+            "git_domain": workspace_data.get("git_domain", ""),
+            "branch_name": workspace_data.get("branch_name", ""),
+            "prompt": task_crd.spec.prompt,
+            "status": task_crd.status.status if task_crd.status else "PENDING",
+            "progress": task_crd.status.progress if task_crd.status else 0,
+            "result": task_crd.status.result if task_crd.status else None,
+            "error_message": task_crd.status.errorMessage if task_crd.status else None,
+            "created_at": related_data.get("created_at", task.created_at),
+            "updated_at": related_data.get("updated_at", task.updated_at),
+            "completed_at": related_data.get("completed_at"),
+        }
 
 
 task_kinds_service = TaskKindsService(Kind)

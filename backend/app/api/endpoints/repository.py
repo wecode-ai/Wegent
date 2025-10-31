@@ -51,12 +51,13 @@ async def get_branches(
 async def search_repositories(
     q: str = Query(..., description="Search query for repository name"),
     timeout: int = Query(30, ge=5, le=60, description="Search timeout in seconds"),
+    fullmatch: bool = Query(False, description="Enable exact match (true) or partial match (false)"),
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Search repositories by name from all user's repositories"""
 
-    repositories = await repository_service.search_repositories(current_user, q, timeout)
+    repositories = await repository_service.search_repositories(current_user, q, timeout, fullmatch)
     return [
         RepositoryResult(
             git_repo_id=repo["id"],
