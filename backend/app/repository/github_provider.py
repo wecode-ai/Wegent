@@ -9,6 +9,7 @@ import asyncio
 import logging
 from typing import List, Dict, Any, Optional
 import requests
+from functools import lru_cache
 from fastapi import HTTPException
 
 from app.repository.interfaces.repository_provider import RepositoryProvider
@@ -187,7 +188,6 @@ class GitHubProvider(RepositoryProvider):
                 continue
 
         return all_repos
-    
     async def get_branches(
         self,
         user: User,
@@ -226,6 +226,9 @@ class GitHubProvider(RepositoryProvider):
                 "Accept": "application/vnd.github.v3+json"
             }
             
+            # Get the actual default branch name
+            default_branch_name = self._get_default_branch(repo_name, git_domain, git_token)
+            
             all_branches = []
             page = 1
             per_page = 100
@@ -256,7 +259,7 @@ class GitHubProvider(RepositoryProvider):
                 Branch(
                     name=branch["name"],
                     protected=branch.get("protected", False),
-                    default=branch.get("default", False)
+                    default=branch.get("default", False) or branch["name"] == default_branch_name
                 ).model_dump() for branch in all_branches
             ]
         except requests.exceptions.RequestException as e:
@@ -264,7 +267,40 @@ class GitHubProvider(RepositoryProvider):
                 status_code=502,
                 detail=f"GitHub API error: {str(e)}"
             )
-    
+            
+    @lru_cache(maxsize=100)
+    def _get_default_branch(
+        self,
+        repo_name: str,
+        git_domain: str,
+        git_token: str
+    ) -> str:
+
+        api_base_url = self._get_api_base_url(git_domain)
+
+        headers = {
+            "Authorization": f"token {git_token}",
+            "Accept": "application/vnd.github.v3+json"
+        }
+
+        try:
+            response = requests.get(
+                f"{api_base_url}/repos/{repo_name}",
+                headers=headers
+            )
+            response.raise_for_status()
+            
+            repo_data = response.json()
+            return repo_data.get("default_branch", "main")
+        except requests.exceptions.RequestException as e:
+            self.logger.warning(f"Failed to get default branch for {repo_name}: {str(e)}")
+            # Fallback to common default branch names
+            return "main"
+        except (ValueError, KeyError) as e:
+            self.logger.warning(f"Failed to parse default branch for {repo_name}: {str(e)}")
+            # Fallback to common default branch names
+            return "main"
+            
     def validate_token(
         self,
         token: str,
