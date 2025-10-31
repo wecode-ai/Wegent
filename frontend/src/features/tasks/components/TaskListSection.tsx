@@ -18,7 +18,6 @@ interface TaskListSectionProps {
 
 import { useRouter } from 'next/navigation'
 import { taskApis } from '@/apis/tasks'
-import { paths } from '@/config/paths'
 
 export default function TaskListSection({
   tasks,

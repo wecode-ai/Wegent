@@ -31,9 +31,20 @@ export const githubApis = {
     return await apiClient.get('/git/repositories')
   },
 
-  async searchRepositories(query: string): Promise<GitRepoInfo[]> {
-    // Add timeout=30 parameter to be compatible with backend interface
-    return await apiClient.get(`/git/repositories/search?q=${encodeURIComponent(query)}&timeout=30`);
+  // Unified search API: supports optional precise search via fullmatch and configurable timeout
+  async searchRepositories(
+    query: string,
+    opts?: { fullmatch?: boolean; timeout?: number }
+  ): Promise<GitRepoInfo[]> {
+    const timeout = opts?.timeout ?? 30
+    const params = new URLSearchParams({
+      q: query,
+      timeout: String(timeout),
+    })
+    if (opts?.fullmatch) {
+      params.append('fullmatch', '1')
+    }
+    return await apiClient.get(`/git/repositories/search?${params.toString()}`)
   },
 
   async getBranches(repo: GitRepoInfo): Promise<GitBranchesResponse> {

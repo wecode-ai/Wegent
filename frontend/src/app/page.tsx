@@ -9,8 +9,9 @@ import { Button } from 'antd'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 import LanguageSwitcher from '@/components/LanguageSwitcher'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
 import { getToken } from '@/apis/user'
+import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { GithubStarButton } from '@/features/layout/GithubStarButton'
 
 export default function Home() {
   const router = useRouter()
@@ -29,6 +30,7 @@ export default function Home() {
     <main className="flex smart-h-screen flex-col items-center justify-center p-8 bg-base relative box-border">
       {/* Language Switcher */}
       <div className="absolute top-4 right-4 flex items-center gap-3">
+        <GithubStarButton />
         <ThemeToggle />
         <LanguageSwitcher />
       </div>
