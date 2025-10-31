@@ -14,3 +14,4 @@ anthropic==0.67.0
 openai==1.107.1
 mcp==1.12.4
 sqlalchemy==2.0.43
+httpx==0.28.1

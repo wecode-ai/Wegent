@@ -272,7 +272,7 @@ def get_running_task_details(label_selector: str = None) -> dict:
         # Using go template formatting to get multiple fields
         cmd.extend([
             "--format",
-            "{{.Label \"task_id\"}}|{{.Label \"subtask_id\"}}|{{.Label \"subtask_next_id\"}}|{{.Names}}"
+            "{{.Label \"task_id\"}}|{{.Label \"subtask_id\"}}|{{.Label \"subtask_next_id\"}}|{{.Label \"aigc.weibo.com/task-type\"}}|{{.Names}}"
         ])
         
         result = subprocess.run(cmd, check=True, capture_output=True, text=True)
@@ -286,17 +286,20 @@ def get_running_task_details(label_selector: str = None) -> dict:
                 continue
                 
             parts = line.strip().split("|")
-            if len(parts) >= 4:
+            
+            if len(parts) >= 5:
                 task_id = parts[0]
                 subtask_id = parts[1]
                 subtask_next_id = parts[2]
-                container_name = parts[3]
-                
+                task_type = parts[3] if parts[3] else "online"
+                container_name = parts[4]
+                                
                 container_info = {
                     "task_id": task_id,
                     "subtask_id": subtask_id,
                     "container_name": container_name,
-                    "subtask_next_id": subtask_next_id
+                    "subtask_next_id": subtask_next_id,
+                    "task_type": task_type
                 }
                 
                 containers.append(container_info)
