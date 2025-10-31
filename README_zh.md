@@ -73,6 +73,9 @@ graph LR
 - **💼 Workspace**：用于任务和项目的隔离工作环境
 - **🎯 Task**：分配给团队的可执行工作单元
 
+> 💡 **详细的 YAML 配置文档**:
+- [完整的 YAML 配置示例和字段说明](docs/zh/资源定义格式.md)
+
 ### ✨ 为什么选择 Wegent？
 
 - **标准化**：通用的 AI 智能体运行时规范，就像容器的 Kubernetes
@@ -123,19 +126,21 @@ graph LR
    - 按照页面说明配置您的 GitHub 访问令牌
 
 5. **配置 Bot**
-   
-   Wegent 内置了一个开发 Bot。只需配置您的 Claude API 密钥即可开始使用：
-   
-   ```bash
-    {
-        "env": {
-            "ANTHROPIC_MODEL": "claude-4.1-opus",
-            "ANTHROPIC_API_KEY": "xxxxxx",
-            "ANTHROPIC_BASE_URL": "sk-xxxxxx",
-            "ANTHROPIC_SMALL_FAST_MODEL": "claude-3.5-haiku"
-        }
-    }
+
+   Wegent 内置了一个开发 Bot。对于 Claude Code 运行时，请设置以下环境变量：
+
+   ```json
+   {
+     "env": {
+       "ANTHROPIC_MODEL": "openrouter,anthropic/claude-sonnet-4",
+       "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxx",
+       "ANTHROPIC_BASE_URL": "http://xxxxx",
+       "ANTHROPIC_SMALL_FAST_MODEL": "openrouter,anthropic/claude-3.5-haiku"
+     }
+   }
    ```
+
+   注：部分运行时可能使用 `ANTHROPIC_API_KEY` 而非 `ANTHROPIC_AUTH_TOKEN`，具体以文档说明为准。
 
 6. **运行任务**
 
