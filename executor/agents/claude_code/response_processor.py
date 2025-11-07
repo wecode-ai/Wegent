@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-
+import json
+from dataclasses import asdict
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
@@ -16,13 +17,14 @@ from claude_agent_sdk.types import (
     Message,
     SystemMessage,
     AssistantMessage,
+    UserMessage,
     ResultMessage,
     ToolUseBlock,
     TextBlock,
+    ToolResultBlock,
 )
 
 logger = setup_logger("claude_response_processor")
-
 
 async def process_response(
     client: ClaudeSDKClient, report_progress_callback, thinking_manager=None
@@ -40,43 +42,18 @@ async def process_response(
     """
     index = 0
     try:
-        # Add thinking step for starting response processing
-        if thinking_manager:
-            thinking_manager.add_thinking_step_by_key(
-                title_key="thinking.claude.process_response",
-                action_key="thinking.claude.starting_process_response",
-                reasoning_key="thinking.claude.beginning_process_response",
-                report_immediately=False
-            )
-        
         async for msg in client.receive_response():
             index += 1
             # Log the number of messages received
             logger.info(f"claude message index: {index}, received: {msg}")
-            
-            # Add thinking step for each message received
-            if thinking_manager:
-                # # Check if msg has content attribute
-                # if hasattr(msg, 'content') and msg.content is not None:
-                #     # Use content in reasoning_key, truncate if too long
-                #     content_str = str(msg.content)
-                #     content_preview = content_str[:200] + "..." if len(content_str) > 200 else content_str
-                #     reasoning_key = f"${{thinking.claude.from_claude}}:{content_preview}"
-                # else:
-                # Use message type name when content is not available
-                reasoning_key = f"${{thinking.claude.from_claude}}:{type(msg).__name__}"
-                
-                thinking_manager.add_thinking_step_by_key(
-                    title_key="thinking.claude.receive_message",
-                    reasoning_key=reasoning_key,
-                    report_immediately=True
-                )
-            
-            # Handle different message types based on their class
 
             if isinstance(msg, SystemMessage):
                 # Handle SystemMessage
                 _handle_system_message(msg, thinking_manager)
+
+            elif isinstance(msg, UserMessage):
+                # Handle UserMessage
+                _handle_user_message(msg, thinking_manager)
 
             elif isinstance(msg, AssistantMessage):
                 _handle_assistant_message(msg, thinking_manager)
@@ -97,10 +74,7 @@ async def process_response(
         # Add thinking step for error
         if thinking_manager:
             thinking_manager.add_thinking_step_by_key(
-                title_key="thinking.claude.response_processing_error",
-                action_key="thinking.claude.failed_process_response",
-                reasoning_key=f"${{thinking.claude.error_during_response_processing}} {str(e)}",
-                next_action_key="thinking.exit",
+                title_key="thinking.response_processing_error",
                 report_immediately=False
             )
         
@@ -119,78 +93,216 @@ async def process_response(
 
 
 def _handle_system_message(msg: SystemMessage, thinking_manager=None):
-    logger.info(f"SystemMessage: subtype = {msg.subtype}")
+    """处理系统消息，提取详细信息"""
+    
+    # 构建系统消息的详细信息，符合目标格式
+    system_detail = {
+        "type": "system",
+        "subtype": msg.subtype,
+        **msg.data  # 包含原有的系统消息数据
+    }
+    
+    logger.info(f"SystemMessage: subtype = {msg.subtype}. msg = {json.dumps(asdict(msg), ensure_ascii=False)}")
     
     if thinking_manager:
-        thinking_manager.add_thinking_step_by_key(
-            title_key="thinking.claude.system_message",
-            action_key=f"${{thinking.claude.processing_system_message}} {msg.subtype}",
-            reasoning_key="thinking.claude.handling_system_message",
-            report_immediately=False
+        thinking_manager.add_thinking_step(
+            title="thinking.system_message_received",
+            report_immediately=True,
+            use_i18n_keys=True,
+            details=system_detail
+        )
+
+
+def _handle_user_message(msg: UserMessage, thinking_manager=None):
+    """处理用户消息，提取详细信息"""
+    
+    # 构建用户消息的详细信息，符合目标格式
+    message_details = {
+        "type": "user",
+        "message": {
+            "type": "message",
+            "role": "user",
+            "content": [],
+            "parent_tool_use_id": msg.parent_tool_use_id
+        }
+    }
+    
+    # 处理内容（可能是字符串或内容块列表）
+    if isinstance(msg.content, str):
+        # 如果是字符串，直接作为文本内容
+        text_detail = {
+            "type": "text",
+            "text": msg.content
+        }
+        message_details["message"]["content"].append(text_detail)
+        logger.info(f"UserMessage: text content, length = {len(msg.content)}")
+    else:
+        # 如果是内容块列表，处理每个块
+        logger.info(f"UserMessage: {len(msg.content)} content blocks")
+        
+        for block in msg.content:
+            # 添加调试日志：打印 block 的类型和内容
+            logger.info(f"Processing UserMessage block type: {type(block).__name__}, isinstance checks: "
+                       f"ToolUseBlock={isinstance(block, ToolUseBlock)}, "
+                       f"TextBlock={isinstance(block, TextBlock)}, "
+                       f"ToolResultBlock={isinstance(block, ToolResultBlock)}")
+            logger.info(f"UserMessage Block content: {asdict(block) if hasattr(block, '__dataclass_fields__') else block}")
+            
+            if isinstance(block, ToolUseBlock):
+                # 工具使用详情，符合目标格式
+                tool_detail = {
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input
+                }
+                message_details["message"]["content"].append(tool_detail)
+                
+                logger.info(f"UserMessage ToolUseBlock: tool = {block.name}")
+                    
+            elif isinstance(block, TextBlock):
+                # 文本内容详情，符合目标格式
+                text_detail = {
+                    "type": "text",
+                    "text": block.text
+                }
+                message_details["message"]["content"].append(text_detail)
+                
+                logger.info(f"UserMessage TextBlock: {len(block.text)} chars")
+            
+            elif isinstance(block, ToolResultBlock):
+                # 工具结果详情，符合目标格式
+                result_detail = {
+                    "type": "tool_result",
+                    "tool_use_id": block.tool_use_id,
+                    "content": block.content,
+                    "is_error": block.is_error
+                }
+                message_details["message"]["content"].append(result_detail)
+                
+                logger.info(f"UserMessage ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}")
+            
+            else:
+                # 未知块类型，符合目标格式
+                unknown_detail = {
+                    "type": "unknown",
+                    "block_type": type(block).__name__,
+                    "block_data": asdict(block) if hasattr(block, '__dict__') else str(block)
+                }
+                message_details["message"]["content"].append(unknown_detail)
+                
+                logger.debug(f"UserMessage Unknown block type: {type(block)}")
+    
+    # 记录整体消息
+    if thinking_manager:
+        thinking_manager.add_thinking_step(
+            title="thinking.user_message_received",
+            report_immediately=True,
+            use_i18n_keys=True,
+            details=message_details
         )
 
 
 def _handle_assistant_message(msg: AssistantMessage, thinking_manager=None):
-    logger.info(f"AssistantMessage: {len(msg.content)} content blocks")
+    """处理助手消息，提取详细信息"""
     
-    if thinking_manager:
-        thinking_manager.add_thinking_step_by_key(
-            title_key="thinking.claude.assistant_message",
-            reasoning_key="thinking.claude.handling_assistant_message",
-            report_immediately=False
-        )
-
+    # 收集所有内容块的详细信息，符合目标格式
+    message_details = {
+        "type": "assistant",
+        "message": {
+            "id": getattr(msg, 'id', ''),
+            "type": "message",
+            "role": "assistant",
+            "model": msg.model,
+            "content": [],
+            "parent_tool_use_id": msg.parent_tool_use_id
+        }
+    }
+    
+    # Convert content blocks to dict format for JSON serialization
+    content_dicts = []
     for block in msg.content:
+        content_dicts.append(asdict(block))
+    msg_dict = {"content": content_dicts, "model": msg.model, "parent_tool_use_id": msg.parent_tool_use_id}
+    logger.info(f"AssistantMessage: {len(msg.content)} content blocks, msg = {json.dumps(msg_dict, ensure_ascii=False)}")
+    
+    # 处理每个内容块
+    for block in msg.content:
+        # 添加调试日志：打印 block 的类型和内容
+        logger.info(f"Processing block type: {type(block).__name__}, isinstance checks: "
+                   f"ToolUseBlock={isinstance(block, ToolUseBlock)}, "
+                   f"TextBlock={isinstance(block, TextBlock)}, "
+                   f"ToolResultBlock={isinstance(block, ToolResultBlock)}")
+        logger.info(f"Block content: {asdict(block) if hasattr(block, '__dataclass_fields__') else block}")
+        
         if isinstance(block, ToolUseBlock):
+            # 工具使用详情，符合目标格式
+            tool_detail = {
+                "type": "tool_use",
+                "id": block.id,
+                "name": block.name,
+                "input": block.input
+            }
+            message_details["message"]["content"].append(tool_detail)
+            
             logger.info(f"ToolUseBlock: tool = {block.name}")
-            if thinking_manager:
-                thinking_manager.add_thinking_step_by_key(
-                    title_key="thinking.claude.tool_use",
-                    action_key=f"${{thinking.claude.using_tool}} {block.name}",
-                    reasoning_key=f"${{thinking.claude.is_using_tool}} {block.name}",
-                    report_immediately=False
-                )
-            # Add tool-specific logic
+                
         elif isinstance(block, TextBlock):
+            # 文本内容详情，符合目标格式
+            text_detail = {
+                "type": "text",
+                "text": block.text
+            }
+            message_details["message"]["content"].append(text_detail)
+            
             logger.info(f"TextBlock: {len(block.text)} chars")
-            if thinking_manager:
-                thinking_manager.add_thinking_step_by_key(
-                    title_key="thinking.claude.text_response",
-                    reasoning_key="thinking.claude.generating_text_response",
-                    report_immediately=False
-                )
-            # Add text handling logic
+        
+        elif isinstance(block, ToolResultBlock):
+            # 工具结果详情，符合目标格式
+            result_detail = {
+                "type": "tool_result",
+                "tool_use_id": block.tool_use_id,
+                "content": block.content,
+                "is_error": block.is_error
+            }
+            message_details["message"]["content"].append(result_detail)
+            
+            logger.info(f"ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}")
+        
         else:
+            # 未知块类型，符合目标格式
+            unknown_detail = {
+                "type": "unknown",
+                "block_type": type(block).__name__,
+                "block_data": asdict(block) if hasattr(block, '__dict__') else str(block)
+            }
+            message_details["message"]["content"].append(unknown_detail)
+            
             logger.debug(f"Unknown block type: {type(block)}")
-            if thinking_manager:
-                thinking_manager.add_thinking_step_by_key(
-                    title_key="thinking.claude.unknown_block_type",
-                    action_key=f"${{thinking.claude.processing_unknown_block}} {type(block).__name__}",
-                    reasoning_key="thinking.claude.unknown_block_sent",
-                    report_immediately=False
-                )
-
+    
+    # 记录整体消息
+    # 记录整体消息
+    if thinking_manager:
+        thinking_manager.add_thinking_step(
+            title="thinking.assistant_message_received",
+            report_immediately=True,
+            use_i18n_keys=True,
+            details=message_details
+        )
 
 def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
     msg_type = msg.get("type", "unknown")
-    
-    if thinking_manager:
-        thinking_manager.add_thinking_step(
-            title="Legacy Message",
-            action=f"Processing legacy message of type: {msg_type}",
-            reasoning="Handling legacy message format from Claude",
-            report_immediately=False
-        )
+
+    logger.info(f"Legacy Message: type = {msg_type}. msg = {json.dumps(msg, ensure_ascii=False)}")
 
     if msg_type == "tool_use":
         tool_name = msg.get("tool", {}).get("name", "unknown")
         logger.info(f"Legacy ToolUse: tool = {tool_name}")
         if thinking_manager:
             thinking_manager.add_thinking_step(
-                title="Legacy Tool Use",
-                action=f"Using tool (legacy format): {tool_name}",
-                reasoning=f"Claude is using the {tool_name} tool in legacy format",
-                report_immediately=False
+                title="thinking.legacy_tool_use",
+                report_immediately=False,
+                use_i18n_keys=True
             )
 
     elif msg_type == "content":
@@ -198,20 +310,18 @@ def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
         logger.info(f"Legacy Content: length = {len(content)}")
         if thinking_manager:
             thinking_manager.add_thinking_step(
-                title="Legacy Content",
-                action=f"Processing content (legacy format) of length: {len(content)}",
-                reasoning="Claude is sending content in legacy format",
-                report_immediately=False
+                title="thinking.legacy_content",
+                report_immediately=False,
+                use_i18n_keys=True
             )
 
     else:
         logger.warning(f"Unknown legacy message type: {msg_type}")
         if thinking_manager:
             thinking_manager.add_thinking_step(
-                title="Unknown Legacy Message",
-                action=f"Processing unknown legacy message type: {msg_type}",
-                reasoning="Claude sent an unknown legacy message type",
-                report_immediately=False
+                title="thinking.unknown_legacy_message",
+                report_immediately=False,
+                use_i18n_keys=True
             )
 
 
@@ -222,20 +332,27 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
     Args:
         msg: The ResultMessage to process
         report_progress_callback: Callback function to report progress
+        thinking_manager: Optional ThinkingStepManager instance
 
     Returns:
         TaskStatus: Processing status (COMPLETED if successful, otherwise None)
     """
-    logger.info(f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}")
     
-    # Add thinking step for result message
-    if thinking_manager:
-        thinking_manager.add_thinking_step(
-            title="thinking.claude.process_result_message",
-            action=f"Processing result message with subtype: {msg.subtype}",
-            reasoning=f"Handling result message from Claude, is_error: {msg.is_error}",
-            report_immediately=False
-        )
+    # 构建详细的结果信息，符合目标格式
+    result_details = {
+        "type": "result",
+        "subtype": msg.subtype,
+        "is_error": msg.is_error,
+        "session_id": msg.session_id,
+        "num_turns": msg.num_turns,
+        "duration_ms": msg.duration_ms,
+        "duration_api_ms": msg.duration_api_ms,
+        "total_cost_usd": msg.total_cost_usd,
+        "usage": msg.usage,
+        "result": msg.result
+    }
+    
+    logger.info(f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}, msg = {json.dumps(asdict(msg), ensure_ascii=False)}")
 
     # If it's a successful result message, send the result back via callback
     if msg.subtype == "success" and not msg.is_error:
@@ -246,13 +363,10 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
         # Add thinking step for successful result
         if thinking_manager:
             thinking_manager.add_thinking_step(
-                title="thinking.claude.result_processing_success",
-                action="thinking.claude.successfully_processed_result",
-                reasoning=f"Result processed successfully with content length: {len(result_str)}",
-                result=result_str[:200] + "..." if len(result_str) > 200 else result_str,
-                confidence=0.9,
-                next_action="thinking.complete",
-                report_immediately=False
+                title="thinking.task_execution_success",
+                report_immediately=False,
+                use_i18n_keys=True,
+                details=result_details
             )
 
         # If there's a result, pass it as result parameter to report_progress
@@ -278,11 +392,9 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
                 logger.error(f"Failed to parse result as dict: {e}")
                 if thinking_manager:
                     thinking_manager.add_thinking_step(
-                        title="thinking.claude.result_parsing_error",
-                        action="thinking.claude.failed_parse_dict",
-                        reasoning=f"Error occurred while parsing result: {str(e)}",
-                        next_action="thinking.exit",
-                        report_immediately=False
+                        title="thinking.result_parsing_error",
+                        report_immediately=False,
+                        use_i18n_keys=True
                     )
                 
                 result_dict = ExecutionResult(thinking=thinking_manager.get_thinking_steps() if thinking_manager else []).dict()
@@ -309,11 +421,10 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
         # Add thinking step for error result
         if thinking_manager:
             thinking_manager.add_thinking_step(
-                title="thinking.claude.result_processing_error",
-                action="thinking.claude.received_error_result",
-                reasoning=f"Claude returned an error result: {result_str}",
-                next_action="thinking.exit",
-                report_immediately=False
+                title="thinking.task_execution_failed",
+                report_immediately=False,
+                use_i18n_keys=True,
+                details=result_details
             )
         
         result_dict = ExecutionResult(thinking=thinking_manager.get_thinking_steps() if thinking_manager else []).dict()

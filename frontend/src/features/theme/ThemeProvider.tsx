@@ -23,13 +23,25 @@ function applyTheme(theme: ThemeMode) {
   const root = typeof document !== 'undefined' ? document.documentElement : null
   if (!root) return
 
+  // 暂时禁用过渡效果，避免闪烁
+  root.classList.add('no-transition')
+  
+  // 批量更新主题相关的 DOM 属性
   root.dataset.theme = theme
-
+  
   if (theme === 'dark') {
     root.classList.add('dark')
   } else {
     root.classList.remove('dark')
   }
+  
+  // 强制重绘以应用新主题
+  root.offsetHeight
+  
+  // 在下一帧恢复过渡效果
+  requestAnimationFrame(() => {
+    root.classList.remove('no-transition')
+  })
 }
 
 function resolveInitialTheme(): ThemeMode {

@@ -47,7 +47,7 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
     if (quota && Object.keys(quota).length > 0) {
       timer = setInterval(() => {
         handleLoadQuota()
-      }, 5000)
+      }, 20000)
     }
     return () => {
       if (timer) clearInterval(timer)

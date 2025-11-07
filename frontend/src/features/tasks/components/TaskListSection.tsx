@@ -5,26 +5,31 @@
 'use client'
 
 import { useState } from 'react'
-import { Task } from '@/types/api'
+import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
 import { FaRegCircleCheck, FaRegCircleStop, FaRegCircleXmark } from 'react-icons/fa6'
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
+import { useTranslation } from '@/hooks/useTranslation'
 
 interface TaskListSectionProps {
   tasks: Task[]
   title: string
+  onTaskClick?: () => void
 }
 
 import { useRouter } from 'next/navigation'
 import { taskApis } from '@/apis/tasks'
+import { paths } from '@/config/paths'
 
 export default function TaskListSection({
   tasks,
   title,
+  onTaskClick,
 }: TaskListSectionProps) {
   const router = useRouter()
   const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext()
+  const { t } = useTranslation('common')
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
 
@@ -36,12 +41,35 @@ export default function TaskListSection({
     }
 
     if (typeof window !== 'undefined') {
-      const params = new URLSearchParams(window.location.search)
+      const params = new URLSearchParams()
       params.set('taskId', String(task.id))
-      router.push(`?${params.toString()}`)
+
+      // Navigate to the appropriate page based on task task_type
+      // If task_type is not set, infer from git information
+      let targetPath = paths.chat.getHref() // default to chat
+
+      if (task.task_type === 'code') {
+        targetPath = paths.code.getHref()
+      } else if (task.task_type === 'chat') {
+        targetPath = paths.chat.getHref()
+      } else {
+        // For backward compatibility: infer type from git information
+        // If task has git repo info, assume it's a code task
+        if (task.git_repo && task.git_repo.trim() !== '') {
+          targetPath = paths.code.getHref()
+        } else {
+          targetPath = paths.chat.getHref()
+        }
+      }
+
+      router.push(`${targetPath}?${params.toString()}`)
+      
+      // Call the onTaskClick callback if provided (to close mobile sidebar)
+      if (onTaskClick) {
+        onTaskClick()
+      }
     }
   }
-
   // Handle touch start for immediate response on mobile
   const handleTaskTouchStart = (task: Task) => (event: React.TouchEvent) => {
     event.preventDefault()
@@ -110,6 +138,33 @@ export default function TaskListSection({
     }
   }
 
+  const getTaskTypeTag = (task: Task) => {
+    let taskType: TaskType | undefined = task.task_type
+
+    // For backward compatibility: infer type from git information if not set
+    if (!taskType) {
+      if (task.git_repo && task.git_repo.trim() !== '') {
+        taskType = 'code'
+      } else {
+        taskType = 'chat'
+      }
+    }
+
+    const typeConfig = {
+      chat: { label: t('navigation.chat'), color: 'bg-blue-100 text-blue-800' },
+      code: { label: t('navigation.code'), color: 'bg-green-100 text-green-800' }
+    }
+
+    const config = typeConfig[taskType]
+    if (!config) return null
+
+    return (
+      <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${config.color}`}>
+        {config.label}
+      </span>
+    )
+  }
+
   const formatTimeAgo = (dateString: string) => {
     const now = new Date()
     const date = new Date(dateString)
@@ -154,7 +209,10 @@ export default function TaskListSection({
                   {getStatusIcon(task.status)}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs text-text-muted leading-tight truncate m-0">{task.title}</p>
+                  <div className="flex items-center gap-2 mb-1">
+                    <p className="text-xs text-text-muted leading-tight truncate m-0 flex-1">{task.title}</p>
+                    {getTaskTypeTag(task)}
+                  </div>
                   <p className="text-xs text-text-secondary m-0">{formatTimeAgo(task.created_at)}</p>
                 </div>
               </div>

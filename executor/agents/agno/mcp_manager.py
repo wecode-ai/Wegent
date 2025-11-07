@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+import json
 from datetime import timedelta
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
@@ -20,8 +21,9 @@ class MCPManager:
     Manages MCP (Model Context Protocol) tools configuration and connections
     """
     
-    def __init__(self):
+    def __init__(self, thinking_manager=None):
         self.connected_tools: List[MCPTools] = []
+        self.thinking_manager = thinking_manager
     
     async def setup_mcp_tools(self, config: Dict[str, Any]) -> Optional[List[MCPTools]]:
         """
@@ -71,6 +73,12 @@ class MCPManager:
             return mcp_tools_list
         except Exception as e:
             logger.error(f"Failed to setup MCP tools: {str(e)}")
+            # Add thinking step for MCP setup failure
+            self.add_thinking_step_by_key(
+                title_key="thinking.mcp_init_fail",
+                report_immediately=True,
+                details={"error_message": f"Failed to setup MCP tools. \nerror message: {str(e)}. \ntools: {json.dumps(mcp_servers, ensure_ascii=False)}"}
+            )
 
         return None
     
@@ -102,6 +110,12 @@ class MCPManager:
                 return None
         except Exception as e:
             logger.error(f"Failed to create MCP tools for server {server_name}: {str(e)}")
+            # Add thinking step for MCP tools creation failure
+            self.add_thinking_step_by_key(
+                title_key="thinking.mcp_init_fail",
+                report_immediately=False,
+                details={"error_message": f"Failed to create MCP tools for server. error message: {str(e)}", "server_name": server_name}
+            )
             return None
     
     def _create_streamable_http_tools(self, server_config: Dict[str, Any]) -> MCPTools:
@@ -116,6 +130,12 @@ class MCPManager:
         """
         if server_config.get("url") is None:
             logger.error("Server URL is required for streamable HTTP transport")
+            # Add thinking step for missing URL configuration
+            self.add_thinking_step_by_key(
+                title_key="thinking.mcp_init_fail",
+                report_immediately=False,
+                details={"error_message": "Server URL is required for streamable HTTP transport", "transport_type": "streamable-http"}
+            )
             return None
 
         server_params = StreamableHTTPClientParams(
@@ -137,6 +157,12 @@ class MCPManager:
         """
         if not server_config.get("url"):
             logger.error("Server URL is required for SSE transport")
+            # Add thinking step for missing URL configuration
+            self.add_thinking_step_by_key(
+                title_key="thinking.mcp_init_fail",
+                report_immediately=False,
+                details={"error_message": "Server URL is required for SSE transport", "transport_type": "sse"}
+            )
             return None
 
         server_params = SSEClientParams(
@@ -179,6 +205,12 @@ class MCPManager:
         # }
         if not server_config.get("command"):
             logger.error(f"Server command is required for Stdio transport: server_config: {server_config}")
+            # Add thinking step for missing command configuration
+            self.add_thinking_step_by_key(
+                title_key="thinking.mcp_init_fail",
+                report_immediately=False,
+                details={"error_message": "Server command is required for Stdio transport", "transport_type": "stdio"}
+            )
             return None
         server_params = StdioServerParameters(
             env=server_config.get("env"),
@@ -199,6 +231,12 @@ class MCPManager:
                     await tools.disconnect()
             except Exception as e:
                 logger.warning(f"Failed to disconnect MCP tools: {str(e)}")
+                # Add thinking step for MCP tools disconnection failure
+                self.add_thinking_step_by_key(
+                    title_key="thinking.mcp_init_fail",
+                    report_immediately=False,
+                    details={"error_message": f"Failed to disconnect MCP tools. \nerror message: {str(e)}. \ntools: {json.dumps(tools, ensure_ascii=False)}"}
+                )
         
         self.connected_tools.clear()
     
@@ -219,3 +257,19 @@ class MCPManager:
             True if tools are connected, False otherwise
         """
         return len(self.connected_tools) > 0
+    
+    def add_thinking_step_by_key(self, title_key: str, report_immediately: bool = True, details: Optional[Dict[str, Any]] = None) -> None:
+        """
+        Add a thinking step using i18n key
+        
+        Args:
+            title_key: i18n key for step title
+            report_immediately: Whether to report this thinking step immediately (default True)
+            details: Additional details for the thinking step (optional)
+        """
+        if self.thinking_manager:
+            self.thinking_manager.add_thinking_step_by_key(
+                title_key=title_key,
+                report_immediately=report_immediately,
+                details=details
+            )
