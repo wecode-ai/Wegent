@@ -23,11 +23,13 @@ import MobileSidebar from '@/features/layout/MobileSidebar'
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean
   setIsMobileSidebarOpen: (open: boolean) => void
+  pageType?: 'chat' | 'code' 
 }
 
-export default function TaskSidebar({ 
-  isMobileSidebarOpen, 
-  setIsMobileSidebarOpen 
+export default function TaskSidebar({
+  isMobileSidebarOpen,
+  setIsMobileSidebarOpen,
+  pageType = 'chat'
 }: TaskSidebarProps) {
   const { t } = useTranslation('common')
   const router = useRouter()
@@ -105,7 +107,16 @@ export default function TaskSidebar({
   // New task
   const handleNewAgentClick = () => {
     if (typeof window !== 'undefined') {
-      router.replace(paths.task.getHref())
+      // Navigate to the same page type for new task creation
+      switch (pageType) {
+        case 'code':
+          router.replace(paths.code.getHref())
+          break
+        case 'chat':
+        default:
+          router.replace(paths.chat.getHref())
+          break
+      }
     }
     // Close mobile sidebar after navigation
     setIsMobileSidebarOpen(false)
@@ -127,15 +138,18 @@ export default function TaskSidebar({
   const sidebarContent = (
     <>
       {/* Logo */}
-      <div className="p-3">
-        <div className="flex justify-start pl-2">
+      <div className="px-3 pt-2 pb-1">
+        <div className="flex items-center justify-start pl-2 gap-2">
           <Image
             src="/weibo-logo.png"
             alt="Weibo Logo"
-            width={24}
-            height={24}
-            className="object-contain"
+            width={20}
+            height={20}
+            className="object-container"
           />
+          <span className="text-sm font-medium text-text-primary">
+            Wegent
+          </span>
         </div>
       </div>
 
@@ -187,29 +201,31 @@ export default function TaskSidebar({
             {isSearchResult ? t('tasks.no_search_results') : t('tasks.no_tasks')}
           </div>
         ) : (
-          <>
-            {isSearchResult ? (
+          isSearchResult ? (
+            <TaskListSection
+              tasks={tasks}
+              title={t('tasks.search_results')}
+              onTaskClick={() => setIsMobileSidebarOpen(false)}
+            />
+          ) : (
+            <>
               <TaskListSection
-                tasks={tasks}
-                title={t('tasks.search_results')}
+                tasks={groupTasksByDate.today}
+                title={t('tasks.today')}
+                onTaskClick={() => setIsMobileSidebarOpen(false)}
               />
-            ) : (
-              <>
-                <TaskListSection
-                  tasks={groupTasksByDate.today}
-                  title={t('tasks.today')}
-                />
-                <TaskListSection
-                  tasks={groupTasksByDate.thisWeek}
-                  title={t('tasks.this_week')}
-                />
-                <TaskListSection
-                  tasks={groupTasksByDate.earlier}
-                  title={t('tasks.earlier')}
-                />
-              </>
-            )}
-          </>
+              <TaskListSection
+                tasks={groupTasksByDate.thisWeek}
+                title={t('tasks.this_week')}
+                onTaskClick={() => setIsMobileSidebarOpen(false)}
+              />
+              <TaskListSection
+                tasks={groupTasksByDate.earlier}
+                title={t('tasks.earlier')}
+                onTaskClick={() => setIsMobileSidebarOpen(false)}
+              />
+            </>
+          )
         )}
         {loadingMore && (
           <div className="text-center py-2 text-xs text-text-muted">{t('tasks.loading')}</div>

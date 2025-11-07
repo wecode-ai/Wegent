@@ -23,17 +23,18 @@ class MemberBuilder:
     Builds and manages individual team members with configurable options
     """
     
-    def __init__(self, db: SqliteDb, config_manager: ConfigManager):
+    def __init__(self, db: SqliteDb, config_manager: ConfigManager, thinking_manager=None):
         """
-        Initialize the member builder
+        Initialize member builder
         
         Args:
             db: SQLite database instance
             config_manager: Configuration manager instance
+            thinking_manager: Thinking step manager instance (optional)
         """
         self.db = db
         self.config_manager = config_manager
-        self.mcp_manager = MCPManager()
+        self.mcp_manager = MCPManager(thinking_manager)
     
     async def create_member(self, member_config: Dict[str, Any], task_data: Dict[str, Any]) -> Optional[AgnoSdkAgent]:
         """

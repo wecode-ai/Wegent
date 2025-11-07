@@ -9,6 +9,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { Spin } from 'antd'
 import { paths } from '@/config/paths'
 import { loginWithOidcToken } from '@/apis/user'
+import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
 
 export default function OidcCallbackPage() {
     const router = useRouter()
@@ -25,11 +26,25 @@ export default function OidcCallbackPage() {
             
             loginWithOidcToken(accessToken)
                 .then(() => {
-                    console.log('OIDC callback page - token processed successfully, redirecting to task page');
-                    router.replace(paths.task.getHref())
+                    console.log('OIDC callback page - token processed successfully, determining redirect target')
+                    let redirectTarget = paths.chat.getHref()
+                    if (typeof window !== 'undefined') {
+                        const loginPath = paths.auth.login.getHref()
+                        const disallowedRedirects = [loginPath, '/login/oidc']
+                        const queryRedirect = searchParams.get('redirect')
+                        const storedRedirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)
+                        const validQueryRedirect = sanitizeRedirectPath(queryRedirect, disallowedRedirects)
+                        const validStoredRedirect = sanitizeRedirectPath(storedRedirect, disallowedRedirects)
+                        redirectTarget = validQueryRedirect || validStoredRedirect || redirectTarget
+                        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+                    }
+                    router.replace(redirectTarget)
                 })
                 .catch((error) => {
                     console.error('OIDC callback page - token processing failed:', error);
+                    if (typeof window !== 'undefined') {
+                        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+                    }
                     router.replace(paths.home.getHref())
                 })
             return

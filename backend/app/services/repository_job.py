@@ -41,7 +41,7 @@ class RepositoryJobService(BaseService[Kind, None, None]):
             
             # Get all active users - patched version in wecode/api/user_service_patch.py is async
             # so we need to await it
-            users = user_service.get_all_users(db)
+            users = await user_service.get_all_users(db)
             
             # The patched version already handles token replacement, so we don't need to do it again
             logger.info(f"[repository_job] Found {len(users)} active users that need repository cache update")

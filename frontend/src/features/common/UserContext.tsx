@@ -8,6 +8,8 @@ import { userApis } from '@/apis/user'
 import { User } from '@/types/api'
 import { App } from 'antd'
 import { useRouter } from 'next/navigation'
+import { paths } from '@/config/paths'
+import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
 
 interface UserContextType {
   user: User | null
@@ -30,6 +32,29 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
   const [isLoading, setIsLoading] = useState(true)
   // Using antd message.error for unified error handling, no local error state needed
 
+  const redirectToLogin = () => {
+    const loginPath = paths.auth.login.getHref()
+    if (typeof window === 'undefined') {
+      router.replace(loginPath)
+      return
+    }
+    if (window.location.pathname === loginPath) {
+      return
+    }
+    const disallowedTargets = [loginPath, '/login/oidc']
+    const currentPathWithSearch = `${window.location.pathname}${window.location.search}`
+    const validRedirect = sanitizeRedirectPath(currentPathWithSearch, disallowedTargets)
+
+    if (validRedirect) {
+      sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, validRedirect)
+      router.replace(`${loginPath}?redirect=${encodeURIComponent(validRedirect)}`)
+      return
+    }
+
+    sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+    router.replace(loginPath)
+  }
+
   const fetchUser = async () => {
     setIsLoading(true)
 
@@ -40,7 +65,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
         console.log('UserContext: User not authenticated, clearing user state and redirecting to login')
         setUser(null)
         setIsLoading(false)
-        router.replace('/login')
+        redirectToLogin()
         return
       }
 
@@ -50,7 +75,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       console.error('UserContext: Failed to fetch user information:', e)
       message.error('Failed to load user')
       setUser(null)
-      router.replace('/login')
+      redirectToLogin()
     } finally {
       setIsLoading(false)
     }
@@ -73,7 +98,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       if (!isAuth && user) {
         console.log('Token expired, auto logout')
         setUser(null)
-        router.replace('/login')
+        redirectToLogin()
       }
     }, 10000)
 
@@ -88,7 +113,7 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
     console.log('Executing logout operation')
     userApis.logout()
     setUser(null)
-    router.replace('/login')
+    redirectToLogin()
   }
 
   const login = async (data: any) => {

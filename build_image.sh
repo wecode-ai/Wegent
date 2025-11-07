@@ -4,10 +4,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# Build docker assets for wecode components
+# Build docker images for wecode components
 # Usage: 
-#   ./build_image.sh [OPTIONS]      - Build assets with default version 1.0.0
-#   ./build_image.sh version=2.0.0  - Build assets with specified version
+#   ./build_image.sh [OPTIONS]      - Build images with default version 1.0.0
+#   ./build_image.sh version=2.0.0  - Build images with specified version
 #   ./build_image.sh -h             - Show this help message (short form)
 
 # Default version

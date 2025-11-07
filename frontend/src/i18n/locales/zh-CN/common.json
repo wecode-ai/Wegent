@@ -1,7 +1,7 @@
 {
   "extension": {
-    "name": "WeCode AI 助手",
-    "description": "编辑器中的完整 AI 开发团队。"
+    "name": "Wegent AI 助手",
+    "description": "浏览器中的完整 AI 团队。"
   },
   "actions": {
     "save": "保存",
@@ -38,8 +38,15 @@
   },
   "navigation": {
     "tasks": "任务",
+    "chat": "聊天",
+    "code": "编码",
     "settings": "设置",
     "docs": "文档"
+  },
+  "sidebar": {
+    "recent_visits": "最近访问",
+    "light_mode": "浅色模式",
+    "dark_mode": "深色模式"
   },
   "user": {
     "default_name": "用户",
@@ -47,7 +54,8 @@
     "login": "登录"
   },
   "chat": {
-    "placeholder": "让团队构建、修复错误、探索"
+    "placeholder_chat": "使用Agent团队进行探索和发现",
+    "placeholder_code": "让Agent开发团队构建功能、修复错误、探索代码仓库"
   },
   "bots": {
     "title": "机器人",
@@ -106,6 +114,7 @@
     "loading": "加载团队中...",
     "active": "活跃",
     "inactive": "非活跃",
+    "select_team": "选择一个团队",
     "no_bots": "没有机器人",
     "edit": "编辑团队",
     "chat": "发送任务",

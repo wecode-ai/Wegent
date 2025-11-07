@@ -5,7 +5,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { usePathname, useRouter } from 'next/navigation'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { getToken } from '@/apis/user'
 import { paths } from '@/config/paths'
 import { Spin } from 'antd'
@@ -18,6 +18,7 @@ interface AuthGuardProps {
 export default function AuthGuard({ children }: AuthGuardProps) {
   const { t } = useTranslation('common')
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const router = useRouter()
   const [checking, setChecking] = useState(true)
 
@@ -32,13 +33,15 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     if (!allowedPaths.includes(pathname)) {
       const token = getToken()
       if (!token) {
-        router.replace(loginPath)
-                // Do not render content, wait for redirect
+        const search = searchParams.toString()
+        const redirectTarget = search ? `${pathname}?${search}` : pathname
+        router.replace(`${loginPath}?redirect=${encodeURIComponent(redirectTarget)}`)
+        // Do not render content, wait for redirect
         return
       }
     }
     setChecking(false)
-  }, [pathname, router])
+  }, [pathname, router, searchParams])
 
   if (checking) {
     return (
@@ -51,6 +54,6 @@ export default function AuthGuard({ children }: AuthGuardProps) {
     )
   }
 
-      // Render page content after validation passes
+  // Render page content after validation passes
   return <>{children}</>
 }

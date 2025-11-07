@@ -13,7 +13,7 @@ import { useTranslation } from '@/hooks/useTranslation'
  * OIDC Token Handler Component
  *
  * Handles token parameters from OIDC callback redirects
- * When backend OIDC callback succeeds, it redirects to /tasks?access_token=xxx&token_type=bearer&login_success=true
+ * When backend OIDC callback succeeds, it redirects to /login/oidc?access_token=xxx&token_type=bearer&login_success=true
  * This component is responsible for extracting these parameters and storing them in localStorage
  */
 export default function OidcTokenHandler() {

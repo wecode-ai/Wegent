@@ -35,14 +35,16 @@ class Settings(BaseSettings):
     MAX_RUNNING_TASKS_PER_USER: int = 10
 
     # Task append expiration (hours)
-    APPEND_TASK_EXPIRE_HOURS: int = 48
+    APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
+    APPEND_CODE_TASK_EXPIRE_HOURS: int = 24
 
     # Subtask executor cleanup configuration
     # After a subtask is COMPLETED or FAILED, if executor_name/executor_namespace are set
     # and updated_at exceeds this threshold, the executor task will be deleted automatically.
-    SUBTASK_EXECUTOR_DELETE_AFTER_HOURS: int = 48
+    CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS: int = 2
+    CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS: int = 24
     # Cleanup scanning interval seconds
-    SUBTASK_CLEANUP_INTERVAL_SECONDS: int = 600
+    TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS: int = 600
 
     # Frontend URL configuration
     FRONTEND_URL: str = "http://localhost:3000"

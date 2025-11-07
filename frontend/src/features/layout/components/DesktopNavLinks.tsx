@@ -1,0 +1,103 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+'use client'
+
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useRouter } from 'next/navigation'
+import { paths } from '@/config/paths'
+import { useTranslation } from '@/hooks/useTranslation'
+
+interface DesktopNavLinksProps {
+  activePage: 'chat' | 'code' | 'dashboard'
+}
+
+export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
+  const { t } = useTranslation('common')
+  const router = useRouter()
+
+  const indicatorContainerRef = useRef<HTMLDivElement | null>(null)
+  const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({})
+  const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 })
+
+  const navItems = useMemo(
+    () => [
+      { 
+        key: 'chat' as const, 
+        label: t('navigation.chat'), 
+        onClick: () => router.push(paths.chat.getHref())
+      },
+      { 
+        key: 'code' as const, 
+        label: t('navigation.code'), 
+        onClick: () => router.push(paths.code.getHref())
+      },
+      { 
+        key: 'dashboard' as const, 
+        label: t('navigation.settings'), 
+        onClick: () => router.push(paths.settings.root.getHref())
+      },
+    ],
+    [t, router]
+  )
+
+  useEffect(() => {
+    const updateIndicator = () => {
+      const container = indicatorContainerRef.current
+      const current = itemRefs.current[activePage]
+
+      if (!container || !current) {
+        setIndicatorStyle((prev) => (prev.width === 0 && prev.left === 0 ? prev : { width: 0, left: 0 }))
+        return
+      }
+
+      const containerRect = container.getBoundingClientRect()
+      const currentRect = current.getBoundingClientRect()
+      setIndicatorStyle({
+        width: currentRect.width,
+        left: currentRect.left - containerRect.left,
+      })
+    }
+
+    updateIndicator()
+    window.addEventListener('resize', updateIndicator)
+
+    return () => {
+      window.removeEventListener('resize', updateIndicator)
+    }
+  }, [activePage, navItems])
+
+  return (
+    <div
+      ref={indicatorContainerRef}
+      className="relative flex items-center gap-4 sm:gap-6 pb-0"
+    >
+      <span
+        className="pointer-events-none absolute bottom-0 h-0.5 rounded-full bg-primary transition-all duration-300 ease-out"
+        style={{
+          width: indicatorStyle.width,
+          transform: `translateX(${indicatorStyle.left}px)`,
+          opacity: indicatorStyle.width ? 1 : 0,
+        }}
+        aria-hidden="true"
+      />
+      {navItems.map((item) => (
+        <button
+          key={item.key}
+          type="button"
+          ref={(element) => {
+            itemRefs.current[item.key] = element
+          }}
+          onClick={item.onClick}
+          className={`relative px-1 pt-[0.55rem] pb-0 text-base sm:text-lg font-medium leading-none transition-colors duration-200 ${
+            activePage === item.key ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'
+          }`}
+          aria-current={activePage === item.key ? 'page' : undefined}
+        >
+          {item.label}
+        </button>
+      ))}
+    </div>
+  )
+}

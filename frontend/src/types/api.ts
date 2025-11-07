@@ -65,6 +65,7 @@ export interface TeamBot {
 /** TaskDetail structure (adapted to latest backend response) */
 // Task Types
 export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'DELETE'
+export type TaskType = 'chat' | 'code'
 export interface TaskDetail {
   id: number
   title: string
@@ -75,6 +76,7 @@ export interface TaskDetail {
   branch_name: string
   prompt: string
   status: TaskStatus
+  task_type?: TaskType
   progress: number
   batch: number
   result: Record<string, any>
@@ -127,6 +129,7 @@ export interface Task {
   branch_name: string
   prompt: string
   status: TaskStatus
+  task_type?: TaskType
   progress: number
   batch: number
   result: Record<string, any>

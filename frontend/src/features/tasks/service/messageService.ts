@@ -16,8 +16,9 @@ export async function sendMessage(params: {
   repo: GitRepoInfo | null
   branch: GitBranch | null
   task_id?: number
+  taskType?: 'chat' | 'code'
 }) {
-  const { message, team, repo, branch, task_id } = params
+  const { message, team, repo, branch, task_id, taskType = 'chat' } = params
   const trimmed = message?.trim() ?? ''
 
   if (!trimmed) {
@@ -25,9 +26,14 @@ export async function sendMessage(params: {
   }
 
     // If there is no task_id, a complete context is required for the first send
-  if ((!task_id || !Number.isFinite(task_id)) && (!team)) {
-    return { error: 'Please select Team, repository and branch', newTask: null }
-  }
+    if ((!task_id || !Number.isFinite(task_id)) && (!team)) {
+      return { error: 'Please select Team, repository and branch', newTask: null }
+    }
+  
+    // For code type tasks, repository is required
+    if (taskType === 'code' && !repo) {
+      return { error: 'Please select a repository for code tasks', newTask: null }
+    }
 
     // Unified delegation to taskApis.sendTaskMessage (internally handles whether to create a task first)
   const payload = {
@@ -41,6 +47,7 @@ export async function sendMessage(params: {
     git_domain: repo?.git_domain ?? '',
     branch_name: branch?.name ?? '',
     prompt: trimmed,
+    task_type: taskType,
     batch: 0,
     user_id: 0,
     user_name: '',

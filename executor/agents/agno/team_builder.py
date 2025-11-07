@@ -26,18 +26,19 @@ class TeamBuilder:
     Builds and manages Agno teams with configured members
     """
     
-    def __init__(self, db: SqliteDb, config_manager: ConfigManager):
+    def __init__(self, db: SqliteDb, config_manager: ConfigManager, thinking_manager=None):
         """
-        Initialize the team builder
+        Initialize team builder
         
         Args:
             db: SQLite database instance
             config_manager: Configuration manager instance
+            thinking_manager: Thinking step manager instance (optional)
         """
         self.db = db
         self.config_manager = config_manager
-        self.mcp_manager = MCPManager()
-        self.member_builder = MemberBuilder(db, config_manager)
+        self.mcp_manager = MCPManager(thinking_manager)
+        self.member_builder = MemberBuilder(db, config_manager, thinking_manager)
     
     async def create_team(self, options: Dict[str, Any], mode: str, session_id: str, task_data: Dict[str, Any]) -> Optional[Team]:
         """

@@ -8,12 +8,13 @@ import { FileTextOutlined } from '@ant-design/icons'
 import { paths } from '@/config/paths'
 import { useTranslation } from '@/hooks/useTranslation'
 
-export function DocsButton({ className = '' }: { className?: string }) {
+export function DocsButton({ className = '', onClick }: { className?: string; onClick?: () => void }) {
   const { t } = useTranslation('common')
 
   const navigateToDocs = () => {
     // Use window.open to open documentation in new tab
     window.open(paths.docs.getHref(), '_blank')
+    onClick?.()
   }
 
   const mergedClassName = `

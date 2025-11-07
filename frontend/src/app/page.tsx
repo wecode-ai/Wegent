@@ -20,7 +20,7 @@ export default function Home() {
   const handleGetStarted = () => {
     const token = getToken()
     if (token) {
-      router.replace(paths.task.getHref())
+      router.replace(paths.chat.getHref())
     } else {
       router.push(paths.auth.login.getHref())
     }
@@ -37,7 +37,7 @@ export default function Home() {
       
       <div className="w-full max-w-2xl text-center">
         <h1 className="text-5xl font-medium text-text-primary mb-4">
-          {t('extension.name')}
+          <span className="font-bold">We</span>gent, more than an <span className="font-bold">A</span>gent.
         </h1>
         <p className="text-xl text-text-secondary mb-12 font-light">
           {t('extension.description')}

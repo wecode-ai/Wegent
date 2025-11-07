@@ -24,6 +24,7 @@ class TaskBase(BaseModel):
     """Task base model"""
     title: Optional[str] = None
     type: Optional[str] = None
+    task_type: Optional[str] = None
     team_id: Optional[int] = None
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -47,6 +48,7 @@ class TaskCreate(BaseModel):
     branch_name: Optional[str] = None
     prompt: str
     type: Optional[str] = None
+    task_type: Optional[str] = None
     auto_delete_executor: Optional[str] = "false"
 
 class TaskCreateToUser(BaseModel):
@@ -61,6 +63,7 @@ class TaskCreateToUser(BaseModel):
     git_domain: Optional[str] = None
     branch_name: Optional[str] = None
     type: Optional[str] = None
+    task_type: Optional[str] = None
     auto_delete_executor: Optional[str] = "false"
 
 class TaskUpdate(BaseModel):

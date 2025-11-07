@@ -39,19 +39,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         task = None
         team = None
 
-        # Limit running tasks per user
-        running_count = db.query(Kind).filter(
-            Kind.user_id == user.id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
-            text("JSON_UNQUOTE(JSON_EXTRACT(json, '$.status.status')) IN ('PENDING', 'RUNNING') and (JSON_EXTRACT(json, '$.metadata.labels.type') is null or JSON_EXTRACT(json, '$.metadata.labels.type') = 'online')")
-        ).count()
-        if running_count >= settings.MAX_RUNNING_TASKS_PER_USER:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Maximum number of running tasks per user ({settings.MAX_RUNNING_TASKS_PER_USER}) exceeded."
-            )
-
         # Set task ID
         if task_id is None:
             task_id = self.create_task_id(db, user.id)
@@ -93,15 +80,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if task_crd.metadata.labels and task_crd.metadata.labels["autoDeleteExecutor"] == "true" :
                 raise HTTPException(
                     status_code=400,
-                    detail="offline task already clear, please create a new task"
+                    detail="task already clear, please create a new task"
                 )
             
             # Check if task is expired
-            expire_hours = settings.APPEND_TASK_EXPIRE_HOURS
+            expire_hours = settings.APPEND_CHAT_TASK_EXPIRE_HOURS
+            task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
+            if task_type == "code" :
+                expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
             if (datetime.now() - existing_task.updated_at).total_seconds() > expire_hours * 3600:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Task has expired. You can only append tasks within {expire_hours} hours after last update."
+                    detail=f"{task_type} task has expired. You can only append tasks within {expire_hours} hours after last update."
                 )
 
             # Get team reference information from task_crd and validate if team exists
@@ -226,6 +216,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "namespace": "default",
                     "labels": {
                         "type": obj_in.type or "online", # "online" or "offline"
+                        "taskType": obj_in.task_type or "chat", # "chat" or "code" - task type
                         "autoDeleteExecutor": obj_in.auto_delete_executor or "false",
                     }
                 },
@@ -837,10 +828,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         user_name = user.user_name if user else ""
 
         type = task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+        task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
 
         return {
             "id": task.id,
             "type": type,
+            "task_type": task_type,
             "user_id": task.user_id,
             "user_name": user_name,
             "title": task_crd.spec.title,
@@ -1203,9 +1196,15 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         Optimized version of _convert_to_task_dict that uses pre-fetched related data
         """
         workspace_data = related_data.get("workspace_data", {})
-        
+
+        # Get task type from metadata labels
+        type = task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+        task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
+
         return {
             "id": task.id,
+            "type": type,
+            "task_type": task_type,
             "user_id": task.user_id,
             "user_name": related_data.get("user_name", ""),
             "title": task_crd.spec.title,

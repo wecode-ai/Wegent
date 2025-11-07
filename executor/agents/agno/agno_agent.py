@@ -62,6 +62,9 @@ class AgnoAgent(Agent):
         self.mode = task_data.get("mode", "")
         self.task_data = task_data
 
+        # Initialize thinking step manager first
+        self.thinking_manager = ThinkingStepManager(progress_reporter=self.report_progress)
+        
         # Initialize configuration manager
         self.config_manager = ConfigManager(EXECUTOR_ENV)
         
@@ -69,60 +72,62 @@ class AgnoAgent(Agent):
         self.options = self.config_manager.extract_agno_options(task_data)
         
         # Initialize team builder
-        self.team_builder = TeamBuilder(db, self.config_manager)
+        self.team_builder = TeamBuilder(db, self.config_manager, self.thinking_manager)
 
         # Initialize member builder
-        self.member_builder = MemberBuilder(db, self.config_manager)
+        self.member_builder = MemberBuilder(db, self.config_manager, self.thinking_manager)
 
         # debug mode
         self.debug_mode: bool = DEBUG_RUN != ""
 
         # stream mode
         self.enable_streaming: bool = True
-        
-        # Initialize thinking step manager
-        self.thinking_manager = ThinkingStepManager(progress_reporter=self.report_progress)
 
-    def add_thinking_step(self, title: str, action: str, reasoning: str,
-                         result: str = "", confidence: float = -1,
-                         next_action: str = "continue", report_immediately: bool = True) -> None:
+    def add_thinking_step(self, title: str, report_immediately: bool = True,
+                         use_i18n_keys: bool = False, details: Optional[Dict[str, Any]] = None) -> None:
         """
-        Add a thinking step
+        Add a thinking step (wrapper for backward compatibility)
         
         Args:
             title: Step title
-            action: Action description
-            reasoning: Reasoning process
-            result: Result (optional)
-            confidence: Confidence level (0.0-1.0, default -1)
-            next_action: Next action (default "continue")
+            action: Action description (ignored, kept for backward compatibility)
+            reasoning: Reasoning process (ignored, kept for backward compatibility)
+            result: Result (ignored, kept for backward compatibility)
+            confidence: Confidence level (ignored, kept for backward compatibility)
+            next_action: Next action (ignored, kept for backward compatibility)
             report_immediately: Whether to report this thinking step immediately (default True)
+            use_i18n_keys: Whether to use i18n key directly instead of English text (default False)
+            details: Additional details for the thinking step (optional)
         """
+        # Only pass the 4 required parameters to ThinkingStepManager
         self.thinking_manager.add_thinking_step(
-            title, action, reasoning, result, confidence, next_action, report_immediately
+            title=title,
+            report_immediately=report_immediately,
+            use_i18n_keys=use_i18n_keys,
+            details=details
         )
     
-    def add_thinking_step_by_key(self, title_key: str, action_key: str, reasoning_key: str,
-                                result_key: str = "", confidence: float = -1,
-                                next_action_key: str = "thinking.continue",
-                                report_immediately: bool = True) -> None:
+    def add_thinking_step_by_key(self, title_key: str, report_immediately: bool = True, details: Optional[Dict[str, Any]] = None) -> None:
         """
-        Add a thinking step using i18n key
+        Add a thinking step using i18n key (wrapper for backward compatibility)
 
         Args:
             title_key: i18n key for step title
-            action_key: i18n key for action description
-            reasoning_key: i18n key for reasoning process
-            result_key: i18n key for result (optional)
-            confidence: Confidence level (0.0-1.0, default -1)
-            next_action_key: i18n key for next action (default "thinking.continue")
+            action_key: i18n key for action description (ignored, kept for backward compatibility)
+            reasoning_key: i18n key for reasoning process (ignored, kept for backward compatibility)
+            result_key: i18n key for result (ignored, kept for backward compatibility)
+            confidence: Confidence level (ignored, kept for backward compatibility)
+            next_action_key: i18n key for next action (ignored, kept for backward compatibility)
             report_immediately: Whether to report this thinking step immediately (default True)
+            details: Additional details for thinking step (optional)
         """
+        # Only pass the 3 required parameters to ThinkingStepManager
         self.thinking_manager.add_thinking_step_by_key(
-            title_key, action_key, reasoning_key, result_key,
-            confidence, next_action_key, report_immediately
+            title_key=title_key,
+            report_immediately=report_immediately,
+            details=details
         )
-    
+
     def _text_to_i18n_key(self, text: str) -> str:
         """
         Convert text to i18n key
@@ -181,8 +186,6 @@ class AgnoAgent(Agent):
             logger.info("Initializing Agno Agent")
             self.add_thinking_step_by_key(
                 title_key="thinking.initialize_agent",
-                action_key="thinking.starting_initialization",
-                reasoning_key="thinking.initializing_with_config",
                 report_immediately=False
             )
             return TaskStatus.SUCCESS
@@ -190,10 +193,8 @@ class AgnoAgent(Agent):
             logger.error(f"Failed to initialize Agno Agent: {str(e)}")
             self.add_thinking_step_by_key(
                 title_key="thinking.initialize_failed",
-                action_key="thinking.failed_initialize",
-                reasoning_key=f"${{thinking.initialization_error}} {str(e)}",
-                next_action_key="thinking.exit",
-                report_immediately=False
+                report_immediately=False,
+                details={"error": str(e)}
             )
             return TaskStatus.FAILED
 
@@ -221,37 +222,20 @@ class AgnoAgent(Agent):
         """
         # Download code if git_url is provided
         try:
-            self.add_thinking_step_by_key(
-                title_key="thinking.pre_execution_setup",
-                action_key="thinking.starting_pre_execution",
-                reasoning_key="thinking.setting_up_environment",
-                report_immediately=False
-            )
-            
             git_url = self.task_data.get("git_url")
             if git_url and git_url != "":
                 self.add_thinking_step_by_key(
                     title_key="thinking.download_code",
-                    action_key=f"${{thinking.downloading_code_from}} {git_url}",
-                    reasoning_key="thinking.code_download_required",
-                    report_immediately=False
+                    report_immediately=False,
+                    details={"git_url": git_url}
                 )
                 self.download_code()
-                self.add_thinking_step_by_key(
-                    title_key="thinking.download_code_completed",
-                    action_key="thinking.code_download_success",
-                    reasoning_key="thinking.code_ready",
-                    result_key="thinking.code_download_success",
-                    report_immediately=False
-                )
         except Exception as e:
             logger.error(f"Pre-execution failed: {str(e)}")
-            self.add_thinking_step(
-                title="Pre-execution Failed",
-                action="Pre-execution setup failed",
-                reasoning=f"Pre-execution failed with error: {str(e)}",
-                next_action="exit",
-                report_immediately=False
+            self.add_thinking_step_by_key(
+                title_key="thinking.pre_execution_failed",
+                report_immediately=False,
+                details={"error": str(e)}
             )
             return TaskStatus.FAILED
 
@@ -272,13 +256,6 @@ class AgnoAgent(Agent):
             self.report_progress(
                 progress, TaskStatus.RUNNING.value, "Starting Agno Agent", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
-            
-            self.add_thinking_step_by_key(
-                title_key="thinking.execute_task",
-                action_key="thinking.starting_execution",
-                reasoning_key="thinking.beginning_execution",
-                report_immediately=False
-            )
 
             # Check if currently running in coroutine
             try:
@@ -289,12 +266,6 @@ class AgnoAgent(Agent):
                 logger.info(
                     "Detected running in an async context, calling execute_async"
                 )
-                self.add_thinking_step(
-                    title="Async Execution",
-                    action="Detected async context, switching to async execution",
-                    reasoning="Running in coroutine context, will execute asynchronously",
-                    report_immediately=False
-                )
                 # Create async task to run in background, but return PENDING instead of task object
                 asyncio.create_task(self.execute_async())
                 logger.info(
@@ -304,10 +275,8 @@ class AgnoAgent(Agent):
             except RuntimeError:
                 # No running event loop, can safely use run_until_complete
                 logger.info("No running event loop detected, using new event loop")
-                self.add_thinking_step(
-                    title="Sync Execution",
-                    action="No async context detected, creating new event loop",
-                    reasoning="Not in coroutine context, will create new event loop for execution",
+                self.add_thinking_step_by_key(
+                    title_key="thinking.sync_execution",
                     report_immediately=False
                 )
                 loop = asyncio.new_event_loop()
@@ -328,11 +297,10 @@ class AgnoAgent(Agent):
             TaskStatus: Execution status
         """
         try:
-            self.add_thinking_step(
-                title="Async Execution Started",
-                action="Starting asynchronous execution",
-                reasoning="Task is now executing in async mode",
-                report_immediately=False)
+            self.add_thinking_step_by_key(
+                title_key="thinking.async_execution_started",
+                report_immediately=False
+            )
             # Update current progress
             self._update_progress(60)
             # Report starting progress
@@ -360,11 +328,10 @@ class AgnoAgent(Agent):
                 logger.info(
                     f"Reusing existing Agno team for session_id: {self.session_id}"
                 )
-                self.add_thinking_step(
-                    title="Reuse Existing Team",
-                    action=f"${{thinking.reusing_team_session}} {self.session_id}",
-                    reasoning="Team already exists for this session, reusing to maintain context",
-                    report_immediately=False
+                self.add_thinking_step_by_key(
+                    title_key="thinking.reuse_existing_team",
+                    report_immediately=False,
+                    details={"session_id": self.session_id}
                 )
                 tmp = self._clients[self.session_id]
                 if isinstance(tmp, Team):
@@ -377,12 +344,6 @@ class AgnoAgent(Agent):
                 logger.info(
                     f"Creating new Agno team for session_id: {self.session_id}"
                 )
-                self.add_thinking_step(
-                    title="Create New Team",
-                    action=f"${{thinking.creating_team_session}} {self.session_id}",
-                    reasoning="No existing team found for this session, creating a new one",
-                    report_immediately=False
-                )
                 self.team = await self._create_team()
                 progress = 70
                 # Update current progress
@@ -390,24 +351,9 @@ class AgnoAgent(Agent):
                 if self.team is not None:
                     # Store team for reuse
                     self._clients[self.session_id] = self.team
-                    self.add_thinking_step(
-                        title="Team Created Successfully",
-                        action="Team created and stored for reuse",
-                        reasoning="Team has been created successfully and will be reused for this session",
-                        result="Team created successfully",
-                        report_immediately=False
-                    )
                 else:
                     self.single_agent = await self._create_agent()
                     self._clients[self.session_id] = self.single_agent
-                    self.add_thinking_step(
-                        title="Single Agent Created",
-                        action="Created single agent instead of team",
-                        reasoning="Team creation failed, falling back to single agent",
-                        result="Single agent created",
-                        report_immediately=False
-                    )
-            # Prepare prompt
             # Prepare prompt
             prompt = self.prompt
             if self.options.get("cwd"):
@@ -420,12 +366,6 @@ class AgnoAgent(Agent):
             progress = 75
             # Update current progress
             self._update_progress(progress)
-            self.add_thinking_step(
-                title="Prepare Prompt",
-                action="Preparing execution prompt",
-                reasoning=f"${{thinking.prepared_prompt_with_info}} {prompt[:100]}...",
-                report_immediately=False
-            )
             # Execute the team run
             result = await self._run_async(prompt)
 
@@ -478,15 +418,6 @@ class AgnoAgent(Agent):
             logger.info(
                 f"{execution_type} completed with content length: {len(result_content)}"
             )
-            self.add_thinking_step(
-                title="Execution Completed",
-                action=f"Completed {execution_type}",
-                reasoning=f"{execution_type} completed successfully with content length: {len(result_content)}",
-                result=result_content[:200] + "..." if len(result_content) > 200 else result_content,
-                confidence=0.9,
-                next_action="complete",
-                report_immediately=False
-            )
             self.report_progress(
                 100,
                 TaskStatus.COMPLETED.value,
@@ -496,13 +427,6 @@ class AgnoAgent(Agent):
             return TaskStatus.COMPLETED
         else:
             logger.warning(f"No content received from {execution_type}")
-            self.add_thinking_step(
-                title="Execution Failed",
-                action=f"{execution_type} failed - no content received",
-                reasoning=f"{execution_type} completed but no content was returned",
-                next_action="exit",
-                report_immediately=False
-            )
             self.report_progress(
                 100,
                 TaskStatus.FAILED.value,
@@ -525,12 +449,11 @@ class AgnoAgent(Agent):
         error_message = str(error)
         logger.exception(f"Error in {execution_type}: {error_message}")
         
-        self.add_thinking_step(
-            title="Execution Error",
-            action=f"{execution_type} encountered an error",
-            reasoning=f"Error occurred during {execution_type}: {error_message}",
-            next_action="exit",
-            report_immediately=False
+        # Add thinking step for execution failure
+        self.add_thinking_step_by_key(
+            title_key="thinking.execution_failed",
+            report_immediately=False,
+            details={"error_message": error_message, "execution_type": execution_type}
         )
         
         self.report_progress(
@@ -567,6 +490,29 @@ class AgnoAgent(Agent):
         if run_response_event.event in [RunEvent.tool_call_started]:
             logger.info(f"🔧 AGENT TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
+            
+            # 构建工具调用详情，符合目标格式
+            tool_details = {
+                "type": "assistant",
+                "message": {
+                    "id": getattr(run_response_event, 'id', ''),
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": getattr(run_response_event.tool, 'id', ''),
+                        "name": run_response_event.tool.tool_name,
+                        "input": run_response_event.tool.tool_args
+                    }]
+                }
+            }
+            
+            self.add_thinking_step_by_key(
+                title_key="thinking.tool_use",
+                report_immediately=True,
+                details=tool_details
+            )
+            
             self.report_progress(
                 80, TaskStatus.RUNNING.value, f"${{thinking.using_tool}} {run_response_event.tool.tool_name}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
@@ -574,6 +520,28 @@ class AgnoAgent(Agent):
         if run_response_event.event in [RunEvent.tool_call_completed]:
             logger.info(f"✅ AGENT TOOL COMPLETED: {run_response_event.tool.tool_name}")
             logger.info(f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}...")
+            
+            # 构建工具结果详情，符合目标格式
+            tool_result_details = {
+                "type": "assistant",
+                "message": {
+                    "id": getattr(run_response_event, 'id', ''),
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": getattr(run_response_event.tool, 'id', ''),
+                        "content": run_response_event.tool.result,
+                        "is_error": False
+                    }]
+                }
+            }
+            
+            self.add_thinking_step_by_key(
+                title_key="thinking.tool_result",
+                report_immediately=True,
+                details=tool_result_details
+            )
 
         # Handle content generation
         if run_response_event.event in [RunEvent.run_content]:
@@ -642,13 +610,6 @@ class AgnoAgent(Agent):
             TaskStatus: Execution status
         """
         try:
-            self.add_thinking_step(
-                title="Agent Non-streaming Execution",
-                action="Starting agent non-streaming execution",
-                reasoning="Agent will now execute the task in non-streaming mode",
-                report_immediately=False
-            )
-            
             # Run to completion (non-streaming) and gather final output
             result = await self.single_agent.arun(
                 prompt,
@@ -689,10 +650,8 @@ class AgnoAgent(Agent):
                 70, TaskStatus.RUNNING.value, "${{thinking.starting_agent_streaming}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
 
-            self.add_thinking_step(
-                title="Agent Streaming Execution",
-                action="Starting agent streaming execution",
-                reasoning="Agent will now execute the task in streaming mode",
+            self.add_thinking_step_by_key(
+                title_key="thinking.agent_streaming_execution",
                 report_immediately=False
             )
 
@@ -750,14 +709,6 @@ class AgnoAgent(Agent):
         """
         try:
             ext_config = self._get_team_config()
-            
-            self.add_thinking_step(
-                title="Team Non-streaming Execution",
-                action="Starting team non-streaming execution",
-                reasoning="Team will now execute the task in non-streaming mode",
-                report_immediately=False
-            )
-
             # Run to completion (non-streaming) and gather final output
             result = await self.team.arun(
                 prompt,
@@ -852,13 +803,31 @@ class AgnoAgent(Agent):
                 confidence_value = reasoning.confidence if reasoning.confidence is not None else 0.5
                 next_action_value = reasoning.next_action if reasoning.next_action is not None else "continue"
                 
-                self.add_thinking_step(
-                    title=reasoning.title,
-                    action=action_value,
-                    reasoning=reasoning.reasoning,
-                    confidence=confidence_value,
-                    next_action=next_action_value,
-                    report_immediately=False
+                # 构建推理步骤详情，符合目标格式
+                reasoning_details = {
+                    "type": "assistant",
+                    "message": {
+                        "id": getattr(run_response_event, 'id', ''),
+                        "type": "message",
+                        "role": "assistant",
+                        "model": "agno-team",
+                        "content": [{
+                            "type": "text",
+                            "text": f"{reasoning.title}\n\nAction: {action_value}\nReasoning: {reasoning.reasoning}\nConfidence: {confidence_value}\nNext Action: {next_action_value}"
+                        }],
+                        "stop_reason": None,
+                        "usage": {
+                            "input_tokens": 0,
+                            "output_tokens": 0
+                        }
+                    },
+                    "parent_tool_use_id": None
+                }
+                
+                self.add_thinking_step_by_key(
+                    title_key="thinking.assistant_message_received",
+                    report_immediately=False,
+                    details=reasoning_details
                 )
 
         # Handle team-level events
@@ -876,12 +845,27 @@ class AgnoAgent(Agent):
         if run_response_event.event in [TeamRunEvent.tool_call_started]:
             logger.info(f"\n🔧 TEAM TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
+            
+            # 构建团队工具调用详情，符合目标格式
+            team_tool_details = {
+                "type": "assistant",
+                "message": {
+                    "id": getattr(run_response_event, 'id', ''),
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": getattr(run_response_event.tool, 'id', ''),
+                        "name": run_response_event.tool.tool_name,
+                        "input": run_response_event.tool.tool_args
+                    }]
+                }
+            }
+
             self.add_thinking_step_by_key(
-                title_key=f"{{thinking.agno.team_tool_started_title}}: {run_response_event.tool.tool_name}",
-                action_key="thinking.agno.team_tool_started_action",
-                reasoning_key=f"${{thinking.agno.team_tool_started_reasoning}}: {json.dumps(run_response_event.tool.tool_args, ensure_ascii=False)}",
-                next_action_key="thinking.agno.team_tool_started_next_action",
-                report_immediately=False
+                title_key="thinking.tool_use",
+                report_immediately=False,
+                details=team_tool_details
             )
             self.report_progress(
                 80, TaskStatus.RUNNING.value, f"${{thinking.team_using_tool}} {run_response_event.tool.tool_name}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
@@ -889,12 +873,27 @@ class AgnoAgent(Agent):
 
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
             logger.info(f"\n✅ TEAM TOOL COMPLETED: {run_response_event.tool.tool_name}")
+            
+            # 构建团队工具结果详情，符合目标格式
+            team_tool_result_details = {
+                "type": "assistant",
+                "message": {
+                    "id": getattr(run_response_event, 'id', ''),
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": getattr(run_response_event.tool, 'id', ''),
+                        "content": run_response_event.tool.result,
+                        "is_error": False
+                    }]
+                }
+            }
+            
             self.add_thinking_step_by_key(
-                title_key=f"{{thinking.agno.team_tool_completed_title}}: {run_response_event.tool.tool_name}",
-                action_key="thinking.agno.team_tool_completed_action",
-                reasoning_key=f"${{thinking.agno.team_tool_completed_reasoning}}: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}...",
-                next_action_key="thinking.agno.team_tool_completed_next_action",
-                report_immediately=False
+                title_key="thinking.tool_result",
+                report_immediately=False,
+                details=team_tool_result_details
             )
             logger.info(f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}...")
 
@@ -903,12 +902,27 @@ class AgnoAgent(Agent):
             logger.info(f"\n🤖 MEMBER TOOL STARTED: {run_response_event.agent_id}")
             logger.info(f"   Tool: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
+            
+            # 构建成员工具调用详情，符合目标格式
+            member_tool_details = {
+                "type": "assistant",
+                "message": {
+                    "id": getattr(run_response_event, 'id', ''),
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_use",
+                        "id": getattr(run_response_event.tool, 'id', ''),
+                        "name": run_response_event.tool.tool_name,
+                        "input": run_response_event.tool.tool_args
+                    }]
+                }
+            }
+            
             self.add_thinking_step_by_key(
-                title_key=f"{{thinking.agno.member_tool_started_title}}: {run_response_event.tool.tool_name}",
-                action_key="thinking.agno.member_tool_started_action",
-                reasoning_key=f"${{thinking.agno.member_tool_started_reasoning}}: {json.dumps(run_response_event.tool.tool_args, ensure_ascii=False)}",
-                next_action_key="thinking.agno.member_tool_started_next_action",
-                report_immediately=False
+                title_key="thinking.tool_use",
+                report_immediately=False,
+                details=member_tool_details
             )
 
         if run_response_event.event in [RunEvent.tool_call_completed]:
@@ -917,12 +931,27 @@ class AgnoAgent(Agent):
             logger.info(
                 f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..."
             )
+            
+            # 构建成员工具结果详情，符合目标格式
+            member_tool_result_details = {
+                "type": "assistant",
+                "message": {
+                    "id": getattr(run_response_event, 'id', ''),
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": getattr(run_response_event.tool, 'id', ''),
+                        "content": run_response_event.tool.result,
+                        "is_error": False
+                    }]
+                }
+            }
+            
             self.add_thinking_step_by_key(
-                title_key=f"{{thinking.agno.member_tool_completed_title}}: {run_response_event.tool.tool_name}",
-                action_key="thinking.agno.member_tool_completed_action",
-                reasoning_key=f"${{thinking.agno.member_tool_completed_reasoning}}: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..",
-                next_action_key="thinking.agno.member_tool_completed_next_action",
-                report_immediately=False
+                title_key="thinking.tool_result",
+                report_immediately=False,
+                details=member_tool_result_details
             )
 
         # Handle content generation
@@ -971,3 +1000,4 @@ class AgnoAgent(Agent):
         Clean up resources used by the agent
         """
         await self.team_builder.cleanup()
+

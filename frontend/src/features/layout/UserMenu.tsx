@@ -32,8 +32,22 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
           style={{ boxShadow: 'var(--shadow-popover)' }}
         >
           <div className="flex flex-col gap-2 px-2 pb-1.5">
-            <DocsButton className="w-full justify-center" />
-            <ThemeToggle className="w-full justify-center" />
+            <Menu.Item>
+              {({ close }) => (
+                <DocsButton
+                  className="w-full justify-center"
+                  onClick={close}
+                />
+              )}
+            </Menu.Item>
+            <Menu.Item>
+              {({ close }) => (
+                <ThemeToggle
+                  className="w-full justify-center"
+                  onToggle={close}
+                />
+              )}
+            </Menu.Item>
           </div>
           <div className="my-1 h-px bg-border/60" />
           <Menu.Item>

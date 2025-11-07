@@ -21,6 +21,7 @@ export interface CreateTaskRequest {
   git_domain: string
   branch_name: string
   prompt: string
+  task_type?: string
   batch: number
   user_id: number
   user_name: string

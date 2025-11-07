@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { paths } from '../config/paths'
+import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
 
 // API Configuration and Client
 const API_BASE_URL = '/api'
@@ -40,7 +41,21 @@ class APIClient {
       if (response.status === 401) {
         removeToken()
         if (typeof window !== 'undefined') {
-          window.location.href = paths.auth.login.getHref()
+          const loginPath = paths.auth.login.getHref()
+          if (window.location.pathname === loginPath) {
+            window.location.href = loginPath
+          } else {
+            const disallowedTargets = [loginPath, '/login/oidc']
+            const currentPathWithSearch = `${window.location.pathname}${window.location.search}`
+            const redirectTarget = sanitizeRedirectPath(currentPathWithSearch, disallowedTargets)
+            if (redirectTarget) {
+              sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, redirectTarget)
+              window.location.href = `${loginPath}?redirect=${encodeURIComponent(redirectTarget)}`
+            } else {
+              sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+              window.location.href = loginPath
+            }
+          }
         }
         throw new Error('Authentication failed')
       }

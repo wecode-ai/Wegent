@@ -43,6 +43,7 @@ export default function TeamList() {
   const router = useRouter()
   const isEditing = editingTeamId !== null
   const isDesktop = useMediaQuery('(min-width: 640px)')
+  const isMobile = useMediaQuery('(max-width: 639px)')
   const statusTagStyle = useMemo<React.CSSProperties>(() => getStatusTagStyle(token), [token])
   const workflowTagStyle = useMemo<React.CSSProperties>(() => getWorkflowTagStyle(token), [token])
 
@@ -108,7 +109,7 @@ export default function TeamList() {
   const handleChatTeam = (team: Team) => {
     const params = new URLSearchParams()
     params.set('teamId', String(team.id))
-    router.push(`/tasks?${params.toString()}`)
+    router.push(`/chat?${params.toString()}`)
   }
 
   const handleDelete = (teamId: number) => {
@@ -201,7 +202,9 @@ export default function TeamList() {
           className={`bg-surface border border-border rounded-md p-2 w-full ${
             isEditing
               ? 'md:min-h-[70vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
-              : 'max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'
+              : isMobile
+                ? 'max-h-[calc(100vh-200px)] flex flex-col overflow-y-auto custom-scrollbar'
+                : 'max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'
           }`}
         >
           {isLoading ? (
@@ -227,12 +230,20 @@ export default function TeamList() {
                       <div className="space-y-1">
                         {teams.map((team) => (
                           <div key={team.id}>
-                            <div className="flex items-center justify-between py-0.5 min-w-0">
-                              <div className="flex items-center space-x-2 min-w-0 flex-1">
-                                <AiOutlineTeam className="w-4 h-4 flex-shrink-0" />
+                            <div className={`flex ${isMobile ? 'items-start' : 'items-center'} justify-between py-0.5 min-w-0`}>
+                              <div className={`flex ${isMobile ? 'items-start' : 'items-center'} space-x-2 min-w-0 flex-1`}>
+                                <AiOutlineTeam className={`w-4 h-4 flex-shrink-0 ${isMobile ? 'mt-1' : ''}`} />
                                 <div className="flex flex-col justify-center min-w-0 flex-1">
                                   <div className="flex items-center space-x-1 min-w-0">
-                                    <h3 className="text-base font-medium text-text-primary mb-0 truncate">{team.name}</h3>
+                                    <h3
+                                      className="text-base font-medium text-text-primary mb-0 truncate"
+                                      title={team.name.length > 20 ? team.name : undefined}
+                                      style={{
+                                        maxWidth: isMobile ? '180px' : 'none'
+                                      }}
+                                    >
+                                      {team.name.length > 20 ? `${team.name.substring(0, 20)}...` : team.name}
+                                    </h3>
                                     <div className="flex items-center h-4 space-x-0.5 flex-shrink-0">
                                       <div
                                         className="w-2 h-2 rounded-full"
@@ -247,48 +258,50 @@ export default function TeamList() {
                                       )}
                                     </div>
                                   </div>
-                                  <div className="flex items-center space-x-1 mt-0 min-w-0">
+                                  <div className={`flex ${isMobile ? 'flex-col space-y-1' : 'items-center'} space-x-1 mt-0 min-w-0`}>
                                     {team.workflow?.mode && (
-                                      <>
-                                        <span
-                                          className="inline-block max-w-full truncate px-2 py-0.5 text-xs rounded-full capitalize"
-                                          style={workflowTagStyle}
-                                        >
-                                          {t(`team_model.${team.workflow.mode}`)}
-                                        </span>
-                                        <span className="mx-2 hidden sm:inline"></span>
-                                      </>
+                                      <span
+                                        className="inline-block w-fit px-2 py-0.5 text-xs rounded-full capitalize"
+                                        style={workflowTagStyle}
+                                      >
+                                        {t(`team_model.${team.workflow.mode}`)}
+                                      </span>
                                     )}
+                                    {!isMobile && <span className="mx-2 hidden sm:inline"></span>}
                                     {team.bots.length > 0 ? (
                                       <div className="flex items-center min-w-0 flex-1">
-                                        <div className="flex items-center overflow-hidden whitespace-nowrap text-ellipsis">
-                                          {/* Limit the number of bots displayed: 1 on mobile, 3 on desktop */}
-                                          {team.bots.slice(0, isDesktop ? 3 : 1).map((bot, idx) => (
-                                            <span
-                                              key={`${bot.bot_id}-${idx}`}
-                                              className="flex items-center shrink min-w-0"
-                                            >
-                                              <RiRobot2Line className="w-4 h-4 mr-0.5 text-text-muted" />
-                                              <span className="text-xs text-text-muted mr-0.5 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap max-w-[80px] sm:max-w-[120px] lg:max-w-[160px]">
-                                                {bots.find(b => b.id === bot.bot_id)?.name || bot.bot_id}
+                                        {isMobile ? (
+                                          <div className="flex flex-wrap items-center gap-1">
+                                            {team.bots.slice(0, 1).map((bot, idx) => (
+                                              <span
+                                                key={`${bot.bot_id}-${idx}`}
+                                                className="flex items-center shrink min-w-0 bg-muted px-2 py-1 rounded"
+                                              >
+                                                <RiRobot2Line className="w-3 h-3 mr-1 text-text-muted" />
+                                                <span className="text-xs text-text-muted min-w-0 overflow-hidden text-ellipsis whitespace-nowrap max-w-[60px] sm:max-w-[100px] lg:max-w-[140px]">
+                                                  {bots.find(b => b.id === bot.bot_id)?.name || bot.bot_id}
+                                                </span>
                                               </span>
-                                              {team.workflow?.mode === 'pipeline'
-                                                ? (idx < Math.min(team.bots.length - 1, isDesktop ? 2 : 0) && (
-                                                    <FiArrowRight className="w-4 h-4 text-text-muted mx-2" />
-                                                  ))
-                                                : (idx < Math.min(team.bots.length - 1, isDesktop ? 2 : 0) && (
-                                                    <span className="text-text-muted mx-1"> </span>
-                                                  ))
-                                              }
-                                            </span>
-                                          ))}
-                                          {/* Show ellipsis */}
-                                          {(isDesktop ? team.bots.length > 3 : team.bots.length > 1) && (
-                                            <span className="text-xs text-text-muted ml-1">
-                                              +{team.bots.length - (isDesktop ? 3 : 1)}
-                                            </span>
-                                          )}
-                                        </div>
+                                            ))}
+                                            {team.bots.length > 1 && (
+                                              <span className="text-xs text-text-muted bg-muted px-2 py-1 rounded">
+                                                +{team.bots.length - 1}
+                                              </span>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <div className="flex items-center overflow-hidden whitespace-nowrap text-ellipsis">
+                                            {team.bots.slice(0, 3).map((bot, idx) => (
+                                              <span key={`${bot.bot_id}-${idx}`} className="flex items-center shrink min-w-0">
+                                                <RiRobot2Line className="w-4 h-4 mr-0.5 text-text-muted" />
+                                                <span className="text-xs text-text-muted mr-0.5 min-w-0 overflow-hidden text-ellipsis whitespace-nowrap max-w-[80px] sm:max-w-[120px] lg:max-w-[160px]">
+                                                  {bots.find(b => b.id === bot.bot_id)?.name || bot.bot_id}
+                                                </span>
+                                                {idx < team.bots.slice(0, 3).length - 1 && <span className="text-text-muted mx-1"> </span>}
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
                                       </div>
                                     ) : (
                                       <span className="text-xs text-text-muted">{t('teams.no_bots')}</span>
@@ -296,75 +309,145 @@ export default function TeamList() {
                                   </div>
                                 </div>
                               </div>
-                              <div className="flex items-center space-x-1 flex-shrink-0">
-                                {/* Primary action buttons - always visible */}
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<ChatBubbleLeftEllipsisIcon className="w-4 h-4" />}
-                                  onClick={() => handleChatTeam(team)}
-                                  title={t('teams.chat')}
-                                  style={{ padding: '2px' }}
-                                  className="!text-text-muted hover:!text-text-primary"
-                                />
-                                {shouldShowEditDelete(team) && (
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
-                                    onClick={() => handleEditTeam(team)}
-                                    title={t('teams.edit')}
-                                    style={{ padding: '2px' }}
-                                    className="!text-text-muted hover:!text-text-primary"
-                                  />
+                              <div className={`${isMobile ? 'flex-col items-end space-y-1' : 'flex items-center'} space-x-1 flex-shrink-0 ${isMobile ? 'ml-2' : ''}`}>
+                                {isMobile ? (
+                                  <div className="grid grid-cols-2 gap-1 w-full">
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<ChatBubbleLeftEllipsisIcon className="w-3 h-3" />}
+                                      onClick={() => handleChatTeam(team)}
+                                      title={t('teams.chat')}
+                                      style={{ padding: '1px' }}
+                                      className="!text-text-muted hover:!text-text-primary"
+                                    />
+                                    {shouldShowEditDelete(team) && (
+                                      <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<PencilIcon className="w-3 h-3 text-text-muted" />}
+                                        onClick={() => handleEditTeam(team)}
+                                        title={t('teams.edit')}
+                                        style={{ padding: '1px' }}
+                                        className="!text-text-muted hover:!text-text-primary"
+                                      />
+                                    )}
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<DocumentDuplicateIcon className="w-3 h-3 text-text-muted" />}
+                                      onClick={() => handleCopyTeam(team)}
+                                      title={t('teams.copy')}
+                                      style={{ padding: '1px' }}
+                                      className="!text-text-muted hover:!text-text-primary"
+                                    />
+                                    {shouldShowShare(team) && (
+                                      <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<ShareIcon className="w-3 h-3 text-text-muted" />}
+                                        onClick={() => handleShareTeam(team)}
+                                        title={t('teams.share')}
+                                        style={{ padding: '1px' }}
+                                        className="!text-text-muted hover:!text-text-primary"
+                                        loading={sharingId === team.id}
+                                      />
+                                    )}
+                                    <Dropdown
+                                      menu={{
+                                        items: [
+                                          {
+                                            key: 'delete',
+                                            label: t('teams.delete'),
+                                            icon: <TrashIcon className="w-4 h-4" />,
+                                            onClick: () => handleDelete(team.id),
+                                            danger: true
+                                          }
+                                        ]
+                                      }}
+                                      trigger={['click']}
+                                      placement="bottomRight"
+                                    >
+                                      <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<EllipsisVerticalIcon className="w-3 h-3 text-text-muted" />}
+                                        title={t('teams.more')}
+                                        style={{ padding: '1px' }}
+                                        className="!text-text-muted hover:!text-text-primary"
+                                      />
+                                    </Dropdown>
+                                  </div>
+                                ) : (
+                                  <>
+                                    {/* Desktop: All buttons in one row */}
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<ChatBubbleLeftEllipsisIcon className="w-4 h-4" />}
+                                      onClick={() => handleChatTeam(team)}
+                                      title={t('teams.chat')}
+                                      style={{ padding: '2px' }}
+                                      className="!text-text-muted hover:!text-text-primary"
+                                    />
+                                    {shouldShowEditDelete(team) && (
+                                      <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
+                                        onClick={() => handleEditTeam(team)}
+                                        title={t('teams.edit')}
+                                        style={{ padding: '2px' }}
+                                        className="!text-text-muted hover:!text-text-primary"
+                                      />
+                                    )}
+                                    <Button
+                                      type="text"
+                                      size="small"
+                                      icon={<DocumentDuplicateIcon className="w-4 h-4 text-text-muted" />}
+                                      onClick={() => handleCopyTeam(team)}
+                                      title={t('teams.copy')}
+                                      style={{ padding: '2px' }}
+                                      className="!text-text-muted hover:!text-text-primary"
+                                    />
+                                    {shouldShowShare(team) && (
+                                      <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<ShareIcon className="w-4 h-4 text-text-muted" />}
+                                        onClick={() => handleShareTeam(team)}
+                                        title={t('teams.share')}
+                                        style={{ padding: '2px' }}
+                                        className="!text-text-muted hover:!text-text-primary"
+                                        loading={sharingId === team.id}
+                                      />
+                                    )}
+                                    <Dropdown
+                                      menu={{
+                                        items: [
+                                          {
+                                            key: 'delete',
+                                            label: t('teams.delete'),
+                                            icon: <TrashIcon className="w-4 h-4" />,
+                                            onClick: () => handleDelete(team.id),
+                                            danger: true
+                                          }
+                                        ]
+                                      }}
+                                      trigger={['click']}
+                                      placement="bottomRight"
+                                    >
+                                      <Button
+                                        type="text"
+                                        size="small"
+                                        icon={<EllipsisVerticalIcon className="w-4 h-4 text-text-muted" />}
+                                        title={t('teams.more')}
+                                        style={{ padding: '2px' }}
+                                        className="!text-text-muted hover:!text-text-primary"
+                                      />
+                                    </Dropdown>
+                                  </>
                                 )}
-                                <Button
-                                  type="text"
-                                  size="small"
-                                  icon={<DocumentDuplicateIcon className="w-4 h-4 text-text-muted" />}
-                                  onClick={() => handleCopyTeam(team)}
-                                  title={t('teams.copy')}
-                                  style={{ padding: '2px' }}
-                                  className="!text-text-muted hover:!text-text-primary"
-                                />
-                                {shouldShowShare(team) && (
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<ShareIcon className="w-4 h-4 text-text-muted" />}
-                                    onClick={() => handleShareTeam(team)}
-                                    title={t('teams.share')}
-                                    style={{ padding: '2px' }}
-                                    className="!text-text-muted hover:!text-text-primary"
-                                    loading={sharingId === team.id}
-                                  />
-                                )}
-
-                                {/* Secondary action buttons - dropdown menu */}
-                                <Dropdown
-                                  menu={{
-                                    items: [
-                                      {
-                                        key: 'delete',
-                                        label: t('teams.delete'),
-                                        icon: <TrashIcon className="w-4 h-4" />,
-                                        onClick: () => handleDelete(team.id),
-                                        danger: true
-                                      }
-                                    ]
-                                  }}
-                                  trigger={['click']}
-                                  placement="bottomRight"
-                                >
-                                  <Button
-                                    type="text"
-                                    size="small"
-                                    icon={<EllipsisVerticalIcon className="w-4 h-4 text-text-muted" />}
-                                    title={t('teams.more')}
-                                    style={{ padding: '2px' }}
-                                    className="!text-text-muted hover:!text-text-primary"
-                                  />
-                                </Dropdown>
                               </div>
                             </div>
                             {teams.length > 1 && team.id !== teams[teams.length - 1].id && (
