@@ -83,7 +83,7 @@ def cleanup_worker(stop_event: threading.Event):
             # Log and continue loop
             logger.error(f"[job] cleanup stale executors error: {e}")
         # Wait with wake-up capability
-        stop_event.wait(timeout=settings.SUBTASK_CLEANUP_INTERVAL_SECONDS)
+        stop_event.wait(timeout=settings.TASK_EXECUTOR_CLEANUP_INTERVAL_SECONDS)
 
 
 def repo_update_worker(stop_event: threading.Event):

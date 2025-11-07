@@ -32,12 +32,12 @@ class JobService(BaseService[Kind, None, None]):
         - subtask.status in (COMPLETED, FAILED, CANCELLED)
         - corresponding task.status in (COMPLETED, FAILED, CANCELLED)
         - executor_name and executor_namespace are both non-empty
-        - updated_at older than SUBTASK_EXECUTOR_DELETE_AFTER_HOURS
+        - updated_at older than expired hours
         Deduplicate by (executor_namespace, executor_name).
         After successful deletion, set executor_deleted_at.
         """
         try:
-            cutoff = datetime.now() - timedelta(hours=settings.SUBTASK_EXECUTOR_DELETE_AFTER_HOURS)
+            cutoff = datetime.now() - timedelta(hours=settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS)
             logging.info("[executor_job] Starting scheduled deletion of expired executors, cutoff: {}".format(cutoff))
             
             # Query candidates using kinds table
@@ -77,6 +77,10 @@ class JobService(BaseService[Kind, None, None]):
                 task_crd = Task.model_validate(task.json)
                 task_status = task_crd.status.status if task_crd.status else "PENDING"
                 
+                task_type = (task_crd.metadata.labels and task_crd.metadata.labels.get("taskType")) or "chat"
+                if task_type == 'code':
+                    if (datetime.now() - subtask.updated_at).total_seconds() < settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS * 3600:
+                        continue
                 # Check if task status is in COMPLETED, FAILED, or CANCELLED
                 if task_status in ["COMPLETED", "FAILED", "CANCELLED"]:
                     valid_candidates.append(subtask)

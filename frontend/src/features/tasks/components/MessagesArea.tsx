@@ -4,12 +4,12 @@
 
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTaskContext } from '../contexts/taskContext'
 import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
-import { RiRobot2Line } from 'react-icons/ri'
+import { RiRobot2Line, RiUser3Line } from 'react-icons/ri'
 import { FiCopy, FiCheck, FiTool, FiExternalLink, FiDownload } from 'react-icons/fi'
-import { Button, Collapse } from 'antd'
+import { Button } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import MarkdownEditor from '@uiw/react-markdown-editor'
 import { useTheme } from '@/features/theme/ThemeProvider'
@@ -93,7 +93,7 @@ const BubbleTools = ({
   }>
 }) => {
   return (
-    <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
+    <div className="absolute bottom-1 left-2 flex items-center gap-1 z-10">
       <CopyButton content={contentToCopy} />
       {tools.map(tool => (
         <Button
@@ -119,6 +119,10 @@ export default function MessagesArea() {
   const { t } = useTranslation('chat')
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext()
   const { theme } = useTheme()
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null)
+  const scrollStateRef = useRef<{ scrollTop: number, scrollHeight: number }>({ scrollTop: 0, scrollHeight: 0 })
+  const isUserNearBottomRef = useRef(true)
+  const AUTO_SCROLL_THRESHOLD = 32
 
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
@@ -229,214 +233,246 @@ export default function MessagesArea() {
   
   const displayMessages = generateTaskMessages(selectedTaskDetail);
 
+  useEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    const updateScrollMeta = () => {
+      const { scrollTop, scrollHeight, clientHeight } = container
+      scrollStateRef.current = {
+        scrollTop,
+        scrollHeight,
+      }
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight
+      isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD
+    }
+
+    const handleScroll = () => {
+      updateScrollMeta()
+    }
+
+    container.addEventListener('scroll', handleScroll)
+
+    // Initialize stored values
+    updateScrollMeta()
+
+    return () => {
+      container.removeEventListener('scroll', handleScroll)
+    }
+  }, [selectedTaskDetail?.id, displayMessages.length > 0, AUTO_SCROLL_THRESHOLD])
+
+  useLayoutEffect(() => {
+    const container = messagesContainerRef.current
+    if (!container) return
+
+    const previous = scrollStateRef.current
+    const shouldStickToBottom = isUserNearBottomRef.current
+
+    if (shouldStickToBottom) {
+      container.scrollTop = container.scrollHeight
+    } else {
+      container.scrollTop = previous.scrollTop
+    }
+
+    scrollStateRef.current = {
+      scrollTop: container.scrollTop,
+      scrollHeight: container.scrollHeight,
+    }
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
+    isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD
+  }, [displayMessages, AUTO_SCROLL_THRESHOLD])
+
+  const renderProgressBar = (status: string, progress: number) => {
+    const normalizedStatus = (status ?? '').toUpperCase()
+    const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus)
+    const safeProgress = Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 100) : 0
+
+    return (
+      <div className="mt-2">
+        <div className="flex justify-between items-center mb-1">
+          <span className="text-sm">
+            {t('messages.task_status')} {status}
+          </span>
+        </div>
+        <div className="w-full bg-border/60 rounded-full h-2">
+          <div
+            className={`bg-primary h-2 rounded-full transition-all duration-300 ease-in-out ${isActiveStatus ? 'progress-bar-animated' : ''}`}
+            style={{ width: `${safeProgress}%` }}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={safeProgress}
+            role="progressbar"
+          ></div>
+        </div>
+      </div>
+    )
+  };
+
+  const renderMarkdownResult = (rawResult: string, promptPart?: string) => {
+    const trimmed = (rawResult ?? '').trim();
+    const fencedMatch = trimmed.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/);
+    const normalizedResult = fencedMatch ? fencedMatch[1] : trimmed;
+
+    const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/);
+    if (progressMatch) {
+      const status = progressMatch[1];
+      const progress = parseInt(progressMatch[2], 10) || 0;
+      return renderProgressBar(status, progress);
+    }
+
+    return (
+      <>
+        <MarkdownEditor.Markdown
+          source={normalizedResult}
+          style={{ background: 'transparent' }}
+          wrapperElement={{ 'data-color-mode': theme }}
+          components={{
+            a: ({ href, children, ...props }) => (
+              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                {children}
+              </a>
+            )
+          }}
+        />
+        <BubbleTools
+          contentToCopy={`${promptPart ? (promptPart + '\n\n') : ''}${normalizedResult}`}
+          tools={[
+            {
+              key: 'download',
+              title: t('messages.download') || 'Download',
+              icon: <FiDownload className="w-4 h-4 text-gray-400 hover:text-white" />,
+              onClick: () => {
+                const blob = new Blob([`${normalizedResult}`], { type: 'text/plain;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'message.md';
+                a.click();
+                URL.revokeObjectURL(url);
+              }
+            }
+          ]}
+        />
+      </>
+    );
+  };
+
+  const renderPlainMessage = (msg: Message) => (
+    (msg.content?.split('\n') || []).map((line, idx) => {
+      if (line.startsWith('__PROMPT_TRUNCATED__:')) {
+        const match = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/);
+        if (match) {
+          const shortPrompt = match[1];
+          const fullPrompt = match[2];
+          return (
+            <span
+              key={idx}
+              className="text-sm font-bold cursor-pointer underline decoration-dotted block"
+              title={fullPrompt}
+            >
+              {shortPrompt}
+            </span>
+          );
+        }
+      }
+
+      const progressMatch = line.match(/__PROGRESS_BAR__:(.*?):(\d+)/);
+      if (progressMatch) {
+        const status = progressMatch[1];
+        const progress = parseInt(progressMatch[2], 10) || 0;
+        return renderProgressBar(status, progress);
+      }
+
+      return (
+        <div key={idx} className="group pb-4">
+          {idx === 0 && (
+            <BubbleTools
+              contentToCopy={msg.content}
+              tools={[]}
+            />
+          )}
+          <div className="text-sm break-all">
+            {line}
+          </div>
+        </div>
+      );
+    })
+  );
+
+  const renderAiMessage = (msg: Message) => {
+    const content = msg.content ?? '';
+    if (!content.includes('${$$}$')) {
+      return renderPlainMessage(msg);
+    }
+
+    const [prompt, result] = content.split('${$$}$');
+    return (
+      <>
+        {prompt && (
+          <div className="text-sm whitespace-pre-line mb-2">
+            {prompt}
+          </div>
+        )}
+        {result && renderMarkdownResult(result, prompt)}
+      </>
+    );
+  };
+
+  const renderMessageBody = (msg: Message) => (
+    msg.type === 'ai' ? renderAiMessage(msg) : renderPlainMessage(msg)
+  );
+
+  const formatTimestamp = (timestamp: number | undefined) => {
+    if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return ''
+    return new Date(timestamp).toLocaleTimeString(navigator.language, {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    })
+  }
+
   return (
     <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
       {/* Messages Area - only shown when there are messages or loading */}
       {(displayMessages.length > 0) && (
-        <div className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar">
-          {displayMessages.map((msg, index) => (
-            <div key={index} className={`flex ${msg.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-              <div className={`relative group max-w-[100%] p-3 rounded-lg ${msg.type === 'user'
-                  ? 'bg-muted border border-border text-text-primary my-10'
-                  : 'bg-surface border border-border text-text-primary'
-                }`}>
-                {/* Bot name and icon, only displayed for ai messages, and before the timestamp */}
-                {msg.type === 'ai' && (
-                  <div className="flex justify-between items-center mb-1">
-                    <div className="flex items-center text-xs opacity-80">
-                      <RiRobot2Line className="w-5 h-5 mr-1" />
-                      <span className="font-semibold mr-2">{msg.botName || t('messages.bot')}</span>
-                      <span>
-                        {new Date(msg.timestamp ?? 0).toLocaleTimeString(navigator.language, {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                          second: '2-digit',
-                          hour12: false,
-                          timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-                        })}
-                      </span>
+        <div
+          ref={messagesContainerRef}
+          className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar"
+        >
+          {displayMessages.map((msg, index) => {
+            const bubbleBaseClasses = 'relative group w-full p-3 pb-8 rounded-lg border border-border text-text-primary'
+            const bubbleTypeClasses = msg.type === 'user' ? 'bg-muted my-6' : 'bg-surface'
+            const isUserMessage = msg.type === 'user'
+            const timestampLabel = formatTimestamp(msg.timestamp)
+            const headerIcon = isUserMessage ? (
+              <RiUser3Line className="w-4 h-4" />
+            ) : (
+              <RiRobot2Line className="w-4 h-4" />
+            )
+            const headerLabel = isUserMessage
+              ? ''
+              : (msg.botName || t('messages.bot') || 'Bot')
+
+            return (
+              <div key={index} className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}>
+                <div className={`flex ${isUserMessage ? 'w-3/4 sm:w-2/3 md:w-1/2' : 'w-full'} flex-col gap-3 ${isUserMessage ? 'items-end' : 'items-start'}`}>
+                  {msg.type === 'ai' && msg.thinking && (
+                    <ThinkingComponent thinking={msg.thinking} taskStatus={selectedTaskDetail?.status} />
+                  )}
+                  <div className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}>
+                    <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                      {headerIcon}
+                      <span className="font-semibold">{headerLabel}</span>
+                      {timestampLabel && <span>{timestampLabel}</span>}
                     </div>
-                    {/* Thinking component for AI messages */}
-                    {msg.thinking && <ThinkingComponent thinking={msg.thinking} taskStatus={selectedTaskDetail?.status} />}
+                    {renderMessageBody(msg)}
                   </div>
-                )}
-                {/* Multi-line content support, split by ${$$}$ and render each line intelligently */}
-                {/* Bot messages distinguish between Prompt and Result, Result is rendered with Markdown */}
-                {msg.type === 'ai' && msg.content?.includes('${$$}$') ? (() => {
-                  const [prompt, result] = msg.content.split('${$$}$');
-                  return (
-                    <>
-                      {/* Prompt part, plain text */}
-                      {prompt && (
-                        <div className="text-sm whitespace-pre-line mb-2">
-                          {prompt}
-                        </div>
-                      )}
-                      {/* Result part, markdown rendering */}
-                      {result && (
-                        (() => {
-                          // Prioritize progress bar handling
-                          const progressMatch = result.match(/__PROGRESS_BAR__:(.*?):(\d+)/);
-                          if (progressMatch) {
-                            const status = progressMatch[1];
-                            const progress = parseInt(progressMatch[2], 10) || 0;
-                            return (
-                              <div className="mt-2">
-                                <div className="flex justify-between items-center mb-1">
-                                  <span className="text-sm">{t('messages.task_status')} {status}</span>
-                                </div>
-                                <div className="w-full bg-border/60 rounded-full h-2">
-                                  <div
-                                    className="bg-primary h-2 rounded-full transition-all duration-300 ease-in-out"
-                                    style={{ width: `${progress}%` }}
-                                  ></div>
-                                </div>
-                              </div>
-                            );
-                          }
-                          // Not a progress bar, normal markdown rendering
-                          return (
-                            <div className="group pb-8">
-                              <div className="text-sm">
-                                <div className="w-full" style={{ background: 'transparent' }}>
-                                  {(() => {
-                                        // ★ Normalize: if result is a complete fenced code block, unpack it
-                                    const normalizedResult = (() => {
-                                      const s = (result ?? '').trim();
-
-                                          // Only match the case where the entire string is a fenced block:
-                                          // ```markdown\n...\n``` or ```md\n...\n``` or ```\n...\n```
-                                      const m = s.match(/^```(?:\s*(?:markdown|md))?\s*\n([\s\S]*?)\n```$/);
-                                      if (m) return m[1];
-
-                                      return s;
-                                    })();
-
-                                        // ★ Anchor progress bar matching to avoid false positives in main text
-                                    const progressMatch = normalizedResult.match(/^__PROGRESS_BAR__:(.*?):(\d+)$/);
-                                    if (progressMatch) {
-                                      const status = progressMatch[1];
-                                      const progress = parseInt(progressMatch[2], 10) || 0;
-                                      return (
-                                        <div className="mt-2">
-                                          <div className="flex justify-between items-center mb-1">
-                                            <span className="text-sm">{t('messages.task_status')} {status}</span>
-                                          </div>
-                                          <div className="w-full bg-border/60 rounded-full h-2">
-                                            <div
-                                              className="bg-primary h-2 rounded-full transition-all duration-300 ease-in-out"
-                                              style={{ width: `${progress}%` }}
-                                            />
-                                          </div>
-                                        </div>
-                                      );
-                                    }
-
-                                    return (
-                                      <>
-                                        <MarkdownEditor.Markdown
-                                          source={normalizedResult}
-                                          style={{ background: 'transparent' }}
-                                          wrapperElement={{ 'data-color-mode': theme }}
-                                          components={{
-                                            a: ({ href, children, ...props }) => (
-                                              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                                                {children}
-                                              </a>
-                                            )
-                                          }}
-                                        />
-                                        {/* ★ Top floating toolbar: copy + extensible tools */}
-                                        <BubbleTools
-                                          contentToCopy={`${prompt ? (prompt + '\n\n') : ''}${normalizedResult}`}
-                                          tools={[
-                                            {
-                                              key: 'download',
-                                              title: t('messages.download') || 'Download',
-                                              icon: <FiDownload className="w-4 h-4 text-gray-400 hover:text-white" />,
-                                              onClick: () => {
-                                                    // Simple download: save content as file
-                                                const blob = new Blob([`${normalizedResult}`], { type: 'text/plain;charset=utf-8' });
-                                                const url = URL.createObjectURL(blob);
-                                                const a = document.createElement('a');
-                                                a.href = url;
-                                                a.download = 'message.md';
-                                                a.click();
-                                                URL.revokeObjectURL(url);
-                                              }
-                                            }
-                                          ]}
-                                        />
-                                      </>
-                                    );
-                                  })()}
-                                </div>
-                              </div>
-                            </div>
-                          );
-                        })()
-                      )}
-                    </>
-                  );
-                })() : (
-                  // Non-Bot messages or no separator, keep original multi-line processing
-                  (msg.content?.split('\n') || []).map((line, idx) => {
-                    // __PROMPT_TRUNCATED__ handling
-                    if (line.startsWith('__PROMPT_TRUNCATED__:')) {
-                      const match = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/);
-                      if (match) {
-                        const shortPrompt = match[1];
-                        const fullPrompt = match[2];
-                        return (
-                          <span
-                            key={idx}
-                            className="text-sm font-bold cursor-pointer underline decoration-dotted block"
-                            title={fullPrompt}
-                          >
-                            {shortPrompt}
-                          </span>
-                        );
-                      }
-                    }
-                    // __PROGRESS_BAR__ handling
-                    const progressMatch2 = line.match(/__PROGRESS_BAR__:(.*?):(\d+)/);
-                    if (progressMatch2) {
-                      const status = progressMatch2[1];
-                      const progress = parseInt(progressMatch2[2], 10) || 0;
-                      return (
-                        <div key={idx} className="mt-2">
-                          <div className="flex justify-between items-center mb-1">
-                            <span className="text-sm">{t('messages.task_status')} {status}</span>
-                          </div>
-                          <div className="w-full bg-border/60 rounded-full h-2">
-                            <div
-                              className="bg-primary h-2 rounded-full transition-all duration-300 ease-in-out"
-                              style={{ width: `${progress}%` }}
-                            ></div>
-                          </div>
-                        </div>
-                      );
-                    }
-                    // Plain text
-                    return (
-                      <div key={idx} className="group pb-8">
-                        {/* Only render toolbar on the first line, copy the entire message */}
-                        {idx === 0 && (
-                          <BubbleTools
-                            contentToCopy={msg.content}
-                            tools={[]}
-                          />
-                        )}
-                        <div className="text-sm break-all">
-                          {line}
-                        </div>
-                      </div>
-                    );
-                  })
-                )}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </div>

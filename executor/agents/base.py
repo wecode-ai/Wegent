@@ -225,10 +225,9 @@ class Agent:
             if hasattr(self, 'add_thinking_step'):
                 self.add_thinking_step(
                     title=title,
-                    action=f"System encountered an error: {title}",
-                    reasoning=f"Error occurred: {error_message}",
-                    confidence=0.0,
-                    next_action="exit"
+                    report_immediately=True,
+                    use_i18n_keys=False,
+                    details={"error_message": error_message}
                 )
                 logger.info(f"Recorded error thinking for {title}: {error_message}")
         except Exception as e:

@@ -75,6 +75,7 @@ function DashboardContent() {
         {/* Top Navigation */}
         <TopNavigation
           activePage="dashboard"
+          variant="standalone"
           showLogo={true}
         >
           <GithubStarButton />
@@ -146,43 +147,43 @@ function DashboardContent() {
                 /* Mobile Layout */
                 <>
                   <div className="bg-base border-b border-border">
-                    <Tab.List className="flex space-x-1 px-4 py-2">
+                    <Tab.List className="flex space-x-1 px-2 py-2">
                       <Tab className={({ selected }) =>
-                        `flex-1 flex items-center justify-center space-x-2 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                        `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
                           selected
                             ? 'bg-muted text-text-primary'
                             : 'text-text-muted hover:text-text-primary hover:bg-muted'
                         }`
                       }>
-                        <PuzzlePieceIcon className="w-4 h-4" />
-                        <span className="hidden sm:inline">{t('settings.integrations')}</span>
+                        <PuzzlePieceIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('settings.integrations')}</span>
                       </Tab>
 
                       <Tab className={({ selected }) =>
-                        `flex-1 flex items-center justify-center space-x-2 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                        `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
                           selected
                             ? 'bg-muted text-text-primary'
                             : 'text-text-muted hover:text-text-primary hover:bg-muted'
                         }`
                       }>
-                        <RiRobot2Line className="w-4 h-4" />
-                        <span className="hidden sm:inline">{t('settings.bot')}</span>
+                        <RiRobot2Line className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('settings.bot')}</span>
                       </Tab>
 
                       <Tab className={({ selected }) =>
-                        `flex-1 flex items-center justify-center space-x-2 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                        `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
                           selected
                             ? 'bg-muted text-text-primary'
                             : 'text-text-muted hover:text-text-primary hover:bg-muted'
                         }`
                       }>
-                        <UsersIcon className="w-4 h-4" />
-                        <span className="hidden sm:inline">{t('settings.team')}</span>
+                        <UsersIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('settings.team')}</span>
                       </Tab>
                     </Tab.List>
                   </div>
 
-                  <div className="flex-1 min-h-0 px-4 py-4 overflow-y-auto min-w-0">
+                  <div className="flex-1 min-h-0 px-2 py-2 overflow-y-auto min-w-0">
                     <Tab.Panels>
                       <Tab.Panel className="focus:outline-none">
                         <GitHubIntegration />

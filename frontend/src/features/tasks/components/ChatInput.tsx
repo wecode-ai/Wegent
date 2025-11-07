@@ -15,6 +15,7 @@ interface ChatInputProps {
   handleSendMessage: () => void
   isLoading: boolean
   disabled?: boolean
+  taskType?: 'chat' | 'code'
 }
 
 export default function ChatInput({
@@ -23,8 +24,10 @@ export default function ChatInput({
   handleSendMessage,
   isLoading,
   disabled = false,
+  taskType = 'code',
 }: ChatInputProps) {
   const { t } = useTranslation('common')
+  const placeholderKey = taskType === 'chat' ? 'chat.placeholder_chat' : 'chat.placeholder_code'
   const [isComposing, setIsComposing] = useState(false)
 
   const handleCompositionStart = () => {
@@ -52,7 +55,7 @@ export default function ChatInput({
         onKeyDown={handleKeyPress}
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
-        placeholder={t('chat.placeholder')}
+        placeholder={t(placeholderKey)}
         className={`w-full p-3 bg-transparent custom-scrollbar text-text-primary text-base placeholder:text-text-muted placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         disabled={disabled}
         minRows={3}

@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation'
 import { Team } from '@/types/api'
 import { useTaskContext } from '../contexts/taskContext'
 import { useTranslation } from '@/hooks/useTranslation'
+import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { paths } from '@/config/paths'
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles'
 
@@ -34,8 +35,8 @@ export default function TeamSelector({
   const { t } = useTranslation('common')
   const router = useRouter()
   const { token } = theme.useToken()
+  const isMobile = useMediaQuery('(max-width: 767px)')
   const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(token), [token])
-
   // Automatically set team based on selectedTask
   useEffect(() => {
     if (selectedTaskDetail && 'team' in selectedTaskDetail && selectedTaskDetail.team && teams.length > 0) {
@@ -120,15 +121,15 @@ export default function TeamSelector({
         value={selectedTeam ? {
           value: selectedTeam.id,
           label: (
-            <div className="flex items-center gap-2">
-              <span title={selectedTeam.name}>{selectedTeam.name}</span>
-              {selectedTeam.share_status === 2 && selectedTeam.user?.user_name && (
-                <Tag className="text-xs !m-0 flex-shrink-0 ml-2" style={sharedBadgeStyle}>
-                  {selectedTeam.user?.user_name}
-                </Tag>
-              )}
-            </div>
-          )
+              <div className="flex items-center gap-2">
+                <span className="truncate" title={selectedTeam.name}>{selectedTeam.name}</span>
+                {selectedTeam.share_status === 2 && selectedTeam.user?.user_name && (
+                  <Tag className="text-xs !m-0 flex-shrink-0 ml-2" style={sharedBadgeStyle}>
+                    {selectedTeam.user?.user_name}
+                  </Tag>
+                )}
+              </div>
+            )
         } : undefined}
         placeholder={
           <span className="text-sx truncate h-2">
@@ -138,7 +139,7 @@ export default function TeamSelector({
         className="repository-selector min-w-0 truncate"
         style={{
           width: 'auto',
-          maxWidth: 200,
+          maxWidth: isMobile ? 150 : 200,
           display: 'inline-block',
           paddingRight: 20,
         }}

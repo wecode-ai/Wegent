@@ -21,8 +21,11 @@ export const paths = {
             },
         },
     },
-    task: {
-        getHref: () => '/tasks',
+    chat: {
+        getHref: () => '/chat',
+    },
+    code: {
+        getHref: () => '/code',
     },
     settings: {
         root: {

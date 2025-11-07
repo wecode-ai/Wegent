@@ -7,18 +7,20 @@
 import { useEffect, useState } from 'react'
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline'
 import { Button } from 'antd'
-import { useRouter } from 'next/navigation'
+import { useRouter, useSearchParams } from 'next/navigation'
 import { useUser } from '@/features/common/UserContext'
 import { paths } from '@/config/paths'
 import { App } from 'antd'
 import { useTranslation } from '@/hooks/useTranslation'
 import LanguageSwitcher from '@/components/LanguageSwitcher'
 import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants'
 
 export default function LoginForm() {
   const { t } = useTranslation('common')
   const { message } = App.useApp()
   const router = useRouter()
+  const searchParams = useSearchParams()
   const [formData, setFormData] = useState({
     user_name: 'admin',
     password: 'Wegent2025!'
@@ -34,6 +36,9 @@ export default function LoginForm() {
 
       // Get OIDC login button text
   const oidcLoginText = process.env.NEXT_PUBLIC_OIDC_LOGIN_TEXT || t('login.oidc_login')
+  const loginPath = paths.auth.login.getHref()
+  const defaultRedirect = paths.chat.getHref()
+  const [redirectPath, setRedirectPath] = useState(defaultRedirect)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
@@ -44,18 +49,44 @@ export default function LoginForm() {
         // Used antd message.error for unified error prompt, no need for local error state
   }
 
-  const { user, refresh, isLoading: userLoading, login } = useUser()
+  const { user, isLoading: userLoading, login } = useUser()
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const queryRedirect = searchParams.get('redirect')
+      const storedRedirect = sessionStorage.getItem(POST_LOGIN_REDIRECT_KEY)
+      const disallowedRedirects = [loginPath, '/login/oidc']
+      const validQueryRedirect = sanitizeRedirectPath(queryRedirect, disallowedRedirects)
+      const validStoredRedirect = sanitizeRedirectPath(storedRedirect, disallowedRedirects)
+
+      if (validQueryRedirect) {
+        sessionStorage.setItem(POST_LOGIN_REDIRECT_KEY, validQueryRedirect)
+        setRedirectPath(validQueryRedirect)
+      } else if (validStoredRedirect) {
+        setRedirectPath(validStoredRedirect)
+      } else {
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+        setRedirectPath(defaultRedirect)
+      }
+    }
+  }, [defaultRedirect, loginPath, searchParams])
 
   useEffect(() => {
     if (!userLoading && user) {
-      router.replace(paths.task.getHref())
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+      }
+      router.replace(redirectPath)
     }
-  }, [userLoading, user, router])
+  }, [userLoading, user, router, redirectPath])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (user) {
-      router.replace(paths.task.getHref())
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+      }
+      router.replace(redirectPath)
       return
     }
     setIsLoading(true)
@@ -66,7 +97,10 @@ export default function LoginForm() {
         user_name: formData.user_name,
         password: formData.password
       })
-      router.replace(paths.task.getHref())
+      if (typeof window !== 'undefined') {
+        sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY)
+      }
+      router.replace(redirectPath)
     } catch (error: any) {
       // Error handling is already done in UserContext.login, no need to show error message here
     } finally {

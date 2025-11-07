@@ -8,7 +8,7 @@ import { MoonOutlined, SunOutlined } from '@ant-design/icons'
 import { useTheme } from './ThemeProvider'
 import { useTranslation } from '@/hooks/useTranslation'
 
-export function ThemeToggle({ className = '' }: { className?: string }) {
+export function ThemeToggle({ className = '', onToggle }: { className?: string; onToggle?: () => void }) {
   const { theme, toggleTheme } = useTheme()
   const { t } = useTranslation('common')
   const isDark = theme === 'dark'
@@ -22,10 +22,16 @@ export function ThemeToggle({ className = '' }: { className?: string }) {
 
   const Icon = isDark ? SunOutlined : MoonOutlined
 
+  const handleClick = () => {
+    // 先执行回调关闭菜单，再切换主题，避免闪烁
+    onToggle?.()
+    toggleTheme()
+  }
+
   return (
     <button
       type="button"
-      onClick={toggleTheme}
+      onClick={handleClick}
       className={mergedClassName}
       aria-label={t('actions.toggle_theme')}
     >

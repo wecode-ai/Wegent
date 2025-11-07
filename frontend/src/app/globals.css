@@ -115,6 +115,66 @@ body {
   .custom-scrollbar {
     -webkit-overflow-scrolling: touch;
   }
+
+  /* Text truncation utilities */
+  .line-clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-none {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
+
+  /* Hide scrollbar but keep functionality */
+  .scrollbar-hide {
+    -ms-overflow-style: none;  /* IE and Edge */
+    scrollbar-width: none;  /* Firefox */
+    -webkit-overflow-scrolling: touch;  /* iOS momentum scrolling */
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;  /* Chrome, Safari and Opera */
+  }
+
+  /* Ensure horizontal scrolling works on mobile */
+  .scrollbar-horizontal {
+    overflow-x: auto;
+    overflow-y: hidden;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .scrollbar-horizontal::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Snap scrolling for carousel effect */
+  .snap-x {
+    scroll-snap-type: x mandatory;
+    -webkit-scroll-snap-type: x mandatory;
+  }
+
+  .snap-center {
+    scroll-snap-align: center;
+    -webkit-scroll-snap-align: center;
+  }
+
+  .snap-mandatory {
+    scroll-snap-stop: always;
+    -webkit-scroll-snap-stop: always;
+  }
 }
 
 /* Remove default blue outline from Headless UI */
@@ -171,6 +231,36 @@ button:focus-visible {
   display: none;
 }
 
+/* Animated progress bar used in AI running bubbles */
+.progress-bar-animated {
+  position: relative;
+  overflow: hidden;
+}
+
+.progress-bar-animated::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: linear-gradient(
+    120deg,
+    rgba(255, 255, 255, 0),
+    rgba(255, 255, 255, 0.35),
+    rgba(255, 255, 255, 0)
+  );
+  transform: translateX(-100%);
+  animation: progress-bar-sheen 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+
+@keyframes progress-bar-sheen {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 /* Custom styles for RepositorySelector antd Select */
 .repository-selector.ant-select .ant-select-selector {
   background-color: transparent !important;
@@ -211,6 +301,7 @@ button:focus-visible {
   box-shadow: var(--shadow-popover) !important;
   padding-top: 4px !important;
   padding-bottom: 4px !important;
+  min-width: 320px !important;
 }
 
 .repository-selector-dropdown .ant-select-item {
@@ -348,4 +439,103 @@ button:focus-visible {
 /* Text-only animation for thinking text without gradient background */
 .thinking-text-flow-text {
   animation: thinkingTextFlow 2s ease-in-out infinite;
+}
+
+/* Mobile Sidebar Animations */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slide-down {
+  from {
+    opacity: 0;
+    max-height: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    max-height: 500px;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out forwards;
+  opacity: 0;
+}
+
+.animate-slide-down {
+  animation: slide-down 0.2s ease-out forwards;
+}
+
+/* Ripple effect for touch feedback */
+@keyframes ripple {
+  0% {
+    transform: scale(0);
+    opacity: 0.5;
+  }
+  100% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.ripple-effect {
+  position: relative;
+  overflow: hidden;
+}
+
+.ripple-effect::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 100%;
+  height: 100%;
+  background: rgb(var(--color-primary) / 0.3);
+  border-radius: 50%;
+  transform: translate(-50%, -50%) scale(0);
+  pointer-events: none;
+}
+
+.ripple-effect:active::after {
+  animation: ripple 0.6s ease-out;
+}
+
+/* Custom scrollbar for sidebar */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-scrollbar-thumb) / 0.5);
+  border-radius: 3px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgb(var(--color-scrollbar-thumb) / 0.7);
+}
+
+/* Smooth transitions for theme switching */
+* {
+  transition-property: background-color, border-color, color, fill, stroke;
+  transition-duration: 200ms;
+  transition-timing-function: ease-in-out;
+}
+
+/* Disable transitions when switching themes to prevent flashing */
+.no-transition,
+.no-transition * {
+  transition: none !important;
 }

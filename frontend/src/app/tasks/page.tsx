@@ -59,12 +59,13 @@ export default function TasksPage() {
             <TaskSidebar
               isMobileSidebarOpen={isMobileSidebarOpen}
               setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+              pageType="code"
             />
             {/* Main content area */}
             <div className="flex-1 flex flex-col min-w-0">
               {/* Top navigation */}
               <TopNavigation
-                activePage="tasks"
+                activePage="code"
                 showLogo={false}
                 onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
               >
@@ -76,6 +77,7 @@ export default function TasksPage() {
                 teams={teams}
                 isTeamsLoading={isTeamsLoading}
                 selectedTeamForNewTask={selectedTeamForNewTask}
+                taskType="code"
               />
             </div>
           </div>
