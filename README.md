@@ -1,4 +1,5 @@
 # Wegent
+> 🚀 An open-source platform to define, organize, and run Agentic AI
 
 English | [简体中文](README_zh.md)
 
@@ -8,9 +9,40 @@ English | [简体中文](README_zh.md)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
 [![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
 
-> 🚀 An open-source platform to define, organize, and run Agentic AI
+<div align="center">
 
-## 📖 Overview
+### 🚀 **Build Your Own AI Agent Workforce**
+
+*From coding assistants to news analysts - deploy intelligent agents that actually work*
+
+[Quick Start](#-quick-start) · [Use Cases](#-what-can-you-build) · [Documentation](docs/en/resource-definition-formats.md)
+
+</div>
+
+---
+
+## 💡 What Can You Build?
+
+Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
+
+### 🖥️ **Web-Based Coding Assistant**
+Build a full-featured development environment in your browser 
+<img src="./docs/assets/example.gif" width="75%" alt="Demo Video"/>
+
+### 📰 **News Intelligence Platform**
+Create a smart news aggregation and analysis system 
+
+### 🔧 **Custom Agent Applications**
+The possibilities are endless - build agents for:
+- **Data Analysis**: Automated report generation and visualization
+- **Content Creation**: Blog posts, social media, and marketing materials
+- **Customer Support**: Intelligent chatbots with contextual understanding
+- **DevOps Automation**: CI/CD pipeline management and monitoring
+- **Research Assistant**: Literature review and knowledge synthesis
+
+---
+
+## 📖 What is Wegent?
 
 Wegent is an open-source AI native operating system that enables you to define, organize, and run intelligent agents at scale. Built on Kubernetes-style declarative API and CRD (Custom Resource Definition) design patterns, Wegent provides a standardized framework for creating and managing AI agent ecosystems.
 
@@ -84,22 +116,6 @@ graph LR
 - **Multi-Model Support**: Currently supports Claude Code, with plans for Codex and Gemini
 - **Flexible Configuration**: Customizable agent personalities and capabilities
 - **Task Orchestration**: Intelligent scheduling and execution
-
-### Demo & Screenshots
-
-#### Demo Video
-
-> A quick preview of Wegent in action, showcasing agent creation and team collaboration.
-
-<img src="./docs/assets/example.gif" width="75%" alt="Demo Video"/>
-
-### Screenshots
-
-#### 🤖 New Bot
-<img src="./docs/assets/cc-glm4.6.png" width="75%" alt="ClaudeCode-GLM4.6"/>
-
-#### 👥 New Team
-<img src="./docs/assets/cc-team.png" width="75%" alt="ClaudeCode-Team"/>
 
 ## 🚀 Quick Start
 

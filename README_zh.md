@@ -1,4 +1,5 @@
 # Wegent
+> 🚀 一个定义、组织和运行智能体 AI的开源平台
 
 [English](README.md) | 简体中文
 
@@ -8,9 +9,40 @@
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
 [![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
 
-> 🚀 一个定义、组织和运行智能体 AI的开源平台
+<div align="center">
 
-##  概述
+### 🚀 **构建你的 AI 智能体工作团队**
+
+*从编程助手到新闻分析 - 部署真正能干活的智能代理*
+
+[快速开始](#-快速开始) · [应用场景](#-你能构建什么) · [文档](docs/zh/资源定义格式.md)
+
+</div>
+
+---
+
+## 💡 你能构建什么？
+
+Wegent 让你通过智能体编排创建强大的 AI 应用：
+
+### 🖥️ **网页版编程助手**
+在浏览器中构建全功能开发环境
+<img src="./docs/assets/example.gif" width="75%" alt="演示视频"/>
+
+### 📰 **新闻智能平台**
+创建智能新闻聚合和分析系统
+
+### 🔧 **自定义智能体应用**
+可能性无限 - 为以下场景构建智能体：
+- **数据分析**：自动化报告生成和可视化
+- **内容创作**：博客文章、社交媒体和营销素材
+- **客户支持**：具有上下文理解的智能聊天机器人
+- **DevOps 自动化**：CI/CD 流水线管理和监控
+- **研究助手**：文献综述和知识合成
+
+---
+
+## 📖 什么是 Wegent？
 
 Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、组织和运行智能代理。基于 Kubernetes 风格的声明式 API 和 CRD（自定义资源定义）设计模式，Wegent 为创建和管理 AI 智能体生态系统提供了标准化框架。
 
@@ -26,12 +58,12 @@ graph LR
             Team["👥 Team<br/>协作团队"]
         end
      end
-    
+
     subgraph Wegent ["🚀 Wegent"]
         Workspace["💼 Workspace<br/>工作环境"]
         TeamInstance["👥 智能体团队实例<br/>运行中的团队"]
     end
-   
+
       User["👤 用户"]
       Task["🎯 Task<br/>用户任务"]
     %% CRD 资源关系
@@ -41,21 +73,21 @@ graph LR
     Bot --> Team
     CollabModel --> Team
     Shell --> Team
-    
+
     %% 团队定义到实例
     AIResource --> Wegent
     Workspace --> TeamInstance
-    
+
     %% 用户交互流程
     User --> Task
     Task --> TeamInstance
     TeamInstance --> Task
-    
+
     %% 样式
     classDef yamlBox stroke-dasharray: 5 5
     classDef runtimeBox stroke:#ff6b6b,stroke-width:2px
     classDef resourceBox stroke:#4ecdc4,stroke-width:2px
-    
+
     class YAMLDef yamlBox
     class Runtime runtimeBox
     class AIResource resourceBox
@@ -84,22 +116,6 @@ graph LR
 - **多模型支持**：目前支持 Claude Code，计划支持 Codex 和 Gemini
 - **灵活配置**：可自定义智能体个性和能力
 - **任务编排**：智能调度和执行
-
-### 演示与截图
-
-#### 演示视频
-
-> Wegent 的快速预览，展示智能体创建和团队协作。
-
-<img src="./docs/assets/example.gif" width="75%" alt="演示视频"/>
-
-### 截图
-
-#### 🤖 新建 Bot
-<img src="./docs/assets/cc-glm4.6.png" width="75%" alt="ClaudeCode-GLM4.6"/>
-
-#### 👥 新建团队
-<img src="./docs/assets/cc-team.png" width="75%" alt="ClaudeCode-Team"/>
 
 ## 🚀 快速开始
 
@@ -155,25 +171,25 @@ graph TB
         Backend["⚙️ FastAPI 后端"]
         API["🚀 声明式 API"]
     end
-    
+
     subgraph "📊 数据层"
         MySQL[("💾 MySQL 数据库")]
     end
-    
+
     subgraph "🔍 执行层"
         ExecutorManager["💯 执行器管理器"]
         Executor1["🚀 执行器 1"]
         Executor2["🚀 执行器 2"]
         ExecutorN["🚀 执行器 N"]
     end
-    
+
     subgraph "🤖 智能体层"
         Claude["🧠 Claude Code"]
         AngoPlanned["💻 Agno（计划中）"]
         DifyPlanned["✨ Dify（计划中）"]
     end
-  
-    
+
+
     %% 系统交互
     Frontend --> API
     API --> Backend
@@ -182,7 +198,7 @@ graph TB
     ExecutorManager --> Executor1
     ExecutorManager --> Executor2
     ExecutorManager --> ExecutorN
-    
+
     %% AI 程序集成（目前仅支持 Claude Code）
     Executor1 --> Claude
     Executor2 --> Claude
@@ -223,7 +239,7 @@ wegent/
    ```bash
    # 后端测试
    cd backend && python -m pytest
-   
+
    # 前端测试
    cd frontend && npm test
    ```
@@ -245,9 +261,9 @@ wegent/
 
 - 🐛 问题反馈：[GitHub Issues](https://github.com/wecode-ai/wegent/issues)
 
-## 👥 Contributors
+## 👥 贡献者
 
-感谢以下开发者对本项目的贡献，为了让项目变得更好 💪  
+感谢以下开发者对本项目的贡献，为了让项目变得更好 💪
 
 <table>
   <tr>
