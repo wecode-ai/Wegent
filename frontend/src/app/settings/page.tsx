@@ -76,7 +76,7 @@ function DashboardContent() {
         <TopNavigation
           activePage="dashboard"
           variant="standalone"
-          showLogo={true}
+          showLogo={false}
         >
           <GithubStarButton />
           <UserMenu />
