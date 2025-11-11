@@ -8,6 +8,7 @@ import { useState } from 'react'
 import { Task, TaskType } from '@/types/api'
 import TaskMenu from './TaskMenu'
 import { FaRegCircleCheck, FaRegCircleStop, FaRegCircleXmark } from 'react-icons/fa6'
+import { Tooltip } from 'antd'
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext'
 import { useTranslation } from '@/hooks/useTranslation'
@@ -210,7 +211,9 @@ export default function TaskListSection({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <p className="text-xs text-text-muted leading-tight truncate m-0 flex-1">{task.title}</p>
+                    <Tooltip title={task.title} placement="top" mouseEnterDelay={0.5}>
+                      <p className="text-xs text-text-muted leading-tight truncate m-0 flex-1">{task.title}</p>
+                    </Tooltip>
                     {getTaskTypeTag(task)}
                   </div>
                   <p className="text-xs text-text-secondary m-0">{formatTimeAgo(task.created_at)}</p>
