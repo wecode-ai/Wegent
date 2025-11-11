@@ -255,8 +255,8 @@ export default function TaskSidebar({
 
   return (
     <>
-      {/* Desktop Sidebar - Hidden on mobile */}
-      <div className="hidden lg:flex lg:w-56 lg:flex-col lg:bg-surface lg:border-r lg:border-border">
+      {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
+      <div className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full">
         {sidebarContent}
       </div>
 

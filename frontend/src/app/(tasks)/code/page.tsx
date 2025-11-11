@@ -9,6 +9,7 @@ import { teamService } from '@/features/tasks/service/teamService'
 import TopNavigation from '@/features/layout/TopNavigation'
 import UserMenu from '@/features/layout/UserMenu'
 import TaskSidebar from '@/features/tasks/components/TaskSidebar'
+import ResizableSidebar from '@/features/tasks/components/ResizableSidebar'
 import BeginnerGuideModal from '@/features/tasks/components/BeginnerGuideModal'
 import ChatArea from '@/features/tasks/components/ChatArea'
 import TaskParamSync from '@/features/tasks/components/TaskParamSync'
@@ -53,12 +54,14 @@ export default function CodePage() {
           teamLoading={isTeamsLoading}
         />
         <div className="flex smart-h-screen bg-base text-text-primary box-border">
-          {/* Responsive sidebar */}
-          <TaskSidebar
-            isMobileSidebarOpen={isMobileSidebarOpen}
-            setIsMobileSidebarOpen={setIsMobileSidebarOpen}
-            pageType="code"
-          />
+          {/* Responsive resizable sidebar */}
+          <ResizableSidebar>
+            <TaskSidebar
+              isMobileSidebarOpen={isMobileSidebarOpen}
+              setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+              pageType="code"
+            />
+          </ResizableSidebar>
           {/* Main content area */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* Top navigation */}
