@@ -160,9 +160,10 @@ export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask
   useEffect(() => {
     if (hasMessages) {
       // Use timeout to ensure DOM is updated before scrolling
-      setTimeout(() => scrollToBottom(false), 0)
+      // Force scroll to bottom when opening a historical task
+      setTimeout(() => scrollToBottom(true), 100)
     }
-  }, [selectedTaskDetail])
+  }, [selectedTaskDetail?.id])
 
   // Style reference: TaskParamWrapper.tsx
   return (
