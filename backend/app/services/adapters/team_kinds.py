@@ -510,6 +510,88 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 status_code=400,
                 detail=f"Invalid or inactive bot_ids: {', '.join(map(str, missing_bot_ids))}"
             )
+        
+    def get_team_by_id(self, db: Session, *, team_id: int, user_id: int) -> Optional[Kind]:
+        """
+        Get team by id, checking both user's own teams and shared teams
+        """
+        # First check if team exists and belongs to user
+        existing_team = db.query(Kind).filter(
+            Kind.id == team_id,
+            Kind.user_id == user_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).first()
+        
+        if existing_team:
+            return existing_team
+        
+        # If not found, check if team exists in shared teams
+        shared_team = db.query(SharedTeam).filter(
+            SharedTeam.user_id == user_id,
+            SharedTeam.team_id == team_id,
+            SharedTeam.is_active == True
+        ).first()
+        
+        if shared_team:
+            # Return shared team
+            return db.query(Kind).filter(
+                Kind.id == team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True
+            ).first()
+        
+        return None
+        
+    def get_team_by_id_or_name_and_namespace(self, db: Session, *, team_id: Optional[int] = None,
+                                           team_name: Optional[str] = None,
+                                           team_namespace: Optional[str] = None,
+                                           user_id: int) -> Optional[Kind]:
+        """
+        Get team by id or by name and namespace, checking both user's own teams and shared teams
+        
+        If team_id is provided, search by id
+        If team_id is None, search by team_name and team_namespace
+        """
+        # If team_id is provided, search by id
+        if team_id is not None:
+            return self.get_team_by_id(db, team_id=team_id, user_id=user_id)
+        # If team_id is None, search by name and namespace
+        elif team_name is not None and team_namespace is not None:
+            return self.get_team_by_name_and_namespace(db, team_name, team_namespace, user_id)
+        
+        return None
+    
+    def get_team_by_name_and_namespace(self, db: Session, team_name: str, team_namespace: str, user_id: int) -> Optional[Kind]:
+        existing_team = db.query(Kind).filter(
+            Kind.name == team_name,
+            Kind.namespace == team_namespace,
+            Kind.user_id == user_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).first()
+
+        if existing_team:
+            return existing_team
+
+        join_share_teams = db.query(SharedTeam).filter(
+            SharedTeam.user_id == user_id,
+            SharedTeam.is_active == True
+        ).all()
+
+        for join_team in join_share_teams:
+            team = db.query(Kind).filter(
+                Kind.name == team_name,
+                Kind.namespace == team_namespace,
+                Kind.user_id == join_team.original_user_id,
+                Kind.kind == "Team",
+                Kind.is_active == True
+            ).first()
+            if team:
+                return team
+
+        return None
+        
     def _convert_to_team_dict(self, team: Kind, db: Session, user_id: int) -> Dict[str, Any]:
         """
         Convert kinds Team to team-like dictionary

@@ -20,6 +20,7 @@ from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
 from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskStatus
 from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
 from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.adapters.team_kinds import team_kinds_service
 from app.services.base import BaseService
 from app.core.config import settings
 
@@ -42,13 +43,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Set task ID
         if task_id is None:
             task_id = self.create_task_id(db, user.id)
-        else:
-            # Validate if task_id is valid
-            if not self.validate_task_id(db, task_id):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Invalid task_id: {task_id} does not exist in session"
-                )
+
+        # Validate if task_id is valid
+        if not self.validate_task_id(db, task_id):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid task_id: {task_id} does not exist in session"
+            )
 
         # Check if already exists
         existing_task = db.query(Kind).filter(
@@ -66,12 +67,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     status_code=400,
                     detail="Task is still running, please wait for it to complete"
                 )
-            elif task_status in ["FAILED", "DELETE", "CANCELLED"]:
+            elif task_status in ["DELETE", "CANCELLED"]:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Task has {task_status.lower()}, please create a new task"
                 )
-            elif task_status != "COMPLETED":
+            elif task_status not in ["COMPLETED", "FAILED"]:
                 raise HTTPException(
                     status_code=400,
                     detail="Task is in progress, please wait for it to complete"
@@ -98,7 +99,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             team_name = task_crd.spec.teamRef.name
             team_namespace = task_crd.spec.teamRef.namespace
             
-            team = self._get_team_by_name_and_namespace(db, team_name, team_namespace, user.id)
+            team = team_kinds_service.get_team_by_name_and_namespace(db, team_name, team_namespace, user.id)
             if not team:
                 raise HTTPException(
                     status_code=404,
@@ -115,13 +116,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             task = existing_task
         else:
             # Validate team exists and belongs to user
-            if not obj_in.team_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Team ID is required for creating a new task."
-                )
-
-            team = self._get_team_by_id_or_join_team(db, obj_in.team_id, user.id)
+            team = team_kinds_service.get_team_by_id_or_name_and_namespace(
+                db,
+                team_id=obj_in.team_id,
+                team_name=obj_in.team_name,
+                team_namespace=obj_in.team_namespace,
+                user_id=user.id
+            )
             
             if not team:
                 raise HTTPException(
@@ -136,13 +137,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     detail="Prompt content is too long. Maximum allowed size is 60000 bytes in UTF-8 encoding."
                 )
 
-            # Default values for git-related information
-            git_url = obj_in.git_url or ""
-            git_repo = obj_in.git_repo or ""
-            git_domain = obj_in.git_domain or ""
-            branch_name = obj_in.branch_name or ""
-            git_repo_id = obj_in.git_repo_id or 0
-
             # If title is empty, extract first 50 characters from prompt as title
             title = obj_in.title
             if not title and obj_in.prompt:
@@ -156,11 +150,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "kind": "Workspace",
                 "spec": {
                     "repository": {
-                        "gitUrl": git_url,
-                        "gitRepo": git_repo,
-                        "gitRepoId": git_repo_id,
-                        "gitDomain": git_domain,
-                        "branchName": branch_name
+                        "gitUrl": obj_in.git_url,
+                        "gitRepo": obj_in.git_repo,
+                        "gitRepoId": obj_in.git_repo_id,
+                        "gitDomain": obj_in.git_domain,
+                        "branchName": obj_in.branch_name
                     }
                 },
                 "status": {
@@ -215,9 +209,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "name": f"task-{task_id}",
                     "namespace": "default",
                     "labels": {
-                        "type": obj_in.type or "online", # "online" or "offline"
-                        "taskType": obj_in.task_type or "chat", # "chat" or "code" - task type
-                        "autoDeleteExecutor": obj_in.auto_delete_executor or "false",
+                        "type": obj_in.type, # default：online、offline"
+                        "taskType": obj_in.task_type, # defalut：chat、code
+                        "autoDeleteExecutor": obj_in.auto_delete_executor, #default: false 、true
+                        "source": obj_in.source,
                     }
                 },
                 "apiVersion": "agent.wecode.io/v1"
@@ -242,68 +237,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         db.flush()
 
         return self._convert_to_task_dict(task, db, user.id)
-
-    def _get_team_by_name_and_namespace(self, db: Session, team_name: str, team_namespace: str, user_id: int) -> Optional[Kind]:
-        existing_team = db.query(Kind).filter(
-            Kind.name == team_name,
-            Kind.namespace == team_namespace,
-            Kind.user_id == user_id,
-            Kind.kind == "Team",
-            Kind.is_active == True
-        ).first()
-
-        if existing_team:
-            return existing_team
-
-        join_share_teams = db.query(SharedTeam).filter(
-            SharedTeam.user_id == user_id,
-            SharedTeam.is_active == True
-        ).all()
-
-        for join_team in join_share_teams:
-            team = db.query(Kind).filter(
-                Kind.name == team_name,
-                Kind.namespace == team_namespace,
-                Kind.user_id == join_team.original_user_id,
-                Kind.kind == "Team",
-                Kind.is_active == True
-            ).first()
-            if team:
-                return team
-
-        return None
-
-    def _get_team_by_id_or_join_team(self, db: Session, team_id: int, user_id: int) -> Optional[Kind]:
-        """
-        Get team by ID, checking both user's own teams and shared teams
-        """
-        # First check if team exists and belongs to user
-        existing_team = db.query(Kind).filter(
-            Kind.id == team_id,
-            Kind.user_id == user_id,
-            Kind.kind == "Team",
-            Kind.is_active == True
-        ).first()
-        
-        if existing_team:
-            return existing_team
-        
-        # If not found, check if team exists in shared teams
-        shared_team = db.query(SharedTeam).filter(
-            SharedTeam.user_id == user_id,
-            SharedTeam.team_id == team_id,
-            SharedTeam.is_active == True
-        ).first()
-        
-        if shared_team:
-            # Return shared team
-            return db.query(Kind).filter(
-                Kind.id == team_id,
-                Kind.kind == "Team",
-                Kind.is_active == True
-            ).first()
-        
-        return None
+    
     def get_user_tasks_with_pagination(
         self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
     ) -> Tuple[List[Dict[str, Any]], int]:

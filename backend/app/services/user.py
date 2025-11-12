@@ -183,7 +183,28 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 detail=f"User with id {user_id} not found"
             )
         return user
-
+        
+    def get_user_by_name(self, db: Session, user_name: str) -> User:
+        """
+        Get user object by username
+        
+        Args:
+            db: Database session
+            user_name: Username
+            
+        Returns:
+            User object
+            
+        Raises:
+            HTTPException: If user does not exist
+        """
+        user = db.query(User).filter(User.user_name == user_name).first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"User with username '{user_name}' not found"
+            )
+        return user
 
     def get_all_users(self, db: Session) -> List[User]:
         """

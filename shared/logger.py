@@ -58,42 +58,50 @@ def setup_logger(name, level=logging.INFO,
     if env_log_level and env_log_level.upper() == "DEBUG":
         level = logging.DEBUG
 
-    # Configure logging with non-blocking handler
-    logging.basicConfig(
-        level=level,
-        format=format,
-        datefmt=datefmt,
-        handlers=[NonBlockingStreamHandler(sys.stdout)]
-    )
-
+    # Get or create logger
     logger = logging.getLogger(name)
+
+    # Prevent adding duplicate handlers
+    if logger.handlers:
+        # Logger already configured, just update level and return
+        logger.setLevel(level)
+        return logger
+
+    # Set logger level
+    logger.setLevel(level)
+
+    # Prevent propagation to root logger to avoid duplicate logs
+    logger.propagate = False
+
+    formatter = logging.Formatter(format, datefmt)
+    handler_configured = False
 
     # If multiprocessing-safe logging is requested and we're in a multiprocessing context
     if use_multiprocessing_safe and hasattr(os, 'getppid') and os.getppid() != 1:
-        # Check if we're in a subprocess
         try:
-            # Use a QueueHandler to avoid BlockingIOError in multiprocessing
-            if not any(isinstance(handler, QueueHandler) for handler in logger.handlers):
-                # Create a queue for log messages
-                log_queue = multiprocessing.Queue()
+            log_queue = multiprocessing.Queue()
+            queue_handler = QueueHandler(log_queue)
+            queue_handler.setLevel(level)
 
-                # Create a queue handler for this logger
-                queue_handler = QueueHandler(log_queue)
-                logger.addHandler(queue_handler)
+            listener_handler = NonBlockingStreamHandler(sys.stdout)
+            listener_handler.setLevel(level)
+            listener_handler.setFormatter(formatter)
 
-                # Create a listener that will write to the console
-                console_handler = NonBlockingStreamHandler(sys.stdout)
-                console_handler.setFormatter(logging.Formatter(format, datefmt))
+            listener = QueueListener(log_queue, listener_handler)
+            listener.start()
 
-                # Create and start the listener
-                listener = QueueListener(log_queue, console_handler)
-                listener.start()
-
-                # Store the listener reference to prevent garbage collection
-                logger._queue_listener = listener
+            logger.addHandler(queue_handler)
+            logger._queue_listener = listener
+            handler_configured = True
 
         except Exception:
             # If multiprocessing setup fails, fall back to standard logging
-            pass
+            handler_configured = False
+
+    if not handler_configured:
+        console_handler = NonBlockingStreamHandler(sys.stdout)
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
 
     return logger

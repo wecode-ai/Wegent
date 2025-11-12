@@ -1,0 +1,27 @@
+{
+  "workbench": {
+    "overview": "Overview",
+    "files_changed": "Files Changed",
+    "close_panel": "Close panel",
+    "open_main_menu": "Open main menu",
+    "waiting_result": "Waiting for task execution result...",
+    "status": {
+      "completed": "Completed",
+      "failed": "Failed",
+      "running": "Running"
+    },
+    "summary": "Summary",
+    "commits": "commits",
+    "last_updated": "Last updated",
+    "copy_commit_id": "Copy full commit ID",
+    "files": "files",
+    "changes": "Changes",
+    "original_prompt": "Original prompt",
+    "no_file_changes": "No file changes detected",
+    "file_status": {
+      "new": "New",
+      "deleted": "Deleted",
+      "renamed": "Renamed"
+    }
+  }
+}

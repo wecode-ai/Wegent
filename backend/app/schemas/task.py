@@ -41,30 +41,19 @@ class TaskCreate(BaseModel):
     """Task creation model"""
     title: Optional[str] = None
     team_id: Optional[int] = None
-    git_url: Optional[str] = None
-    git_repo: Optional[str] = None
-    git_repo_id: Optional[int] = None
-    git_domain: Optional[str] = None
-    branch_name: Optional[str] = None
+    team_name: Optional[str] = None
+    team_namespace: Optional[str] = None
+    git_url: Optional[str] = ""
+    git_repo: Optional[str] = ""
+    git_repo_id: Optional[int] = 0
+    git_domain: Optional[str] = ""
+    branch_name: Optional[str] = ""
     prompt: str
-    type: Optional[str] = None
-    task_type: Optional[str] = None
-    auto_delete_executor: Optional[str] = "false"
+    type: Optional[str] = "online" # online、offline
+    task_type: Optional[str] = "chat" # chat、code
+    auto_delete_executor: Optional[str] = "false" # true、fasle
+    source: Optional[str] = "web"
 
-class TaskCreateToUser(BaseModel):
-    """Task base model"""
-    team_name: str
-    team_namespace: str
-    prompt: str
-    title: Optional[str] = None
-    git_url: Optional[str] = None
-    git_repo: Optional[str] = None
-    git_repo_id: Optional[int] = None
-    git_domain: Optional[str] = None
-    branch_name: Optional[str] = None
-    type: Optional[str] = None
-    task_type: Optional[str] = None
-    auto_delete_executor: Optional[str] = "false"
 
 class TaskUpdate(BaseModel):
     """Task update model"""

@@ -2,48 +2,48 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useRouter } from 'next/navigation'
-import { ChatBubbleLeftIcon, CodeBracketIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
-import { paths } from '@/config/paths'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useRouter } from 'next/navigation';
+import { ChatBubbleLeftIcon, CodeBracketIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { paths } from '@/config/paths';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface MobileNavTabsProps {
-  activePage: 'chat' | 'code' | 'dashboard'
+  activePage: 'chat' | 'code' | 'dashboard';
 }
 
 export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
-  const router = useRouter()
-  const { t } = useTranslation('common')
+  const router = useRouter();
+  const { t } = useTranslation('common');
 
   const tabs = [
-    { 
-      key: 'chat' as const, 
+    {
+      key: 'chat' as const,
       label: t('navigation.chat'),
       icon: ChatBubbleLeftIcon,
-      path: paths.chat.getHref()
+      path: paths.chat.getHref(),
     },
-    { 
-      key: 'code' as const, 
+    {
+      key: 'code' as const,
       label: t('navigation.code'),
       icon: CodeBracketIcon,
-      path: paths.code.getHref()
+      path: paths.code.getHref(),
     },
-    { 
-      key: 'dashboard' as const, 
+    {
+      key: 'dashboard' as const,
       label: t('navigation.settings'),
       icon: Cog6ToothIcon,
-      path: paths.settings.root.getHref()
-    }
-  ]
+      path: paths.settings.root.getHref(),
+    },
+  ];
 
   return (
-    <div className="flex items-center bg-surface/50 backdrop-blur-sm rounded-full p-1 border border-border/50 shadow-sm">
-      {tabs.map((tab) => {
-        const Icon = tab.icon
-        const isActive = activePage === tab.key
-        
+    <div className="flex items-center bg-surface/50 backdrop-blur-sm rounded-full p-1 border border-border/50 shadow-sm min-w-0 max-w-full">
+      {tabs.map(tab => {
+        const Icon = tab.icon;
+        const isActive = activePage === tab.key;
+
         return (
           <button
             key={tab.key}
@@ -53,19 +53,21 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
               flex items-center justify-center gap-1.5
               px-3 py-1.5 rounded-full text-sm font-medium
               transition-all duration-200
-              ${isActive 
-                ? 'bg-primary text-white shadow-sm' 
-                : 'text-text-secondary hover:text-text-primary hover:bg-surface/80'
+              min-w-0 flex-shrink-0
+              ${
+                isActive
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'text-text-secondary hover:text-text-primary hover:bg-surface/80'
               }
             `}
             aria-label={tab.label}
             aria-current={isActive ? 'page' : undefined}
           >
-            <Icon className="h-4 w-4" aria-hidden="true" />
-            <span className="hidden xs:inline">{tab.label}</span>
+            <Icon className="h-4 w-4 flex-shrink-0" aria-hidden="true" />
+            <span className="hidden xs:inline whitespace-nowrap">{tab.label}</span>
           </button>
-        )
+        );
       })}
     </div>
-  )
+  );
 }

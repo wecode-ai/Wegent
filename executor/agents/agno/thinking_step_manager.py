@@ -21,16 +21,19 @@ class ThinkingStepManager:
     Class for managing thinking steps, encapsulating functions like adding thinking steps and progress tracking
     """
     
-    def __init__(self, progress_reporter: Optional[Callable] = None):
+    def __init__(self, progress_reporter: Optional[Callable] = None, state_manager=None):
         """
         Initialize ThinkingStepManager
         
         Args:
             progress_reporter: Progress report callback function with signature (progress, status, message, result)
+                              (kept for backward compatibility, prefer using state_manager)
+            state_manager: Optional ProgressStateManager instance for unified progress reporting
         """
         self.thinking_steps: List[ThinkingStep] = []
         self._current_progress: int = 50
         self.progress_reporter = progress_reporter
+        self.state_manager = state_manager
     
     def add_thinking_step(self, title: str, report_immediately: bool = True,
                          use_i18n_keys: bool = False, details: Optional[Dict[str, Any]] = None) -> None:
@@ -51,14 +54,22 @@ class ThinkingStepManager:
         logger.info(f"Added thinking step: {title}")
         
         # Report this thinking step if immediate reporting is needed
-        if report_immediately and self.progress_reporter:
-            # Use current progress value, do not update main task progress
-            self.progress_reporter(
-                progress=self._current_progress,
-                status=TaskStatus.RUNNING.value,
-                message=f"Thinking: {title}",
-                result=ExecutionResult(thinking=self.thinking_steps).dict()
-            )
+        if report_immediately:
+            # Prefer using state_manager for unified reporting (includes workbench)
+            if self.state_manager:
+                self.state_manager.report_progress(
+                    progress=self._current_progress,
+                    status=TaskStatus.RUNNING.value,
+                    message=f"Thinking: {title}"
+                )
+            # Fallback to legacy progress_reporter if state_manager not available
+            elif self.progress_reporter:
+                self.progress_reporter(
+                    progress=self._current_progress,
+                    status=TaskStatus.RUNNING.value,
+                    message=f"Thinking: {title}",
+                    result=ExecutionResult(thinking=self.thinking_steps).dict()
+                )
     
     def _text_to_i18n_key(self, text: str) -> str:
         return text
@@ -125,3 +136,12 @@ class ThinkingStepManager:
             progress_reporter: Progress report callback function with signature (progress, status, message, result)
         """
         self.progress_reporter = progress_reporter
+    
+    def set_state_manager(self, state_manager) -> None:
+        """
+        Set state manager for unified progress reporting
+        
+        Args:
+            state_manager: ProgressStateManager instance
+        """
+        self.state_manager = state_manager

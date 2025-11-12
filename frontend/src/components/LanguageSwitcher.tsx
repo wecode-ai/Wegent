@@ -2,32 +2,32 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { useTranslation, languageNames } from '@/hooks/useTranslation'
-import { ChevronDownIcon, LanguageIcon } from '@heroicons/react/24/outline'
+import { useState } from 'react';
+import { useTranslation, languageNames } from '@/hooks/useTranslation';
+import { ChevronDownIcon, LanguageIcon } from '@heroicons/react/24/outline';
 
 interface LanguageSwitcherProps {
-  className?: string
-  showLabel?: boolean
+  className?: string;
+  showLabel?: boolean;
 }
 
-export default function LanguageSwitcher({ 
-  className = '', 
-  showLabel = true 
+export default function LanguageSwitcher({
+  className = '',
+  showLabel = true,
 }: LanguageSwitcherProps) {
-  const { t, changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation('common')
-  const [isOpen, setIsOpen] = useState(false)
-  
-  const currentLanguage = getCurrentLanguage()
-  const supportedLanguages = getSupportedLanguages()
-  
+  const { changeLanguage, getCurrentLanguage, getSupportedLanguages } = useTranslation('common');
+  const [isOpen, setIsOpen] = useState(false);
+
+  const currentLanguage = getCurrentLanguage();
+  const supportedLanguages = getSupportedLanguages();
+
   const handleLanguageChange = (language: string) => {
-    changeLanguage(language)
-    setIsOpen(false)
-  }
-  
+    changeLanguage(language);
+    setIsOpen(false);
+  };
+
   return (
     <div className={`relative ${className}`}>
       <button
@@ -35,12 +35,10 @@ export default function LanguageSwitcher({
         className="flex items-center space-x-2 px-3 py-2 text-sm font-medium text-text-primary bg-surface border border-border rounded-md hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/40"
       >
         <LanguageIcon className="w-4 h-4" />
-        {showLabel && (
-          <span>{languageNames[currentLanguage] || currentLanguage}</span>
-        )}
+        {showLabel && <span>{languageNames[currentLanguage] || currentLanguage}</span>}
         <ChevronDownIcon className="w-4 h-4" />
       </button>
-      
+
       {isOpen && (
         <>
           {/* Dropdown menu with higher z-index to ensure it's above the overlay */}
@@ -49,20 +47,18 @@ export default function LanguageSwitcher({
             style={{ boxShadow: 'var(--shadow-popover)' }}
           >
             <div className="py-1">
-              {supportedLanguages.map((language) => (
+              {supportedLanguages.map(language => (
                 <button
                   key={language}
                   onClick={() => handleLanguageChange(language)}
                   className={`w-full text-left px-4 py-2 text-sm hover:bg-muted ${
-                    currentLanguage === language 
-                      ? 'bg-primary/10 text-primary font-medium' 
+                    currentLanguage === language
+                      ? 'bg-primary/10 text-primary font-medium'
                       : 'text-text-primary'
                   }`}
                 >
                   {languageNames[language] || language}
-                  {currentLanguage === language && (
-                    <span className="ml-2 text-primary">✓</span>
-                  )}
+                  {currentLanguage === language && <span className="ml-2 text-primary">✓</span>}
                 </button>
               ))}
             </div>
@@ -70,5 +66,5 @@ export default function LanguageSwitcher({
         </>
       )}
     </div>
-  )
+  );
 }

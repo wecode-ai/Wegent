@@ -2,76 +2,79 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useEffect, useState } from 'react'
-import '@/features/common/scrollbar.css'
-import { Button } from 'antd'
-import { PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline'
-import { FiGithub, FiGitlab } from 'react-icons/fi'
-import Modal from '@/features/common/Modal'
-import GitHubEdit from './GitHubEdit'
-import LoadingState from '@/features/common/LoadingState'
-import { GitInfo } from '@/types/api'
-import { useUser } from '@/features/common/UserContext'
-import { fetchGitInfo, saveGitToken, deleteGitToken } from '../services/github'
-import { App } from 'antd'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useEffect, useState } from 'react';
+import '@/features/common/scrollbar.css';
+import { Button } from 'antd';
+import { PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { FiGithub, FiGitlab } from 'react-icons/fi';
+import GitHubEdit from './GitHubEdit';
+import LoadingState from '@/features/common/LoadingState';
+import { GitInfo } from '@/types/api';
+import { useUser } from '@/features/common/UserContext';
+import { fetchGitInfo, deleteGitToken } from '../services/github';
+import { App } from 'antd';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export default function GitHubIntegration() {
-  const { t } = useTranslation('common')
-  const { message } = App.useApp()
-  const { user, isLoading: isUserLoading, refresh } = useUser()
-  const [gitInfo, setGitInfo] = useState<GitInfo[]>([])
-  const [isLoading, setIsLoading] = useState(true)
-  const [showModal, setShowModal] = useState(false)
-  const [modalType, setModalType] = useState<'add' | 'edit'>('add')
-  const [currentEditInfo, setCurrentEditInfo] = useState<GitInfo | null>(null)
+  const { t } = useTranslation('common');
+  const { message } = App.useApp();
+  const { user, refresh } = useUser();
+  const [gitInfo, setGitInfo] = useState<GitInfo[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [modalType, setModalType] = useState<'add' | 'edit'>('add');
+  const [currentEditInfo, setCurrentEditInfo] = useState<GitInfo | null>(null);
 
   useEffect(() => {
     async function loadGitInfo() {
-      setIsLoading(true)
+      setIsLoading(true);
       try {
         if (user) {
-          const info = await fetchGitInfo(user)
-          setGitInfo(info)
+          const info = await fetchGitInfo(user);
+          setGitInfo(info);
         } else {
           // If no user, set empty array to show the "no tokens" state
-          setGitInfo([])
+          setGitInfo([]);
         }
-      } catch (e) {
-        message.error(t('integrations.loading'))
-        setGitInfo([])
+      } catch {
+        message.error(t('integrations.loading'));
+        setGitInfo([]);
       } finally {
-        setIsLoading(false)
+        setIsLoading(false);
       }
     }
-    loadGitInfo()
-  }, [user])
+    loadGitInfo();
+  }, [user]);
 
-  const platforms = gitInfo || []
+  const platforms = gitInfo || [];
 
   const getMaskedTokenDisplay = (token: string) => {
-    if (!token) return null
+    if (!token) return null;
     if (token.length >= 8) {
-      return token.substring(0, 4) + '*'.repeat(Math.max(32, token.length - 8)) + token.substring(token.length - 4)
+      return (
+        token.substring(0, 4) +
+        '*'.repeat(Math.max(32, token.length - 8)) +
+        token.substring(token.length - 4)
+      );
     }
-    return token
-  }
+    return token;
+  };
 
   // Edit
   const handleEdit = (info: GitInfo) => {
-    setModalType('edit')
-    setCurrentEditInfo(info)
-    setShowModal(true)
-  }
+    setModalType('edit');
+    setCurrentEditInfo(info);
+    setShowModal(true);
+  };
 
   // Add
   const handleAdd = () => {
-    setModalType('add')
-    setCurrentEditInfo(null)
-    setShowModal(true)
-  }
+    setModalType('add');
+    setCurrentEditInfo(null);
+    setShowModal(true);
+  };
 
   // Token deletion logic unchanged
 
@@ -79,13 +82,13 @@ export default function GitHubIntegration() {
     if (!user) return; // Fix type issue
     // Unified error prompt using antd message.error, no local error state needed
     try {
-      const success = await deleteGitToken(user, domain)
-      if (!success) message.error(t('integrations.delete'))
-      await refresh()
-    } catch (e) {
-      message.error(t('integrations.delete'))
+      const success = await deleteGitToken(user, domain);
+      if (!success) message.error(t('integrations.delete'));
+      await refresh();
+    } catch {
+      message.error(t('integrations.delete'));
     }
-  }
+  };
 
   return (
     <div className="space-y-3">
@@ -99,7 +102,7 @@ export default function GitHubIntegration() {
         ) : (
           <>
             {platforms.length > 0 ? (
-              platforms.map((info) => (
+              platforms.map(info => (
                 <div key={info.git_domain}>
                   <div className="flex items-center justify-between py-0.5">
                     <div className="flex items-center space-x-2 w-0 flex-1 min-w-0">
@@ -110,10 +113,14 @@ export default function GitHubIntegration() {
                       )}
                       <div>
                         <div className="flex items-center space-x-1">
-                          <h3 className="text-base font-medium text-text-primary truncate mb-0">{info.git_domain}</h3>
+                          <h3 className="text-base font-medium text-text-primary truncate mb-0">
+                            {info.git_domain}
+                          </h3>
                         </div>
                         <div>
-                          <p className="text-xs text-text-muted break-all font-mono mt-0">{getMaskedTokenDisplay(info.git_token)}</p>
+                          <p className="text-xs text-text-muted break-all font-mono mt-0">
+                            {getMaskedTokenDisplay(info.git_token)}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -138,9 +145,10 @@ export default function GitHubIntegration() {
                       />
                     </div>
                   </div>
-                  {platforms.length > 1 && info.git_domain !== platforms[platforms.length - 1].git_domain && (
-                    <div className="border-t border-border mt-1 pt-1"></div>
-                  )}
+                  {platforms.length > 1 &&
+                    info.git_domain !== platforms[platforms.length - 1].git_domain && (
+                      <div className="border-t border-border mt-1 pt-1"></div>
+                    )}
                 </div>
               ))
             ) : (
@@ -171,5 +179,5 @@ export default function GitHubIntegration() {
         editInfo={currentEditInfo}
       />
     </div>
-  )
+  );
 }

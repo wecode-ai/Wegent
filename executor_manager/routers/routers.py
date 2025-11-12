@@ -44,17 +44,15 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
     client_ip = request.client.host if request.client else "unknown"
     
-    # Log request start
-    logger.info(f"Request started: {request.method} {request.url.path} from {client_ip}")
-    
     # Process request
     response = await call_next(request)
     
     # Calculate duration in milliseconds
     process_time_ms = (time.time() - start_time) * 1000
     
-    # Log request completion with duration and IP
-    logger.info(f"Request completed: {request.method} {request.url.path} from {client_ip} - "
+    # Only log request completion with duration and IP for monitoring purposes
+    # Avoid duplicate logging since FastAPI already logs basic request info
+    logger.info(f"Request: {request.method} {request.url.path} from {client_ip} - "
                 f"Status: {response.status_code} - Time: {process_time_ms:.0f}ms")
     
     return response

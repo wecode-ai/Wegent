@@ -2,31 +2,31 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
-import { Radio, Transfer, Select, Button, Tooltip, Tag, theme } from 'antd'
-import type { TransferDirection } from 'antd/es/transfer'
-import type { MessageInstance } from 'antd/es/message/interface'
-import Image from 'next/image'
-import { RiRobot2Line, RiMagicLine } from 'react-icons/ri'
-import { EditOutlined, DownOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons'
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { Radio, Transfer, Select, Button, Tooltip, Tag, theme } from 'antd';
+import type { TransferDirection } from 'antd/es/transfer';
+import type { MessageInstance } from 'antd/es/message/interface';
+import Image from 'next/image';
+import { RiRobot2Line, RiMagicLine } from 'react-icons/ri';
+import { EditOutlined, DownOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons';
 
-import { Bot, Team } from '@/types/api'
-import { createTeam, updateTeam } from '../services/teams'
-import TeamEditDrawer from './TeamEditDrawer'
-import { useTranslation } from '@/hooks/useTranslation'
-import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles'
+import { Bot, Team } from '@/types/api';
+import { createTeam, updateTeam } from '../services/teams';
+import TeamEditDrawer from './TeamEditDrawer';
+import { useTranslation } from '@/hooks/useTranslation';
+import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles';
 
 interface TeamEditProps {
-  teams: Team[]
-  setTeams: React.Dispatch<React.SetStateAction<Team[]>>
-  editingTeamId: number
-  setEditingTeamId: React.Dispatch<React.SetStateAction<number | null>>
-  initialTeam?: Team | null
-  bots: Bot[]
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>> // Add setBots property
-  message: MessageInstance
+  teams: Team[];
+  setTeams: React.Dispatch<React.SetStateAction<Team[]>>;
+  editingTeamId: number;
+  setEditingTeamId: React.Dispatch<React.SetStateAction<number | null>>;
+  initialTeam?: Team | null;
+  bots: Bot[];
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>; // Add setBots property
+  message: MessageInstance;
 }
 
 export default function TeamEdit(props: TeamEditProps) {
@@ -39,131 +39,132 @@ export default function TeamEdit(props: TeamEditProps) {
     bots,
     setBots,
     message,
-  } = props
+  } = props;
 
-  const { t } = useTranslation('common')
-  const { token } = theme.useToken()
-    // Current editing object (0 means create new)
-  const editingTeam: Team | null = editingTeamId === 0
-    ? null
-    : (teams.find(t => t.id === editingTeamId) || null)
+  const { t } = useTranslation('common');
+  const { token } = theme.useToken();
+  // Current editing object (0 means create new)
+  const editingTeam: Team | null =
+    editingTeamId === 0 ? null : teams.find(t => t.id === editingTeamId) || null;
 
-  const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null
+  const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null;
 
-    // Left column: Team Name, Mode, Description
-  const [name, setName] = useState('')
-  const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline')
+  // Left column: Team Name, Mode, Description
+  const [name, setName] = useState('');
+  const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline');
 
-    // Right column: LeaderBot (single select), Bots Transfer (multi-select)
-    // Use string key for antd Transfer, stringify bot.id here
-  const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([])
-  const [leaderBotId, setLeaderBotId] = useState<number | null>(null)
+  // Right column: LeaderBot (single select), Bots Transfer (multi-select)
+  // Use string key for antd Transfer, stringify bot.id here
+  const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([]);
+  const [leaderBotId, setLeaderBotId] = useState<number | null>(null);
 
-  const [saving, setSaving] = useState(false)
+  const [saving, setSaving] = useState(false);
 
-    // Bot editing related state
-  const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false)
-  const [editingBotId, setEditingBotId] = useState<number | null>(null)
-  const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit')
-  const [cloningBot, setCloningBot] = useState<Bot | null>(null)
-  
-    // Store unsaved team prompts
-  const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({})
+  // Bot editing related state
+  const [editingBotDrawerVisible, setEditingBotDrawerVisible] = useState(false);
+  const [editingBotId, setEditingBotId] = useState<number | null>(null);
+  const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit');
+  const [cloningBot, setCloningBot] = useState<Bot | null>(null);
+
+  // Store unsaved team prompts
+  const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({});
 
   const teamPromptMap = useMemo(() => {
-    const map = new Map<number, boolean>()
+    const map = new Map<number, boolean>();
     if (editingTeam) {
       editingTeam.bots.forEach(bot => {
-        map.set(bot.bot_id, !!bot.bot_prompt?.trim())
-      })
+        map.set(bot.bot_id, !!bot.bot_prompt?.trim());
+      });
     }
     Object.entries(unsavedPrompts).forEach(([key, value]) => {
-      const id = Number(key.replace('prompt-', ''))
+      const id = Number(key.replace('prompt-', ''));
       if (!Number.isNaN(id)) {
-        map.set(id, !!value?.trim())
+        map.set(id, !!value?.trim());
       }
-    })
-    return map
-  }, [editingTeam, unsavedPrompts])
+    });
+    return map;
+  }, [editingTeam, unsavedPrompts]);
 
   const promptSummary = useMemo<{ label: string; variant: PromptBadgeVariant }>(() => {
-    let configuredCount = 0
+    let configuredCount = 0;
     teamPromptMap.forEach(value => {
-      if (value) configuredCount += 1
-    })
-    const unsavedHasContent = Object.values(unsavedPrompts).some(value => (value ?? '').trim().length > 0)
+      if (value) configuredCount += 1;
+    });
+    const unsavedHasContent = Object.values(unsavedPrompts).some(
+      value => (value ?? '').trim().length > 0
+    );
 
     if (unsavedHasContent) {
-      const countText = configuredCount > 0
-        ? ` - ${t('team.prompts_tag_configured', { count: configuredCount })}`
-        : ''
+      const countText =
+        configuredCount > 0
+          ? ` - ${t('team.prompts_tag_configured', { count: configuredCount })}`
+          : '';
       return {
         label: `${t('team.prompts_tag_pending')}${countText}`,
         variant: 'pending',
-      }
+      };
     }
 
     if (configuredCount > 0) {
       return {
         label: t('team.prompts_tag_configured', { count: configuredCount }),
         variant: 'configured',
-      }
+      };
     }
 
     return {
       label: t('team.prompts_tag_none'),
       variant: 'none',
-    }
-  }, [teamPromptMap, unsavedPrompts, t])
+    };
+  }, [teamPromptMap, unsavedPrompts, t]);
 
   const configuredPromptBadgeStyle = useMemo(
     () => getPromptBadgeStyle(token, 'configured'),
-    [token],
-  )
+    [token]
+  );
   const promptSummaryStyle = useMemo(
     () => getPromptBadgeStyle(token, promptSummary.variant),
-    [token, promptSummary.variant],
-  )
+    [token, promptSummary.variant]
+  );
 
   const handleBack = useCallback(() => {
-    setEditingTeamId(null)
-  }, [setEditingTeamId])
+    setEditingTeamId(null);
+  }, [setEditingTeamId]);
 
   useEffect(() => {
     const handleEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
-      if (editingBotDrawerVisible) return
+      if (event.key !== 'Escape') return;
+      if (editingBotDrawerVisible) return;
 
-      handleBack()
-    }
+      handleBack();
+    };
 
-    window.addEventListener('keydown', handleEsc)
-    return () => window.removeEventListener('keydown', handleEsc)
-  }, [handleBack, editingBotDrawerVisible])
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [handleBack, editingBotDrawerVisible]);
 
   useEffect(() => {
     if (editingTeamId === 0 && initialTeam) {
       setUnsavedPrompts(prev => {
         if (Object.keys(prev).length > 0) {
-          return prev
+          return prev;
         }
-        const next: Record<string, string> = {}
+        const next: Record<string, string> = {};
         initialTeam.bots.forEach(bot => {
-          next[`prompt-${bot.bot_id}`] = bot.bot_prompt || ''
-        })
-        return next
-      })
+          next[`prompt-${bot.bot_id}`] = bot.bot_prompt || '';
+        });
+        return next;
+      });
     }
-  }, [editingTeamId, initialTeam])
+  }, [editingTeamId, initialTeam]);
 
-
-    // Each Mode's "description" and "boundary", including text and images (i18n)
-    const MODE_INFO = useMemo(() => {
+  // Each Mode's "description" and "boundary", including text and images (i18n)
+  const MODE_INFO = useMemo(() => {
     // i18n keys
     const titleKey = `team_model.${mode}`;
     const descKey = `team_model_desc.${mode}`;
 
-      // Image mapping by mode
+    // Image mapping by mode
     const imageMap: Record<typeof mode, string> = {
       pipeline: '/settings/sequential.png',
       route: '/settings/router.png',
@@ -181,125 +182,131 @@ export default function TeamEdit(props: TeamEditProps) {
     };
   }, [mode, t]);
 
-    // Reset form when initializing/switching editing object
-    // Reset form when initializing/switching editing object
+  // Reset form when initializing/switching editing object
+  // Reset form when initializing/switching editing object
   useEffect(() => {
     if (formTeam) {
-      setName(formTeam.name)
-      const m = (formTeam.workflow?.mode as any) || 'pipeline'
-      setMode(m)
-      const ids = formTeam.bots.map(b => String(b.bot_id))
-      setSelectedBotKeys(ids)
-      const leaderBot = formTeam.bots.find(b => b.role === 'leader')
-      setLeaderBotId(leaderBot?.bot_id ?? null)
+      setName(formTeam.name);
+      const m =
+        (formTeam.workflow?.mode as 'pipeline' | 'route' | 'coordinate' | 'collaborate') ||
+        'pipeline';
+      setMode(m);
+      const ids = formTeam.bots.map(b => String(b.bot_id));
+      setSelectedBotKeys(ids);
+      const leaderBot = formTeam.bots.find(b => b.role === 'leader');
+      setLeaderBotId(leaderBot?.bot_id ?? null);
     } else {
-      setName('')
-      setMode('pipeline')
-      setSelectedBotKeys([])
-      setLeaderBotId(null)
+      setName('');
+      setMode('pipeline');
+      setSelectedBotKeys([]);
+      setLeaderBotId(null);
     }
-  }, [editingTeamId, formTeam])
-  
-    // When bots change, only update bots-related state, do not reset name and mode
+  }, [editingTeamId, formTeam]);
+
+  // When bots change, only update bots-related state, do not reset name and mode
   useEffect(() => {
     if (formTeam) {
       const ids = formTeam.bots
         .filter(b => bots.some(bot => bot.id === b.bot_id))
-        .map(b => String(b.bot_id))
-      setSelectedBotKeys(ids)
-      const leaderBot = formTeam.bots.find(b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id))
-      setLeaderBotId(leaderBot?.bot_id ?? null)
+        .map(b => String(b.bot_id));
+      setSelectedBotKeys(ids);
+      const leaderBot = formTeam.bots.find(
+        b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id)
+      );
+      setLeaderBotId(leaderBot?.bot_id ?? null);
     }
-  }, [bots, formTeam])
-    // Change Mode
+  }, [bots, formTeam]);
+  // Change Mode
   const handleModeChange = (newMode: 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
-    setMode(newMode)
-    setSelectedBotKeys([])
-  }
-    // Get currently selected agent_name (from leader or selected bot)
+    setMode(newMode);
+    setSelectedBotKeys([]);
+  };
+  // Get currently selected agent_name (from leader or selected bot)
   const selectedAgentName = useMemo(() => {
-      // No agent_name restriction in pipeline mode
+    // No agent_name restriction in pipeline mode
     if (mode === 'pipeline') return null;
 
-      // If leader exists, use leader's agent_name first
+    // If leader exists, use leader's agent_name first
     if (leaderBotId !== null) {
       const leaderBot = bots.find(b => b.id === leaderBotId);
       if (leaderBot) return leaderBot.agent_name;
     }
 
-      // If no leader but selected bot exists, use first selected bot's agent_name
+    // If no leader but selected bot exists, use first selected bot's agent_name
     if (selectedBotKeys.length > 0) {
       const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
       if (firstSelectedBot) return firstSelectedBot.agent_name;
     }
 
-      // No selection, return null
+    // No selection, return null
     return null;
   }, [mode, leaderBotId, selectedBotKeys, bots]);
 
   const isClaudeCodeAgent = useCallback((agentName?: string | null) => {
-    if (!agentName) return false
-    const normalized = agentName.trim().toLowerCase()
-    return normalized === 'claudecode' || normalized === 'claude_code_agent' || normalized === 'claudecodeagent'
-  }, [])
+    if (!agentName) return false;
+    const normalized = agentName.trim().toLowerCase();
+    return (
+      normalized === 'claudecode' ||
+      normalized === 'claude_code_agent' ||
+      normalized === 'claudecodeagent'
+    );
+  }, []);
 
   const hasClaudeCodeBot = useMemo(() => {
-    const leaderBot = leaderBotId != null ? bots.find(b => b.id === leaderBotId) : null
+    const leaderBot = leaderBotId != null ? bots.find(b => b.id === leaderBotId) : null;
     if (leaderBot && isClaudeCodeAgent(leaderBot.agent_name)) {
-      return true
+      return true;
     }
     return selectedBotKeys.some(key => {
-      const bot = bots.find(b => String(b.id) === key)
-      return bot ? isClaudeCodeAgent(bot.agent_name) : false
-    })
-  }, [bots, leaderBotId, selectedBotKeys, isClaudeCodeAgent])
+      const bot = bots.find(b => String(b.id) === key);
+      return bot ? isClaudeCodeAgent(bot.agent_name) : false;
+    });
+  }, [bots, leaderBotId, selectedBotKeys, isClaudeCodeAgent]);
 
   useEffect(() => {
     if (hasClaudeCodeBot && mode !== 'pipeline') {
-      setMode('pipeline')
+      setMode('pipeline');
     }
-  }, [hasClaudeCodeBot, mode])
+  }, [hasClaudeCodeBot, mode]);
 
+  // Data source for Transfer
+  const transferData = useMemo(() => {
+    return bots.map(b => ({
+      key: String(b.id),
+      title: b.name,
+      description: b.agent_name,
+      disabled:
+        // In non-pipeline mode, disable options not matching agent_name if already selected
+        mode !== 'pipeline' && selectedAgentName !== null && b.agent_name !== selectedAgentName,
+    }));
+  }, [bots, mode, selectedAgentName]);
 
-    // Data source for Transfer
-  const transferData = useMemo(
-    () => {
-      return bots.map(b => ({
-        key: String(b.id),
-        title: b.name,
-        description: b.agent_name,
-        disabled:
-            // In non-pipeline mode, disable options not matching agent_name if already selected
-          mode !== 'pipeline' &&
-          selectedAgentName !== null &&
-          b.agent_name !== selectedAgentName
-      }))
-    },
-    [bots, mode, selectedAgentName]
-  )
-
-    // Transfer change
-  const onTransferChange = (targetKeys: React.Key[], direction: TransferDirection, moveKeys: React.Key[]) => {
+  // Transfer change
+  const onTransferChange = (
+    targetKeys: React.Key[],
+    direction: TransferDirection,
+    moveKeys: React.Key[]
+  ) => {
     if (direction === 'right') {
       setSelectedBotKeys([...new Set(selectedBotKeys.concat(moveKeys))]);
       return;
     }
     setSelectedBotKeys(targetKeys);
-  }
-    // Leader change
+  };
+  // Leader change
   const onLeaderChange = (botId: number) => {
-      // If new leader is in selected bots, remove it from selected bots
+    // If new leader is in selected bots, remove it from selected bots
     if (selectedBotKeys.some(k => Number(k) === botId)) {
-      setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId))
+      setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId));
     }
 
-    setLeaderBotId(botId)
+    setLeaderBotId(botId);
 
-      // In non-pipeline mode, filter selected bots by new leader's agent_name
+    // In non-pipeline mode, filter selected bots by new leader's agent_name
     if (mode !== 'pipeline') {
       const leaderBot = bots.find(b => b.id === botId);
       if (leaderBot) {
-          // Filter out selected bots not matching agent_name
+        // Filter out selected bots not matching agent_name
         setSelectedBotKeys(prev =>
           prev.filter(key => {
             const bot = bots.find(b => String(b.id) === key);
@@ -308,62 +315,65 @@ export default function TeamEdit(props: TeamEditProps) {
         );
       }
     }
-  }
+  };
 
   const handleEditBot = useCallback((botId: number) => {
-    setDrawerMode('edit')
-    setCloningBot(null)
-    setEditingBotId(botId)
-    setEditingBotDrawerVisible(true)
-  }, [])
+    setDrawerMode('edit');
+    setCloningBot(null);
+    setEditingBotId(botId);
+    setEditingBotDrawerVisible(true);
+  }, []);
 
   const handleCreateBot = useCallback(() => {
-    setDrawerMode('edit')
-    setCloningBot(null)
-    setEditingBotId(0)
-    setEditingBotDrawerVisible(true)
-  }, [])
+    setDrawerMode('edit');
+    setCloningBot(null);
+    setEditingBotId(0);
+    setEditingBotDrawerVisible(true);
+  }, []);
 
-  const handleCloneBot = useCallback((botId: number) => {
-    const botToClone = bots.find(b => b.id === botId)
-    if (!botToClone) {
-      return
-    }
-    setDrawerMode('edit')
-    setCloningBot(botToClone)
-    setEditingBotId(0)
-    setEditingBotDrawerVisible(true)
-  }, [bots])
-    // Validate agent_name consistency (required in non-pipeline mode)
+  const handleCloneBot = useCallback(
+    (botId: number) => {
+      const botToClone = bots.find(b => b.id === botId);
+      if (!botToClone) {
+        return;
+      }
+      setDrawerMode('edit');
+      setCloningBot(botToClone);
+      setEditingBotId(0);
+      setEditingBotDrawerVisible(true);
+    },
+    [bots]
+  );
+  // Validate agent_name consistency (required in non-pipeline mode)
   const validateAgentNameConsistency = (ids: number[]) => {
-    const selected = bots.filter(b => ids.includes(b.id))
-    const agentNames = Array.from(new Set(selected.map(b => b.agent_name)))
-    return agentNames.length <= 1
-  }
+    const selected = bots.filter(b => ids.includes(b.id));
+    const agentNames = Array.from(new Set(selected.map(b => b.agent_name)));
+    return agentNames.length <= 1;
+  };
 
-    // Save
+  // Save
   const handleSave = async () => {
     if (!name.trim()) {
-      message.error('Team name is required')
-      return
+      message.error('Team name is required');
+      return;
     }
     if (leaderBotId == null) {
-      message.error('Leader bot is required')
-      return
+      message.error('Leader bot is required');
+      return;
     }
-    const selectedIds = selectedBotKeys.map(k => Number(k))
+    const selectedIds = selectedBotKeys.map(k => Number(k));
 
-      // Non-pipeline mode requires agent_name consistency
+    // Non-pipeline mode requires agent_name consistency
     if (mode !== 'pipeline') {
       if (!validateAgentNameConsistency(selectedIds)) {
-        message.error('Only bots with the same agent_name can be selected in non-Pipeline mode')
-        return
+        message.error('Only bots with the same agent_name can be selected in non-Pipeline mode');
+        return;
       }
     }
 
     // Assemble bots data (per-step prompt not supported, all prompts empty)
     // Ensure leader bot is first, others follow transfer order
-    let allBotIds: number[] = [];
+    const allBotIds: number[] = [];
 
     // Add leader bot first (if any)
     if (leaderBotId !== null) {
@@ -383,7 +393,7 @@ export default function TeamEdit(props: TeamEditProps) {
       const existingBot = formTeam?.bots.find(b => b.bot_id === id);
       // Check for unsaved prompt
       const unsavedPrompt = unsavedPrompts[`prompt-${id}`];
-      
+
       return {
         bot_id: id,
         bot_prompt: unsavedPrompt || existingBot?.bot_prompt || '',
@@ -391,91 +401,91 @@ export default function TeamEdit(props: TeamEditProps) {
       };
     });
 
-    const workflow = { mode, leader_bot_id: leaderBotId }
+    const workflow = { mode, leader_bot_id: leaderBotId };
 
-    setSaving(true)
+    setSaving(true);
     try {
       if (editingTeam && editingTeamId && editingTeamId > 0) {
         const updated = await updateTeam(editingTeamId, {
           name: name.trim(),
           workflow,
-          bots: botsData
-        })
-        setTeams(prev => prev.map(team => team.id === updated.id ? updated : team))
+          bots: botsData,
+        });
+        setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
       } else {
         const created = await createTeam({
           name: name.trim(),
           workflow,
-          bots: botsData
-        })
-        setTeams(prev => [created, ...prev])
+          bots: botsData,
+        });
+        setTeams(prev => [created, ...prev]);
       }
       // Clear unsaved prompts
-      setUnsavedPrompts({})
-      setEditingTeamId(null)
-    } catch (e: any) {
-      message.error(e?.message || (editingTeam ? 'Failed to edit team' : 'Failed to create team'))
+      setUnsavedPrompts({});
+      setEditingTeamId(null);
+    } catch (error) {
+      message.error(
+        (error as Error)?.message || (editingTeam ? 'Failed to edit team' : 'Failed to create team')
+      );
     } finally {
-      setSaving(false)
+      setSaving(false);
     }
-  }
+  };
 
   // Leader dropdown options, filter by agent_name in non-pipeline mode
-  const leaderOptions = useMemo(
-    () => {
-      // Show all bots in pipeline mode
-      if (mode === 'pipeline') return bots;
+  const leaderOptions = useMemo(() => {
+    // Show all bots in pipeline mode
+    if (mode === 'pipeline') return bots;
 
-      // If non-pipeline mode and selected bot exists
-      if (selectedBotKeys.length > 0) {
-        // Find first selected bot
-        const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
-        if (firstSelectedBot) {
-          // Show only bots with same agent_name
-          return bots.filter(b => b.agent_name === firstSelectedBot.agent_name);
-        }
+    // If non-pipeline mode and selected bot exists
+    if (selectedBotKeys.length > 0) {
+      // Find first selected bot
+      const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
+      if (firstSelectedBot) {
+        // Show only bots with same agent_name
+        return bots.filter(b => b.agent_name === firstSelectedBot.agent_name);
       }
+    }
 
-      // Show all bots if no selected bot
-      return bots;
-    },
-    [bots, mode, selectedBotKeys]
-  )
+    // Show all bots if no selected bot
+    return bots;
+  }, [bots, mode, selectedBotKeys]);
 
   const handleTeamUpdate = (updatedTeam: Team) => {
-    setTeams(prev => prev.map(t => t.id === updatedTeam.id ? updatedTeam : t))
-  }
-
+    setTeams(prev => prev.map(t => (t.id === updatedTeam.id ? updatedTeam : t)));
+  };
 
   return (
-    <div className="flex flex-col flex-1 min-h-0 items-stretch bg-surface rounded-lg pt-0 pb-4 relative w-full max-w-none px-0 md:px-4">
+    <div className="flex flex-col flex-1 min-h-0 items-stretch bg-surface rounded-lg pt-0 pb-4 relative w-full max-w-none px-0 md:px-4 overflow-hidden">
       {/* Top toolbar: Back + Save */}
-      <div className="w-full flex items-center justify-between mb-4 mt-4">
+      <div className="w-full flex items-center justify-between mb-4 mt-4 flex-shrink-0 px-4 md:px-0">
         <button
           onClick={handleBack}
           className="flex items-center text-text-muted hover:text-text-primary text-base"
           title={t('common.back')}
         >
-          <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+          <svg
+            width="24"
+            height="24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="mr-1"
+          >
             <path d="M15 6l-6 6 6 6" />
           </svg>
           {t('common.back')}
         </button>
 
-        <Button
-          onClick={handleSave}
-          disabled={saving}
-          loading={saving}
-          type="primary"
-        >
+        <Button onClick={handleSave} disabled={saving} loading={saving} type="primary">
           {saving ? (editingTeam ? t('actions.saving') : t('actions.creating')) : t('actions.save')}
         </Button>
       </div>
 
       {/* Two-column layout: Left (Name, Mode, Description Image), Right (LeaderBot, Bots Transfer) */}
-      <div className="w-full flex flex-col md:flex-row gap-6 items-stretch flex-1 py-0 min-h-0">
+      <div className="w-full flex flex-col lg:flex-row gap-6 items-stretch flex-1 py-0 min-h-0 px-4 md:px-0 overflow-hidden">
         {/* Left column */}
-        <div className="w-full md:w-2/5 min-w-0 flex flex-col space-y-5 min-w-0">
+        <div className="w-full lg:w-2/5 xl:w-1/3 min-w-0 flex flex-col space-y-5 min-h-0 flex-shrink-0">
           {/* Team Name */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
@@ -506,14 +516,14 @@ export default function TeamEdit(props: TeamEditProps) {
               <div className="mb-3">
                 <Radio.Group
                   value={mode}
-                  onChange={(e) => handleModeChange(e.target.value)}
+                  onChange={e => handleModeChange(e.target.value)}
                   optionType="button"
                   buttonStyle="solid"
                   options={['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => ({
                     label: t(`team_model.${opt}`),
-                    value: opt as any,
+                    value: opt as string,
                     disabled: hasClaudeCodeBot && opt !== 'pipeline',
-                    style: { minWidth: 20, padding: '0 12px', textAlign: 'center' }
+                    style: { minWidth: 20, padding: '0 12px', textAlign: 'center' },
                   }))}
                   className="w-full"
                 />
@@ -549,7 +559,7 @@ export default function TeamEdit(props: TeamEditProps) {
         </div>
 
         {/* Right column */}
-        <div className="w-full md:w-3/5 min-w-0 flex flex-col space-y-5 min-h-0">
+        <div className="w-full lg:w-3/5 xl:w-2/3 min-w-0 flex flex-col space-y-5 min-h-0">
           <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
             {/* LeaderBot single select */}
             <div className="flex flex-col">
@@ -566,10 +576,8 @@ export default function TeamEdit(props: TeamEditProps) {
                 suffixIcon={<DownOutlined className="text-text-secondary" />}
                 optionFilterProp="title"
                 filterOption={(input, option) => {
-                  const searchText = typeof option?.title === 'string'
-                    ? option.title
-                    : ''
-                  return searchText.toLowerCase().includes(input.toLowerCase())
+                  const searchText = typeof option?.title === 'string' ? option.title : '';
+                  return searchText.toLowerCase().includes(input.toLowerCase());
                 }}
                 notFoundContent={
                   <Button
@@ -578,8 +586,8 @@ export default function TeamEdit(props: TeamEditProps) {
                     icon={<PlusOutlined />}
                     onMouseDown={e => e.preventDefault()}
                     onClick={e => {
-                      e.stopPropagation()
-                      handleCreateBot()
+                      e.stopPropagation();
+                      handleCreateBot();
                     }}
                   >
                     {t('bots.new_bot')}
@@ -595,7 +603,8 @@ export default function TeamEdit(props: TeamEditProps) {
                         <RiRobot2Line className="w-4 h-4 text-text-muted" />
                         <Tooltip title={`${b.name} (${b.agent_name})`}>
                           <span className="block truncate">
-                            {b.name} <span className="text-text-muted text-xs">({b.agent_name})</span>
+                            {b.name}{' '}
+                            <span className="text-text-muted text-xs">({b.agent_name})</span>
                           </span>
                         </Tooltip>
                         {teamPromptMap.get(b.id) && (
@@ -619,9 +628,9 @@ export default function TeamEdit(props: TeamEditProps) {
                             e.preventDefault();
                             e.stopPropagation();
                           }}
-                          onClick={(e) => {
+                          onClick={e => {
                             e.stopPropagation(); // Stop event propagation to avoid triggering selection
-                            handleEditBot(b.id)
+                            handleEditBot(b.id);
                           }}
                         />
                         <CopyOutlined
@@ -630,14 +639,14 @@ export default function TeamEdit(props: TeamEditProps) {
                             e.preventDefault();
                             e.stopPropagation();
                           }}
-                          onClick={(e) => {
+                          onClick={e => {
                             e.stopPropagation();
-                            handleCloneBot(b.id)
+                            handleCloneBot(b.id);
                           }}
                         />
                       </div>
                     </div>
-                  )
+                  ),
                 }))}
                 popupMatchSelectWidth={true}
                 listHeight={250}
@@ -668,108 +677,128 @@ export default function TeamEdit(props: TeamEditProps) {
                     {t('team.prompts_link')}
                   </Button>
                 </Tooltip>
-                <Tag
-                  className="!m-0 !px-2 !py-0 text-xs leading-5"
-                  style={promptSummaryStyle}
-                >
+                <Tag className="!m-0 !px-2 !py-0 text-xs leading-5" style={promptSummaryStyle}>
                   {promptSummary.label}
                 </Tag>
               </div>
 
               {/* Transfer component with flex-1 to fill remaining space */}
               <div className="relative flex-1 min-h-0">
-              <Transfer
-                oneWay
-                dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
-                targetKeys={selectedBotKeys}
-                onChange={onTransferChange}
-                render={item => (
-                  <div className="flex items-center justify-between w-full">
-                    <Tooltip title={`${item.title} (${item.description})`}>
-                      <span className="truncate">
-                        {item.title}
-                        <span className="text-xs text-text-muted">({item.description})</span>
-                      </span>
-                    </Tooltip>
+                <Transfer
+                  oneWay
+                  dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
+                  targetKeys={selectedBotKeys}
+                  onChange={onTransferChange}
+                  render={item => (
+                    <div className="flex items-center justify-between w-full">
+                      <Tooltip title={`${item.title} (${item.description})`}>
+                        <span className="truncate">
+                          {item.title}
+                          <span className="text-xs text-text-muted">({item.description})</span>
+                        </span>
+                      </Tooltip>
 
-                    <div className="flex items-center">
-                      {teamPromptMap.get(Number(item.key)) && (
-                        <Tooltip title={t('team.prompts_badge_tooltip')}>
-                          <Tag
-                            className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
-                            style={configuredPromptBadgeStyle}
-                          >
-                            {t('team.prompts_badge')}
-                          </Tag>
-                        </Tooltip>
-                      )}
+                      <div className="flex items-center">
+                        {teamPromptMap.get(Number(item.key)) && (
+                          <Tooltip title={t('team.prompts_badge_tooltip')}>
+                            <Tag
+                              className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
+                              style={configuredPromptBadgeStyle}
+                            >
+                              {t('team.prompts_badge')}
+                            </Tag>
+                          </Tooltip>
+                        )}
 
-                      <EditOutlined
-                        className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation(); // Stop event propagation to avoid triggering selection
-                          handleEditBot(Number(item.key))
-                        }}
-                      />
-                      <CopyOutlined
-                        className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          handleCloneBot(Number(item.key))
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-                titles={[t("team.candidates"), t("team.in_team")]}
-                style={{}}
-                className="h-full transfer-fill"
-                listStyle={{
-                  backgroundColor: 'rgb(var(--color-bg-base))',
-                  borderColor: 'rgb(var(--color-border))',
-                }}
-                locale={{
-                  itemUnit: 'item',
-                  itemsUnit: 'items',
-                  notFoundContent: t("team.no_data"),
-                }}
-                footer={(_, info) => {
-                  if (info?.direction === 'left') {
-                    return (
-                      <div className="p-2 text-center">
-                        <Button
-                          type="primary"
-                          size="small"
-                          className="w-70"
-                          icon={<PlusOutlined />}
-                          onClick={() => {
-                            handleCreateBot()
+                        <EditOutlined
+                          className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
+                          onClick={e => {
+                            e.stopPropagation(); // Stop event propagation to avoid triggering selection
+                            handleEditBot(Number(item.key));
                           }}
-                        >
-                          {t('bots.new_bot')}
-                        </Button>
+                        />
+                        <CopyOutlined
+                          className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleCloneBot(Number(item.key));
+                          }}
+                        />
                       </div>
-                    );
-                  }
-                  return null;
-                }}
-              />
+                    </div>
+                  )}
+                  titles={[t('team.candidates'), t('team.in_team')]}
+                  style={{}}
+                  className="h-full transfer-fill"
+                  listStyle={{
+                    backgroundColor: 'rgb(var(--color-bg-base))',
+                    borderColor: 'rgb(var(--color-border))',
+                  }}
+                  locale={{
+                    itemUnit: 'item',
+                    itemsUnit: 'items',
+                    notFoundContent: t('team.no_data'),
+                  }}
+                  footer={(_, info) => {
+                    if (info?.direction === 'left') {
+                      return (
+                        <div className="p-2 text-center">
+                          <Button
+                            type="primary"
+                            size="small"
+                            className="w-70"
+                            icon={<PlusOutlined />}
+                            onClick={() => {
+                              handleCreateBot();
+                            }}
+                          >
+                            {t('bots.new_bot')}
+                          </Button>
+                        </div>
+                      );
+                    }
+                    return null;
+                  }}
+                />
               </div>
             </div>
           </div>
           {/* Mobile Transfer layout optimization styles */}
-          <style dangerouslySetInnerHTML={{
-            __html: `
+          <style
+            dangerouslySetInnerHTML={{
+              __html: `
+              @media (max-width: 1024px) {
+                /* Stack layout on tablet */
+                .flex.flex-col.lg\\:flex-row {
+                  flex-direction: column !important;
+                }
+                .w-full.lg\\:w-2\\/5.xl\\:w-1\\/3 {
+                  width: 100% !important;
+                  margin-bottom: 1rem;
+                }
+                .w-full.lg\\:w-3\\/5.xl\\:w-2\\/3 {
+                  width: 100% !important;
+                }
+              }
+
               @media (max-width: 640px) {
+                /* Mobile Transfer layout optimization */
                 .ant-transfer {
                   display: flex !important;
                   flex-direction: column !important;
                   gap: 16px !important;
                   align-items: stretch !important;
+                  max-width: 100vw !important;
+                  overflow-x: hidden !important;
                 }
                 .ant-transfer .ant-transfer-list {
                   width: 100% !important;
                   flex: 1 !important;
+                  min-height: 200px !important;
+                  max-height: 300px !important;
+                  max-width: 100% !important;
+                  overflow-x: hidden !important;
+                  box-sizing: border-box !important;
                 }
                 .ant-transfer .ant-transfer-operation {
                   order: 0 !important;
@@ -777,87 +806,355 @@ export default function TeamEdit(props: TeamEditProps) {
                   align-items: center !important;
                   padding: 12px 0 !important;
                   background-color: transparent !important;
+                  flex-direction: row !important;
+                  gap: 8px !important;
+                  max-width: 100% !important;
+                  overflow-x: hidden !important;
                 }
                 .ant-transfer .ant-transfer-operation .ant-btn {
-                  margin: 0 !important;
+                  margin: 0 4px !important;
+                  min-width: 40px !important;
+                  height: 40px !important;
+                  flex-shrink: 0 !important;
+                }
+
+                /* Mobile layout adjustments */
+                .flex.flex-col.flex-1.min-h-0.items-stretch.bg-surface.rounded-lg {
+                  padding: 0.25rem !important;
+                  border-radius: 0.5rem !important;
+                  max-width: 100vw !important;
+                  overflow-x: hidden !important;
+                }
+
+                /* Prevent horizontal scroll on mobile */
+                body, html {
+                  overflow-x: hidden !important;
+                }
+
+                /* Adjust input and select sizes */
+                input[type="text"] {
+                  font-size: 16px !important;
+                  padding: 0.75rem 1rem !important;
+                  height: auto !important;
+                  max-width: 100% !important;
+                  box-sizing: border-box !important;
+                }
+
+                .ant-select {
+                  max-width: 100% !important;
+                }
+
+                .ant-select-selector {
+                  min-height: 40px !important;
+                  font-size: 16px !important;
+                  max-width: 100% !important;
+                  box-sizing: border-box !important;
+                }
+
+                .ant-select-dropdown {
+                  max-width: 90vw !important;
+                  min-width: 200px !important;
+                }
+
+                /* Adjust button sizes */
+                .ant-btn {
+                  min-height: 40px !important;
+                  font-size: 14px !important;
+                  padding: 8px 16px !important;
+                  max-width: 100% !important;
+                  white-space: nowrap !important;
+                  overflow: hidden !important;
+                  text-overflow: ellipsis !important;
+                  flex-shrink: 0 !important;
+                }
+
+                /* Adjust labels */
+                label {
+                  font-size: 16px !important;
+                  max-width: 100% !important;
+                  word-wrap: break-word !important;
+                }
+
+                /* Reduce spacing on mobile */
+                .space-y-5 > * + * {
+                  margin-top: 1rem !important;
+                }
+
+                /* Fix overflow issues */
+                .overflow-hidden {
+                  overflow-x: hidden !important;
+                  overflow-y: auto !important;
+                }
+
+                .min-h-0 {
+                  min-height: 0 !important;
+                  min-width: 0 !important;
+                }
+
+                /* Fix flex container overflow */
+                .flex.flex-col {
+                  min-width: 0 !important;
+                  max-width: 100% !important;
+                }
+
+                .flex-grow {
+                  min-width: 0 !important;
+                  max-width: 100% !important;
+                }
+
+                /* Adjust Radio buttons for mobile */
+                .ant-radio-button-wrapper {
+                  padding: 0 8px !important;
+                  font-size: 14px !important;
+                  height: 36px !important;
+                  line-height: 34px !important;
+                  flex-shrink: 0 !important;
+                  min-width: 60px !important;
+                }
+
+                .ant-radio-group {
+                  flex-wrap: wrap !important;
+                  max-width: 100% !important;
+                  overflow-x: hidden !important;
+                }
+
+                /* Adjust Image container */
+                .pt-3.rounded-md.overflow-hidden.flex-1.min-h-0.flex.items-stretch.justify-start {
+                  min-height: 200px !important;
+                  max-height: 300px !important;
+                  max-width: 100% !important;
+                  overflow: hidden !important;
+                }
+
+                img {
+                  max-width: 100% !important;
+                  height: auto !important;
+                  object-fit: contain !important;
+                }
+
+                /* Adjust padding for mobile */
+                .rounded-md.border.border-border.bg-base.p-4 {
+                  padding: 1rem !important;
+                  max-width: 100% !important;
+                  box-sizing: border-box !important;
+                }
+
+                /* Fix Transfer component scroll */
+                .ant-transfer-list-body {
+                  overflow-y: auto !important;
+                  max-height: 200px !important;
+                  overflow-x: hidden !important;
+                }
+
+                .ant-transfer-list-content {
+                  overflow-x: hidden !important;
+                }
+
+                .ant-transfer-list-content-item {
+                  max-width: 100% !important;
+                  overflow-x: hidden !important;
+                }
+
+                /* Adjust Tag sizes */
+                .ant-tag {
+                  font-size: 12px !important;
+                  padding: 2px 6px !important;
+                  line-height: 18px !important;
+                  max-width: 100% !important;
+                  overflow: hidden !important;
+                  text-overflow: ellipsis !important;
+                  white-space: nowrap !important;
+                }
+
+                /* Fix Select dropdown */
+                .ant-select-dropdown {
+                  font-size: 16px !important;
+                  max-width: 90vw !important;
+                }
+
+                .ant-select-dropdown .ant-select-item {
+                  max-width: 100% !important;
+                  overflow: hidden !important;
+                  text-overflow: ellipsis !important;
+                  white-space: nowrap !important;
+                }
+
+                /* Adjust tooltips for mobile */
+                .ant-tooltip-inner {
+                  font-size: 14px !important;
+                  padding: 8px 12px !important;
+                  max-width: 80vw !important;
+                  word-wrap: break-word !important;
+                  white-space: normal !important;
+                }
+
+                /* Fix long text in transfer items */
+                .ant-transfer-list-content-item-text {
+                  max-width: calc(100% - 40px) !important;
+                  overflow: hidden !important;
+                  text-overflow: ellipsis !important;
+                  white-space: nowrap !important;
+                }
+
+                /* Fix container widths */
+                .w-full {
+                  max-width: 100vw !important;
+                  overflow-x: hidden !important;
+                }
+
+                .max-w-none {
+                  max-width: 100vw !important;
+                  overflow-x: hidden !important;
                 }
               }
-            `
-          }} />
+            `,
+            }}
+          />
 
-          {/* Additional scroll and width fix styles */}
-          <style dangerouslySetInnerHTML={{
-            __html: `
+          {/* Desktop and responsive styles */}
+          <style
+            dangerouslySetInnerHTML={{
+              __html: `
+      /* Global overflow prevention */
+      * {
+        box-sizing: border-box !important;
+      }
+
       /* Ensure Transfer component doesn't overflow horizontally on mobile */
       @media (max-width: 640px) {
         .ant-transfer-list {
           max-width: 100% !important;
           overflow-x: hidden !important;
+          box-sizing: border-box !important;
         }
         /* Mobile: Limit list body height to avoid taking full screen */
         .ant-transfer-list-body {
           overflow-y: auto !important;
-          max-height: 250px !important;
+          max-height: 200px !important;
+          overflow-x: hidden !important;
         }
         /* Ensure minimum height for Transfer container */
         .transfer-fill {
           min-height: 400px !important;
+          max-width: 100% !important;
+          overflow-x: hidden !important;
         }
       }
-    `
-          }} />
-          {/* Desktop Transfer layout tidy-up */}
-          <style
-            dangerouslySetInnerHTML={{
-              __html: `
-        /* Desktop: equal widths and no overflow */
-        @media (min-width: 641px) {
-          .ant-transfer { align-items: stretch !important; }
-          .ant-transfer .ant-transfer-list { width: calc(50% - 24px) !important; }
-          .ant-transfer .ant-transfer-operation { padding: 0 8px !important; }
-          .ant-transfer .ant-transfer-list-header { padding: 6px 10px !important; }
-        }
 
-        /* PC Transfer fixed height and scroll */
-        @media (min-width: 641px) {
-          /* Set fixed height for Transfer component */
-          .transfer-fill .ant-transfer {
-            height: 350px !important;
-            display: flex !important;
-            flex-direction: column !important;
-          }
-          .transfer-fill .ant-transfer-list {
-            height: 350px !important;
-            display: flex !important;
-            flex-direction: column !important;
-            border: 1px solid rgb(var(--color-border)) !important;
-            border-radius: 6px !important;
-          }
-          /* Ensure list header has fixed height */
-          .transfer-fill .ant-transfer-list-header {
-            flex-shrink: 0 !important;
-            height: 40px !important;
-            padding: 8px 12px !important;
-          }
-          /* Set fixed height and scroll for list body */
-          .transfer-fill .ant-transfer-list-body {
-            flex: 1 !important;
-            overflow-y: auto !important;
-            overflow-x: hidden !important;
-            min-height: 200px !important;
-            max-height: 360px !important;
-          }
-          /* Ensure list footer has fixed height (if any) */
-          .transfer-fill .ant-transfer-list-footer {
-            flex-shrink: 0 !important;
-            padding: 8px 12px !important;
-          }
+      /* Desktop: equal widths and no overflow */
+      @media (min-width: 1025px) {
+        .ant-transfer {
+          align-items: stretch !important;
+          height: 400px !important;
+          max-width: 100% !important;
+          overflow-x: hidden !important;
         }
+        .ant-transfer .ant-transfer-list {
+          width: calc(50% - 24px) !important;
+          height: 400px !important;
+          max-width: 100% !important;
+          overflow-x: hidden !important;
+          box-sizing: border-box !important;
+        }
+        .ant-transfer .ant-transfer-operation {
+          padding: 0 8px !important;
+        }
+        .ant-transfer .ant-transfer-list-header {
+          padding: 6px 10px !important;
+          overflow-x: hidden !important;
+        }
+      }
 
-        /* Normalize small typography paddings for tight, neat look */
-        .ant-select .ant-select-selector { min-height: 36px; }
-        .ant-tag { line-height: 20px; }
-      `,
+      /* PC Transfer fixed height and scroll */
+      @media (min-width: 1025px) {
+        /* Set fixed height for Transfer component */
+        .transfer-fill .ant-transfer {
+          height: 400px !important;
+          display: flex !important;
+          flex-direction: column !important;
+          max-width: 100% !important;
+          overflow-x: hidden !important;
+        }
+        .transfer-fill .ant-transfer-list {
+          height: 400px !important;
+          display: flex !important;
+          flex-direction: column !important;
+          border: 1px solid rgb(var(--color-border)) !important;
+          border-radius: 6px !important;
+          max-width: 100% !important;
+          overflow-x: hidden !important;
+          box-sizing: border-box !important;
+        }
+        /* Ensure list header has fixed height */
+        .transfer-fill .ant-transfer-list-header {
+          flex-shrink: 0 !important;
+          height: 40px !important;
+          padding: 8px 12px !important;
+          overflow-x: hidden !important;
+        }
+        /* Set fixed height and scroll for list body */
+        .transfer-fill .ant-transfer-list-body {
+          flex: 1 !important;
+          overflow-y: auto !important;
+          overflow-x: hidden !important;
+          min-height: 200px !important;
+          max-height: 320px !important;
+        }
+        /* Ensure list footer has fixed height (if any) */
+        .transfer-fill .ant-transfer-list-footer {
+          flex-shrink: 0 !important;
+          padding: 8px 12px !important;
+          overflow-x: hidden !important;
+        }
+      }
+
+      /* Normalize small typography paddings for tight, neat look */
+      .ant-select .ant-select-selector {
+        min-height: 36px;
+        max-width: 100% !important;
+      }
+      .ant-tag {
+        line-height: 20px;
+      }
+
+      /* Tablet responsive styles */
+      @media (min-width: 641px) and (max-width: 1024px) {
+        .ant-transfer {
+          height: 350px !important;
+          display: flex !important;
+          flex-direction: column !important;
+          max-width: 100% !important;
+          overflow-x: hidden !important;
+        }
+        .ant-transfer .ant-transfer-list {
+          height: 350px !important;
+          width: calc(50% - 12px) !important;
+          max-width: 100% !important;
+          overflow-x: hidden !important;
+          box-sizing: border-box !important;
+        }
+        .transfer-fill .ant-transfer-list-body {
+          max-height: 280px !important;
+          overflow-x: hidden !important;
+        }
+      }
+
+      /* General overflow prevention for all screen sizes */
+      .ant-transfer-list-content {
+        overflow-x: hidden !important;
+      }
+
+      .ant-transfer-list-content-item {
+        overflow-x: hidden !important;
+      }
+
+      .ant-transfer-list-content-item-text {
+        max-width: calc(100% - 40px) !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+      }
+    `,
             }}
           />
         </div>
@@ -883,5 +1180,5 @@ export default function TeamEdit(props: TeamEditProps) {
         setUnsavedPrompts={setUnsavedPrompts}
       />
     </div>
-  )
+  );
 }

@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+
+# Ensure we're in the correct directory
+# If not in frontend, try to navigate to it from project root
+if [ ! -f "package.json" ] || ! grep -q '"name": "wecode-ai-assistant"' package.json 2>/dev/null; then
+  if [ -d "frontend" ]; then
+    cd frontend || exit 1
+  else
+    echo "Error: Cannot locate frontend directory"
+    exit 1
+  fi
+fi
+
+# Run lint-staged
+npx lint-staged

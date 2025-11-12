@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, status, Path, Query, HTTPException
 from sqlalchemy.orm import Session
 
@@ -10,7 +10,7 @@ from app.api.dependencies import get_db
 from app.core.security import create_access_token, get_admin_user
 from app.models.user import User
 from app.schemas.user import UserInDB, UserInfo, Token
-from app.schemas.task import TaskCreate, TaskCreateToUser, TaskInDB
+from app.schemas.task import TaskCreate, TaskInDB
 from app.api.endpoints.kind.kinds import KIND_SCHEMA_MAP
 from app.api.endpoints.kind.common import (
     validate_resource_type,
@@ -54,8 +54,9 @@ async def get_user_by_id_endpoint(
 
 
 @router.post("/users/{user_id}/tasks", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
-async def create_task_for_user(
-    task: TaskCreateToUser,
+async def create_task_for_user_id(
+    task: TaskCreate,
+    task_id: Optional[str] = None,
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user)
@@ -66,36 +67,25 @@ async def create_task_for_user(
     # Verify user exists
     target_user = user_service.get_user_by_id(db, user_id)
 
-    # Check if user's team exists
-    team = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Team",
-            Kind.name == task.team_name,
-            Kind.namespace == task.team_namespace,
-            Kind.is_active == True
-        ).first()
-    
-    if team is None:
-        raise HTTPException(status_code=400, detail="Specified team does not exist")
-    
-    # Create task ID
-    task_id = task_kinds_service.create_task_id(db=db, user_id=target_user.id)
-
-    task_create = TaskCreate(
-        title = task.title,
-        team_id = team.id,
-        git_url = task.git_url,
-        git_repo = task.git_repo,
-        git_repo_id = task.git_repo_id,
-        git_domain = task.git_domain,
-        branch_name = task.branch_name,
-        prompt = task.prompt,
-        type = task.type, 
-        auto_delete_executor = task.auto_delete_executor,
-    )
-    
     # Create task
-    return task_kinds_service.create_task_or_append(db=db, obj_in=task_create, user=target_user, task_id=task_id)
+    return task_kinds_service.create_task_or_append(db=db, obj_in=task, user=target_user, task_id=task_id)
+
+@router.post("/users/username/{user_name}/tasks", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
+async def create_task_for_user_by_username(
+    task: TaskCreate,
+    task_id: Optional[int] = None,
+    user_name: str = Path(..., description="User name"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Create task for specified user name
+    """
+    # Verify user exists
+    target_user = user_service.get_user_by_name(db, user_name)
+
+    # Create task
+    return task_kinds_service.create_task_or_append(db=db, obj_in=task, user=target_user, task_id=task_id)
 
 @router.post("/generate-admin-token", response_model=Token)
 async def generate_admin_token(
@@ -142,6 +132,33 @@ async def admin_list_user_resources(
     return format_resource_list(kind, resources)
 
 
+@router.get("/users/username/{user_name}/kinds/{kinds}")
+async def admin_list_user_resources_by_username(
+    user_name: str = Path(..., description="User name"),
+    kinds: str = Path(..., description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks"),
+    namespace: str = Query("default", description="Resource namespace"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Get all resources of specified type for a user by username
+    
+    Administrators can view resource lists for any user.
+    """
+    # Validate resource type
+    kind = validate_resource_type(kinds)
+    
+    # Verify user exists and get user ID
+    target_user = user_service.get_user_by_name(db, user_name)
+    user_id = target_user.id
+    
+    # Get resource list
+    resources = kind_service.list_resources(user_id, kind, namespace)
+    
+    # Format and return response
+    return format_resource_list(kind, resources)
+
+
 @router.get("/users/{user_id}/kinds/{kinds}/{name}")
 async def admin_get_user_resource(
     user_id: int = Path(..., description="User ID"),
@@ -161,6 +178,39 @@ async def admin_get_user_resource(
     
     # Verify user exists
     validate_user_exists(db, user_id)
+    
+    # Get resource
+    resource = kind_service.get_resource(user_id, kind, namespace, name)
+    if not resource:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{kind} resource '{name}' not found in namespace '{namespace}'"
+        )
+    
+    # Format and return response
+    return format_single_resource(kind, resource)
+
+
+@router.get("/users/username/{user_name}/kinds/{kinds}/{name}")
+async def admin_get_user_resource_by_username(
+    user_name: str = Path(..., description="User name"),
+    kinds: str = Path(..., description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks"),
+    name: str = Path(..., description="Resource name"),
+    namespace: str = Query("default", description="Resource namespace"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user)
+):
+    """
+    Get specific resource for a user by username
+    
+    Administrators can view details of any specific resource for any user.
+    """
+    # Validate resource type
+    kind = validate_resource_type(kinds)
+    
+    # Verify user exists and get user ID
+    target_user = user_service.get_user_by_name(db, user_name)
+    user_id = target_user.id
     
     # Get resource
     resource = kind_service.get_resource(user_id, kind, namespace, name)

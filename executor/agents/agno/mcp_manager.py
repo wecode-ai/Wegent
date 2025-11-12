@@ -138,10 +138,15 @@ class MCPManager:
             )
             return None
 
+        # Set default timeout to 5 minutes, allow user override
+        timeout_value = server_config.get("timeout")
+        sse_read_timeout_value = server_config.get("sse_read_timeout")
+
         server_params = StreamableHTTPClientParams(
             url=server_config.get("url"),
             headers=server_config.get("headers", {}),
-            timeout=timedelta(seconds=20)
+            timeout=timedelta(seconds=timeout_value) if timeout_value is not None else timedelta(seconds=60 * 5),
+            sse_read_timeout=timedelta(seconds=sse_read_timeout_value) if sse_read_timeout_value is not None else timedelta(seconds=60 * 5)
         )
         return MCPTools(transport="streamable-http", server_params=server_params)
     
@@ -165,10 +170,15 @@ class MCPManager:
             )
             return None
 
+        # Set default timeout to 5 minutes, allow user override
+        timeout_value = server_config.get("timeout")
+        sse_read_timeout_value = server_config.get("sse_read_timeout")
+
         server_params = SSEClientParams(
             url=server_config.get("url"),
             headers=server_config.get("headers", {}),
-            timeout=2
+            timeout=timeout_value if timeout_value is not None else 60 * 5,
+            sse_read_timeout=sse_read_timeout_value if sse_read_timeout_value is not None else 60 * 5
         )
         return MCPTools(transport="sse", server_params=server_params)
     

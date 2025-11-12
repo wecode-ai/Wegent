@@ -2,35 +2,35 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React from 'react'
-import { Drawer, Form, Input, Button, Alert, Tooltip } from 'antd'
-import type { MessageInstance } from 'antd/es/message/interface'
-import { teamApis } from '@/apis/team'
-import { useTranslation } from 'react-i18next'
+import React from 'react';
+import { Drawer, Form, Input, Button, Alert, Tooltip } from 'antd';
+import type { MessageInstance } from 'antd/es/message/interface';
+import { teamApis } from '@/apis/team';
+import { useTranslation } from 'react-i18next';
 
-import { Bot, Team, TeamBot } from '@/types/api'
-import BotEdit from './BotEdit'
+import { Bot, Team, TeamBot } from '@/types/api';
+import BotEdit from './BotEdit';
 
 interface TeamEditDrawerProps {
-  bots: Bot[]
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>>
-  editingBotId: number | null
-  setEditingBotId: React.Dispatch<React.SetStateAction<number | null>>
-  visible: boolean
-  setVisible: React.Dispatch<React.SetStateAction<boolean>>
-  message: MessageInstance
-  mode: 'edit' | 'prompt'
-  editingTeam: Team | null
-  onTeamUpdate: (updatedTeam: Team) => void
-  cloningBot: Bot | null
-  setCloningBot: React.Dispatch<React.SetStateAction<Bot | null>>
+  bots: Bot[];
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
+  editingBotId: number | null;
+  setEditingBotId: React.Dispatch<React.SetStateAction<number | null>>;
+  visible: boolean;
+  setVisible: React.Dispatch<React.SetStateAction<boolean>>;
+  message: MessageInstance;
+  mode: 'edit' | 'prompt';
+  editingTeam: Team | null;
+  onTeamUpdate: (updatedTeam: Team) => void;
+  cloningBot: Bot | null;
+  setCloningBot: React.Dispatch<React.SetStateAction<Bot | null>>;
   // Added property to handle new team cases
-  selectedBotKeys?: React.Key[]
-  leaderBotId?: number | null
-  unsavedPrompts?: Record<string, string>
-  setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  selectedBotKeys?: React.Key[];
+  leaderBotId?: number | null;
+  unsavedPrompts?: Record<string, string>;
+  setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }
 
 function PromptEdit({
@@ -39,37 +39,36 @@ function PromptEdit({
   onClose,
   message,
   onTeamUpdate,
-  setBots,
   isNewTeam = false,
   selectedBotKeys = [],
   leaderBotId = null,
   unsavedPrompts = {},
   setUnsavedPrompts,
 }: {
-  team?: Team,
-  allBots: Bot[],
-  onClose: () => void,
-  message: MessageInstance,
-  onTeamUpdate: (updatedTeam: Team) => void,
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>>,
-  isNewTeam?: boolean,
-  selectedBotKeys?: React.Key[],
-  leaderBotId?: number | null,
-  unsavedPrompts?: Record<string, string>,
-  setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>,
+  team?: Team;
+  allBots: Bot[];
+  onClose: () => void;
+  message: MessageInstance;
+  onTeamUpdate: (updatedTeam: Team) => void;
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
+  isNewTeam?: boolean;
+  selectedBotKeys?: React.Key[];
+  leaderBotId?: number | null;
+  unsavedPrompts?: Record<string, string>;
+  setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }) {
-  const { t } = useTranslation('common')
-  const [form] = Form.useForm()
-  const [loading, setLoading] = React.useState(false)
+  const { t } = useTranslation('common');
+  const [form] = Form.useForm();
+  const [loading, setLoading] = React.useState(false);
   const drawerTitle = React.useMemo(() => {
-    if (isNewTeam) return t('team.prompts_drawer_title_new')
-    if (team) return t('team.prompts_drawer_title_existing', { name: team.name })
-    return t('team.prompts_drawer_title_generic')
-  }, [isNewTeam, team, t])
+    if (isNewTeam) return t('team.prompts_drawer_title_new');
+    if (team) return t('team.prompts_drawer_title_existing', { name: team.name });
+    return t('team.prompts_drawer_title_generic');
+  }, [isNewTeam, team, t]);
 
   const handleBack = React.useCallback(() => {
-    onClose()
-  }, [onClose])
+    onClose();
+  }, [onClose]);
 
   const teamBotsWithDetails = React.useMemo(() => {
     if (isNewTeam) {
@@ -78,7 +77,7 @@ function PromptEdit({
       if (leaderBotId !== null && !allBotIds.includes(String(leaderBotId))) {
         allBotIds.unshift(String(leaderBotId));
       }
-      
+
       return allBotIds.map(botId => {
         const botDetails = allBots.find(b => String(b.id) === String(botId));
         const numericBotId = Number(botId);
@@ -96,101 +95,102 @@ function PromptEdit({
       // Handle existing team case, including unsaved new Bot
       const selectedIds = Array.isArray(selectedBotKeys)
         ? (selectedBotKeys as React.Key[]).map(key => Number(key)).filter(id => !Number.isNaN(id))
-        : []
+        : [];
 
-      const orderedIds: number[] = []
+      const orderedIds: number[] = [];
       if (leaderBotId !== null) {
-        orderedIds.push(leaderBotId)
+        orderedIds.push(leaderBotId);
       }
       selectedIds.forEach(id => {
         if (!orderedIds.includes(id)) {
-          orderedIds.push(id)
+          orderedIds.push(id);
         }
-      })
+      });
       team.bots.forEach(teamBot => {
         if (!orderedIds.includes(teamBot.bot_id)) {
-          orderedIds.push(teamBot.bot_id)
+          orderedIds.push(teamBot.bot_id);
         }
-      })
+      });
 
       return orderedIds.map(botId => {
-        const teamBot = team.bots.find(b => b.bot_id === botId)
-        const botDetails = allBots.find(b => b.id === botId)
-        const promptKey = `prompt-${botId}`
-        const promptValue = (unsavedPrompts?.[promptKey] ?? teamBot?.bot_prompt ?? '')
+        const teamBot = team.bots.find(b => b.bot_id === botId);
+        const botDetails = allBots.find(b => b.id === botId);
+        const promptKey = `prompt-${botId}`;
+        const promptValue = unsavedPrompts?.[promptKey] ?? teamBot?.bot_prompt ?? '';
 
         return {
           bot_id: botId,
           bot_prompt: promptValue,
           name: botDetails?.name || (teamBot ? `Bot ID: ${teamBot.bot_id}` : `Bot ID: ${botId}`),
-          isLeader: (teamBot?.role === 'leader') || botId === leaderBotId,
+          isLeader: teamBot?.role === 'leader' || botId === leaderBotId,
           basePrompt: botDetails?.system_prompt || '',
           role: teamBot?.role,
-        }
-      })
+        };
+      });
     }
-  }, [team, allBots, isNewTeam, selectedBotKeys, leaderBotId, unsavedPrompts])
+  }, [team, allBots, isNewTeam, selectedBotKeys, leaderBotId, unsavedPrompts]);
 
   React.useEffect(() => {
-    const initialValues: Record<string, string> = {}
+    const initialValues: Record<string, string> = {};
     if (teamBotsWithDetails) {
       teamBotsWithDetails.forEach(bot => {
-        initialValues[`prompt-${bot.bot_id}`] = bot.bot_prompt
-      })
-      form.setFieldsValue(initialValues)
+        initialValues[`prompt-${bot.bot_id}`] = bot.bot_prompt;
+      });
+      form.setFieldsValue(initialValues);
     }
-  }, [teamBotsWithDetails, form])
+  }, [teamBotsWithDetails, form]);
 
   React.useEffect(() => {
     const handleEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape' || event.defaultPrevented) return
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
 
-      const activeElement = document.activeElement as HTMLElement | null
-      if (activeElement && (
-        activeElement.getAttribute('role') === 'combobox' ||
-        activeElement.closest('.ant-select-dropdown')
-      )) {
-        return
+      const activeElement = document.activeElement as HTMLElement | null;
+      if (
+        activeElement &&
+        (activeElement.getAttribute('role') === 'combobox' ||
+          activeElement.closest('.ant-select-dropdown'))
+      ) {
+        return;
       }
 
-      handleBack()
-    }
+      handleBack();
+    };
 
-    window.addEventListener('keydown', handleEsc)
-    return () => window.removeEventListener('keydown', handleEsc)
-  }, [handleBack])
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [handleBack]);
 
   const handleSave = async () => {
     try {
-      setLoading(true)
-      const values = await form.validateFields()
-      const existingBotIds = team ? team.bots.map(bot => bot.bot_id) : []
-      const currentBotIds = teamBotsWithDetails.map(bot => bot.bot_id)
+      setLoading(true);
+      const values = await form.validateFields();
+      const existingBotIds = team ? team.bots.map(bot => bot.bot_id) : [];
+      const currentBotIds = teamBotsWithDetails.map(bot => bot.bot_id);
       const structureChanged =
         currentBotIds.length !== existingBotIds.length ||
         currentBotIds.some(id => !existingBotIds.includes(id)) ||
-        existingBotIds.some(id => !currentBotIds.includes(id))
-      const existingLeaderId = team?.bots.find(b => b.role === 'leader')?.bot_id ?? null
-      const leaderChanged = (leaderBotId ?? null) !== (existingLeaderId ?? null)
-      const shouldPersistLocally = isNewTeam || structureChanged || leaderChanged
+        existingBotIds.some(id => !currentBotIds.includes(id));
+      const existingLeaderId = team?.bots.find(b => b.role === 'leader')?.bot_id ?? null;
+      const leaderChanged = (leaderBotId ?? null) !== (existingLeaderId ?? null);
+      const shouldPersistLocally = isNewTeam || structureChanged || leaderChanged;
 
       const collectPrompts = () => {
-        const newPrompts: Record<string, string> = {}
+        const newPrompts: Record<string, string> = {};
         teamBotsWithDetails.forEach(bot => {
-          const key = `prompt-${bot.bot_id}`
-          const value = (values[key] ?? '').trim()
-          newPrompts[key] = value
-        })
-        return newPrompts
-      }
-      
+          const key = `prompt-${bot.bot_id}`;
+          const value = (values[key] ?? '').trim();
+          newPrompts[key] = value;
+        });
+        return newPrompts;
+      };
+
       if (shouldPersistLocally) {
         if (setUnsavedPrompts) {
-          setUnsavedPrompts(collectPrompts())
+          setUnsavedPrompts(collectPrompts());
         }
-        message.success(t('team.prompts_save_success'))
-        onClose()
-        return
+        message.success(t('team.prompts_save_success'));
+        onClose();
+        return;
       }
 
       if (team) {
@@ -198,30 +198,30 @@ function PromptEdit({
         const updatedBots: TeamBot[] = team.bots.map(teamBot => ({
           ...teamBot,
           bot_prompt: values[`prompt-${teamBot.bot_id}`] || '',
-        }))
+        }));
 
         await teamApis.updateTeam(team.id, {
           name: team.name,
           workflow: team.workflow,
           bots: updatedBots,
-        })
+        });
 
         // Update team state
-        onTeamUpdate({ ...team, bots: updatedBots })
-        
+        onTeamUpdate({ ...team, bots: updatedBots });
+
         // Update global bots state
         // Note: No need to update global bots here, as bot_prompt is team-specific
         // If other bot properties need to be synced in the future, add here
 
-        message.success(t('team.prompts_update_success'))
-        onClose()
+        message.success(t('team.prompts_update_success'));
+        onClose();
       }
-    } catch (error) {
-      message.error(t('team.prompts_update_error'))
+    } catch {
+      message.error(t('team.prompts_update_error'));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   return (
     <div className="p-6 h-full flex flex-col">
@@ -231,7 +231,14 @@ function PromptEdit({
           className="flex items-center text-text-muted hover:text-text-primary text-base"
           title={t('common.back')}
         >
-          <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
+          <svg
+            width="24"
+            height="24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="mr-1"
+          >
             <path d="M15 6l-6 6 6 6" />
           </svg>
           {t('common.back')}
@@ -241,9 +248,7 @@ function PromptEdit({
         </Button>
       </div>
 
-      <h2 className="text-lg font-semibold mb-3">
-        {drawerTitle}
-      </h2>
+      <h2 className="text-lg font-semibold mb-3">{drawerTitle}</h2>
       <Alert
         type="info"
         showIcon
@@ -251,7 +256,11 @@ function PromptEdit({
         description={t('team.prompts_scope_sub')}
         className="mb-4"
       />
-      <Form form={form} layout="vertical" className="flex-grow overflow-y-auto custom-scrollbar pr-4">
+      <Form
+        form={form}
+        layout="vertical"
+        className="flex-grow overflow-y-auto custom-scrollbar pr-4"
+      >
         {teamBotsWithDetails.map(bot => (
           <Form.Item
             key={bot.bot_id}
@@ -259,7 +268,9 @@ function PromptEdit({
               <div className="flex items-center justify-between gap-3">
                 <span className="font-medium">
                   {bot.name}
-                  {bot.isLeader && <span className="text-gray-400 ml-2 font-semibold">(Leader)</span>}
+                  {bot.isLeader && (
+                    <span className="text-gray-400 ml-2 font-semibold">(Leader)</span>
+                  )}
                 </span>
                 {bot.basePrompt && (
                   <Tooltip
@@ -284,9 +295,8 @@ function PromptEdit({
         ))}
       </Form>
     </div>
-  )
+  );
 }
-
 
 export default function TeamEditDrawer(props: TeamEditDrawerProps) {
   const {
@@ -302,13 +312,13 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
     onTeamUpdate,
     cloningBot,
     setCloningBot,
-  } = props
+  } = props;
 
   const handleClose = () => {
-    setVisible(false)
-    setEditingBotId(null)
-    setCloningBot(null)
-  }
+    setVisible(false);
+    setEditingBotId(null);
+    setCloningBot(null);
+  };
 
   return (
     <Drawer
@@ -319,7 +329,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
       destroyOnClose={true}
       styles={{
         header: {
-          display: "none",
+          display: 'none',
         },
         body: { backgroundColor: 'rgb(var(--color-bg-base))', padding: 0 },
       }}
@@ -332,9 +342,9 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
             editingBotId={editingBotId}
             cloningBot={cloningBot}
             onClose={() => {
-              setEditingBotId(null)
-              setCloningBot(null)
-              setVisible(false)
+              setEditingBotId(null);
+              setCloningBot(null);
+              setVisible(false);
             }}
             message={message}
           />
@@ -356,5 +366,5 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
         )}
       </div>
     </Drawer>
-  )
+  );
 }

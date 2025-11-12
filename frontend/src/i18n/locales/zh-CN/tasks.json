@@ -1,0 +1,27 @@
+{
+  "workbench": {
+    "overview": "概览",
+    "files_changed": "文件变更",
+    "close_panel": "关闭面板",
+    "open_main_menu": "打开主菜单",
+    "waiting_result": "等待任务执行结果...",
+    "status": {
+      "completed": "已完成",
+      "failed": "失败",
+      "running": "运行中"
+    },
+    "summary": "摘要",
+    "commits": "次提交",
+    "last_updated": "最后更新",
+    "copy_commit_id": "复制完整提交ID",
+    "files": "个文件",
+    "changes": "变更",
+    "original_prompt": "原始提示词",
+    "no_file_changes": "未检测到文件变更",
+    "file_status": {
+      "new": "新建",
+      "deleted": "已删除",
+      "renamed": "已重命名"
+    }
+  }
+}

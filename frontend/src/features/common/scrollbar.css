@@ -11,13 +11,18 @@
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: rgb(var(--color-scrollbar-track));
+  background: transparent;
   border-radius: 3px;
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-scrollbar-thumb));
+  background: transparent;
   border-radius: 3px;
+  transition: background-color 0.3s ease;
+}
+
+.custom-scrollbar:hover::-webkit-scrollbar-thumb {
+  background: rgb(var(--color-scrollbar-thumb));
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb:hover {
@@ -27,5 +32,10 @@
 /* Firefox support */
 .custom-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: rgb(var(--color-scrollbar-thumb)) rgb(var(--color-scrollbar-track));
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 0.3s ease;
+}
+
+.custom-scrollbar:hover {
+  scrollbar-color: rgb(var(--color-scrollbar-thumb)) transparent;
 }

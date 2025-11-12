@@ -4,177 +4,236 @@
 
 // Authentication Types
 
-
 // User Types
 export interface User {
-  id: number
-  user_name: string
-  email: string
-  is_active: boolean
-  created_at: string
-  updated_at: string
-  git_info: GitInfo[]
+  id: number;
+  user_name: string;
+  email: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  git_info: GitInfo[];
 }
-
 
 /** Git account information */
 export interface GitInfo {
-  git_domain: string
-  git_token: string
+  git_domain: string;
+  git_token: string;
   /** Type: "github" | "gitlab" */
-  type: 'github' | 'gitlab'
+  type: 'github' | 'gitlab';
 }
 
 // Bot Types
 export interface Bot {
-  id: number
-  name: string
-  agent_name: string
-  agent_config: Record<string, any>
-  system_prompt: string
-  mcp_servers: Record<string, any>
-  is_active: boolean
-  created_at: string
-  updated_at: string
+  id: number;
+  name: string;
+  agent_name: string;
+  agent_config: Record<string, unknown>;
+  system_prompt: string;
+  mcp_servers: Record<string, unknown>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface Team {
-  id: number
-  name: string
-  description: string
-  bots: TeamBot[]
-  workflow: Record<string, any>
-  is_active: boolean
-  user_id: number
-  created_at: string
-  updated_at: string
-  share_status?: number // 0: 个人团队, 1: 分享中, 2: 共享团队
+  id: number;
+  name: string;
+  description: string;
+  bots: TeamBot[];
+  workflow: Record<string, string>;
+  is_active: boolean;
+  user_id: number;
+  created_at: string;
+  updated_at: string;
+  share_status?: number; // 0: 个人团队, 1: 分享中, 2: 共享团队
   user?: {
-    user_name: string
-  }
+    user_name: string;
+  };
 }
-
 
 /** Bot information (used for Team.bots) */
 export interface TeamBot {
-  bot_id: number
-  bot_prompt: string
-  role?: string
+  bot_id: number;
+  bot_prompt: string;
+  role?: string;
 }
 
 /** TaskDetail structure (adapted to latest backend response) */
 // Task Types
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'DELETE'
-export type TaskType = 'chat' | 'code'
+export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'DELETE';
+export type TaskType = 'chat' | 'code';
+
+// Git commit statistics
+interface CommitStats {
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+}
+
+// Git commit information
+interface GitCommit {
+  commit_id: string;
+  short_id: string;
+  message: string;
+  author: string;
+  author_email: string;
+  committed_date: string;
+  stats: CommitStats;
+}
+
+// Git information
+interface GitInfoWorkbench {
+  initial_commit_id: string;
+  initial_commit_message: string;
+  task_commits: GitCommit[];
+  source_branch: string;
+  target_branch: string;
+}
+
+// File change information
+interface FileChange {
+  old_path: string;
+  new_path: string;
+  new_file: boolean;
+  renamed_file: boolean;
+  deleted_file: boolean;
+  added_lines: number;
+  removed_lines: number;
+  diff_title: string;
+}
+
+export interface WorkbenchData {
+  taskTitle: string;
+  taskNumber: string;
+  status: 'completed' | 'running' | 'failed';
+  completedTime: string;
+  repository: string;
+  branch: string;
+  sessions: number;
+  premiumRequests: number;
+  lastUpdated: string;
+  summary: string;
+  changes: string[];
+  originalPrompt: string;
+  file_changes: FileChange[];
+  git_info: GitInfoWorkbench;
+}
+
 export interface TaskDetail {
-  id: number
-  title: string
-  git_url: string
-  git_repo: string
-  git_repo_id: number
-  git_domain: string
-  branch_name: string
-  prompt: string
-  status: TaskStatus
-  task_type?: TaskType
-  progress: number
-  batch: number
-  result: Record<string, any>
-  error_message: string
-  created_at: string
+  id: number;
+  title: string;
+  git_url: string;
+  git_repo: string;
+  git_repo_id: number;
+  git_domain: string;
+  branch_name: string;
+  prompt: string;
+  status: TaskStatus;
+  task_type?: TaskType;
+  progress: number;
+  batch: number;
+  result: Record<string, unknown>;
+  error_message: string;
+  created_at: string;
   // updated_at: string
   // completed_at: string
-  user: User
-  team: Team
-  subtasks: TaskDetailSubtask[]
+  user: User;
+  team: Team;
+  subtasks: TaskDetailSubtask[];
+  workbench?: WorkbenchData | null;
+}
+
+/** Subtask result structure */
+export interface SubtaskResult {
+  thinking?: unknown[];
+  value?: string | { workbench?: WorkbenchData };
+  workbench?: WorkbenchData;
+  [key: string]: unknown;
 }
 
 /** Subtask structure (adapted to latest backend response) */
 export interface TaskDetailSubtask {
-  task_id: number
-  team_id: number
-  title: string
+  task_id: number;
+  team_id: number;
+  title: string;
   /** Multi-bot support */
-  bot_ids: number[]
+  bot_ids: number[];
   /** Role */
-  role: string
+  role: string;
   /** Message ID */
-  message_id: number
+  message_id: number;
   /** Parent Task ID */
-  parent_id: number
-  prompt: string
-  executor_namespace: string
-  executor_name: string
-  status: TaskStatus
-  progress: number
-  batch: number
-  result: Record<string, any> | { thinking?: any[], value?: string }
-  error_message: string
-  id: number
-  user_id: number
-  created_at: string
-  updated_at: string
-  completed_at: string
-  bots: Bot[]
+  parent_id: number;
+  prompt: string;
+  executor_namespace: string;
+  executor_name: string;
+  status: TaskStatus;
+  progress: number;
+  batch: number;
+  result: SubtaskResult;
+  error_message: string;
+  id: number;
+  user_id: number;
+  created_at: string;
+  updated_at: string;
+  completed_at: string;
+  bots: Bot[];
 }
 
 export interface Task {
-  id: number
-  title: string
-  team_id: number
-  git_url: string
-  git_repo: string
-  git_repo_id: number
-  git_domain: string
-  branch_name: string
-  prompt: string
-  status: TaskStatus
-  task_type?: TaskType
-  progress: number
-  batch: number
-  result: Record<string, any>
-  error_message: string
-  user_id: number
-  user_name: string
-  created_at: string
-  updated_at: string
-  completed_at: string
+  id: number;
+  title: string;
+  team_id: number;
+  git_url: string;
+  git_repo: string;
+  git_repo_id: number;
+  git_domain: string;
+  branch_name: string;
+  prompt: string;
+  status: TaskStatus;
+  task_type?: TaskType;
+  progress: number;
+  batch: number;
+  result: Record<string, unknown>;
+  error_message: string;
+  user_id: number;
+  user_name: string;
+  created_at: string;
+  updated_at: string;
+  completed_at: string;
 }
-
-
-
 
 /** GitHub repository new structure */
 export interface GitRepoInfo {
-  git_repo_id: number
-  name: string
-  git_repo: string
-  git_url: string
-  git_domain: string
-  private: boolean
+  git_repo_id: number;
+  name: string;
+  git_repo: string;
+  git_url: string;
+  git_domain: string;
+  private: boolean;
   /** Type: "github" | "gitlab" */
-  type: 'github' | 'gitlab'
+  type: 'github' | 'gitlab';
 }
 
-
 export interface GitBranch {
-  name: string
-  protected: boolean
-  default: boolean
+  name: string;
+  protected: boolean;
+  default: boolean;
 }
 
 // Common API Response Types
 export interface APIError {
-  message: string
-  detail?: string
+  message: string;
+  detail?: string;
 }
 
 export interface SuccessMessage {
-  message: string
+  message: string;
 }
 
 // Pagination Types
 export interface PaginationParams {
-  page?: number
-  limit?: number
+  page?: number;
+  limit?: number;
 }

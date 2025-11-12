@@ -2,32 +2,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
-import { Button } from 'antd'
-import { useRouter } from 'next/navigation'
-import Modal from '@/features/common/Modal'
-import { paths } from '@/config/paths'
+import { useState, useEffect } from 'react';
+import { Button } from 'antd';
+import { useRouter } from 'next/navigation';
+import Modal from '@/features/common/Modal';
+import { paths } from '@/config/paths';
 
-import { useUser } from '@/features/common/UserContext'
-import { useTranslation } from 'react-i18next'
+import { useUser } from '@/features/common/UserContext';
+import { useTranslation } from 'react-i18next';
 
 import type { Team } from '@/types/api';
 
 interface BeginnerGuideModalProps {
-  teams: Team[]
-  teamLoading: boolean
+  teams: Team[];
+  teamLoading: boolean;
 }
 
-export default function BeginnerGuideModal({
-  teams,
-  teamLoading
-}: BeginnerGuideModalProps) {
-  const router = useRouter()
-  const [isOpen, setIsOpen] = useState(false)
-  const { user, isLoading: userLoading } = useUser()
-  const { t } = useTranslation()
+export default function BeginnerGuideModal({ teams, teamLoading }: BeginnerGuideModalProps) {
+  const router = useRouter();
+  const [isOpen, setIsOpen] = useState(false);
+  const { user: _user, isLoading: userLoading } = useUser();
+  const { t } = useTranslation();
   // Determine if team needs to be set based on teams length
   const needSetTeam = !teams || teams.length === 0;
 
@@ -35,29 +32,24 @@ export default function BeginnerGuideModal({
   useEffect(() => {
     // Only process isOpen when both userLoading and teamLoading are false
     if (userLoading || teamLoading) {
-      return
+      return;
     }
     if (needSetTeam) {
-      setIsOpen(true)
+      setIsOpen(true);
     } else {
-      setIsOpen(false)
+      setIsOpen(false);
     }
-  }, [needSetTeam, userLoading, teamLoading])
+  }, [needSetTeam, userLoading, teamLoading]);
 
   const handleClose = () => {
-    setIsOpen(false)
-  }
+    setIsOpen(false);
+  };
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={handleClose}
-      title={t('guide.title')}
-      maxWidth="sm"
-    >
+    <Modal isOpen={isOpen} onClose={handleClose} title={t('guide.title')} maxWidth="sm">
       <div className="flex flex-col items-center">
         <p className="text-sm text-text-secondary mb-6 text-center leading-relaxed">
-            {t('guide.description')}
+          {t('guide.description')}
         </p>
         {needSetTeam && (
           <div className="flex flex-row items-center justify-center gap-2 w-full mb-2">
@@ -66,15 +58,15 @@ export default function BeginnerGuideModal({
               size="small"
               style={{ minWidth: '100px' }}
               onClick={() => {
-                handleClose()
-                router.push(paths.settings.team.getHref())
+                handleClose();
+                router.push(paths.settings.team.getHref());
               }}
             >
-                {t("guide.create_team")}
+              {t('guide.create_team')}
             </Button>
           </div>
         )}
       </div>
     </Modal>
-  )
+  );
 }

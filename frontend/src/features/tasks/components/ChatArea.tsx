@@ -2,98 +2,152 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React, { useState, useEffect, useRef } from 'react'
-import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline'
-import MessagesArea from './MessagesArea'
-import ChatInput from './ChatInput'
-import TeamSelector from './TeamSelector'
-import RepositorySelector from './RepositorySelector'
-import BranchSelector from './BranchSelector'
-import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
-import { sendMessage } from '../service/messageService'
-import { useRouter, useSearchParams } from 'next/navigation'
-import { useTaskContext } from '../contexts/taskContext'
-import { App, Button } from 'antd'
-import QuotaUsage from './QuotaUsage'
-import { useMediaQuery } from '@/hooks/useMediaQuery'
+import React, { useState, useEffect, useRef } from 'react';
+import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline';
+import MessagesArea from './MessagesArea';
+import ChatInput from './ChatInput';
+import TeamSelector from './TeamSelector';
+import RepositorySelector from './RepositorySelector';
+import BranchSelector from './BranchSelector';
+import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
+import { sendMessage } from '../service/messageService';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useTaskContext } from '../contexts/taskContext';
+import { App, Button } from 'antd';
+import QuotaUsage from './QuotaUsage';
+import { useMediaQuery } from '@/hooks/useMediaQuery';
+import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
 
-const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18
+const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
 interface ChatAreaProps {
-  teams: Team[]
-  isTeamsLoading: boolean
-  selectedTeamForNewTask?: Team | null
-  showRepositorySelector?: boolean
-  taskType?: 'chat' | 'code'
+  teams: Team[];
+  isTeamsLoading: boolean;
+  selectedTeamForNewTask?: Team | null;
+  showRepositorySelector?: boolean;
+  taskType?: 'chat' | 'code';
 }
 
-export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask, showRepositorySelector = true, taskType = 'chat' }: ChatAreaProps) {
-  const { message } = App.useApp()
-  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null)
-  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null)
-  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null)
-  const isMobile = useMediaQuery('(max-width: 640px)')
+export default function ChatArea({
+  teams,
+  isTeamsLoading,
+  selectedTeamForNewTask,
+  showRepositorySelector = true,
+  taskType = 'chat',
+}: ChatAreaProps) {
+  const { message } = App.useApp();
 
-  const [taskInputMessage, setTaskInputMessage] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
+  // Pre-load team preference from localStorage to use as initial value
+  const initialTeamIdRef = useRef<number | null>(null);
+  if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
+    initialTeamIdRef.current = getLastTeamId();
+    console.log('[ChatArea] Pre-loaded team ID from localStorage:', initialTeamIdRef.current);
+  }
+
+  const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null);
+  const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
+  const isMobile = useMediaQuery('(max-width: 640px)');
+
+  const [taskInputMessage, setTaskInputMessage] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
   // Unified error prompt using antd message.error, no local error state needed
-  const [error, setError] = useState('')
+  const [_error, setError] = useState('');
 
-  const scrollContainerRef = useRef<HTMLDivElement>(null)
-  const isUserNearBottomRef = useRef(true)
-  const AUTO_SCROLL_THRESHOLD = 32
-  const router = useRouter()
-  const searchParams = useSearchParams()
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const isUserNearBottomRef = useRef(true);
+  const AUTO_SCROLL_THRESHOLD = 32;
+  const router = useRouter();
+  const searchParams = useSearchParams();
 
   // New: Get selectedTask to determine if there are messages
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } = useTaskContext()
-  const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id)
+  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
+    useTaskContext();
+  const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id);
 
+  // Restore user preferences from localStorage when teams load
   useEffect(() => {
-    if (!teams.length) return
+    console.log('[ChatArea] Preference restoration effect triggered', {
+      teamsLength: teams.length,
+      hasRestoredPreferences,
+      selectedTeam: selectedTeam?.name || 'null',
+      selectedTeamId: selectedTeam?.id || 'null',
+      initialTeamId: initialTeamIdRef.current,
+    });
 
-    const teamIdParam = searchParams.get('teamId')
-    if (!teamIdParam) return
+    if (hasRestoredPreferences || !teams.length) return;
 
-    const matchedTeam = teams.find(team => String(team.id) === teamIdParam) || null
+    const lastTeamId = initialTeamIdRef.current;
+    console.log('[ChatArea] Trying to restore team with ID:', lastTeamId);
 
-    if (matchedTeam && !selectedTeam) {
-      setSelectedTeam(matchedTeam)
+    if (lastTeamId) {
+      const lastTeam = teams.find(team => team.id === lastTeamId);
+      if (lastTeam) {
+        console.log('[ChatArea] ✅ Restoring team from localStorage:', lastTeam.name, lastTeam.id);
+        setSelectedTeam(lastTeam);
+        setHasRestoredPreferences(true);
+        return;
+      } else {
+        console.log(
+          '[ChatArea] ❌ Team from localStorage not found in teams list, ID:',
+          lastTeamId
+        );
+      }
     }
-  }, [teams, searchParams, setSelectedTeam])
+
+    // No valid preference, use first team as default
+    if (teams.length > 0) {
+      console.log(
+        '[ChatArea] No valid preference, using first team as default:',
+        teams[0].name,
+        teams[0].id
+      );
+      setSelectedTeam(teams[0]);
+    }
+    setHasRestoredPreferences(true);
+  }, [teams, hasRestoredPreferences]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
     if (selectedTeamForNewTask && !hasMessages) {
-      setSelectedTeam(selectedTeamForNewTask)
+      setSelectedTeam(selectedTeamForNewTask);
     }
-  }, [selectedTeamForNewTask, hasMessages])
+  }, [selectedTeamForNewTask, hasMessages]);
 
   const shouldHideQuotaUsage = React.useMemo(() => {
-    if (!isMobile || !selectedTeam?.name) return false
-    
+    if (!isMobile || !selectedTeam?.name) return false;
+
     if (selectedTeam.share_status === 2 && selectedTeam.user?.user_name) {
-      return selectedTeam.name.trim().length > 12
+      return selectedTeam.name.trim().length > 12;
     }
-    
-    return selectedTeam.name.trim().length > SHOULD_HIDE_QUOTA_NAME_LIMIT
-  }, [selectedTeam, isMobile])
+
+    return selectedTeam.name.trim().length > SHOULD_HIDE_QUOTA_NAME_LIMIT;
+  }, [selectedTeam, isMobile]);
 
   const handleTeamChange = (team: Team | null) => {
-    setSelectedTeam(team)
+    console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null');
+    setSelectedTeam(team);
 
-    const params = new URLSearchParams(Array.from(searchParams.entries()))
-    if (params.has('teamId')) {
-      params.delete('teamId')
-      router.push(`?${params.toString()}`)
+    // Save team preference to localStorage
+    if (team && team.id) {
+      console.log('[ChatArea] Saving team to localStorage:', team.id);
+      saveLastTeam(team.id);
     }
-  }
+  };
+
+  // Save repository preference when it changes
+  useEffect(() => {
+    if (selectedRepo) {
+      saveLastRepo(selectedRepo.git_repo_id, selectedRepo.git_repo);
+    }
+  }, [selectedRepo]);
 
   const handleSendMessage = async () => {
-    setIsLoading(true)
-    setError('')
+    setIsLoading(true);
+    setError('');
     const { error, newTask } = await sendMessage({
       message: taskInputMessage,
       team: selectedTeam,
@@ -101,19 +155,41 @@ export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask
       branch: showRepositorySelector ? selectedBranch : null,
       task_id: selectedTaskDetail?.id,
       taskType: taskType,
-    })
+    });
     if (error) {
-      message.error(error)
+      message.error(error);
     } else {
-      setTaskInputMessage('')
+      setTaskInputMessage('');
       // Redirect to task URL after successfully creating a task
       if (newTask && newTask.task_id) {
-        const params = new URLSearchParams(Array.from(searchParams.entries()))
-        params.set('taskId', String(newTask.task_id))
-        router.push(`?${params.toString()}`)
+        const params = new URLSearchParams(Array.from(searchParams.entries()));
+        params.set('taskId', String(newTask.task_id));
+        router.push(`?${params.toString()}`);
         // Actively refresh task list and task details
         refreshTasks();
-        setSelectedTask({ id: newTask.task_id } as any); // Only pass id, detail component will auto-fetch
+        // Create a minimal Task object with required fields
+        setSelectedTask({
+          id: newTask.task_id,
+          title: taskInputMessage.substring(0, 50),
+          team_id: selectedTeam?.id || 0,
+          git_url: selectedRepo?.git_url || '',
+          git_repo: selectedRepo?.git_repo || '',
+          git_repo_id: selectedRepo?.git_repo_id || 0,
+          git_domain: selectedRepo?.git_domain || '',
+          branch_name: selectedBranch?.name || '',
+          prompt: taskInputMessage,
+          status: 'PENDING',
+          task_type: taskType,
+          progress: 0,
+          batch: 1,
+          result: {} as Record<string, unknown>,
+          error_message: '',
+          user_id: 0,
+          user_name: '',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          completed_at: '',
+        });
       } else if (selectedTaskDetail?.id) {
         // If appending message to existing task, also refresh task details
         refreshTasks();
@@ -121,49 +197,50 @@ export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask
         refreshSelectedTaskDetail(false); // false means not auto-refresh, allow fetching completed task details
       }
       // Manually trigger scroll to bottom after sending message
-      setTimeout(() => scrollToBottom(true), 0)
+      setTimeout(() => scrollToBottom(true), 0);
     }
-    setIsLoading(false)
-  }
+    setIsLoading(false);
+  };
 
   const scrollToBottom = (force = false) => {
-    const container = scrollContainerRef.current
-    if (!container) return
+    const container = scrollContainerRef.current;
+    if (!container) return;
 
     if (force || isUserNearBottomRef.current) {
-      container.scrollTop = container.scrollHeight
+      container.scrollTop = container.scrollHeight;
       // Force means user initiated action, treat as pinned to bottom
       if (force) {
-        isUserNearBottomRef.current = true
+        isUserNearBottomRef.current = true;
       }
     }
-  }
+  };
 
   useEffect(() => {
-    const container = scrollContainerRef.current
-    if (!container) return
+    const container = scrollContainerRef.current;
+    if (!container) return;
 
     const handleScroll = () => {
-      const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-      isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD
-    }
+      const distanceFromBottom =
+        container.scrollHeight - container.scrollTop - container.clientHeight;
+      isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD;
+    };
 
-    container.addEventListener('scroll', handleScroll)
+    container.addEventListener('scroll', handleScroll);
     // Initialize state based on current position
-    handleScroll()
+    handleScroll();
 
     return () => {
-      container.removeEventListener('scroll', handleScroll)
-    }
-  }, [hasMessages])
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, [hasMessages]);
 
   useEffect(() => {
     if (hasMessages) {
       // Use timeout to ensure DOM is updated before scrolling
       // Force scroll to bottom when opening a historical task
-      setTimeout(() => scrollToBottom(true), 100)
+      setTimeout(() => scrollToBottom(true), 100);
     }
-  }, [selectedTaskDetail?.id])
+  }, [selectedTaskDetail?.id]);
 
   // Style reference: TaskParamWrapper.tsx
   return (
@@ -175,11 +252,9 @@ export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask
       <div
         ref={scrollContainerRef}
         className={
-          (hasMessages
-            ? "flex-1 overflow-y-auto custom-scrollbar"
-            : "overflow-y-hidden") +
-          " transition-opacity duration-200 " +
-          (hasMessages ? "opacity-100" : "opacity-0 pointer-events-none h-0")
+          (hasMessages ? 'flex-1 overflow-y-auto custom-scrollbar' : 'overflow-y-hidden') +
+          ' transition-opacity duration-200 ' +
+          (hasMessages ? 'opacity-100' : 'opacity-0 pointer-events-none h-0')
         }
         aria-hidden={!hasMessages}
       >
@@ -189,9 +264,17 @@ export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask
       </div>
 
       {/* Main Content Area */}
-      <div className={hasMessages ? "w-full" : "flex-1 flex flex-col items-center justify-center w-full"}>
+      <div
+        className={
+          hasMessages ? 'w-full' : 'flex-1 flex flex-col items-center justify-center w-full'
+        }
+      >
         {/* Input Area */}
-        <div className={hasMessages ? "w-full max-w-3xl mx-auto px-4 sm:px-6" : "w-full max-w-3xl px-4 sm:px-6"}>
+        <div
+          className={
+            hasMessages ? 'w-full max-w-3xl mx-auto px-4 sm:px-6' : 'w-full max-w-3xl px-4 sm:px-6'
+          }
+        >
           {/* Chat Input Card */}
           <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface">
             <ChatInput
@@ -224,7 +307,7 @@ export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask
                   style={{
                     color: 'rgb(var(--color-text-muted))',
                     padding: '0',
-                    height: 'auto'
+                    height: 'auto',
                   }}
                 />
               </div>
@@ -256,5 +339,5 @@ export default function ChatArea({ teams, isTeamsLoading, selectedTeamForNewTask
         </div>
       </div>
     </div>
-  )
+  );
 }
