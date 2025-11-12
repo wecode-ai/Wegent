@@ -2,40 +2,40 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import Image from 'next/image'
-import { Bars3Icon } from '@heroicons/react/24/outline'
+import Image from 'next/image';
+import { Bars3Icon } from '@heroicons/react/24/outline';
 
-import { useTranslation } from '@/hooks/useTranslation'
-import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery'
-import { MobileNavTabs } from './components/MobileNavTabs'
-import { DesktopNavLinks } from './components/DesktopNavLinks'
+import { useTranslation } from '@/hooks/useTranslation';
+import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery';
+import { MobileNavTabs } from './components/MobileNavTabs';
+import { DesktopNavLinks } from './components/DesktopNavLinks';
 
 type TopNavigationProps = {
-  activePage: 'chat' | 'code' | 'dashboard'
-  variant?: 'with-sidebar' | 'standalone'
-  showLogo?: boolean
-  children?: React.ReactNode
-  onMobileSidebarToggle?: () => void
-}
+  activePage: 'chat' | 'code' | 'dashboard';
+  variant?: 'with-sidebar' | 'standalone';
+  showLogo?: boolean;
+  children?: React.ReactNode;
+  onMobileSidebarToggle?: () => void;
+};
 
-export default function TopNavigation({ 
-  activePage, 
+export default function TopNavigation({
+  activePage,
   variant = 'standalone',
-  showLogo = false, 
-  children, 
-  onMobileSidebarToggle 
+  showLogo = false,
+  children,
+  onMobileSidebarToggle,
 }: TopNavigationProps) {
-  const { t } = useTranslation('common')
-  const isMobile = useIsMobile()
-  const isDesktop = useIsDesktop()
+  const { t } = useTranslation('common');
+  const isMobile = useIsMobile();
+  const isDesktop = useIsDesktop();
 
   // Determine if we should show the hamburger menu
-  const showHamburgerMenu = variant === 'with-sidebar' && !isDesktop && onMobileSidebarToggle
+  const showHamburgerMenu = variant === 'with-sidebar' && !isDesktop && onMobileSidebarToggle;
 
   // Determine if we should show the logo
-  const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile)
+  const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile);
 
   return (
     <div className="relative flex items-center justify-between px-4 sm:px-6 py-6 sm:py-8 min-h-[60px]">
@@ -48,7 +48,7 @@ export default function TopNavigation({
             onClick={onMobileSidebarToggle}
             aria-label={t('common.open_sidebar')}
           >
-            <Bars3Icon className="h-5 w-5" aria-hidden="true" />
+            <Bars3Icon className={isMobile ? 'h-4 w-4' : 'h-5 w-5'} aria-hidden="true" />
           </button>
         )}
 
@@ -57,14 +57,12 @@ export default function TopNavigation({
             <Image
               src="/weibo-logo.png"
               alt="Weibo Logo"
-              width={24}
-              height={24}
+              width={isMobile ? 20 : 24}
+              height={isMobile ? 20 : 24}
               className="object-container"
               priority
             />
-            <span className="text-lg font-semibold text-text-primary">
-              Wegent
-            </span>
+            {!isMobile && <span className="text-lg font-semibold text-text-primary">Wegent</span>}
           </div>
         )}
       </div>
@@ -79,11 +77,7 @@ export default function TopNavigation({
       </nav>
 
       {/* Right side - User menu and theme toggle */}
-      {children && (
-        <div className="flex items-center gap-2 sm:gap-3">
-          {children}
-        </div>
-      )}
+      {children && <div className="flex items-center gap-2 sm:gap-3">{children}</div>}
     </div>
-  )
+  );
 }

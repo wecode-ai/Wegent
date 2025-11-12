@@ -2,34 +2,48 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { useTaskContext } from '../contexts/taskContext'
-import type { TaskDetail, TaskDetailSubtask } from '@/types/api'
-import { RiRobot2Line, RiUser3Line } from 'react-icons/ri'
-import { FiCopy, FiCheck, FiTool, FiExternalLink, FiDownload } from 'react-icons/fi'
-import { Button } from 'antd'
-import { useTranslation } from '@/hooks/useTranslation'
-import MarkdownEditor from '@uiw/react-markdown-editor'
-import { useTheme } from '@/features/theme/ThemeProvider'
-import ThinkingComponent from './ThinkingComponent'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useTaskContext } from '../contexts/taskContext';
+import type { TaskDetail, TaskDetailSubtask } from '@/types/api';
+import { RiRobot2Line, RiUser3Line } from 'react-icons/ri';
+import { FiCopy, FiCheck, FiDownload } from 'react-icons/fi';
+import { Button } from 'antd';
+import { useTranslation } from '@/hooks/useTranslation';
+import MarkdownEditor from '@uiw/react-markdown-editor';
+import { useTheme } from '@/features/theme/ThemeProvider';
+import ThinkingComponent from './ThinkingComponent';
 
 interface Message {
-  type: 'user' | 'ai'
-  content: string
-  timestamp: number
-  botName?: string
-  thinking?: any[] | null
+  type: 'user' | 'ai';
+  content: string;
+  timestamp: number;
+  botName?: string;
+  thinking?: Array<{
+    title: string;
+    next_action: string;
+    details?: Record<string, unknown>;
+    action?: string;
+    result?: string;
+    reasoning?: string;
+    confidence?: number;
+    value?: unknown;
+  }> | null;
+}
+
+interface ResultWithThinking {
+  thinking?: unknown[];
+  value?: unknown;
 }
 
 // CopyButton component for copying markdown content
-const CopyButton = ({ content, className }: { content: string, className?: string }) => {
+const CopyButton = ({ content, className }: { content: string; className?: string }) => {
   const [copied, setCopied] = useState(false);
   const { t } = useTranslation('chat');
 
   const handleCopy = async () => {
-        // Prefer using Clipboard API
+    // Prefer using Clipboard API
     if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
       try {
         await navigator.clipboard.writeText(content);
@@ -41,7 +55,7 @@ const CopyButton = ({ content, className }: { content: string, className?: strin
       }
     }
 
-        // Fallback: use document.execCommand
+    // Fallback: use document.execCommand
     try {
       const textarea = document.createElement('textarea');
       textarea.value = content;
@@ -65,32 +79,34 @@ const CopyButton = ({ content, className }: { content: string, className?: strin
       // className="absolute bottom-0 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
       title={t('messages.copy_markdown')}
       icon={
-        copied
-          ? <FiCheck className="w-4 h-4 text-green-400" />
-          : <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
+        copied ? (
+          <FiCheck className="w-4 h-4 text-green-400" />
+        ) : (
+          <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
+        )
       }
       style={{
-          padding: '4px',
-          height: 'auto',
-          minWidth: 'auto',
-          borderRadius: '4px'
+        padding: '4px',
+        height: 'auto',
+        minWidth: 'auto',
+        borderRadius: '4px',
       }}
     />
   );
-}
+};
 
-    // Bubble toolbar: supports copy button and extensible tool buttons
+// Bubble toolbar: supports copy button and extensible tool buttons
 const BubbleTools = ({
   contentToCopy,
   tools = [],
 }: {
-  contentToCopy: string,
+  contentToCopy: string;
   tools?: Array<{
-    key: string,
-    title: string,
-    icon: React.ReactNode,
-    onClick: () => void
-  }>
+    key: string;
+    title: string;
+    icon: React.ReactNode;
+    onClick: () => void;
+  }>;
 }) => {
   return (
     <div className="absolute bottom-1 left-2 flex items-center gap-1 z-10">
@@ -107,28 +123,36 @@ const BubbleTools = ({
             padding: '4px',
             height: 'auto',
             minWidth: 'auto',
-            borderRadius: '4px'
+            borderRadius: '4px',
           }}
         />
       ))}
     </div>
   );
-}
+};
 
 export default function MessagesArea() {
-  const { t } = useTranslation('chat')
-  const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext()
-  const { theme } = useTheme()
-  const messagesContainerRef = useRef<HTMLDivElement | null>(null)
-  const scrollStateRef = useRef<{ scrollTop: number, scrollHeight: number }>({ scrollTop: 0, scrollHeight: 0 })
-  const isUserNearBottomRef = useRef(true)
-  const AUTO_SCROLL_THRESHOLD = 32
+  const { t } = useTranslation('chat');
+  const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
+  const { theme } = useTheme();
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const scrollStateRef = useRef<{ scrollTop: number; scrollHeight: number }>({
+    scrollTop: 0,
+    scrollHeight: 0,
+  });
+  const isUserNearBottomRef = useRef(true);
+  const AUTO_SCROLL_THRESHOLD = 32;
 
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
 
-        // Only auto-refresh when the task exists and is not completed
-    if (selectedTaskDetail?.id && selectedTaskDetail.status !== 'COMPLETED' && selectedTaskDetail.status !== 'FAILED' && selectedTaskDetail.status !== 'CANCELLED') {
+    // Only auto-refresh when the task exists and is not completed
+    if (
+      selectedTaskDetail?.id &&
+      selectedTaskDetail.status !== 'COMPLETED' &&
+      selectedTaskDetail.status !== 'FAILED' &&
+      selectedTaskDetail.status !== 'CANCELLED'
+    ) {
       intervalId = setInterval(() => {
         refreshSelectedTaskDetail(true); // This is auto-refresh
       }, 5000);
@@ -136,20 +160,21 @@ export default function MessagesArea() {
 
     return () => {
       if (intervalId) clearInterval(intervalId);
-    }
-  }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail])
+    };
+  }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail]);
 
   // Calculate messages from taskDetail
   function generateTaskMessages(detail: TaskDetail | null): Message[] {
     if (!detail) return [];
     const messages: Message[] = [];
+
     // When subtasks exist, synthesize according to useTaskActionData logic
     if (Array.isArray(detail.subtasks) && detail.subtasks.length > 0) {
       detail.subtasks.forEach((sub: TaskDetailSubtask) => {
         const promptContent = sub.prompt || '';
         let content;
         let msgType: 'user' | 'ai';
-        let thinkingData = null;
+        let thinkingData: Message['thinking'] = null;
 
         if (sub.role === 'USER') {
           msgType = 'user';
@@ -167,39 +192,46 @@ export default function MessagesArea() {
           // Generate aiContent
           let aiContent;
           const result = sub.result;
-          
+
           // Debug: log the result structure
           console.log('Subtask result:', result);
-          
+
           if (result) {
             if (typeof result === 'object') {
+              const resultObj = result as ResultWithThinking;
               // Check for new data structure with thinking and value
-              if (result.thinking && Array.isArray(result.thinking)) {
-                thinkingData = result.thinking;
+              if (resultObj.thinking && Array.isArray(resultObj.thinking)) {
+                thinkingData = resultObj.thinking as Message['thinking'];
               }
               // Also check if thinking might be in a nested structure
-              else if (result.value && typeof result.value === 'object' && result.value.thinking) {
-                thinkingData = result.value.thinking;
+              else if (
+                resultObj.value &&
+                typeof resultObj.value === 'object' &&
+                (resultObj.value as ResultWithThinking).thinking
+              ) {
+                thinkingData = (resultObj.value as ResultWithThinking)
+                  .thinking as Message['thinking'];
               }
               // Check if thinking is in a string that needs to be parsed
-              else if (typeof result.value === 'string') {
+              else if (typeof resultObj.value === 'string') {
                 try {
-                  const parsedValue = JSON.parse(result.value);
+                  const parsedValue = JSON.parse(resultObj.value) as ResultWithThinking;
                   if (parsedValue.thinking && Array.isArray(parsedValue.thinking)) {
-                    thinkingData = parsedValue.thinking;
+                    thinkingData = parsedValue.thinking as Message['thinking'];
                   }
-                } catch (e) {
+                } catch {
                   // Not valid JSON, ignore
                 }
               }
-              
-              aiContent = result && 'value' in result
-                ? (result.value !== null && result.value !== undefined && result.value !== ''
-                  ? String(result.value)
-                  : `__PROGRESS_BAR__:${sub.status}:${sub.progress}`)
-                : result && 'thinking' in result
-                  ? `__PROGRESS_BAR__:${sub.status}:${sub.progress}`
-                  : JSON.stringify(result);
+
+              aiContent =
+                result && 'value' in result
+                  ? result.value !== null && result.value !== undefined && result.value !== ''
+                    ? String(result.value)
+                    : `__PROGRESS_BAR__:${sub.status}:${sub.progress}`
+                  : result && 'thinking' in result
+                    ? `__PROGRESS_BAR__:${sub.status}:${sub.progress}`
+                    : JSON.stringify(result);
             } else {
               aiContent = String(result);
             }
@@ -223,69 +255,74 @@ export default function MessagesArea() {
           type: msgType,
           content: content,
           timestamp: new Date(sub.updated_at).getTime(),
-          botName: (detail?.team?.workflow?.mode !== "pipeline" && detail?.team?.name?.trim()) ? detail.team.name : (sub?.bots?.[0]?.name?.trim() || 'Bot'),
+          botName:
+            detail?.team?.workflow?.mode !== 'pipeline' && detail?.team?.name?.trim()
+              ? detail.team.name
+              : sub?.bots?.[0]?.name?.trim() || 'Bot',
           thinking: thinkingData,
         });
       });
     }
+
     return messages;
   }
-  
+
   const displayMessages = generateTaskMessages(selectedTaskDetail);
 
   useEffect(() => {
-    const container = messagesContainerRef.current
-    if (!container) return
+    const container = messagesContainerRef.current;
+    if (!container) return;
 
     const updateScrollMeta = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container
+      const { scrollTop, scrollHeight, clientHeight } = container;
       scrollStateRef.current = {
         scrollTop,
         scrollHeight,
-      }
-      const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-      isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD
-    }
+      };
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD;
+    };
 
     const handleScroll = () => {
-      updateScrollMeta()
-    }
+      updateScrollMeta();
+    };
 
-    container.addEventListener('scroll', handleScroll)
+    container.addEventListener('scroll', handleScroll);
 
     // Initialize stored values
-    updateScrollMeta()
+    updateScrollMeta();
 
     return () => {
-      container.removeEventListener('scroll', handleScroll)
-    }
-  }, [selectedTaskDetail?.id, displayMessages.length > 0, AUTO_SCROLL_THRESHOLD])
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, [selectedTaskDetail?.id, displayMessages.length > 0, AUTO_SCROLL_THRESHOLD]);
 
   useLayoutEffect(() => {
-    const container = messagesContainerRef.current
-    if (!container) return
+    const container = messagesContainerRef.current;
+    if (!container) return;
 
-    const previous = scrollStateRef.current
-    const shouldStickToBottom = isUserNearBottomRef.current
+    const previous = scrollStateRef.current;
+    const shouldStickToBottom = isUserNearBottomRef.current;
 
     if (shouldStickToBottom) {
-      container.scrollTop = container.scrollHeight
+      container.scrollTop = container.scrollHeight;
     } else {
-      container.scrollTop = previous.scrollTop
+      container.scrollTop = previous.scrollTop;
     }
 
     scrollStateRef.current = {
       scrollTop: container.scrollTop,
       scrollHeight: container.scrollHeight,
-    }
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight
-    isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD
-  }, [displayMessages, AUTO_SCROLL_THRESHOLD])
+    };
+    const distanceFromBottom =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD;
+  }, [displayMessages, AUTO_SCROLL_THRESHOLD]);
 
   const renderProgressBar = (status: string, progress: number) => {
-    const normalizedStatus = (status ?? '').toUpperCase()
-    const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus)
-    const safeProgress = Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 100) : 0
+    const normalizedStatus = (status ?? '').toUpperCase();
+    const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus);
+    const safeProgress = Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 100) : 0;
 
     return (
       <div className="mt-2">
@@ -305,7 +342,7 @@ export default function MessagesArea() {
           ></div>
         </div>
       </div>
-    )
+    );
   };
 
   const renderMarkdownResult = (rawResult: string, promptPart?: string) => {
@@ -331,33 +368,35 @@ export default function MessagesArea() {
               <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
                 {children}
               </a>
-            )
+            ),
           }}
         />
         <BubbleTools
-          contentToCopy={`${promptPart ? (promptPart + '\n\n') : ''}${normalizedResult}`}
+          contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
           tools={[
             {
               key: 'download',
               title: t('messages.download') || 'Download',
               icon: <FiDownload className="w-4 h-4 text-gray-400 hover:text-white" />,
               onClick: () => {
-                const blob = new Blob([`${normalizedResult}`], { type: 'text/plain;charset=utf-8' });
+                const blob = new Blob([`${normalizedResult}`], {
+                  type: 'text/plain;charset=utf-8',
+                });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
                 a.download = 'message.md';
                 a.click();
                 URL.revokeObjectURL(url);
-              }
-            }
+              },
+            },
           ]}
         />
       </>
     );
   };
 
-  const renderPlainMessage = (msg: Message) => (
+  const renderPlainMessage = (msg: Message) =>
     (msg.content?.split('\n') || []).map((line, idx) => {
       if (line.startsWith('__PROMPT_TRUNCATED__:')) {
         const match = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/);
@@ -385,19 +424,11 @@ export default function MessagesArea() {
 
       return (
         <div key={idx} className="group pb-4">
-          {idx === 0 && (
-            <BubbleTools
-              contentToCopy={msg.content}
-              tools={[]}
-            />
-          )}
-          <div className="text-sm break-all">
-            {line}
-          </div>
+          {idx === 0 && <BubbleTools contentToCopy={msg.content} tools={[]} />}
+          <div className="text-sm break-all">{line}</div>
         </div>
       );
-    })
-  );
+    });
 
   const renderAiMessage = (msg: Message) => {
     const content = msg.content ?? '';
@@ -408,58 +439,60 @@ export default function MessagesArea() {
     const [prompt, result] = content.split('${$$}$');
     return (
       <>
-        {prompt && (
-          <div className="text-sm whitespace-pre-line mb-2">
-            {prompt}
-          </div>
-        )}
+        {prompt && <div className="text-sm whitespace-pre-line mb-2">{prompt}</div>}
         {result && renderMarkdownResult(result, prompt)}
       </>
     );
   };
 
-  const renderMessageBody = (msg: Message) => (
-    msg.type === 'ai' ? renderAiMessage(msg) : renderPlainMessage(msg)
-  );
+  const renderMessageBody = (msg: Message) =>
+    msg.type === 'ai' ? renderAiMessage(msg) : renderPlainMessage(msg);
 
   const formatTimestamp = (timestamp: number | undefined) => {
-    if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return ''
+    if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return '';
     return new Date(timestamp).toLocaleTimeString(navigator.language, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
       hour12: false,
-      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone
-    })
-  }
+      timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+    });
+  };
 
   return (
     <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
       {/* Messages Area - only shown when there are messages or loading */}
-      {(displayMessages.length > 0) && (
+      {displayMessages.length > 0 && (
         <div
           ref={messagesContainerRef}
           className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar"
         >
           {displayMessages.map((msg, index) => {
-            const bubbleBaseClasses = 'relative group w-full p-3 pb-8 rounded-lg border border-border text-text-primary'
-            const bubbleTypeClasses = msg.type === 'user' ? 'bg-muted my-6' : 'bg-surface'
-            const isUserMessage = msg.type === 'user'
-            const timestampLabel = formatTimestamp(msg.timestamp)
+            const bubbleBaseClasses =
+              'relative group w-full p-3 pb-8 rounded-lg border border-border text-text-primary';
+            const bubbleTypeClasses = msg.type === 'user' ? 'bg-muted my-6' : 'bg-surface';
+            const isUserMessage = msg.type === 'user';
+            const timestampLabel = formatTimestamp(msg.timestamp);
             const headerIcon = isUserMessage ? (
               <RiUser3Line className="w-4 h-4" />
             ) : (
               <RiRobot2Line className="w-4 h-4" />
-            )
-            const headerLabel = isUserMessage
-              ? ''
-              : (msg.botName || t('messages.bot') || 'Bot')
+            );
+            const headerLabel = isUserMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
 
             return (
-              <div key={index} className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}>
-                <div className={`flex ${isUserMessage ? 'w-3/4 sm:w-2/3 md:w-1/2' : 'w-full'} flex-col gap-3 ${isUserMessage ? 'items-end' : 'items-start'}`}>
+              <div
+                key={index}
+                className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}
+              >
+                <div
+                  className={`flex ${isUserMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${isUserMessage ? 'items-end' : 'items-start'}`}
+                >
                   {msg.type === 'ai' && msg.thinking && (
-                    <ThinkingComponent thinking={msg.thinking} taskStatus={selectedTaskDetail?.status} />
+                    <ThinkingComponent
+                      thinking={msg.thinking}
+                      taskStatus={selectedTaskDetail?.status}
+                    />
                   )}
                   <div className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}>
                     <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
@@ -471,10 +504,10 @@ export default function MessagesArea() {
                   </div>
                 </div>
               </div>
-            )
+            );
           })}
         </div>
       )}
     </div>
-  )
+  );
 }

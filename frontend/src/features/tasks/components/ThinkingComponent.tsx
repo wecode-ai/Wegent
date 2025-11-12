@@ -2,152 +2,173 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useEffect, useRef, useState, useLayoutEffect } from 'react'
-import { RiBrainLine } from 'react-icons/ri'
-import { FiChevronDown, FiChevronUp, FiChevronsDown, FiMaximize2, FiMinimize2 } from 'react-icons/fi'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useEffect, useRef, useState, useLayoutEffect } from 'react';
+import { RiBrainLine } from 'react-icons/ri';
+import {
+  FiChevronDown,
+  FiChevronUp,
+  FiChevronsDown,
+  FiMaximize2,
+  FiMinimize2,
+} from 'react-icons/fi';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface ThinkingStep {
-  title: string
-  next_action: string
+  title: string;
+  next_action: string;
   details?: {
-    type?: string
-    subtype?: string
+    type?: string;
+    subtype?: string;
     message?: {
-      id?: string
-      type?: string
-      role?: string
-      model?: string
+      id?: string;
+      type?: string;
+      role?: string;
+      model?: string;
       content?: Array<{
-        type: string
-        text?: string
-        id?: string
-        name?: string
-        input?: any
-        tool_use_id?: string
-        content?: string
-        is_error?: boolean
-      }>
-      stop_reason?: string
+        type: string;
+        text?: string;
+        id?: string;
+        name?: string;
+        input?: string;
+        tool_use_id?: string;
+        content?: string;
+        is_error?: boolean;
+      }>;
+      stop_reason?: string;
       usage?: {
-        input_tokens?: number
-        output_tokens?: number
-      }
-      parent_tool_use_id?: string
-    }
+        input_tokens?: number;
+        output_tokens?: number;
+      };
+      parent_tool_use_id?: string;
+    };
     // Tool use details
-    id?: string
-    name?: string
-    input?: any
+    id?: string;
+    name?: string;
+    input?: string;
     // Tool result details
-    tool_use_id?: string
-    content?: string
-    is_error?: boolean
+    tool_use_id?: string;
+    content?: string;
+    is_error?: boolean;
     // Result message details
-    session_id?: string
-    num_turns?: number
-    duration_ms?: number
-    duration_api_ms?: number
-    total_cost_usd?: number
+    session_id?: string;
+    num_turns?: number;
+    duration_ms?: number;
+    duration_api_ms?: number;
+    total_cost_usd?: number;
     usage?: {
-      input_tokens?: number
-      output_tokens?: number
-    }
-    result?: string
+      input_tokens?: number;
+      output_tokens?: number;
+    };
+    result?: string;
     // Custom details
-    [key: string]: any
-  }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    [key: string]: any;
+  };
   // Legacy fields for backward compatibility
-  action?: string
-  result?: string
-  reasoning?: string
-  confidence?: number
-  value?: any
+  action?: string;
+  result?: string;
+  reasoning?: string;
+  confidence?: number;
+  value?: unknown;
+}
+
+interface TodoItem {
+  status: 'pending' | 'in_progress' | 'completed';
+  content: string;
+  activeForm?: string;
+}
+
+interface TodoListData {
+  todos?: TodoItem[];
 }
 
 interface ThinkingComponentProps {
-  thinking: ThinkingStep[] | null
-  taskStatus?: string
+  thinking: ThinkingStep[] | null;
+  taskStatus?: string;
 }
 
 export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComponentProps) {
-  const { t } = useTranslation('chat')
-  const items = thinking ?? []
-  const [isOpen, setIsOpen] = useState(true)
-  const previousSignatureRef = useRef<string | null>(null)
-  const userCollapsedRef = useRef(false)
-  const [expandedParams, setExpandedParams] = useState<Set<string>>(new Set())
+  const { t } = useTranslation('chat');
+  const items = thinking ?? [];
+  const [isOpen, setIsOpen] = useState(true);
+  const previousSignatureRef = useRef<string | null>(null);
+  const userCollapsedRef = useRef(false);
+  const [expandedParams, setExpandedParams] = useState<Set<string>>(new Set());
 
   // Refs for scroll management
-  const contentRef = useRef<HTMLDivElement | null>(null)
-  const scrollStateRef = useRef<{ scrollTop: number, scrollHeight: number, isUserScrolling: boolean }>({
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const scrollStateRef = useRef<{
+    scrollTop: number;
+    scrollHeight: number;
+    isUserScrolling: boolean;
+  }>({
     scrollTop: 0,
     scrollHeight: 0,
-    isUserScrolling: false
-  })
-  const [showScrollToBottom, setShowScrollToBottom] = useState(false)
+    isUserScrolling: false,
+  });
+  const [showScrollToBottom, setShowScrollToBottom] = useState(false);
 
   useEffect(() => {
-    const signature = JSON.stringify(items)
+    const signature = JSON.stringify(items);
     if (
       previousSignatureRef.current !== null &&
       previousSignatureRef.current !== signature &&
       !userCollapsedRef.current
     ) {
-      setIsOpen(true)
+      setIsOpen(true);
     }
-    previousSignatureRef.current = signature
-  }, [items])
+    previousSignatureRef.current = signature;
+  }, [items]);
 
   // Handle scroll events
   useEffect(() => {
-    const container = contentRef.current
-    if (!container || !isOpen) return
+    const container = contentRef.current;
+    if (!container || !isOpen) return;
 
     const handleScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = container
-      const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-      const isNearBottom = distanceFromBottom <= 24
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      const isNearBottom = distanceFromBottom <= 24;
 
       // Store current scroll position
       // If user has manually scrolled to bottom, reset isUserScrolling to false to resume auto-scrolling
       scrollStateRef.current = {
         scrollTop,
         scrollHeight,
-        isUserScrolling: !isNearBottom // Reset to false if user is near bottom
-      }
+        isUserScrolling: !isNearBottom, // Reset to false if user is near bottom
+      };
 
       // Show "scroll to bottom" button if not near bottom
-      setShowScrollToBottom(distanceFromBottom > 24)
-    }
+      setShowScrollToBottom(distanceFromBottom > 24);
+    };
 
-    container.addEventListener('scroll', handleScroll)
+    container.addEventListener('scroll', handleScroll);
 
     return () => {
-      container.removeEventListener('scroll', handleScroll)
-    }
-  }, [isOpen])
+      container.removeEventListener('scroll', handleScroll);
+    };
+  }, [isOpen]);
 
   // Handle new content and scrolling
   useLayoutEffect(() => {
-    const container = contentRef.current
-    if (!container || !isOpen) return
+    const container = contentRef.current;
+    if (!container || !isOpen) return;
 
-    const previous = scrollStateRef.current
-    const { scrollTop, scrollHeight, clientHeight } = container
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight
-    const isNearBottom = distanceFromBottom <= 24
+    const previous = scrollStateRef.current;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+    const isNearBottom = distanceFromBottom <= 24;
 
     // Auto-scroll to bottom only if we're not user scrolling or if we're already near bottom
     if (!previous.isUserScrolling || isNearBottom) {
-      container.scrollTop = container.scrollHeight
-      setShowScrollToBottom(false)
+      container.scrollTop = container.scrollHeight;
+      setShowScrollToBottom(false);
     } else {
       // If user is scrolling and new content appears, show "scroll to bottom" button
       if (scrollHeight > previous.scrollHeight) {
-        setShowScrollToBottom(true)
+        setShowScrollToBottom(true);
       }
     }
 
@@ -156,222 +177,241 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     scrollStateRef.current = {
       scrollTop: container.scrollTop,
       scrollHeight: container.scrollHeight,
-      isUserScrolling: previous.isUserScrolling && !isNearBottom // Reset when user is at bottom
-    }
-  }, [items, isOpen])
+      isUserScrolling: previous.isUserScrolling && !isNearBottom, // Reset when user is at bottom
+    };
+  }, [items, isOpen]);
 
   if (items.length === 0) {
-    return null
+    return null;
   }
 
-  const isTaskInProgress = ['RUNNING', 'PENDING', 'PROCESSING'].includes(taskStatus ?? '')
   const isThinkingCompleted =
     taskStatus === 'COMPLETED' ||
     taskStatus === 'FAILED' ||
-    items.some(item => item.value !== null && item.value !== undefined && item.value !== '')
+    items.some(item => item.value !== null && item.value !== undefined && item.value !== '');
 
   const toggleOpen = () =>
     setIsOpen(prev => {
-      const next = !prev
-      userCollapsedRef.current = !next
-      return next
-    })
+      const next = !prev;
+      userCollapsedRef.current = !next;
+      return next;
+    });
 
   // Handler for clicking the scroll to bottom button
   const handleScrollToBottom = () => {
-    const container = contentRef.current
-    if (!container) return
+    const container = contentRef.current;
+    if (!container) return;
 
-    container.scrollTop = container.scrollHeight
-    scrollStateRef.current.isUserScrolling = false
-    setShowScrollToBottom(false)
-  }
+    container.scrollTop = container.scrollHeight;
+    scrollStateRef.current.isUserScrolling = false;
+    setShowScrollToBottom(false);
+  };
 
   const getThinkingText = (key: string): string => {
-    if (!key) return ''
+    if (!key) return '';
 
-    const templateRegex = /\$\{([^}]+)\}/g
-    let match: RegExpExecArray | null
-    let result = key
+    const templateRegex = /\$\{([^}]+)\}/g;
+    let match: RegExpExecArray | null;
+    let result = key;
 
     while ((match = templateRegex.exec(key)) !== null) {
-      const templateKey = match[1]
+      const templateKey = match[1];
       if (templateKey.includes('.')) {
-        const translatedText = t(templateKey) || templateKey
-        result = result.replace(match[0], translatedText)
+        const translatedText = t(templateKey) || templateKey;
+        result = result.replace(match[0], translatedText);
       } else {
-        result = result.replace(match[0], templateKey)
+        result = result.replace(match[0], templateKey);
       }
     }
 
     if (result === key && key.includes('.')) {
-      return t(key) || key
+      return t(key) || key;
     }
 
-    return result
-  }
+    return result;
+  };
 
   const formatConfidence = (confidence?: number) => {
-    if (confidence === undefined || confidence === null || confidence === -1) return null
-    return `${Math.round(confidence * 100)}%`
-  }
+    if (confidence === undefined || confidence === null || confidence === -1) return null;
+    return `${Math.round(confidence * 100)}%`;
+  };
 
   // Parse <tool_call> tags from text content
   interface ParsedToolCall {
-    toolName: string
-    args: Record<string, string>
-    beforeText: string
-    afterText: string
+    toolName: string;
+    args: Record<string, string>;
+    beforeText: string;
+    afterText: string;
   }
 
   const parseToolCallTags = (text: string): ParsedToolCall | null => {
     // Match <tool_call>...</tool_call> pattern
-    const toolCallRegex = /<tool_call>([\s\S]*?)<\/tool_call>/
-    const match = text.match(toolCallRegex)
-    
-    if (!match) return null
+    const toolCallRegex = /<tool_call>([\s\S]*?)<\/tool_call>/;
+    const match = text.match(toolCallRegex);
 
-    const toolCallContent = match[1]
-    const beforeText = text.substring(0, match.index).trim()
-    const afterText = text.substring(match.index! + match[0].length).trim()
+    if (!match) return null;
+
+    const toolCallContent = match[1];
+    const beforeText = text.substring(0, match.index).trim();
+    const afterText = text.substring(match.index! + match[0].length).trim();
 
     // Extract tool name from the content before first <arg_key>
-    const toolNameMatch = toolCallContent.match(/^\s*(\w+)\s*</)
-    const toolName = toolNameMatch ? toolNameMatch[1] : 'Unknown'
+    const toolNameMatch = toolCallContent.match(/^\s*(\w+)\s*</);
+    const toolName = toolNameMatch ? toolNameMatch[1] : 'Unknown';
 
     // Special handling for TodoWrite
     if (toolName === 'TodoWrite') {
-      const todosMatch = toolCallContent.match(/<arg_key>todos<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/)
+      const todosMatch = toolCallContent.match(
+        /<arg_key>todos<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/
+      );
       if (todosMatch) {
         return {
           toolName,
           args: { todos: todosMatch[1] },
           beforeText,
-          afterText
-        }
+          afterText,
+        };
       }
     }
 
     // Extract all arguments
-    const args: Record<string, string> = {}
-    const argRegex = /<arg_key>(.*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g
-    let argMatch
+    const args: Record<string, string> = {};
+    const argRegex = /<arg_key>(.*?)<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g;
+    let argMatch;
 
     while ((argMatch = argRegex.exec(toolCallContent)) !== null) {
-      const key = argMatch[1].trim()
-      const value = argMatch[2].trim()
-      args[key] = value
+      const key = argMatch[1].trim();
+      const value = argMatch[2].trim();
+      args[key] = value;
     }
 
     return {
       toolName,
       args,
       beforeText,
-      afterText
-    }
-  }
+      afterText,
+    };
+  };
   // Check if content should be collapsible (more than 3 lines or long single lines)
   const shouldCollapse = (content: string): boolean => {
-    const lines = content.split('\n')
-    
+    const lines = content.split('\n');
+
     // Check if there are more than 3 lines
     if (lines.length > 3) {
-      return true
+      return true;
     }
-    
+
     // Check if any single line is too long (more than 100 characters)
     // This accounts for automatic wrapping in the UI
-    const hasLongLine = lines.some(line => line.length > 100)
-    
+    const hasLongLine = lines.some(line => line.length > 100);
+
     // Also check total character count as a fallback
-    const isLongContent = content.length > 300
-    
-    return hasLongLine || isLongContent
-  }
+    const isLongContent = content.length > 300;
+
+    return hasLongLine || isLongContent;
+  };
 
   // Get preview of content (first 3 lines or truncated long lines)
   const getContentPreview = (content: string): string => {
-    const lines = content.split('\n')
-    const previewLines = []
-    
+    const lines = content.split('\n');
+    const previewLines = [];
+
     for (let i = 0; i < Math.min(lines.length, 3); i++) {
-      const line = lines[i]
+      const line = lines[i];
       // If line is very long, truncate it
       if (line.length > 100) {
-        previewLines.push(line.substring(0, 100) + '...')
+        previewLines.push(line.substring(0, 100) + '...');
       } else {
-        previewLines.push(line)
+        previewLines.push(line);
       }
     }
-    
-    return previewLines.join('\n')
-  }
+
+    return previewLines.join('\n');
+  };
 
   // Toggle parameter expansion
   const toggleParamExpansion = (paramKey: string) => {
     setExpandedParams(prev => {
-      const newSet = new Set(prev)
+      const newSet = new Set(prev);
       if (newSet.has(paramKey)) {
-        newSet.delete(paramKey)
+        newSet.delete(paramKey);
       } else {
-        newSet.add(paramKey)
+        newSet.add(paramKey);
       }
-      return newSet
-    })
-  }
+      return newSet;
+    });
+  };
 
   // Render text content with tool_call parsing
   const renderTextContent = (text: string, uniqueId: string) => {
-    const parsed = parseToolCallTags(text)
-    
+    const parsed = parseToolCallTags(text);
+
     if (!parsed) {
       // Check if this is a TodoWrite tool call in text format
-      const todoWriteMatch = text.match(/<tool_call>TodoWrite\s*<arg_key>todos<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/)
+      const todoWriteMatch = text.match(
+        /<tool_call>TodoWrite\s*<arg_key>todos<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/
+      );
       if (todoWriteMatch) {
         try {
-          const todosData = JSON.parse(todoWriteMatch[1])
+          const todosData = JSON.parse(todoWriteMatch[1]);
           return (
             <div className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
               <div className="text-xs font-medium text-blue-400 mb-2">
                 {t('thinking.todo_list') || 'Todo List'}
               </div>
               <div className="space-y-2">
-                {todosData.map((todo: any, todoIdx: number) => (
-                  <div key={todoIdx} className="flex items-start gap-2 p-2 bg-surface/50 rounded">
-                    <div className="flex-shrink-0 mt-0.5">
-                      {todo.status === 'in_progress' ? (
-                        <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse" title={t('thinking.todo_status_in_progress') || 'In Progress'}></div>
-                      ) : todo.status === 'completed' ? (
-                        <div className="w-3 h-3 rounded-full bg-green-400" title={t('thinking.todo_status_completed') || 'Completed'}></div>
-                      ) : (
-                        <div className="w-3 h-3 rounded-full bg-gray-400" title={t('thinking.todo_status_pending') || 'Pending'}></div>
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs text-text-secondary font-medium">
-                        {todo.content}
-                      </div>
-                      {todo.activeForm && (
-                        <div className="text-xs text-text-tertiary mt-1 italic">
-                          {todo.activeForm}
+                {Array.isArray(todosData) &&
+                  todosData.map((todo: unknown, todoIdx: number) => {
+                    const todoItem = todo as TodoItem;
+                    return (
+                      <div
+                        key={todoIdx}
+                        className="flex items-start gap-2 p-2 bg-surface/50 rounded"
+                      >
+                        <div className="flex-shrink-0 mt-0.5">
+                          {todoItem.status === 'in_progress' ? (
+                            <div
+                              className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"
+                              title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                            ></div>
+                          ) : todoItem.status === 'completed' ? (
+                            <div
+                              className="w-3 h-3 rounded-full bg-green-400"
+                              title={t('thinking.todo_status_completed') || 'Completed'}
+                            ></div>
+                          ) : (
+                            <div
+                              className="w-3 h-3 rounded-full bg-gray-400"
+                              title={t('thinking.todo_status_pending') || 'Pending'}
+                            ></div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
+                        <div className="flex-1 min-w-0">
+                          <div className="text-xs text-text-secondary font-medium">
+                            {todoItem.content}
+                          </div>
+                          {todoItem.activeForm && (
+                            <div className="text-xs text-text-tertiary mt-1 italic">
+                              {todoItem.activeForm}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
               </div>
             </div>
-          )
-        } catch (error) {
+          );
+        } catch {
           // If parsing fails, fall back to regular text rendering
         }
       }
-      
+
       // No tool_call tags, render as plain text with collapse support
-      const isCollapsible = shouldCollapse(text)
-      const textKey = `${uniqueId}-text`
-      const isExpanded = expandedParams.has(textKey)
-      const displayText = isCollapsible && !isExpanded ? getContentPreview(text) : text
+      const isCollapsible = shouldCollapse(text);
+      const textKey = `${uniqueId}-text`;
+      const isExpanded = expandedParams.has(textKey);
+      const displayText = isCollapsible && !isExpanded ? getContentPreview(text) : text;
 
       return (
         <div className="text-xs text-text-secondary">
@@ -400,7 +440,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
           </div>
         </div>
-      )
+      );
     }
 
     // Render with parsed tool_call
@@ -409,7 +449,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         {parsed.beforeText && (
           <div className="text-xs text-text-secondary whitespace-pre-wrap">{parsed.beforeText}</div>
         )}
-        
+
         {/* Special handling for TodoWrite */}
         {parsed.toolName === 'TodoWrite' && parsed.args.todos ? (
           <div className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
@@ -419,36 +459,54 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             <div className="space-y-2">
               {(() => {
                 try {
-                  const todosData = JSON.parse(parsed.args.todos)
-                  return todosData.map((todo: any, todoIdx: number) => (
-                    <div key={todoIdx} className="flex items-start gap-2 p-2 bg-surface/50 rounded">
-                      <div className="flex-shrink-0 mt-0.5">
-                        {todo.status === 'in_progress' ? (
-                          <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse" title={t('thinking.todo_status_in_progress') || 'In Progress'}></div>
-                        ) : todo.status === 'completed' ? (
-                          <div className="w-3 h-3 rounded-full bg-green-400" title={t('thinking.todo_status_completed') || 'Completed'}></div>
-                        ) : (
-                          <div className="w-3 h-3 rounded-full bg-gray-400" title={t('thinking.todo_status_pending') || 'Pending'}></div>
-                        )}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-xs text-text-secondary font-medium">
-                          {todo.content}
-                        </div>
-                        {todo.activeForm && (
-                          <div className="text-xs text-text-tertiary mt-1 italic">
-                            {todo.activeForm}
+                  const todosData = JSON.parse(parsed.args.todos);
+                  return (
+                    Array.isArray(todosData) &&
+                    todosData.map((todo: unknown, todoIdx: number) => {
+                      const todoItem = todo as TodoItem;
+                      return (
+                        <div
+                          key={todoIdx}
+                          className="flex items-start gap-2 p-2 bg-surface/50 rounded"
+                        >
+                          <div className="flex-shrink-0 mt-0.5">
+                            {todoItem.status === 'in_progress' ? (
+                              <div
+                                className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"
+                                title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                              ></div>
+                            ) : todoItem.status === 'completed' ? (
+                              <div
+                                className="w-3 h-3 rounded-full bg-green-400"
+                                title={t('thinking.todo_status_completed') || 'Completed'}
+                              ></div>
+                            ) : (
+                              <div
+                                className="w-3 h-3 rounded-full bg-gray-400"
+                                title={t('thinking.todo_status_pending') || 'Pending'}
+                              ></div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </div>
-                  ))
-                } catch (error) {
+                          <div className="flex-1 min-w-0">
+                            <div className="text-xs text-text-secondary font-medium">
+                              {todoItem.content}
+                            </div>
+                            {todoItem.activeForm && (
+                              <div className="text-xs text-text-tertiary mt-1 italic">
+                                {todoItem.activeForm}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })
+                  );
+                } catch {
                   return (
                     <pre className="text-xs text-text-tertiary overflow-x-auto bg-surface/50 p-1.5 rounded">
                       {parsed.args.todos}
                     </pre>
-                  )
+                  );
                 }
               })()}
             </div>
@@ -465,21 +523,22 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             </div>
           </div>
         )}
-        
+
         {parsed.afterText && (
           <div className="text-xs text-text-secondary whitespace-pre-wrap">{parsed.afterText}</div>
         )}
       </div>
-    )
-  }
+    );
+  };
 
   // Render parameter value with collapse/expand support
-  const renderParamValue = (key: string, value: any, uniqueId: string) => {
-    const stringValue = typeof value === 'string' ? value : JSON.stringify(value, null, 2)
-    const isCollapsible = shouldCollapse(stringValue)
-    const paramKey = `${uniqueId}-${key}`
-    const isExpanded = expandedParams.has(paramKey)
-    const displayValue = isCollapsible && !isExpanded ? getContentPreview(stringValue) : stringValue
+  const renderParamValue = (key: string, value: unknown, uniqueId: string) => {
+    const stringValue = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    const isCollapsible = shouldCollapse(stringValue);
+    const paramKey = `${uniqueId}-${key}`;
+    const isExpanded = expandedParams.has(paramKey);
+    const displayValue =
+      isCollapsible && !isExpanded ? getContentPreview(stringValue) : stringValue;
 
     return (
       <div className="text-xs">
@@ -489,7 +548,9 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             <button
               onClick={() => toggleParamExpansion(paramKey)}
               className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
-              title={isExpanded ? t('thinking.collapse') || 'Collapse' : t('thinking.expand') || 'Expand'}
+              title={
+                isExpanded ? t('thinking.collapse') || 'Collapse' : t('thinking.expand') || 'Expand'
+              }
             >
               {isExpanded ? (
                 <>
@@ -510,56 +571,75 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
           {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
         </pre>
       </div>
-    )
-  }
+    );
+  };
 
   // Render details content based on type
   const renderDetailsContent = (item: ThinkingStep, itemIndex: number) => {
-    const details = item.details
-    if (!details) return null
+    const details = item.details;
+    if (!details) return null;
 
     // Handle assistant message with content array
-    if ((details.type === 'assistant' || details.type === 'user')&& details.message?.content) {
+    if ((details.type === 'assistant' || details.type === 'user') && details.message?.content) {
       return (
         <div className="mt-2 space-y-2">
           {details.message.content.map((content, idx) => {
             if (content.type === 'tool_use') {
               // Special handling for TodoWrite tool
-              if (content.name === 'TodoWrite' && content.input?.todos) {
+              if (
+                content.name === 'TodoWrite' &&
+                content.input &&
+                typeof content.input === 'object' &&
+                'todos' in content.input
+              ) {
+                const inputObj = content.input as TodoListData;
                 return (
                   <div key={idx} className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
                     <div className="text-xs font-medium text-blue-400 mb-2">
                       {t('thinking.todo_list') || 'Todo List'}
                     </div>
                     <div className="space-y-2">
-                      {content.input.todos.map((todo: any, todoIdx: number) => (
-                        <div key={todoIdx} className="flex items-start gap-2 p-2 bg-surface/50 rounded">
-                          <div className="flex-shrink-0 mt-0.5">
-                            {todo.status === 'in_progress' ? (
-                              <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse" title={t('thinking.todo_status_in_progress') || 'In Progress'}></div>
-                            ) : todo.status === 'completed' ? (
-                              <div className="w-3 h-3 rounded-full bg-green-400" title={t('thinking.todo_status_completed') || 'Completed'}></div>
-                            ) : (
-                              <div className="w-3 h-3 rounded-full bg-gray-400" title={t('thinking.todo_status_pending') || 'Pending'}></div>
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-xs text-text-secondary font-medium">
-                              {todo.content}
+                      {Array.isArray(inputObj.todos) &&
+                        inputObj.todos.map((todo, todoIdx: number) => (
+                          <div
+                            key={todoIdx}
+                            className="flex items-start gap-2 p-2 bg-surface/50 rounded"
+                          >
+                            <div className="flex-shrink-0 mt-0.5">
+                              {todo.status === 'in_progress' ? (
+                                <div
+                                  className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"
+                                  title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                                ></div>
+                              ) : todo.status === 'completed' ? (
+                                <div
+                                  className="w-3 h-3 rounded-full bg-green-400"
+                                  title={t('thinking.todo_status_completed') || 'Completed'}
+                                ></div>
+                              ) : (
+                                <div
+                                  className="w-3 h-3 rounded-full bg-gray-400"
+                                  title={t('thinking.todo_status_pending') || 'Pending'}
+                                ></div>
+                              )}
                             </div>
-                            {todo.activeForm && (
-                              <div className="text-xs text-text-tertiary mt-1 italic">
-                                {todo.activeForm}
+                            <div className="flex-1 min-w-0">
+                              <div className="text-xs text-text-secondary font-medium">
+                                {todo.content}
                               </div>
-                            )}
+                              {todo.activeForm && (
+                                <div className="text-xs text-text-tertiary mt-1 italic">
+                                  {todo.activeForm}
+                                </div>
+                              )}
+                            </div>
                           </div>
-                        </div>
-                      ))}
+                        ))}
                     </div>
                   </div>
-                )
+                );
               }
-              
+
               return (
                 <div key={idx} className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
                   <div className="text-xs font-medium text-blue-400 mb-2">
@@ -579,18 +659,27 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                     </div>
                   )}
                 </div>
-              )
+              );
             } else if (content.type === 'tool_result') {
-              const resultContent = typeof content.content === 'string' ? content.content : JSON.stringify(content.content, null, 2)
-              const isCollapsible = shouldCollapse(resultContent)
-              const resultKey = `item-${itemIndex}-result-${idx}`
-              const isExpanded = expandedParams.has(resultKey)
-              const displayContent = isCollapsible && !isExpanded ? getContentPreview(resultContent) : resultContent
+              const resultContent =
+                typeof content.content === 'string'
+                  ? content.content
+                  : JSON.stringify(content.content, null, 2);
+              const isCollapsible = shouldCollapse(resultContent);
+              const resultKey = `item-${itemIndex}-result-${idx}`;
+              const isExpanded = expandedParams.has(resultKey);
+              const displayContent =
+                isCollapsible && !isExpanded ? getContentPreview(resultContent) : resultContent;
 
               return (
-                <div key={idx} className={`rounded p-2 border ${content.is_error ? 'bg-red-500/5 border-red-500/20' : 'bg-green-500/5 border-green-500/20'}`}>
+                <div
+                  key={idx}
+                  className={`rounded p-2 border ${content.is_error ? 'bg-red-500/5 border-red-500/20' : 'bg-green-500/5 border-green-500/20'}`}
+                >
                   <div className="flex items-center justify-between mb-1">
-                    <div className={`text-xs font-medium ${content.is_error ? 'text-red-400' : 'text-green-400'}`}>
+                    <div
+                      className={`text-xs font-medium ${content.is_error ? 'text-red-400' : 'text-green-400'}`}
+                    >
                       {content.is_error ? '❌' : '✅'} {t('thinking.tool_result') || 'Tool Result'}
                     </div>
                     {isCollapsible && (
@@ -617,58 +706,72 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                     {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
                   </pre>
                 </div>
-              )
+              );
             } else if (content.type === 'text' && content.text) {
               return (
                 <div key={idx}>
                   {renderTextContent(content.text, `item-${itemIndex}-text-${idx}`)}
                 </div>
-              )
+              );
             }
-            return null
+            return null;
           })}
         </div>
-      )
+      );
     }
 
     // Handle direct tool_use type
     if (details.type === 'tool_use') {
       // Special handling for TodoWrite tool
-      if (details.name === 'TodoWrite' && details.input?.todos) {
+      if (
+        details.name === 'TodoWrite' &&
+        details.input &&
+        typeof details.input === 'object' &&
+        'todos' in details.input
+      ) {
+        const inputObj = details.input as TodoListData;
         return (
           <div className="mt-2 rounded bg-blue-500/5 p-2 border border-blue-500/20">
             <div className="text-xs font-medium text-blue-400 mb-2">
               {t('thinking.todo_list') || 'Todo List'}
             </div>
             <div className="space-y-2">
-              {details.input.todos.map((todo: any, todoIdx: number) => (
-                <div key={todoIdx} className="flex items-start gap-2 p-2 bg-surface/50 rounded">
-                  <div className="flex-shrink-0 mt-0.5">
-                    {todo.status === 'in_progress' ? (
-                      <div className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse" title={t('thinking.todo_status_in_progress') || 'In Progress'}></div>
-                    ) : todo.status === 'completed' ? (
-                      <div className="w-3 h-3 rounded-full bg-green-400" title={t('thinking.todo_status_completed') || 'Completed'}></div>
-                    ) : (
-                      <div className="w-3 h-3 rounded-full bg-gray-400" title={t('thinking.todo_status_pending') || 'Pending'}></div>
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="text-xs text-text-secondary font-medium">
-                      {todo.content}
+              {Array.isArray(inputObj.todos) &&
+                inputObj.todos.map((todo, todoIdx: number) => (
+                  <div key={todoIdx} className="flex items-start gap-2 p-2 bg-surface/50 rounded">
+                    <div className="flex-shrink-0 mt-0.5">
+                      {todo.status === 'in_progress' ? (
+                        <div
+                          className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"
+                          title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                        ></div>
+                      ) : todo.status === 'completed' ? (
+                        <div
+                          className="w-3 h-3 rounded-full bg-green-400"
+                          title={t('thinking.todo_status_completed') || 'Completed'}
+                        ></div>
+                      ) : (
+                        <div
+                          className="w-3 h-3 rounded-full bg-gray-400"
+                          title={t('thinking.todo_status_pending') || 'Pending'}
+                        ></div>
+                      )}
                     </div>
-                    {todo.activeForm && (
-                      <div className="text-xs text-text-tertiary mt-1 italic">
-                        {todo.activeForm}
-                      </div>
-                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs text-text-secondary font-medium">{todo.content}</div>
+                      {todo.activeForm && (
+                        <div className="text-xs text-text-tertiary mt-1 italic">
+                          {todo.activeForm}
+                        </div>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                ))}
             </div>
           </div>
-        )
+        );
       }
-      
+
       return (
         <div className="mt-2 rounded bg-blue-500/5 p-2 border border-blue-500/20">
           <div className="text-xs font-medium text-blue-400 mb-2">
@@ -688,21 +791,29 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             </div>
           )}
         </div>
-      )
+      );
     }
 
     // Handle direct tool_result type
     if (details.type === 'tool_result') {
-      const resultContent = typeof details.content === 'string' ? details.content : JSON.stringify(details.content, null, 2)
-      const isCollapsible = shouldCollapse(resultContent)
-      const resultKey = `item-${itemIndex}-direct-result`
-      const isExpanded = expandedParams.has(resultKey)
-      const displayContent = isCollapsible && !isExpanded ? getContentPreview(resultContent) : resultContent
+      const resultContent =
+        typeof details.content === 'string'
+          ? details.content
+          : JSON.stringify(details.content, null, 2);
+      const isCollapsible = shouldCollapse(resultContent);
+      const resultKey = `item-${itemIndex}-direct-result`;
+      const isExpanded = expandedParams.has(resultKey);
+      const displayContent =
+        isCollapsible && !isExpanded ? getContentPreview(resultContent) : resultContent;
 
       return (
-        <div className={`mt-2 rounded p-2 border ${details.is_error ? 'bg-red-500/5 border-red-500/20' : 'bg-green-500/5 border-green-500/20'}`}>
+        <div
+          className={`mt-2 rounded p-2 border ${details.is_error ? 'bg-red-500/5 border-red-500/20' : 'bg-green-500/5 border-green-500/20'}`}
+        >
           <div className="flex items-center justify-between mb-1">
-            <div className={`text-xs font-medium ${details.is_error ? 'text-red-400' : 'text-green-400'}`}>
+            <div
+              className={`text-xs font-medium ${details.is_error ? 'text-red-400' : 'text-green-400'}`}
+            >
               {details.is_error ? '❌' : '✅'} {t('thinking.tool_result') || 'Tool Result'}
             </div>
             {isCollapsible && (
@@ -729,7 +840,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
           </pre>
         </div>
-      )
+      );
     }
 
     // Handle result message type
@@ -745,11 +856,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {details.duration_ms !== undefined && <div>Duration: {details.duration_ms}ms</div>}
             {/*{details.total_cost_usd !== undefined && <div>Cost: ${details.total_cost_usd.toFixed(4)}</div>}*/}
             {details.usage && (
-              <div>Tokens: {details.usage.input_tokens || 0} in / {details.usage.output_tokens || 0} out</div>
+              <div>
+                Tokens: {details.usage.input_tokens || 0} in / {details.usage.output_tokens || 0}{' '}
+                out
+              </div>
             )}
           </div>
         </div>
-      )
+      );
     }
 
     // Handle system message type
@@ -759,7 +873,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
           <div className="text-xs font-medium text-gray-400 mb-2">
             ⚙️ {t('thinking.system_message') || 'System Message'}: {details.subtype}
           </div>
-          
+
           {/* Show key system information */}
           <div className="space-y-1 text-xs text-text-tertiary">
             {/* Model information */}
@@ -769,64 +883,81 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                 <span>{details.model}</span>
               </div>
             )}
-            
+
             {/* Tools count */}
             {details.tools && Array.isArray(details.tools) && (
               <div className="flex items-center gap-1">
                 <span className="font-medium">{t('thinking.system_tools') || 'Tools'}:</span>
-                <span>{details.tools.length} {t('thinking.system_tools_available') || 'available'}</span>
+                <span>
+                  {details.tools.length} {t('thinking.system_tools_available') || 'available'}
+                </span>
               </div>
             )}
-            
+
             {/* MCP Servers status */}
-            {details.mcp_servers && Array.isArray(details.mcp_servers) && details.mcp_servers.length > 0 && (
-              <div className="flex items-center gap-1">
-                <span className="font-medium">{t('thinking.system_mcp_servers') || 'MCP Servers'}:</span>
-                <div className="flex gap-2">
-                  {details.mcp_servers.map((server: any, idx: number) => (
-                    <span key={idx} className={`px-1.5 py-0.5 rounded text-xs ${
-                      server.status === 'connected'
-                        ? 'bg-green-500/10 text-green-400'
-                        : 'bg-red-500/10 text-red-400'
-                    }`}>
-                      {server.name}
-                    </span>
-                  ))}
+            {details.mcp_servers &&
+              Array.isArray(details.mcp_servers) &&
+              details.mcp_servers.length > 0 && (
+                <div className="flex items-center gap-1">
+                  <span className="font-medium">
+                    {t('thinking.system_mcp_servers') || 'MCP Servers'}:
+                  </span>
+                  <div className="flex gap-2">
+                    {details.mcp_servers.map((server: unknown, idx: number) => {
+                      const serverObj = server as { status?: string; name?: string };
+                      return (
+                        <span
+                          key={idx}
+                          className={`px-1.5 py-0.5 rounded text-xs ${
+                            serverObj.status === 'connected'
+                              ? 'bg-green-500/10 text-green-400'
+                              : 'bg-red-500/10 text-red-400'
+                          }`}
+                        >
+                          {serverObj.name}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            )}
-            
+              )}
+
             {/* Permission mode */}
             {details.permissionMode && (
               <div className="flex items-center gap-1">
-                <span className="font-medium">{t('thinking.system_permission') || 'Permission'}:</span>
+                <span className="font-medium">
+                  {t('thinking.system_permission') || 'Permission'}:
+                </span>
                 <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-xs">
                   {details.permissionMode}
                 </span>
               </div>
             )}
-            
+
             {/* Working directory */}
             {details.cwd && details.cwd !== '/app/executor' && (
               <div className="flex items-center gap-1">
-                <span className="font-medium">{t('thinking.system_directory') || 'Directory'}:</span>
+                <span className="font-medium">
+                  {t('thinking.system_directory') || 'Directory'}:
+                </span>
                 <span className="text-xs">{details.cwd}</span>
               </div>
             )}
           </div>
         </div>
-      )
+      );
     }
 
     // Handle execution failed with error_message and execution_type
     if (details.error_message || details.execution_type) {
       return (
         <div className="mt-2 rounded bg-red-500/5 p-2 border border-red-500/20">
-
           <div className="space-y-2">
             {details.error_message && (
               <div className="text-xs">
-                <span className="font-medium text-red-300">{t('thinking.error_message') || 'Error Message'}:</span>
+                <span className="font-medium text-red-300">
+                  {t('thinking.error_message') || 'Error Message'}:
+                </span>
                 <pre className="mt-1 text-text-tertiary overflow-x-auto bg-surface/50 p-1.5 rounded whitespace-pre-wrap break-words">
                   {details.error_message}
                 </pre>
@@ -834,183 +965,219 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             )}
             {details.execution_type && (
               <div className="text-xs">
-                <span className="font-medium text-red-300">{t('thinking.execution_type') || 'Execution Type'}:</span>
+                <span className="font-medium text-red-300">
+                  {t('thinking.execution_type') || 'Execution Type'}:
+                </span>
                 <span className="ml-2 text-text-tertiary">{details.execution_type}</span>
               </div>
             )}
           </div>
         </div>
-      )
+      );
     }
 
-    return null
-  }
+    return null;
+  };
 
   return (
-    <div className="w-full rounded-lg border border-border bg-surface/80 shadow-sm relative" data-thinking-inline>
-    <button
-      type="button"
-      onClick={toggleOpen}
-      className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-surface/60"
+    <div
+      className="w-full rounded-lg border border-border bg-surface/80 shadow-sm relative"
+      data-thinking-inline
     >
-      <div className="flex items-center gap-2">
-        <RiBrainLine className="h-4 w-4 text-blue-400" />
-        <span className={`text-sm font-medium ${isThinkingCompleted ? 'text-blue-300' : 'text-blue-400'}`}>
-          {isThinkingCompleted
-            ? (t('messages.thinking_completed') || 'Thinking Completed')
-            : (t('messages.thinking') || 'Thinking')}
-        </span>
-      </div>
-      {isOpen ? (
-        <FiChevronUp className="h-4 w-4 text-text-tertiary" />
-      ) : (
-        <FiChevronDown className="h-4 w-4 text-text-tertiary" />
-      )}
-    </button>
-
-    {isOpen && (
-      <div className="relative">
-        <div
-          ref={contentRef}
-          className="space-y-3 px-3 pb-3 pt-1 max-h-[400px] overflow-y-auto custom-scrollbar"
-        >
-          {items.map((item, index) => {
-            const confidenceText = formatConfidence(item.confidence)
-            const hasLegacyFields = item.action || item.result || item.reasoning
-            
-            return (
-              <div key={index} className="rounded-md border border-border/60 bg-surface p-3 shadow-sm relative">
-                {/* Title */}
-                <div className="mb-2 text-xs font-semibold text-blue-300">{getThinkingText(item.title)}</div>
-                
-                {/* Legacy fields for backward compatibility */}
-                {hasLegacyFields && (
-                  <>
-                    {item.action && (
-                      <div className="mb-2 text-xs text-text-secondary">
-                        <span className="font-medium">{t('messages.action') || 'Action'}: </span>
-                        {getThinkingText(item.action)}
-                      </div>
-                    )}
-                    {item.result && (
-                      <div key="result" className="mb-2 text-xs text-text-tertiary">
-                        <span className="font-medium">{t('messages.result') || 'Result'}: </span>
-                        {(() => {
-                          const resultText = getThinkingText(item.result)
-                          const isCollapsible = shouldCollapse(resultText)
-                          const resultKey = `item-${index}-legacy-result`
-                          const isExpanded = expandedParams.has(resultKey)
-                          const displayResult = isCollapsible && !isExpanded ? getContentPreview(resultText) : resultText
-
-                          return (
-                            <div>
-                              {isCollapsible && (
-                                <div className="flex justify-end mb-1">
-                                  <button
-                                    onClick={() => toggleParamExpansion(resultKey)}
-                                    className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
-                                  >
-                                    {isExpanded ? (
-                                      <>
-                                        <FiMinimize2 className="h-3 w-3" />
-                                        <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <FiMaximize2 className="h-3 w-3" />
-                                        <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
-                                      </>
-                                    )}
-                                  </button>
-                                </div>
-                              )}
-                              <div className="whitespace-pre-wrap">
-                                {displayResult}
-                                {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
-                              </div>
-                            </div>
-                          )
-                        })()}
-                      </div>
-                    )}
-                    {item.reasoning && (
-                      <div key="reasoning" className="mb-2 text-xs text-text-tertiary">
-                        <span className="font-medium">{t('messages.reasoning') || 'Reasoning'}: </span>
-                        {(() => {
-                          const reasoningText = getThinkingText(item.reasoning)
-                          const isCollapsible = shouldCollapse(reasoningText)
-                          const reasoningKey = `item-${index}-legacy-reasoning`
-                          const isExpanded = expandedParams.has(reasoningKey)
-                          const displayReasoning = isCollapsible && !isExpanded ? getContentPreview(reasoningText) : reasoningText
-
-                          return (
-                            <div>
-                              {isCollapsible && (
-                                <div className="flex justify-end mb-1">
-                                  <button
-                                    onClick={() => toggleParamExpansion(reasoningKey)}
-                                    className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
-                                  >
-                                    {isExpanded ? (
-                                      <>
-                                        <FiMinimize2 className="h-3 w-3" />
-                                        <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
-                                      </>
-                                    ) : (
-                                      <>
-                                        <FiMaximize2 className="h-3 w-3" />
-                                        <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
-                                      </>
-                                    )}
-                                  </button>
-                                </div>
-                              )}
-                              <div className="whitespace-pre-wrap">
-                                {displayReasoning}
-                                {isCollapsible && !isExpanded && <span className="text-blue-400">...</span>}
-                              </div>
-                            </div>
-                          )
-                        })()}
-                      </div>
-                    )}
-                  </>
-                )}
-                
-                {/* New details field */}
-                {renderDetailsContent(item, index)}
-                
-                {/* Footer with confidence and next_action */}
-                <div className="flex flex-wrap items-center justify-between gap-2 mt-3">
-                  {confidenceText && (
-                    <div className="text-xs text-text-tertiary">
-                      <span className="font-medium">{t('messages.confidence') || 'Confidence'}: </span>
-                      {confidenceText}
-                    </div>
-                  )}
-                  {item.next_action && item.next_action !== 'continue' && item.next_action !== 'thinking.continue' && (
-                    <div className="rounded bg-blue-500/10 px-2.5 py-1 text-xs text-blue-400 shadow-sm">
-                      {getThinkingText(item.next_action)}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )
-          })}
-        </div>
-
-        {/* Scroll to bottom button */}
-        {showScrollToBottom && (
-          <button
-            onClick={handleScrollToBottom}
-            className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-xs text-white shadow-md transition-all hover:bg-primary/90"
+      <button
+        type="button"
+        onClick={toggleOpen}
+        className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-surface/60"
+      >
+        <div className="flex items-center gap-2">
+          <RiBrainLine className="h-4 w-4 text-blue-400" />
+          <span
+            className={`text-sm font-medium ${isThinkingCompleted ? 'text-blue-300' : 'text-blue-400'}`}
           >
-            <FiChevronsDown className="h-3 w-3" />
-            <span>{t('thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
-          </button>
+            {isThinkingCompleted
+              ? t('messages.thinking_completed') || 'Thinking Completed'
+              : t('messages.thinking') || 'Thinking'}
+          </span>
+        </div>
+        {isOpen ? (
+          <FiChevronUp className="h-4 w-4 text-text-tertiary" />
+        ) : (
+          <FiChevronDown className="h-4 w-4 text-text-tertiary" />
         )}
-      </div>
-    )}
-  </div>
-)
+      </button>
+
+      {isOpen && (
+        <div className="relative">
+          <div
+            ref={contentRef}
+            className="space-y-3 px-3 pb-3 pt-1 max-h-[400px] overflow-y-auto custom-scrollbar"
+          >
+            {items.map((item, index) => {
+              const confidenceText = formatConfidence(item.confidence);
+              const hasLegacyFields = item.action || item.result || item.reasoning;
+
+              return (
+                <div
+                  key={index}
+                  className="rounded-md border border-border/60 bg-surface p-3 shadow-sm relative"
+                >
+                  {/* Title */}
+                  <div className="mb-2 text-xs font-semibold text-blue-300">
+                    {getThinkingText(item.title)}
+                  </div>
+
+                  {/* Legacy fields for backward compatibility */}
+                  {hasLegacyFields && (
+                    <>
+                      {item.action && (
+                        <div className="mb-2 text-xs text-text-secondary">
+                          <span className="font-medium">{t('messages.action') || 'Action'}: </span>
+                          {getThinkingText(item.action)}
+                        </div>
+                      )}
+                      {item.result && (
+                        <div key="result" className="mb-2 text-xs text-text-tertiary">
+                          <span className="font-medium">{t('messages.result') || 'Result'}: </span>
+                          {(() => {
+                            const resultText = getThinkingText(item.result);
+                            const isCollapsible = shouldCollapse(resultText);
+                            const resultKey = `item-${index}-legacy-result`;
+                            const isExpanded = expandedParams.has(resultKey);
+                            const displayResult =
+                              isCollapsible && !isExpanded
+                                ? getContentPreview(resultText)
+                                : resultText;
+
+                            return (
+                              <div>
+                                {isCollapsible && (
+                                  <div className="flex justify-end mb-1">
+                                    <button
+                                      onClick={() => toggleParamExpansion(resultKey)}
+                                      className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+                                    >
+                                      {isExpanded ? (
+                                        <>
+                                          <FiMinimize2 className="h-3 w-3" />
+                                          <span className="text-xs">
+                                            {t('thinking.collapse') || 'Collapse'}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <FiMaximize2 className="h-3 w-3" />
+                                          <span className="text-xs">
+                                            {t('thinking.expand') || 'Expand'}
+                                          </span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                )}
+                                <div className="whitespace-pre-wrap">
+                                  {displayResult}
+                                  {isCollapsible && !isExpanded && (
+                                    <span className="text-blue-400">...</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                      {item.reasoning && (
+                        <div key="reasoning" className="mb-2 text-xs text-text-tertiary">
+                          <span className="font-medium">
+                            {t('messages.reasoning') || 'Reasoning'}:{' '}
+                          </span>
+                          {(() => {
+                            const reasoningText = getThinkingText(item.reasoning);
+                            const isCollapsible = shouldCollapse(reasoningText);
+                            const reasoningKey = `item-${index}-legacy-reasoning`;
+                            const isExpanded = expandedParams.has(reasoningKey);
+                            const displayReasoning =
+                              isCollapsible && !isExpanded
+                                ? getContentPreview(reasoningText)
+                                : reasoningText;
+
+                            return (
+                              <div>
+                                {isCollapsible && (
+                                  <div className="flex justify-end mb-1">
+                                    <button
+                                      onClick={() => toggleParamExpansion(reasoningKey)}
+                                      className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
+                                    >
+                                      {isExpanded ? (
+                                        <>
+                                          <FiMinimize2 className="h-3 w-3" />
+                                          <span className="text-xs">
+                                            {t('thinking.collapse') || 'Collapse'}
+                                          </span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <FiMaximize2 className="h-3 w-3" />
+                                          <span className="text-xs">
+                                            {t('thinking.expand') || 'Expand'}
+                                          </span>
+                                        </>
+                                      )}
+                                    </button>
+                                  </div>
+                                )}
+                                <div className="whitespace-pre-wrap">
+                                  {displayReasoning}
+                                  {isCollapsible && !isExpanded && (
+                                    <span className="text-blue-400">...</span>
+                                  )}
+                                </div>
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </>
+                  )}
+
+                  {/* New details field */}
+                  {renderDetailsContent(item, index)}
+
+                  {/* Footer with confidence and next_action */}
+                  <div className="flex flex-wrap items-center justify-between gap-2 mt-3">
+                    {confidenceText && (
+                      <div className="text-xs text-text-tertiary">
+                        <span className="font-medium">
+                          {t('messages.confidence') || 'Confidence'}:{' '}
+                        </span>
+                        {confidenceText}
+                      </div>
+                    )}
+                    {item.next_action &&
+                      item.next_action !== 'continue' &&
+                      item.next_action !== 'thinking.continue' && (
+                        <div className="rounded bg-blue-500/10 px-2.5 py-1 text-xs text-blue-400 shadow-sm">
+                          {getThinkingText(item.next_action)}
+                        </div>
+                      )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Scroll to bottom button */}
+          {showScrollToBottom && (
+            <button
+              onClick={handleScrollToBottom}
+              className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-xs text-white shadow-md transition-all hover:bg-primary/90"
+            >
+              <FiChevronsDown className="h-3 w-3" />
+              <span>{t('thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }

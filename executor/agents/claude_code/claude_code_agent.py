@@ -13,11 +13,14 @@ import importlib
 import random
 import string
 import subprocess
+import re
 from typing import Dict, Any, List, Optional
 from pathlib import Path
+from datetime import datetime
 
 from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
 from executor.agents.claude_code.response_processor import process_response
+from executor.agents.claude_code.progress_state_manager import ProgressStateManager
 from executor.agents.base import Agent
 from executor.agents.agno.thinking_step_manager import ThinkingStepManager
 from executor.config import config
@@ -110,6 +113,9 @@ class ClaudeCodeAgent(Agent):
 
         # Initialize thinking step manager
         self.thinking_manager = ThinkingStepManager(progress_reporter=self.report_progress)
+        
+        # Initialize progress state manager - will be fully initialized when task starts
+        self.state_manager: Optional[ProgressStateManager] = None
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
@@ -235,6 +241,25 @@ class ClaudeCodeAgent(Agent):
         Clear all thinking steps
         """
         self.thinking_manager.clear_thinking_steps()
+    def _initialize_state_manager(self) -> None:
+        """
+        Initialize the progress state manager
+        """
+        if self.state_manager is None:
+            # Get project path from options or use default
+            project_path = self.options.get("cwd", self.project_path)
+            
+            self.state_manager = ProgressStateManager(
+                thinking_manager=self.thinking_manager,
+                task_data=self.task_data,
+                report_progress_callback=self.report_progress,
+                project_path=project_path
+            )
+            
+            # Set state_manager to thinking_manager for immediate reporting
+            self.thinking_manager.set_state_manager(self.state_manager)
+            
+            logger.info("Initialized progress state manager")
 
     def update_prompt(self, new_prompt: str) -> None:
         """
@@ -450,13 +475,18 @@ class ClaudeCodeAgent(Agent):
         """
         try:
             progress = 55
+            progress = 55
             # Update current progress
             self._update_progress(progress)
-            # Report starting progress
-            self.report_progress(
-                progress, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
+            
+            # Initialize state manager and workbench at task start
+            self._initialize_state_manager()
+            self.state_manager.initialize_workbench("running")
+            
+            # Report starting progress using state manager
+            self.state_manager.report_progress(
+                progress, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}"
             )
-
             # Check if currently running in coroutine
             try:
                 # Try to get current running event loop
@@ -500,9 +530,15 @@ class ClaudeCodeAgent(Agent):
         try:
             # Update current progress
             self._update_progress(60)
-            # Report starting progress
-            self.report_progress(
-                60, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
+            
+            # Initialize state manager and workbench if not already initialized
+            if self.state_manager is None:
+                self._initialize_state_manager()
+                self.state_manager.initialize_workbench("running")
+            
+            # Report starting progress using state manager
+            self.state_manager.report_progress(
+                60, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}"
             )
             return await self._async_execute()
         except Exception as e:
@@ -574,31 +610,10 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Waiting for response for prompt: {prompt}")
             # Process and handle the response using the external processor
-            return await process_response(self.client, self._report_progress_with_thinking, self.thinking_manager)
+            return await process_response(self.client, self.state_manager, self.thinking_manager)
 
         except Exception as e:
             return self._handle_execution_error(e, "async execution")
-
-    def _report_progress_with_thinking(self, progress: int, status: str, message: str, result: Dict[str, Any] = None) -> None:
-        """
-        Report progress including thinking steps
-
-        Args:
-            progress: Progress value (0-100)
-            status: Task status
-            message: Progress message
-            result: Result data (optional)
-        """
-        # If result is not None, ensure it includes thinking steps
-        if result is not None:
-            # If result doesn't have thinking, add current thinking steps
-            if "thinking" not in result:
-                result["thinking"] = [step.dict() for step in self.thinking_manager.get_thinking_steps()]
-        else:
-            # If result is None, create a result containing thinking steps
-            result = ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
-
-        self.report_progress(progress, status, message, result=result)
 
     def _handle_execution_result(self, result_content: str, execution_type: str = "execution") -> TaskStatus:
         """

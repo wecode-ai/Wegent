@@ -2,86 +2,89 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useState, useCallback } from 'react'
-import { Modal, Input } from 'antd'
-import { useTranslation } from 'react-i18next'
-import type { MessageInstance } from 'antd/es/message/interface'
+import React, { useState, useCallback } from 'react';
+import { Modal, Input } from 'antd';
+import { useTranslation } from 'react-i18next';
+import type { MessageInstance } from 'antd/es/message/interface';
 
 interface McpConfigImportModalProps {
-  visible: boolean
-  onClose: () => void
-  onImport: (config: any, mode: 'replace' | 'append') => void
-  message: MessageInstance
+  visible: boolean;
+  onClose: () => void;
+  onImport: (config: Record<string, unknown>, mode: 'replace' | 'append') => void;
+  message: MessageInstance;
 }
 
 // Utility function to normalize MCP servers configuration
-function normalizeMcpServers(config: any) {
-  let servers = config.mcpServers ?? config.mcp_servers ?? config
+function normalizeMcpServers(config: Record<string, unknown>): Record<string, unknown> {
+  const servers: Record<string, unknown> = (config.mcpServers ??
+    config.mcp_servers ??
+    config) as Record<string, unknown>;
   if (typeof servers !== 'object' || servers === null) {
-    throw new Error('Invalid MCP servers configuration')
+    throw new Error('Invalid MCP servers configuration');
   }
 
   Object.keys(servers).forEach(key => {
-    if (servers[key].transport) {
-      servers[key].type = servers[key].transport
-      delete servers[key].transport
+    const server = servers[key] as Record<string, unknown>;
+    if (server.transport) {
+      server.type = server.transport;
+      delete server.transport;
     }
-    if (!servers[key].type) {
-      servers[key].type = 'sse'
+    if (!server.type) {
+      server.type = 'sse';
     }
-  })
+  });
 
-  return servers
+  return servers;
 }
 
 const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
   visible,
   onClose,
   onImport,
-  message
+  message,
 }) => {
-  const { t } = useTranslation("common")
-  const [importConfig, setImportConfig] = useState('')
-  const [importConfigError, setImportConfigError] = useState(false)
-  const [importMode, setImportMode] = useState<'replace' | 'append'>('replace')
+  const { t } = useTranslation('common');
+  const [importConfig, setImportConfig] = useState('');
+  const [importConfigError, setImportConfigError] = useState(false);
+  const [importMode, setImportMode] = useState<'replace' | 'append'>('replace');
 
   // Handle import configuration confirmation
   const handleImportConfirm = useCallback(() => {
-    const trimmed = importConfig.trim()
+    const trimmed = importConfig.trim();
     if (!trimmed) {
-      setImportConfigError(true)
-      message.error(t('bot.errors.mcp_config_json'))
-      return
+      setImportConfigError(true);
+      message.error(t('bot.errors.mcp_config_json'));
+      return;
     }
 
     try {
       // Parse the imported configuration
-      let parsed = JSON.parse(trimmed)
+      const parsed = JSON.parse(trimmed);
       // Normalize the MCP servers configuration
-      const normalized = normalizeMcpServers(parsed)
+      const normalized = normalizeMcpServers(parsed);
 
       // Call parent component's import handler function
-      onImport(normalized, importMode)
+      onImport(normalized, importMode);
 
       // Reset state
-      setImportConfig('')
-      setImportConfigError(false)
-    } catch (error: any) {
-      setImportConfigError(true)
+      setImportConfig('');
+      setImportConfigError(false);
+    } catch (error) {
+      setImportConfigError(true);
       if (error instanceof SyntaxError) {
-        message.error(t('bot.errors.mcp_config_json'))
+        message.error(t('bot.errors.mcp_config_json'));
       } else {
-        message.error(t('bot.errors.mcp_config_invalid'))
+        message.error(t('bot.errors.mcp_config_invalid'));
       }
     }
-  }, [importConfig, importMode, message, onImport, t])
+  }, [importConfig, importMode, message, onImport, t]);
 
   // Reset state when closing modal
   const handleCancel = () => {
-    setImportConfig('')
-    setImportConfigError(false)
-    onClose()
-  }
+    setImportConfig('');
+    setImportConfigError(false);
+    onClose();
+  };
 
   return (
     <Modal
@@ -125,9 +128,9 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
       </div>
       <Input.TextArea
         value={importConfig}
-        onChange={(e) => {
-          setImportConfig(e.target.value)
-          setImportConfigError(false)
+        onChange={e => {
+          setImportConfig(e.target.value);
+          setImportConfigError(false);
         }}
         placeholder={`{
   "mcpServers": {
@@ -151,7 +154,7 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
         <div className="text-red-500 mt-1">{t('bot.errors.mcp_config_json')}</div>
       )}
     </Modal>
-  )
-}
+  );
+};
 
-export default McpConfigImportModal
+export default McpConfigImportModal;

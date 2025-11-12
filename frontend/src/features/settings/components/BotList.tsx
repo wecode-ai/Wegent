@@ -2,106 +2,109 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
-import '@/features/common/scrollbar.css'
+'use client';
+import '@/features/common/scrollbar.css';
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { App, Button, Dropdown, Modal, Tag, theme } from 'antd'
-import { PencilIcon, TrashIcon, PlusIcon, DocumentDuplicateIcon, ChatBubbleLeftEllipsisIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline'
-import { RiRobot2Line } from 'react-icons/ri'
-import LoadingState from '@/features/common/LoadingState'
-import { Bot } from '@/types/api'
-import { fetchBotsList, deleteBot, isPredefinedModel, getModelFromConfig } from '../services/bots'
-import BotEdit from './BotEdit'
-import { useTranslation } from '@/hooks/useTranslation'
-import { sortBotsByUpdatedAt } from '@/utils/bot'
-import { getSubtleBadgeStyle } from '@/utils/styles'
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { App, Button, Modal, Tag, theme } from 'antd';
+import {
+  PencilIcon,
+  TrashIcon,
+  PlusIcon,
+  DocumentDuplicateIcon,
+} from '@heroicons/react/24/outline';
+import { RiRobot2Line } from 'react-icons/ri';
+import LoadingState from '@/features/common/LoadingState';
+import { Bot } from '@/types/api';
+import { fetchBotsList, deleteBot, isPredefinedModel, getModelFromConfig } from '../services/bots';
+import BotEdit from './BotEdit';
+import { useTranslation } from '@/hooks/useTranslation';
+import { sortBotsByUpdatedAt } from '@/utils/bot';
+import { getSubtleBadgeStyle } from '@/utils/styles';
 
 export default function BotList() {
-  const { t } = useTranslation('common')
-  const { message } = App.useApp()
-  const { token } = theme.useToken()
-  const [bots, setBots] = useState<Bot[]>([])
-  const [isLoading, setIsLoading] = useState(true)
+  const { t } = useTranslation('common');
+  const { message } = App.useApp();
+  const { token } = theme.useToken();
+  const [bots, setBots] = useState<Bot[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   // Unified error prompt using antd message.error, no local error state needed
-  const [editingBotId, setEditingBotId] = useState<number | null>(null)
-  const [cloningBot, setCloningBot] = useState<Bot | null>(null)
-  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false)
-  const [botToDelete, setBotToDelete] = useState<number | null>(null)
-  const isEditing = editingBotId !== null
-  const subtleBadgeStyle = useMemo(() => getSubtleBadgeStyle(token), [token])
+  const [editingBotId, setEditingBotId] = useState<number | null>(null);
+  const [cloningBot, setCloningBot] = useState<Bot | null>(null);
+  const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [botToDelete, setBotToDelete] = useState<number | null>(null);
+  const isEditing = editingBotId !== null;
+  const subtleBadgeStyle = useMemo(() => getSubtleBadgeStyle(token), [token]);
 
-  const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>((updater) => {
-    setBots(prev => {
-      const next = typeof updater === 'function'
-        ? (updater as (value: Bot[]) => Bot[])(prev)
-        : updater
-      return sortBotsByUpdatedAt(next)
-    })
-  }, [setBots])
-
+  const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
+    updater => {
+      setBots(prev => {
+        const next =
+          typeof updater === 'function' ? (updater as (value: Bot[]) => Bot[])(prev) : updater;
+        return sortBotsByUpdatedAt(next);
+      });
+    },
+    [setBots]
+  );
 
   useEffect(() => {
     async function loadBots() {
-      setIsLoading(true)
+      setIsLoading(true);
       try {
-        const botsData = await fetchBotsList()
-        setBotsSorted(botsData)
-      } catch (e) {
-        message.error(t('bots.loading'))
+        const botsData = await fetchBotsList();
+        setBotsSorted(botsData);
+      } catch {
+        message.error(t('bots.loading'));
       } finally {
-        setIsLoading(false)
+        setIsLoading(false);
       }
     }
-    loadBots()
-  }, [])
+    loadBots();
+  }, []);
 
   const handleCreateBot = () => {
-    setCloningBot(null)
-    setEditingBotId(0) // Use 0 to mark new creation
-  }
+    setCloningBot(null);
+    setEditingBotId(0); // Use 0 to mark new creation
+  };
 
   const handleEditBot = (bot: Bot) => {
-    setCloningBot(null)
-    setEditingBotId(bot.id)
-  }
+    setCloningBot(null);
+    setEditingBotId(bot.id);
+  };
 
   const handleCloneBot = (bot: Bot) => {
-    setCloningBot(bot)
-    setEditingBotId(0)
-  }
+    setCloningBot(bot);
+    setEditingBotId(0);
+  };
 
   const handleCloseEditor = () => {
-    setEditingBotId(null)
-    setCloningBot(null)
-  }
-
+    setEditingBotId(null);
+    setCloningBot(null);
+  };
 
   const handleDeleteBot = (botId: number) => {
-    setBotToDelete(botId)
-    setDeleteConfirmVisible(true)
-  }
+    setBotToDelete(botId);
+    setDeleteConfirmVisible(true);
+  };
 
   const handleConfirmDelete = async () => {
-    if (!botToDelete) return
+    if (!botToDelete) return;
 
     try {
-      await deleteBot(botToDelete)
-      setBotsSorted(prev => prev.filter(b => b.id !== botToDelete))
-      setDeleteConfirmVisible(false)
-      setBotToDelete(null)
+      await deleteBot(botToDelete);
+      setBotsSorted(prev => prev.filter(b => b.id !== botToDelete));
+      setDeleteConfirmVisible(false);
+      setBotToDelete(null);
     } catch (e) {
-      const errorMessage = e instanceof Error && e.message
-        ? e.message
-        : t('bots.delete')
-      message.error(errorMessage)
+      const errorMessage = e instanceof Error && e.message ? e.message : t('bots.delete');
+      message.error(errorMessage);
     }
-  }
+  };
 
   const handleCancelDelete = () => {
-    setDeleteConfirmVisible(false)
-    setBotToDelete(null)
-  }
+    setDeleteConfirmVisible(false);
+    setBotToDelete(null);
+  };
 
   return (
     <>
@@ -135,20 +138,28 @@ export default function BotList() {
                 <>
                   <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
                     {bots.length > 0 ? (
-                      bots.map((bot) => (
+                      bots.map(bot => (
                         <div key={bot.id}>
                           <div className="flex items-center justify-between py-0.5 min-w-0">
                             <div className="flex items-center space-x-2 min-w-0 flex-1">
                               <RiRobot2Line className="w-4 h-4 text-text-primary flex-shrink-0" />
                               <div className="flex flex-col justify-center min-w-0 flex-1">
                                 <div className="flex items-center space-x-1 min-w-0">
-                                  <h3 className="text-base font-medium text-text-primary mb-0 truncate">{bot.name}</h3>
+                                  <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                                    {bot.name}
+                                  </h3>
                                   <div className="flex items-center h-4 space-x-0.5 flex-shrink-0">
                                     <div
                                       className="w-2 h-2 rounded-full"
-                                      style={{ backgroundColor: bot.is_active ? 'rgb(var(--color-success))' : 'rgb(var(--color-border))' }}
+                                      style={{
+                                        backgroundColor: bot.is_active
+                                          ? 'rgb(var(--color-success))'
+                                          : 'rgb(var(--color-border))',
+                                      }}
                                     ></div>
-                                    <span className="text-xs text-text-muted flex items-center justify-center">{bot.is_active ? t('bots.active') : t('bots.inactive')}</span>
+                                    <span className="text-xs text-text-muted flex items-center justify-center">
+                                      {bot.is_active ? t('bots.active') : t('bots.inactive')}
+                                    </span>
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1 mt-1 min-w-0">
@@ -245,5 +256,5 @@ export default function BotList() {
         <p>{t('bots.delete_confirm_message')}</p>
       </Modal>
     </>
-  )
+  );
 }

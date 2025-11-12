@@ -2,15 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { UserProvider } from '@/features/common/UserContext'
-import UserMenu from '@/features/layout/UserMenu'
-import OidcTokenHandler from '@/features/login/components/OidcTokenHandler'
-import '@/app/tasks/tasks.css'
-import '@/features/common/scrollbar.css'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
-import { Form, Input, Button } from 'antd'
+import { UserProvider } from '@/features/common/UserContext';
+import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
+import '@/app/tasks/tasks.css';
+import '@/features/common/scrollbar.css';
+import { Form, Input, Button } from 'antd';
 
 export default function DemoPage() {
   return (
@@ -45,5 +43,5 @@ export default function DemoPage() {
         </div>
       </div>
     </UserProvider>
-  )
+  );
 }

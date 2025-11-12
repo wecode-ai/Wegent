@@ -1,0 +1,609 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+'use client';
+
+import { useEffect, useState } from 'react';
+import { Disclosure, DisclosureButton, DisclosurePanel } from '@headlessui/react';
+import {
+  Bars3Icon,
+  CheckIcon,
+  ChevronRightIcon,
+  ClipboardDocumentIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline';
+import MarkdownEditor from '@uiw/react-markdown-editor';
+import { useTheme } from '@/features/theme/ThemeProvider';
+import { useTranslation } from '@/hooks/useTranslation';
+
+// Git commit statistics
+interface CommitStats {
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+}
+
+// Git commit information
+interface GitCommit {
+  commit_id: string;
+  short_id: string;
+  message: string;
+  author: string;
+  author_email: string;
+  committed_date: string;
+  stats: CommitStats;
+}
+
+// Git information
+interface GitInfo {
+  initial_commit_id: string;
+  initial_commit_message: string;
+  task_commits: GitCommit[];
+  source_branch: string;
+  target_branch: string;
+}
+
+// File change information
+interface FileChange {
+  old_path: string;
+  new_path: string;
+  new_file: boolean;
+  renamed_file: boolean;
+  deleted_file: boolean;
+  added_lines: number;
+  removed_lines: number;
+  diff_title: string;
+}
+
+// Workbench data structure
+interface WorkbenchData {
+  taskTitle: string;
+  taskNumber: string;
+  status: 'running' | 'completed' | 'failed';
+  completedTime: string;
+  repository: string;
+  branch: string;
+  sessions: number;
+  premiumRequests: number;
+  lastUpdated: string;
+  summary: string;
+  changes: string[];
+  originalPrompt: string;
+  file_changes: FileChange[];
+  git_info: GitInfo;
+}
+
+interface WorkbenchProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onOpen: () => void;
+  workbenchData?: WorkbenchData | null;
+  isLoading?: boolean;
+}
+
+function classNames(...classes: string[]) {
+  return classes.filter(Boolean).join(' ');
+}
+
+function formatDateTime(dateString: string | undefined): string {
+  if (!dateString) return '';
+
+  try {
+    const date = new Date(dateString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  } catch (_error) {
+    return dateString;
+  }
+}
+
+export default function Workbench({
+  isOpen,
+  onClose,
+  onOpen: _onOpen,
+  workbenchData,
+  isLoading: _isLoading = false,
+}: WorkbenchProps) {
+  const [activeTab, setActiveTab] = useState<'overview' | 'files'>('overview');
+  const [showCommits, setShowCommits] = useState(false);
+  const [copiedCommitId, setCopiedCommitId] = useState<string | null>(null);
+  const { theme } = useTheme();
+  const { t } = useTranslation('tasks');
+
+  // Internal state: cache the latest workbench data
+  const [cachedWorkbenchData, setCachedWorkbenchData] = useState<WorkbenchData | null>(null);
+
+  // Observer pattern: listen to workbenchData changes
+  useEffect(() => {
+    // If the API returns new workbench data (not null/undefined), update the cache
+    if (workbenchData) {
+      setCachedWorkbenchData(workbenchData);
+    }
+    // If workbenchData is null/undefined, keep the previous state (don't update cache)
+  }, [workbenchData]);
+
+  // Use cached data for rendering
+  const displayData = cachedWorkbenchData;
+
+  const navigation = [
+    {
+      name: t('workbench.overview'),
+      value: 'overview' as const,
+      current: activeTab === 'overview',
+    },
+    {
+      name: t('workbench.files_changed'),
+      value: 'files' as const,
+      current: activeTab === 'files',
+      badge: displayData?.file_changes?.length || 0,
+    },
+  ];
+
+  const getStatusColor = () => {
+    switch (displayData?.status) {
+      case 'completed':
+        return 'text-green-600';
+      case 'failed':
+        return 'text-red-600';
+      default:
+        return 'text-yellow-600';
+    }
+  };
+
+  const getStatusText = () => {
+    switch (displayData?.status) {
+      case 'completed':
+        return t('workbench.status.completed');
+      case 'failed':
+        return t('workbench.status.failed');
+      default:
+        return t('workbench.status.running');
+    }
+  };
+
+  return (
+    <>
+      {/* Right panel */}
+      <div
+        className="transition-all duration-300 ease-in-out bg-surface overflow-hidden"
+        style={{
+          width: isOpen ? '50%' : '0',
+        }}
+      >
+        {isOpen && (
+          <div className="h-full flex flex-col border border-border rounded-lg overflow-hidden">
+            {/* Navigation Header */}
+            <Disclosure as="nav" className="border-b border-border bg-surface">
+              <div className="mx-auto px-2 sm:px-3 lg:px-4">
+                <div className="flex h-12 justify-between">
+                  <div className="flex">
+                    <div className="hidden sm:-my-px sm:flex sm:space-x-8">
+                      {navigation.map(item => (
+                        <button
+                          key={item.name}
+                          onClick={() => setActiveTab(item.value)}
+                          aria-current={item.current ? 'page' : undefined}
+                          className={classNames(
+                            item.current
+                              ? 'border-primary text-text-primary'
+                              : 'border-transparent text-text-muted hover:border-border hover:text-text-primary',
+                            'inline-flex items-center border-b-2 px-1 pt-1 text-sm font-medium'
+                          )}
+                        >
+                          {item.name}
+                          {item.badge !== undefined && item.badge > 0 && (
+                            <span className="ml-2 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-text-muted">
+                              {item.badge}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="hidden sm:ml-6 sm:flex sm:items-center">
+                    <button
+                      onClick={onClose}
+                      className="relative rounded-full p-1 text-text-muted hover:text-text-primary focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary"
+                    >
+                      <span className="sr-only">{t('workbench.close_panel')}</span>
+                      <XMarkIcon aria-hidden="true" className="size-6" />
+                    </button>
+                  </div>
+                  <div className="-mr-2 flex items-center sm:hidden">
+                    {/* Mobile menu button */}
+                    <DisclosureButton className="group relative inline-flex items-center justify-center rounded-md bg-surface p-2 text-text-muted hover:bg-muted hover:text-text-primary focus:outline focus:outline-2 focus:outline-offset-2 focus:outline-primary">
+                      <span className="absolute -inset-0.5" />
+                      <span className="sr-only">{t('workbench.open_main_menu')}</span>
+                      <Bars3Icon
+                        aria-hidden="true"
+                        className="block size-6 group-data-[open]:hidden"
+                      />
+                      <XMarkIcon
+                        aria-hidden="true"
+                        className="hidden size-6 group-data-[open]:block"
+                      />
+                    </DisclosureButton>
+                  </div>
+                </div>
+              </div>
+
+              <DisclosurePanel className="sm:hidden">
+                <div className="space-y-1 pb-3 pt-2">
+                  {navigation.map(item => (
+                    <DisclosureButton
+                      key={item.name}
+                      as="button"
+                      onClick={() => setActiveTab(item.value)}
+                      aria-current={item.current ? 'page' : undefined}
+                      className={classNames(
+                        item.current
+                          ? 'border-primary bg-muted text-text-primary'
+                          : 'border-transparent text-text-muted hover:border-border hover:bg-muted hover:text-text-primary',
+                        'block w-full text-left border-l-4 py-2 pl-3 pr-4 text-base font-medium'
+                      )}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span>{item.name}</span>
+                        {item.badge !== undefined && item.badge > 0 && (
+                          <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-text-muted">
+                            {item.badge}
+                          </span>
+                        )}
+                      </div>
+                    </DisclosureButton>
+                  ))}
+                </div>
+              </DisclosurePanel>
+            </Disclosure>
+
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto">
+              <div className="mx-auto max-w-7xl px-2 pt-4 pb-2 sm:px-3 lg:px-4">
+                {!displayData ? (
+                  // Loading state with animation
+                  <div className="flex flex-col items-center justify-center h-64 space-y-4">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                    <p className="text-text-muted">{t('workbench.waiting_result')}</p>
+                  </div>
+                ) : activeTab === 'overview' ? (
+                  <div className="space-y-6">
+                    <div className="flex items-baseline gap-2">
+                      <h2 className="text-lg font-semibold text-text-primary">
+                        {displayData?.taskTitle || ''}
+                      </h2>
+                      <span className="text-sm text-text-muted">
+                        {displayData?.taskNumber || ''}
+                      </span>
+                    </div>
+                    {/* Status Badge */}
+                    <div className="flex items-center gap-3">
+                      <span
+                        className={classNames(
+                          getStatusColor(),
+                          'inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-medium bg-muted'
+                        )}
+                      >
+                        {displayData?.status === 'running' ? (
+                          <div className="animate-spin rounded-full h-4 w-4 border-[2px] border-current border-t-transparent"></div>
+                        ) : (
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M8 16A8 8 0 1 1 8 0a8 8 0 0 1 0 16zm3.78-9.72a.75.75 0 0 0-1.06-1.06L6.75 9.19 5.28 7.72a.75.75 0 0 0-1.06 1.06l2 2a.75.75 0 0 0 1.06 0l4.5-4.5z" />
+                          </svg>
+                        )}
+                        {getStatusText()}
+                      </span>
+                      <span className="text-sm text-text-muted">
+                        {formatDateTime(displayData?.completedTime) || ''}
+                      </span>
+                    </div>
+                    {/* Repository Info */}
+                    <div className="rounded-lg border border-border bg-surface p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-sm text-text-muted">
+                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 16 16">
+                            <path d="M2 2.5A2.5 2.5 0 0 1 4.5 0h8.75a.75.75 0 0 1 .75.75v12.5a.75.75 0 0 1-.75.75h-2.5a.75.75 0 0 1 0-1.5h1.75v-2h-8a1 1 0 0 0-.714 1.7.75.75 0 1 1-1.072 1.05A2.495 2.495 0 0 1 2 11.5v-9zm10.5-1h-8a1 1 0 0 0-1 1v6.708A2.486 2.486 0 0 1 4.5 9h8V1.5z" />
+                          </svg>
+                          <span className="font-medium">{displayData?.repository || ''}</span>
+                        </div>
+                      </div>
+                      <div className="mt-3 flex items-center gap-2 text-sm">
+                        <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
+                          {displayData?.git_info?.source_branch || displayData?.branch || ''}
+                        </span>
+                        {displayData?.git_info?.target_branch ? (
+                          <>
+                            <ChevronRightIcon className="w-4 h-4 text-text-muted" />
+                            <span className="inline-flex items-center rounded-md bg-primary/10 px-2 py-1 text-xs font-medium text-primary ring-1 ring-inset ring-primary/20">
+                              {displayData.git_info.target_branch}
+                            </span>
+                          </>
+                        ) : displayData?.status === 'running' ? (
+                          <>
+                            <ChevronRightIcon className="w-4 h-4 text-text-muted" />
+                            <div className="flex items-center gap-1.5">
+                              <div className="animate-pulse flex space-x-1">
+                                <div className="w-1.5 h-1.5 bg-primary/40 rounded-full"></div>
+                                <div className="w-1.5 h-1.5 bg-primary/40 rounded-full animation-delay-200"></div>
+                                <div className="w-1.5 h-1.5 bg-primary/40 rounded-full animation-delay-400"></div>
+                              </div>
+                            </div>
+                          </>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {/* Summary */}
+                    <div className="rounded-lg border border-border bg-surface overflow-hidden">
+                      <div className="border-b border-border bg-muted px-4 py-3">
+                        <h3 className="text-base font-semibold text-text-primary">
+                          {t('workbench.summary')}
+                        </h3>
+                        <div className="mt-1 flex items-center gap-2 text-sm text-text-muted">
+                          <button
+                            onClick={() => setShowCommits(!showCommits)}
+                            className="inline-flex items-center gap-1 hover:text-text-primary transition-colors"
+                          >
+                            <span className="font-medium text-primary">
+                              {displayData?.git_info?.task_commits?.length || 0}{' '}
+                              {t('workbench.commits')}
+                            </span>
+                            <ChevronRightIcon
+                              className={classNames(
+                                showCommits ? 'rotate-90 transform' : '',
+                                'h-4 w-4 transition-transform'
+                              )}
+                            />
+                          </button>
+                          <span>·</span>
+                          <span>
+                            {t('workbench.last_updated')} {formatDateTime(displayData?.lastUpdated)}
+                          </span>
+                        </div>
+                      </div>
+                      {showCommits &&
+                        displayData?.git_info?.task_commits &&
+                        displayData.git_info.task_commits.length > 0 && (
+                          <div className="border-b border-border bg-surface px-4 py-3">
+                            <div className="space-y-2">
+                              {displayData.git_info.task_commits.map((commit: GitCommit) => (
+                                <div
+                                  key={commit.commit_id}
+                                  className="flex items-start gap-3 p-2 rounded-md hover:bg-muted/50 transition-colors"
+                                >
+                                  <div className="flex-1 min-w-0">
+                                    <div className="flex items-center gap-2">
+                                      <code className="text-xs font-mono text-primary bg-primary/10 px-2 py-0.5 rounded">
+                                        {commit.short_id}
+                                      </code>
+                                      <button
+                                        onClick={() => {
+                                          navigator.clipboard.writeText(commit.commit_id);
+                                          setCopiedCommitId(commit.commit_id);
+                                          setTimeout(() => setCopiedCommitId(null), 2000);
+                                        }}
+                                        className="p-1 hover:bg-muted rounded transition-colors"
+                                        title={t('workbench.copy_commit_id')}
+                                      >
+                                        {copiedCommitId === commit.commit_id ? (
+                                          <CheckIcon className="h-4 w-4 text-green-600" />
+                                        ) : (
+                                          <ClipboardDocumentIcon className="h-4 w-4 text-text-muted" />
+                                        )}
+                                      </button>
+                                    </div>
+                                    <div className="mt-1 flex items-center gap-3 text-xs text-text-muted">
+                                      <span>{commit.author}</span>
+                                      <span>·</span>
+                                      <span>
+                                        {commit.stats.files_changed} {t('workbench.files')}, +
+                                        {commit.stats.insertions} -{commit.stats.deletions}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      <div className="px-4 py-4">
+                        <div className="text-sm text-text-primary">
+                          {displayData?.summary ? (
+                            <MarkdownEditor.Markdown
+                              source={displayData.summary}
+                              style={{ background: 'transparent' }}
+                              wrapperElement={{ 'data-color-mode': theme }}
+                              components={{
+                                a: ({ href, children, ...props }) => (
+                                  <a
+                                    href={href}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    {...props}
+                                  >
+                                    {children}
+                                  </a>
+                                ),
+                              }}
+                            />
+                          ) : (
+                            ''
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Changes */}
+                    {displayData?.changes && displayData.changes.length > 0 && (
+                      <div className="rounded-lg border border-border bg-surface p-4">
+                        <h3 className="text-base font-semibold text-text-primary mb-3">
+                          {t('workbench.changes')}
+                        </h3>
+                        <ul className="space-y-2">
+                          {displayData.changes.map((change: string, index: number) => (
+                            <li
+                              key={index}
+                              className="flex items-start gap-2 text-sm text-text-primary"
+                            >
+                              <span className="text-text-muted mt-0.5">•</span>
+                              <span>{change}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+
+                    {/* Original Prompt */}
+                    {displayData?.originalPrompt && (
+                      <Disclosure>
+                        {({ open }) => (
+                          <div className="rounded-lg border border-border bg-surface overflow-hidden">
+                            <DisclosureButton className="flex w-full items-center justify-between bg-muted px-4 py-3 text-left hover:bg-muted/80">
+                              <span className="text-base font-semibold text-text-primary">
+                                {t('workbench.original_prompt')}
+                              </span>
+                              <ChevronRightIcon
+                                className={classNames(
+                                  open ? 'rotate-90 transform' : '',
+                                  'h-5 w-5 text-text-muted transition-transform'
+                                )}
+                              />
+                            </DisclosureButton>
+                            <DisclosurePanel className="border-t border-border px-4 py-4">
+                              <div className="rounded-md bg-muted p-4">
+                                <pre className="text-sm text-text-primary whitespace-pre-wrap font-mono">
+                                  {displayData.originalPrompt}
+                                </pre>
+                              </div>
+                            </DisclosurePanel>
+                          </div>
+                        )}
+                      </Disclosure>
+                    )}
+                  </div>
+                ) : (
+                  // Files Changed Tab
+                  <div className="space-y-2">
+                    {displayData?.file_changes && displayData.file_changes.length > 0 ? (
+                      displayData.file_changes.map((fileChange: FileChange, index: number) => {
+                        const totalChanges = fileChange.added_lines + fileChange.removed_lines;
+                        const addedPercent =
+                          totalChanges > 0 ? (fileChange.added_lines / totalChanges) * 100 : 0;
+                        const removedPercent =
+                          totalChanges > 0 ? (fileChange.removed_lines / totalChanges) * 100 : 0;
+
+                        return (
+                          <div
+                            key={index}
+                            className="rounded-lg border border-border bg-surface hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="px-4 py-3 flex items-center justify-between">
+                              <div className="flex items-center gap-3 flex-1 min-w-0">
+                                {/* File path */}
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-sm font-mono text-text-primary truncate">
+                                      {fileChange.new_path}
+                                    </span>
+                                    {fileChange.new_file && (
+                                      <span className="inline-flex items-center rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
+                                        {t('workbench.file_status.new')}
+                                      </span>
+                                    )}
+                                    {fileChange.deleted_file && (
+                                      <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/20">
+                                        {t('workbench.file_status.deleted')}
+                                      </span>
+                                    )}
+                                    {fileChange.renamed_file && (
+                                      <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">
+                                        {t('workbench.file_status.renamed')}
+                                      </span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                {/* Stats */}
+                                <div className="flex items-center gap-3 flex-shrink-0">
+                                  {/* Added/Removed lines */}
+                                  <div className="flex items-center gap-2 text-sm font-mono">
+                                    {fileChange.added_lines > 0 && (
+                                      <span className="text-green-600">
+                                        +{fileChange.added_lines}
+                                      </span>
+                                    )}
+                                    {fileChange.removed_lines > 0 && (
+                                      <span className="text-red-600">
+                                        -{fileChange.removed_lines}
+                                      </span>
+                                    )}
+                                  </div>
+
+                                  {/* Visual bar */}
+                                  <div className="flex items-center gap-0.5 w-20">
+                                    {totalChanges > 0 && (
+                                      <>
+                                        {/* Green bars for additions */}
+                                        {Array.from({ length: Math.ceil(addedPercent / 20) }).map(
+                                          (_, i) => (
+                                            <div
+                                              key={`add-${i}`}
+                                              className="h-2 w-2 rounded-sm bg-green-500"
+                                            />
+                                          )
+                                        )}
+                                        {/* Red bars for deletions */}
+                                        {Array.from({ length: Math.ceil(removedPercent / 20) }).map(
+                                          (_, i) => (
+                                            <div
+                                              key={`del-${i}`}
+                                              className="h-2 w-2 rounded-sm bg-red-500"
+                                            />
+                                          )
+                                        )}
+                                        {/* Gray bars to fill remaining space */}
+                                        {Array.from({
+                                          length: Math.max(
+                                            0,
+                                            5 -
+                                              Math.ceil(addedPercent / 20) -
+                                              Math.ceil(removedPercent / 20)
+                                          ),
+                                        }).map((_, i) => (
+                                          <div
+                                            key={`empty-${i}`}
+                                            className="h-2 w-2 rounded-sm bg-border"
+                                          />
+                                        ))}
+                                      </>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                        <p className="text-text-muted">{t('workbench.no_file_changes')}</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Toggle button - fixed position - hidden on mobile */}
+    </>
+  );
+}

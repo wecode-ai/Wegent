@@ -2,26 +2,26 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useCallback, useState, useEffect, useMemo } from 'react'
-import { Button, Select, Switch } from 'antd'
-import McpConfigImportModal from './McpConfigImportModal'
+import React, { useCallback, useState, useEffect, useMemo } from 'react';
+import { Button, Select, Switch } from 'antd';
+import McpConfigImportModal from './McpConfigImportModal';
 
-import { Bot } from '@/types/api'
-import { botApis } from '@/apis/bots'
-import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots'
-import { agentApis, Agent } from '@/apis/agents'
-import { modelApis, Model } from '@/apis/models'
-import { useTranslation } from 'react-i18next'
+import { Bot } from '@/types/api';
+import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
+import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
+import { agentApis, Agent } from '@/apis/agents';
+import { modelApis, Model } from '@/apis/models';
+import { useTranslation } from 'react-i18next';
 
-import type { MessageInstance } from 'antd/es/message/interface'
+import type { MessageInstance } from 'antd/es/message/interface';
 
 interface BotEditProps {
-  bots: Bot[]
-  setBots: React.Dispatch<React.SetStateAction<Bot[]>>
-  editingBotId: number
-  cloningBot: Bot | null
-  onClose: () => void
-  message: MessageInstance
+  bots: Bot[];
+  setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
+  editingBotId: number;
+  cloningBot: Bot | null;
+  onClose: () => void;
+  message: MessageInstance;
 }
 const BotEdit: React.FC<BotEditProps> = ({
   bots,
@@ -31,315 +31,316 @@ const BotEdit: React.FC<BotEditProps> = ({
   onClose,
   message,
 }) => {
-  const { t } = useTranslation("common")
+  const { t } = useTranslation('common');
 
-  const [botSaving, setBotSaving] = useState(false)
-  const [agents, setAgents] = useState<Agent[]>([])
-  const [loadingAgents, setLoadingAgents] = useState(false)
-  const [models, setModels] = useState<Model[]>([])
-  const [loadingModels, setLoadingModels] = useState(false)
-  const [isCustomModel, setIsCustomModel] = useState(false)
-  const [selectedModel, setSelectedModel] = useState('')
+  const [botSaving, setBotSaving] = useState(false);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [loadingAgents, setLoadingAgents] = useState(false);
+  const [models, setModels] = useState<Model[]>([]);
+  const [loadingModels, setLoadingModels] = useState(false);
+  const [isCustomModel, setIsCustomModel] = useState(false);
+  const [selectedModel, setSelectedModel] = useState('');
 
-    // Convert agents to options format for Select component
+  // Convert agents to options format for Select component
   const agentOptions = agents.map(agent => ({
     value: agent.name,
-    label: agent.name
-  }))
+    label: agent.name,
+  }));
 
-    // Current editing object
-  const editingBot = editingBotId > 0
-    ? bots.find(b => b.id === editingBotId) || null
-    : null
+  // Current editing object
+  const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null;
 
   const baseBot = useMemo(() => {
     if (editingBot) {
-      return editingBot
+      return editingBot;
     }
     if (editingBotId === 0 && cloningBot) {
-      return cloningBot
+      return cloningBot;
     }
-    return null
-  }, [editingBot, editingBotId, cloningBot])
+    return null;
+  }, [editingBot, editingBotId, cloningBot]);
 
-  const [botName, setBotName] = useState(baseBot?.name || '')
-  const [agentName, setAgentName] = useState(baseBot?.agent_name || '')
+  const [botName, setBotName] = useState(baseBot?.name || '');
+  const [agentName, setAgentName] = useState(baseBot?.agent_name || '');
   const [agentConfig, setAgentConfig] = useState(
     baseBot?.agent_config ? JSON.stringify(baseBot.agent_config, null, 2) : ''
-  )
+  );
 
-  const [prompt, setPrompt] = useState(baseBot?.system_prompt || '')
+  const [prompt, setPrompt] = useState(baseBot?.system_prompt || '');
   const [mcpConfig, setMcpConfig] = useState(
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
-  )
-  const [agentConfigError, setAgentConfigError] = useState(false)
-  const [mcpConfigError, setMcpConfigError] = useState(false)
-  const [importModalVisible, setImportModalVisible] = useState(false)
+  );
+  const [agentConfigError, setAgentConfigError] = useState(false);
+  const [mcpConfigError, setMcpConfigError] = useState(false);
+  const [importModalVisible, setImportModalVisible] = useState(false);
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
-      const trimmed = prev.trim()
+      const trimmed = prev.trim();
       if (!trimmed) {
-        setAgentConfigError(false)
-        return ''
+        setAgentConfigError(false);
+        return '';
       }
       try {
-        const parsed = JSON.parse(trimmed)
-        setAgentConfigError(false)
-        return JSON.stringify(parsed, null, 2)
+        const parsed = JSON.parse(trimmed);
+        setAgentConfigError(false);
+        return JSON.stringify(parsed, null, 2);
       } catch {
-        message.error(t('bot.errors.agent_config_json'))
-        setAgentConfigError(true)
-        return prev
+        message.error(t('bot.errors.agent_config_json'));
+        setAgentConfigError(true);
+        return prev;
       }
-    })
-  }, [message, t])
+    });
+  }, [message, t]);
 
   const prettifyMcpConfig = useCallback(() => {
     setMcpConfig(prev => {
-      const trimmed = prev.trim()
+      const trimmed = prev.trim();
       if (!trimmed) {
-        setMcpConfigError(false)
-        return ''
+        setMcpConfigError(false);
+        return '';
       }
       try {
-        const parsed = JSON.parse(trimmed)
-        setMcpConfigError(false)
-        return JSON.stringify(parsed, null, 2)
+        const parsed = JSON.parse(trimmed);
+        setMcpConfigError(false);
+        return JSON.stringify(parsed, null, 2);
       } catch {
-        message.error(t('bot.errors.mcp_config_json'))
-        setMcpConfigError(true)
-        return prev
+        message.error(t('bot.errors.mcp_config_json'));
+        setMcpConfigError(true);
+        return prev;
       }
-    })
-  }, [message, t])
+    });
+  }, [message, t]);
 
   // Handle MCP configuration import
   const handleImportMcpConfig = useCallback(() => {
-    setImportModalVisible(true)
-  }, [])
+    setImportModalVisible(true);
+  }, []);
 
   // Handle import configuration confirmation
-  const handleImportConfirm = useCallback((config: any, mode: 'replace' | 'append') => {
-    try {
-      // Update MCP configuration
-      if (mode === 'replace') {
-        // Replace mode: directly use new configuration
-        setMcpConfig(JSON.stringify(config, null, 2))
-        message.success(t('bot.import_success'))
-      } else {
-        // Append mode: merge existing configuration with new configuration
-        try {
-          const currentConfig = mcpConfig.trim() ? JSON.parse(mcpConfig) : {}
-          const mergedConfig = { ...currentConfig, ...config }
-          setMcpConfig(JSON.stringify(mergedConfig, null, 2))
-          message.success(t('bot.append_success'))
-        } catch (error) {
-          message.error(t('bot.errors.mcp_config_json'))
-          return
+  const handleImportConfirm = useCallback(
+    (config: Record<string, unknown>, mode: 'replace' | 'append') => {
+      try {
+        // Update MCP configuration
+        if (mode === 'replace') {
+          // Replace mode: directly use new configuration
+          setMcpConfig(JSON.stringify(config, null, 2));
+          message.success(t('bot.import_success'));
+        } else {
+          // Append mode: merge existing configuration with new configuration
+          try {
+            const currentConfig = mcpConfig.trim() ? JSON.parse(mcpConfig) : {};
+            const mergedConfig = { ...currentConfig, ...config };
+            setMcpConfig(JSON.stringify(mergedConfig, null, 2));
+            message.success(t('bot.append_success'));
+          } catch {
+            message.error(t('bot.errors.mcp_config_json'));
+            return;
+          }
         }
+        setImportModalVisible(false);
+      } catch {
+        message.error(t('bot.errors.mcp_config_json'));
       }
-      setImportModalVisible(false)
-    } catch (error) {
-      message.error(t('bot.errors.mcp_config_json'))
-    }
-  }, [mcpConfig, message, t])
+    },
+    [mcpConfig, message, t]
+  );
 
-    // Get agents list
+  // Get agents list
   useEffect(() => {
     const fetchAgents = async () => {
-      setLoadingAgents(true)
+      setLoadingAgents(true);
       try {
-        const response = await agentApis.getAgents()
-        setAgents(response.items)
+        const response = await agentApis.getAgents();
+        setAgents(response.items);
       } catch (error) {
-        console.error('Failed to fetch agents:', error)
-        message.error(t('bot.errors.fetch_agents_failed'))
+        console.error('Failed to fetch agents:', error);
+        message.error(t('bot.errors.fetch_agents_failed'));
       } finally {
-        setLoadingAgents(false)
+        setLoadingAgents(false);
       }
-    }
+    };
 
-    fetchAgents()
-  }, [message, t])
+    fetchAgents();
+  }, [message, t]);
 
-    // Fetch corresponding model list when agentName changes
+  // Fetch corresponding model list when agentName changes
   useEffect(() => {
     if (!agentName) {
-      setModels([])
-      return
+      setModels([]);
+      return;
     }
 
     const fetchModels = async () => {
-      setLoadingModels(true)
+      setLoadingModels(true);
       try {
-        const response = await modelApis.getModelNames(agentName)
-        setModels(response.data)
-        
+        const response = await modelApis.getModelNames(agentName);
+        setModels(response.data);
+
         // When models list is empty, automatically switch to custom model mode
         if (!response.data || response.data.length === 0) {
-          setIsCustomModel(true)
-          setSelectedModel('')
+          setIsCustomModel(true);
+          setSelectedModel('');
         }
       } catch (error) {
-        console.error('Failed to fetch models:', error)
-        message.error(t('bot.errors.fetch_models_failed'))
+        console.error('Failed to fetch models:', error);
+        message.error(t('bot.errors.fetch_models_failed'));
         // On error, also switch to custom model mode
-        setIsCustomModel(true)
-        setSelectedModel('')
+        setIsCustomModel(true);
+        setSelectedModel('');
       } finally {
-        setLoadingModels(false)
+        setLoadingModels(false);
       }
-    }
+    };
 
-    fetchModels()
-  }, [agentName, message, t])
+    fetchModels();
+  }, [agentName, message, t]);
 
-    // Reset base form when switching editing object
+  // Reset base form when switching editing object
   useEffect(() => {
-    setBotName(baseBot?.name || '')
-    setAgentName(baseBot?.agent_name || '')
-    setPrompt(baseBot?.system_prompt || '')
-    setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '')
-    setAgentConfigError(false)
-    setMcpConfigError(false)
+    setBotName(baseBot?.name || '');
+    setAgentName(baseBot?.agent_name || '');
+    setPrompt(baseBot?.system_prompt || '');
+    setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '');
+    setAgentConfigError(false);
+    setMcpConfigError(false);
 
     if (baseBot?.agent_config) {
-      setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2))
+      setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2));
     } else {
-      setAgentConfig('')
+      setAgentConfig('');
     }
-  }, [editingBotId, baseBot])
+  }, [editingBotId, baseBot]);
 
-    // Initialize model-related data after agents and models are loaded
+  // Initialize model-related data after agents and models are loaded
   useEffect(() => {
     if (!baseBot?.agent_config) {
-      setIsCustomModel(false)
-      setSelectedModel('')
-      return
+      setIsCustomModel(false);
+      setSelectedModel('');
+      return;
     }
 
-    const isPredefined = isPredefinedModel(baseBot.agent_config)
-    setIsCustomModel(!isPredefined)
+    const isPredefined = isPredefinedModel(baseBot.agent_config);
+    setIsCustomModel(!isPredefined);
 
     if (isPredefined) {
-      const modelName = getModelFromConfig(baseBot.agent_config)
-      setSelectedModel(modelName)
+      const modelName = getModelFromConfig(baseBot.agent_config);
+      setSelectedModel(modelName);
     } else {
-      setSelectedModel('')
+      setSelectedModel('');
     }
-  }, [baseBot])
+  }, [baseBot]);
 
   const handleBack = useCallback(() => {
-    onClose()
-  }, [onClose])
+    onClose();
+  }, [onClose]);
 
   useEffect(() => {
     const handleEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape') return;
 
-      handleBack()
-    }
+      handleBack();
+    };
 
-    window.addEventListener('keydown', handleEsc)
-    return () => window.removeEventListener('keydown', handleEsc)
-  }, [handleBack])
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [handleBack]);
 
-    // Save logic
+  // Save logic
   const handleSave = async () => {
     if (!botName.trim() || !agentName.trim()) {
-      message.error(t('bot.errors.required'))
-      return
+      message.error(t('bot.errors.required'));
+      return;
     }
-    let parsedAgentConfig: any = undefined
+    let parsedAgentConfig: unknown = undefined;
     if (isCustomModel) {
-      const trimmedConfig = agentConfig.trim()
+      const trimmedConfig = agentConfig.trim();
       if (!trimmedConfig) {
-        setAgentConfigError(true)
-        message.error(t('bot.errors.agent_config_json'))
-        return
+        setAgentConfigError(true);
+        message.error(t('bot.errors.agent_config_json'));
+        return;
       }
       try {
-        parsedAgentConfig = JSON.parse(trimmedConfig)
-        setAgentConfigError(false)
-      } catch (error) {
-        setAgentConfigError(true)
-        message.error(t('bot.errors.agent_config_json'))
-        return
+        parsedAgentConfig = JSON.parse(trimmedConfig);
+        setAgentConfigError(false);
+      } catch {
+        setAgentConfigError(true);
+        message.error(t('bot.errors.agent_config_json'));
+        return;
       }
     } else {
-      parsedAgentConfig = { private_model: selectedModel }
+      parsedAgentConfig = { private_model: selectedModel };
     }
 
-    let parsedMcpConfig: any = undefined
+    let parsedMcpConfig: Record<string, unknown> | null = null;
     if (mcpConfig.trim()) {
       try {
-        parsedMcpConfig = JSON.parse(mcpConfig)
-        setMcpConfigError(false)
-      } catch (error) {
-        setMcpConfigError(true)
-        message.error(t('bot.errors.mcp_config_json'))
-        return
+        parsedMcpConfig = JSON.parse(mcpConfig);
+        setMcpConfigError(false);
+      } catch {
+        setMcpConfigError(true);
+        message.error(t('bot.errors.mcp_config_json'));
+        return;
       }
     } else {
-      setMcpConfigError(false)
+      setMcpConfigError(false);
     }
-    setBotSaving(true)
+    setBotSaving(true);
     try {
-      const botReq: any = {
+      const botReq: CreateBotRequest = {
         name: botName.trim(),
         agent_name: agentName.trim(),
-        agent_config: parsedAgentConfig,
-        system_prompt: prompt.trim() || ''
-      }
-      if (parsedMcpConfig !== undefined) {
-        botReq.mcp_servers = parsedMcpConfig
-      }
+        agent_config: parsedAgentConfig as Record<string, unknown>,
+        system_prompt: prompt.trim() || '',
+        mcp_servers: parsedMcpConfig ?? {},
+      };
       if (editingBotId && editingBotId > 0) {
-          // Edit existing bot
-        const updated = await botApis.updateBot(editingBotId, botReq)
-        setBots(prev => prev.map(b => b.id === editingBotId ? updated : b))
+        // Edit existing bot
+        const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest);
+        setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)));
       } else {
-          // Create new bot
-        const created = await botApis.createBot(botReq)
-        setBots(prev => [created, ...prev])
+        // Create new bot
+        const created = await botApis.createBot(botReq);
+        setBots(prev => [created, ...prev]);
       }
-      onClose()
-    } catch (error: any) {
-      message.error(error?.message || t('bot.errors.save_failed'))
+      onClose();
+    } catch (error) {
+      message.error((error as Error)?.message || t('bot.errors.save_failed'));
     } finally {
-      setBotSaving(false)
+      setBotSaving(false);
     }
-  }
+  };
 
   return (
-    <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 relative h-full min-h-[650px]">
-        {/* Top navigation bar */}
-        <div className="flex items-center justify-between mb-4">
-          <button
-            onClick={handleBack}
-            className="flex items-center text-text-muted hover:text-text-primary text-base"
-            title={t('common.back')}
+    <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 min-h-[650px] overflow-hidden">
+      {/* Top navigation bar */}
+      <div className="flex items-center justify-between mb-4 flex-shrink-0">
+        <button
+          onClick={handleBack}
+          className="flex items-center text-text-muted hover:text-text-primary text-base"
+          title={t('common.back')}
+        >
+          <svg
+            width="24"
+            height="24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            className="mr-1"
           >
-            <svg width="24" height="24" fill="none" stroke="currentColor" strokeWidth="2" className="mr-1">
-              <path d="M15 6l-6 6 6 6" />
-            </svg>
-            {t('common.back')}
-          </button>
-  
-          <Button
-            onClick={handleSave}
-            disabled={botSaving}
-            loading={botSaving}
-            type="primary"
-          >
-            {botSaving ? t('actions.saving') : t('actions.save')}
-          </Button>
-        </div>
-  
-        {/* Main content area - using grid layout */}
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-4 flex-grow mx-2" style={{ minHeight: 0 }}>
-        <div className="md:col-span-2 flex flex-col space-y-3 overflow-y-auto">
+            <path d="M15 6l-6 6 6 6" />
+          </svg>
+          {t('common.back')}
+        </button>
+
+        <Button onClick={handleSave} disabled={botSaving} loading={botSaving} type="primary">
+          {botSaving ? t('actions.saving') : t('actions.save')}
+        </Button>
+      </div>
+
+      {/* Main content area - using responsive layout */}
+      <div className="flex flex-col lg:flex-row gap-4 flex-grow mx-2 min-h-0 overflow-hidden">
+        <div className="flex flex-col space-y-3 overflow-y-auto w-full lg:w-2/5 xl:w-1/3 flex-shrink-0">
           {/* Bot Name */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
@@ -350,8 +351,8 @@ const BotEdit: React.FC<BotEditProps> = ({
             <input
               type="text"
               value={botName}
-              onChange={(e) => setBotName(e.target.value)}
-              placeholder={t("bot.name_placeholder")}
+              onChange={e => setBotName(e.target.value)}
+              placeholder={t('bot.name_placeholder')}
               className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base"
             />
           </div>
@@ -365,25 +366,21 @@ const BotEdit: React.FC<BotEditProps> = ({
             </div>
             <Select
               value={agentName}
-              onChange={(value) => {
+              onChange={value => {
                 if (value !== agentName) {
-                  setIsCustomModel(false)
-                  setSelectedModel('')
-                  setAgentConfig('')
-                  setAgentConfigError(false)
-                  setModels([])
+                  setIsCustomModel(false);
+                  setSelectedModel('');
+                  setAgentConfig('');
+                  setAgentConfigError(false);
+                  setModels([]);
                 }
-                setAgentName(value)
+                setAgentName(value);
               }}
               placeholder="choose an agent"
               style={{ width: '100%' }}
               options={agentOptions}
               loading={loadingAgents}
-              optionRender={(option) => (
-                <div>
-                  {option.data.label}
-                </div>
-              )}
+              optionRender={option => <div>{option.data.label}</div>}
             />
           </div>
 
@@ -396,11 +393,11 @@ const BotEdit: React.FC<BotEditProps> = ({
                 </label>
               </div>
               <div className="flex items-center">
-                <span className="text-xs text-text-muted mr-2">{t("bot.use_custom_model")}</span>
+                <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
                 <Switch
                   size="small"
                   checked={isCustomModel}
-                  onChange={(checked) => {
+                  onChange={checked => {
                     setIsCustomModel(checked);
                     if (checked) {
                       setAgentConfig('');
@@ -417,11 +414,11 @@ const BotEdit: React.FC<BotEditProps> = ({
             {isCustomModel ? (
               <textarea
                 value={agentConfig}
-                onChange={(e) => {
-                  const value = e.target.value
-                  setAgentConfig(value)
+                onChange={e => {
+                  const value = e.target.value;
+                  setAgentConfig(value);
                   if (!value.trim()) {
-                    setAgentConfigError(false)
+                    setAgentConfigError(false);
                   }
                 }}
                 onBlur={prettifyAgentConfig}
@@ -452,14 +449,14 @@ const BotEdit: React.FC<BotEditProps> = ({
             ) : (
               <Select
                 value={selectedModel}
-                onChange={(value) => {
+                onChange={value => {
                   setSelectedModel(value);
                 }}
                 placeholder="Select a model"
                 style={{ width: '100%' }}
                 options={models.map(model => ({
                   value: model.name,
-                  label: model.name
+                  label: model.name,
                 }))}
                 loading={loadingModels}
               />
@@ -474,21 +471,17 @@ const BotEdit: React.FC<BotEditProps> = ({
                   {t('bot.mcp_config')}
                 </label>
               </div>
-              <Button
-                size="small"
-                onClick={() => handleImportMcpConfig()}
-                className="text-xs"
-              >
+              <Button size="small" onClick={() => handleImportMcpConfig()} className="text-xs">
                 {t('bot.import_mcp_button')}
               </Button>
             </div>
             <textarea
               value={mcpConfig}
-              onChange={(e) => {
-                const value = e.target.value
-                setMcpConfig(value)
+              onChange={e => {
+                const value = e.target.value;
+                setMcpConfig(value);
                 if (!value.trim()) {
-                  setMcpConfigError(false)
+                  setMcpConfigError(false);
                 }
               }}
               onBlur={prettifyMcpConfig}
@@ -519,12 +512,12 @@ const BotEdit: React.FC<BotEditProps> = ({
           </div>
         </div>
 
-        {/* Right Prompt area - using grid layout occupying 3 columns */}
-        <div className="md:col-span-4 grid grid-rows-[auto_1fr]">
-          <div className="mb-1">
+        {/* Right Prompt area - responsive layout */}
+        <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col min-h-0">
+          <div className="mb-1 flex-shrink-0">
             <div className="flex items-center">
               <label className="block text-base font-medium text-text-primary">
-                  {t("bot.prompt")}
+                {t('bot.prompt')}
               </label>
               <span className="text-xs text-text-muted ml-2">AI prompt</span>
             </div>
@@ -533,9 +526,9 @@ const BotEdit: React.FC<BotEditProps> = ({
           {/* textarea occupies all space in the second row */}
           <textarea
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={t("bot.prompt_placeholder")}
-            className="w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar"
+            onChange={e => setPrompt(e.target.value)}
+            placeholder={t('bot.prompt_placeholder')}
+            className="w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow"
           />
         </div>
       </div>
@@ -547,8 +540,168 @@ const BotEdit: React.FC<BotEditProps> = ({
         onImport={handleImportConfirm}
         message={message}
       />
-    </div>
-  )
-}
 
-export default BotEdit
+      {/* Mobile responsive styles */}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+          @media (max-width: 1024px) {
+            /* Stack layout on tablet and mobile */
+            .flex.flex-col.lg\\:flex-row {
+              flex-direction: column !important;
+            }
+            .w-full.lg\\:w-2\\/5.xl\\:w-1\\/3 {
+              width: 100% !important;
+              margin-bottom: 1rem;
+            }
+            .w-full.lg\\:w-3\\/5.xl\\:w-2\\/3 {
+              width: 100% !important;
+            }
+          }
+
+          @media (max-width: 640px) {
+            /* Mobile specific optimizations */
+            .flex.flex-col.w-full.bg-surface.rounded-lg {
+              padding: 0.5rem !important;
+              border-radius: 0.5rem !important;
+              max-width: 100vw !important;
+              overflow-x: hidden !important;
+              height: 100vh !important;
+              min-height: 100vh !important;
+              max-height: 100vh !important;
+            }
+
+            /* Prevent horizontal scroll on mobile */
+            body, html {
+              overflow-x: hidden !important;
+            }
+
+            /* Ensure container doesn't cause horizontal scroll */
+            .max-w-full {
+              max-width: 100vw !important;
+              overflow-x: hidden !important;
+            }
+
+            .overflow-hidden {
+              overflow-x: hidden !important;
+              overflow-y: auto !important;
+            }
+
+            /* Fix main container height on mobile */
+            .flex.flex-col.w-full.bg-surface.rounded-lg {
+              height: 100vh !important;
+              min-height: 100vh !important;
+            }
+
+            /* Fix content area to fill remaining height */
+            .flex.flex-col.lg\\:flex-row.gap-4.flex-grow.mx-2.min-h-0.overflow-hidden {
+              height: calc(100vh - 120px) !important;
+              min-height: calc(100vh - 120px) !important;
+            }
+
+            /* Adjust input and textarea sizes for mobile */
+            input[type="text"] {
+              font-size: 16px !important;
+              padding: 0.75rem 1rem !important;
+              height: auto !important;
+              max-width: 100% !important;
+              box-sizing: border-box !important;
+            }
+
+            textarea {
+              font-size: 16px !important;
+              padding: 0.75rem 1rem !important;
+              min-height: 150px !important;
+              max-width: 100% !important;
+              box-sizing: border-box !important;
+              resize: vertical !important;
+              white-space: pre-wrap !important;
+              word-wrap: break-word !important;
+            }
+
+            /* Adjust button sizes */
+            .ant-btn {
+              min-height: 40px !important;
+              font-size: 14px !important;
+              max-width: 100% !important;
+              white-space: nowrap !important;
+              overflow: hidden !important;
+              text-overflow: ellipsis !important;
+            }
+
+            /* Adjust select component */
+            .ant-select {
+              max-width: 100% !important;
+            }
+
+            .ant-select-selector {
+              min-height: 40px !important;
+              font-size: 16px !important;
+              max-width: 100% !important;
+              box-sizing: border-box !important;
+            }
+
+            .ant-select-dropdown {
+              max-width: 90vw !important;
+              min-width: 200px !important;
+            }
+
+            /* Adjust labels */
+            label {
+              font-size: 16px !important;
+              max-width: 100% !important;
+              word-wrap: break-word !important;
+            }
+
+            /* Reduce spacing on mobile */
+            .space-y-3 > * + * {
+              margin-top: 0.75rem !important;
+            }
+
+            /* Fix overflow issues */
+            .overflow-y-auto {
+              overflow-x: hidden !important;
+              overflow-y: auto !important;
+            }
+
+            /* Fix flex container overflow */
+            .flex.flex-col {
+              min-width: 0 !important;
+              max-width: 100% !important;
+            }
+
+            .flex-grow {
+              min-width: 0 !important;
+              max-width: 100% !important;
+              flex: 1 !important;
+            }
+
+            /* Fix grid and layout overflow */
+            .grid {
+              max-width: 100% !important;
+              overflow-x: hidden !important;
+            }
+
+            /* Fix text overflow in containers */
+            .truncate {
+              overflow: hidden !important;
+              text-overflow: ellipsis !important;
+              white-space: nowrap !important;
+              max-width: 100% !important;
+            }
+
+            /* Fix long text in tooltips */
+            .ant-tooltip-inner {
+              max-width: 80vw !important;
+              word-wrap: break-word !important;
+              white-space: normal !important;
+            }
+          }
+        `,
+        }}
+      />
+    </div>
+  );
+};
+
+export default BotEdit;

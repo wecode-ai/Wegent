@@ -8,6 +8,7 @@ from dataclasses import asdict
 # -*- coding: utf-8 -*-
 
 from typing import Dict, Any, List, Union
+from datetime import datetime
 
 from claude_agent_sdk import ClaudeSDKClient
 from shared.status import TaskStatus
@@ -26,15 +27,16 @@ from claude_agent_sdk.types import (
 
 logger = setup_logger("claude_response_processor")
 
+
 async def process_response(
-    client: ClaudeSDKClient, report_progress_callback, thinking_manager=None
+    client: ClaudeSDKClient, state_manager, thinking_manager=None
 ) -> TaskStatus:
     """
     Process the response messages from Claude
 
     Args:
         client: Claude SDK client
-        report_progress_callback: Callback function to report progress
+        state_manager: ProgressStateManager instance for managing state and reporting progress
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
 
     Returns:
@@ -49,18 +51,18 @@ async def process_response(
 
             if isinstance(msg, SystemMessage):
                 # Handle SystemMessage
-                _handle_system_message(msg, thinking_manager)
+                _handle_system_message(msg, state_manager, thinking_manager)
 
             elif isinstance(msg, UserMessage):
                 # Handle UserMessage
                 _handle_user_message(msg, thinking_manager)
 
             elif isinstance(msg, AssistantMessage):
-                _handle_assistant_message(msg, thinking_manager)
+                _handle_assistant_message(msg, state_manager, thinking_manager)
 
             elif isinstance(msg, ResultMessage):
                 # Use specialized function to handle ResultMessage
-                result_status = _process_result_message(msg, report_progress_callback, thinking_manager)
+                result_status = _process_result_message(msg, state_manager, thinking_manager)
                 if result_status:
                     return result_status
 
@@ -78,21 +80,21 @@ async def process_response(
                 report_immediately=False
             )
         
-        # Also try to send error information as result on failure
-        error_result = {"error": str(e)}
-        if thinking_manager:
-            error_result["thinking"] = [step.dict() for step in thinking_manager.get_thinking_steps()]
-        
-        report_progress_callback(
-            progress=100,
-            status=TaskStatus.FAILED.value,
-            message=f"Error processing response: {str(e)}",
-            result=error_result,
-        )
+        # Update workbench status to failed
+        if state_manager:
+            state_manager.update_workbench_status("failed")
+            
+            # Report error using state manager
+            state_manager.report_progress(
+                progress=100,
+                status=TaskStatus.FAILED.value,
+                message=f"Error processing response: {str(e)}",
+                extra_result={"error": str(e)}
+            )
         return TaskStatus.FAILED
 
 
-def _handle_system_message(msg: SystemMessage, thinking_manager=None):
+def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=None):
     """处理系统消息，提取详细信息"""
     
     # 构建系统消息的详细信息，符合目标格式
@@ -203,7 +205,7 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
         )
 
 
-def _handle_assistant_message(msg: AssistantMessage, thinking_manager=None):
+def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_manager=None):
     """处理助手消息，提取详细信息"""
     
     # 收集所有内容块的详细信息，符合目标格式
@@ -228,11 +230,6 @@ def _handle_assistant_message(msg: AssistantMessage, thinking_manager=None):
     
     # 处理每个内容块
     for block in msg.content:
-        # 添加调试日志：打印 block 的类型和内容
-        logger.info(f"Processing block type: {type(block).__name__}, isinstance checks: "
-                   f"ToolUseBlock={isinstance(block, ToolUseBlock)}, "
-                   f"TextBlock={isinstance(block, TextBlock)}, "
-                   f"ToolResultBlock={isinstance(block, ToolResultBlock)}")
         logger.info(f"Block content: {asdict(block) if hasattr(block, '__dataclass_fields__') else block}")
         
         if isinstance(block, ToolUseBlock):
@@ -254,6 +251,8 @@ def _handle_assistant_message(msg: AssistantMessage, thinking_manager=None):
                 "text": block.text
             }
             message_details["message"]["content"].append(text_detail)
+
+            state_manager.update_workbench_status("running", block.text)
             
             logger.info(f"TextBlock: {len(block.text)} chars")
         
@@ -325,13 +324,13 @@ def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
             )
 
 
-def _process_result_message(msg: ResultMessage, report_progress_callback, thinking_manager=None) -> TaskStatus:
+def _process_result_message(msg: ResultMessage, state_manager, thinking_manager=None) -> TaskStatus:
     """
     Process a ResultMessage from Claude
 
     Args:
         msg: The ResultMessage to process
-        report_progress_callback: Callback function to report progress
+        state_manager: ProgressStateManager instance for managing state and reporting progress
         thinking_manager: Optional ThinkingStepManager instance
 
     Returns:
@@ -375,18 +374,20 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
                 # Try to parse result as dict, wrap as dict if not
                 if isinstance(msg.result, dict):
                     result_dict = msg.result
+                    result_value = result_dict.get("value")
                 else:
                     result_dict = {"value": msg.result}
+                    result_value = msg.result
 
-                # Add thinking steps to result if available
-                if thinking_manager:
-                    result_dict["thinking"] = [step.dict() for step in thinking_manager.get_thinking_steps()]
+                # Update workbench status to completed
+                state_manager.update_workbench_status("completed")
 
-                report_progress_callback(
+                # Report progress using state manager
+                state_manager.report_progress(
                     progress=100,
                     status=TaskStatus.COMPLETED.value,
                     message=result_str,
-                    result=result_dict,
+                    extra_result=result_dict
                 )
             except Exception as e:
                 logger.error(f"Failed to parse result as dict: {e}")
@@ -397,20 +398,24 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
                         use_i18n_keys=True
                     )
                 
-                result_dict = ExecutionResult(thinking=thinking_manager.get_thinking_steps() if thinking_manager else []).dict()
-                report_progress_callback(
+                # Update workbench status to failed
+                state_manager.update_workbench_status("failed")
+                
+                # Report error using state manager
+                state_manager.report_progress(
                     progress=100,
                     status=TaskStatus.FAILED.value,
-                    message=result_str,
-                    result=result_dict,
+                    message=result_str
                 )
         else:
-            result_dict = ExecutionResult(thinking=thinking_manager.get_thinking_steps() if thinking_manager else []).dict()
-            report_progress_callback(
+            # Update workbench status to completed
+            state_manager.update_workbench_status("completed")
+            
+            # Report progress using state manager
+            state_manager.report_progress(
                 progress=100,
                 status=TaskStatus.COMPLETED.value,
-                message=result_str,
-                result=result_dict,
+                message=result_str
             )
         return TaskStatus.COMPLETED
 
@@ -427,12 +432,14 @@ def _process_result_message(msg: ResultMessage, report_progress_callback, thinki
                 details=result_details
             )
         
-        result_dict = ExecutionResult(thinking=thinking_manager.get_thinking_steps() if thinking_manager else []).dict()
-        report_progress_callback(
+        # Update workbench status to failed
+        state_manager.update_workbench_status("failed")
+        
+        # Report error using state manager
+        state_manager.report_progress(
             progress=100,
             status=TaskStatus.FAILED.value,
-            message=result_str,
-            result=result_dict,
+            message=result_str
         )
         return TaskStatus.FAILED  # CRITICAL FIX: Return FAILED status to stop task execution
 

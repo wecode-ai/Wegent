@@ -2,8 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { taskApis } from '@/apis/tasks'
-import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
+import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
+import { taskApis } from '@/apis/tasks';
 
 /**
  * Send message:
@@ -11,31 +11,31 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api'
  * - If task_id is not provided, create a task (/api/tasks) to get task_id, then call /api/tasks/{task_id} to send the message
  */
 export async function sendMessage(params: {
-  message: string
-  team: Team | null
-  repo: GitRepoInfo | null
-  branch: GitBranch | null
-  task_id?: number
-  taskType?: 'chat' | 'code'
+  message: string;
+  team: Team | null;
+  repo: GitRepoInfo | null;
+  branch: GitBranch | null;
+  task_id?: number;
+  taskType?: 'chat' | 'code';
 }) {
-  const { message, team, repo, branch, task_id, taskType = 'chat' } = params
-  const trimmed = message?.trim() ?? ''
+  const { message, team, repo, branch, task_id, taskType = 'chat' } = params;
+  const trimmed = message?.trim() ?? '';
 
   if (!trimmed) {
-    return { error: 'Message is empty', newTask: null }
+    return { error: 'Message is empty', newTask: null };
   }
 
-    // If there is no task_id, a complete context is required for the first send
-    if ((!task_id || !Number.isFinite(task_id)) && (!team)) {
-      return { error: 'Please select Team, repository and branch', newTask: null }
-    }
-  
-    // For code type tasks, repository is required
-    if (taskType === 'code' && !repo) {
-      return { error: 'Please select a repository for code tasks', newTask: null }
-    }
+  // If there is no task_id, a complete context is required for the first send
+  if ((!task_id || !Number.isFinite(task_id)) && !team) {
+    return { error: 'Please select Team, repository and branch', newTask: null };
+  }
 
-    // Unified delegation to taskApis.sendTaskMessage (internally handles whether to create a task first)
+  // For code type tasks, repository is required
+  if (taskType === 'code' && !repo) {
+    return { error: 'Please select a repository for code tasks', newTask: null };
+  }
+
+  // Unified delegation to taskApis.sendTaskMessage (internally handles whether to create a task first)
   const payload = {
     task_id: Number.isFinite(task_id as number) ? (task_id as number) : undefined,
     message: trimmed,
@@ -51,12 +51,12 @@ export async function sendMessage(params: {
     batch: 0,
     user_id: 0,
     user_name: '',
-  }
+  };
 
   try {
-    const { task_id } = await taskApis.sendTaskMessage(payload)
-    return { error: '', newTask: { task_id } }
-  } catch (e: any) {
-    return { error: e?.message || 'Failed to send message', newTask: null }
+    const { task_id } = await taskApis.sendTaskMessage(payload);
+    return { error: '', newTask: { task_id } };
+  } catch (error) {
+    return { error: (error as Error)?.message || 'Failed to send message', newTask: null };
   }
 }

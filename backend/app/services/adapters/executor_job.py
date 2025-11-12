@@ -77,10 +77,11 @@ class JobService(BaseService[Kind, None, None]):
                 task_crd = Task.model_validate(task.json)
                 task_status = task_crd.status.status if task_crd.status else "PENDING"
                 
-                task_type = (task_crd.metadata.labels and task_crd.metadata.labels.get("taskType")) or "chat"
+                task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
                 if task_type == 'code':
                     if (datetime.now() - subtask.updated_at).total_seconds() < settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS * 3600:
                         continue
+
                 # Check if task status is in COMPLETED, FAILED, or CANCELLED
                 if task_status in ["COMPLETED", "FAILED", "CANCELLED"]:
                     valid_candidates.append(subtask)

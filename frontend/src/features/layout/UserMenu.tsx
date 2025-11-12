@@ -2,24 +2,24 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { Menu } from '@headlessui/react'
-import { Button } from 'antd'
+import { Menu } from '@headlessui/react';
+import { Button } from 'antd';
 
-import { useUser } from '@/features/common/UserContext'
-import { useTranslation } from '@/hooks/useTranslation'
-import { DocsButton } from '@/features/layout/DocsButton'
-import { ThemeToggle } from '@/features/theme/ThemeToggle'
+import { useUser } from '@/features/common/UserContext';
+import { useTranslation } from '@/hooks/useTranslation';
+import { DocsButton } from '@/features/layout/DocsButton';
+import { ThemeToggle } from '@/features/theme/ThemeToggle';
 
 type UserMenuProps = {
-  className?: string
-}
+  className?: string;
+};
 
 export default function UserMenu({ className = '' }: UserMenuProps) {
-  const { t } = useTranslation('common')
-  const { user, logout } = useUser()
-  const userDisplayName = user?.user_name || t('user.default_name')
+  const { t } = useTranslation('common');
+  const { user, logout } = useUser();
+  const userDisplayName = user?.user_name || t('user.default_name');
 
   return (
     <div className={className}>
@@ -33,20 +33,10 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
         >
           <div className="flex flex-col gap-2 px-2 pb-1.5">
             <Menu.Item>
-              {({ close }) => (
-                <DocsButton
-                  className="w-full justify-center"
-                  onClick={close}
-                />
-              )}
+              {({ close }) => <DocsButton className="w-full justify-center" onClick={close} />}
             </Menu.Item>
             <Menu.Item>
-              {({ close }) => (
-                <ThemeToggle
-                  className="w-full justify-center"
-                  onToggle={close}
-                />
-              )}
+              {({ close }) => <ThemeToggle className="w-full justify-center" onToggle={close} />}
             </Menu.Item>
           </div>
           <div className="my-1 h-px bg-border/60" />
@@ -66,5 +56,5 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
         </Menu.Items>
       </Menu>
     </div>
-  )
+  );
 }

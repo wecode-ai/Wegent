@@ -53,11 +53,7 @@
 body {
   color: rgb(var(--color-text-primary));
   background-color: rgb(var(--color-bg-base));
-  background-image: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--color-bg-base))
-    );
+  background-image: linear-gradient(to bottom, transparent, rgb(var(--color-bg-base)));
   background-attachment: fixed;
   overflow-x: hidden;
 }
@@ -139,13 +135,13 @@ body {
 
   /* Hide scrollbar but keep functionality */
   .scrollbar-hide {
-    -ms-overflow-style: none;  /* IE and Edge */
-    scrollbar-width: none;  /* Firefox */
-    -webkit-overflow-scrolling: touch;  /* iOS momentum scrolling */
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+    -webkit-overflow-scrolling: touch; /* iOS momentum scrolling */
   }
 
   .scrollbar-hide::-webkit-scrollbar {
-    display: none;  /* Chrome, Safari and Opera */
+    display: none; /* Chrome, Safari and Opera */
   }
 
   /* Ensure horizontal scrolling works on mobile */
@@ -178,7 +174,7 @@ body {
 }
 
 /* Remove default blue outline from Headless UI */
-[data-headlessui-state~="open"] {
+[data-headlessui-state~='open'] {
   outline: none !important;
   box-shadow: none !important;
 }
@@ -404,7 +400,8 @@ button:focus-visible {
 
 .thinking-text-flow {
   animation: thinkingTextFlow 2s ease-in-out infinite;
-  background: linear-gradient(90deg,
+  background: linear-gradient(
+    90deg,
     rgb(var(--color-primary)),
     rgb(var(--color-text-primary)),
     rgb(var(--color-primary))
@@ -413,7 +410,9 @@ button:focus-visible {
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
-  animation: thinkingTextFlow 2s ease-in-out infinite, thinkingGradient 3s linear infinite;
+  animation:
+    thinkingTextFlow 2s ease-in-out infinite,
+    thinkingGradient 3s linear infinite;
 }
 
 /* Gradient animation for flowing effect */
@@ -428,7 +427,8 @@ button:focus-visible {
 
 /* Dark mode specific colors for the animation */
 [data-theme='dark'] .thinking-text-flow {
-  background: linear-gradient(90deg,
+  background: linear-gradient(
+    90deg,
     rgb(var(--color-primary)),
     rgb(var(--color-text-primary)),
     rgb(var(--color-primary))
@@ -509,23 +509,7 @@ button:focus-visible {
   animation: ripple 0.6s ease-out;
 }
 
-/* Custom scrollbar for sidebar */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgb(var(--color-scrollbar-thumb) / 0.5);
-  border-radius: 3px;
-}
-
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: rgb(var(--color-scrollbar-thumb) / 0.7);
-}
+/* Custom scrollbar styles are now in scrollbar.css */
 
 /* Smooth transitions for theme switching */
 * {
@@ -538,4 +522,13 @@ button:focus-visible {
 .no-transition,
 .no-transition * {
   transition: none !important;
+}
+
+/* Animation delay utilities for loading dots */
+.animation-delay-200 {
+  animation-delay: 0.2s;
+}
+
+.animation-delay-400 {
+  animation-delay: 0.4s;
 }

@@ -2,55 +2,53 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React, { useState } from 'react'
-import TextareaAutosize from 'react-textarea-autosize'
-import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline'
-import { useTranslation } from '@/hooks/useTranslation'
+import React, { useState } from 'react';
+import TextareaAutosize from 'react-textarea-autosize';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface ChatInputProps {
-  message: string
-  setMessage: (message: string) => void
-  handleSendMessage: () => void
-  isLoading: boolean
-  disabled?: boolean
-  taskType?: 'chat' | 'code'
+  message: string;
+  setMessage: (message: string) => void;
+  handleSendMessage: () => void;
+  isLoading: boolean;
+  disabled?: boolean;
+  taskType?: 'chat' | 'code';
 }
 
 export default function ChatInput({
   message,
   setMessage,
   handleSendMessage,
-  isLoading,
   disabled = false,
   taskType = 'code',
 }: ChatInputProps) {
-  const { t } = useTranslation('common')
-  const placeholderKey = taskType === 'chat' ? 'chat.placeholder_chat' : 'chat.placeholder_code'
-  const [isComposing, setIsComposing] = useState(false)
+  const { t } = useTranslation('common');
+  const placeholderKey = taskType === 'chat' ? 'chat.placeholder_chat' : 'chat.placeholder_code';
+  const [isComposing, setIsComposing] = useState(false);
 
   const handleCompositionStart = () => {
-    setIsComposing(true)
-  }
+    setIsComposing(true);
+  };
 
   const handleCompositionEnd = () => {
-    setIsComposing(false)
-  }
+    setIsComposing(false);
+  };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey && !disabled && !isComposing) {
-      e.preventDefault()
-      handleSendMessage()
+      e.preventDefault();
+      handleSendMessage();
     }
-  }
+  };
 
   return (
     <div className="w-full">
       <TextareaAutosize
         value={message}
-        onChange={(e) => {
-          if (!disabled) setMessage(e.target.value)
+        onChange={e => {
+          if (!disabled) setMessage(e.target.value);
         }}
         onKeyDown={handleKeyPress}
         onCompositionStart={handleCompositionStart}
@@ -63,5 +61,5 @@ export default function ChatInput({
         style={{ resize: 'none', overflow: 'auto' }}
       />
     </div>
-  )
+  );
 }
