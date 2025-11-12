@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.user import UserUpdate, UserCreate
 from app.core import security
+from app.core.crypto import encrypt_git_token, decrypt_git_token
 from app.services.base import BaseService
 from app.core.exceptions import ValidationException
 
@@ -23,15 +24,15 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         """Validate git info fields and tokens"""
         from app.repository.github_provider import GitHubProvider
         from app.repository.gitlab_provider import GitLabProvider
-        
+
         # Provider mapping
         providers = {
             "github": GitHubProvider(),
             "gitlab": GitLabProvider()
         }
-        
+
         validated_git_info = []
-        
+
         for git_item in git_info:
             # Validate required fields
             if not git_item.get("git_token"):
@@ -40,37 +41,43 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 raise ValidationException("git_domain is required")
             if not git_item.get("type"):
                 raise ValidationException("type is required")
-            
+
             provider_type = git_item.get("type")
             if provider_type not in providers:
                 raise ValidationException(f"Unsupported provider type: {provider_type}")
-            
+
             provider = providers[provider_type]
-            
+
+            # Get the plain token for validation
+            plain_token = git_item["git_token"]
+
             try:
                 # Use specific provider's validate_token method with custom domain
                 git_domain = git_item.get("git_domain")
-                validation_result = provider.validate_token(git_item["git_token"], git_domain=git_domain)
-                
+                validation_result = provider.validate_token(plain_token, git_domain=git_domain)
+
                 if not validation_result.get("valid", False):
                     raise ValidationException(
                         f"Invalid {provider_type} token"
                     )
-                
+
                 user_data = validation_result.get("user", {})
-                
+
                 # Update git_info fields
                 git_item["git_id"] = str(user_data.get("id", ""))
                 git_item["git_login"] = user_data.get("login", "")
                 git_item["git_email"] = user_data.get("email", "")
-                
+
+                # Encrypt the token before storing
+                git_item["git_token"] = encrypt_git_token(plain_token)
+
             except ValidationException:
                 raise
             except Exception as e:
                 raise ValidationException(f"{provider_type} token validation failed: {str(e)}")
-            
+
             validated_git_info.append(git_item)
-        
+
         return validated_git_info
 
     def create_user(
