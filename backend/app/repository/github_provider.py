@@ -676,3 +676,130 @@ class GitHubProvider(RepositoryProvider):
             
         cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
         return await cache_manager.get(cache_key)
+
+    async def get_branch_diff(
+        self,
+        user: User,
+        repo_name: str,
+        source_branch: str,
+        target_branch: str,
+        git_domain: str
+    ) -> Dict[str, Any]:
+        """
+        Get diff between two branches for a GitHub repository
+
+        Args:
+            user: User object
+            repo_name: Repository name
+            source_branch: Source branch name (the branch with changes, e.g., feature branch)
+            target_branch: Target branch name (the branch to compare against, e.g., main)
+            git_domain: Git domain
+
+        Returns:
+            Diff information including files changed and diff content
+        """
+        git_info = self._pick_git_info(user, git_domain)
+        git_token = git_info["git_token"]
+
+        if not git_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Git token not configured"
+            )
+
+        # Get API base URL based on git domain
+        api_base_url = self._get_api_base_url(git_domain)
+
+        try:
+            headers = {
+                "Authorization": f"token {git_token}",
+                "Accept": "application/vnd.github.v3+json"
+            }
+
+            # Get compare API response
+            # GitHub API format: base...head
+            # base = target_branch (what we're comparing against, e.g., main)
+            # head = source_branch (what has the changes, e.g., feature branch)
+            # This shows what changes are in source_branch that are not in target_branch
+            self.logger.info(f"Comparing {repo_name}: {target_branch}...{source_branch}")
+            response = requests.get(
+                f"{api_base_url}/repos/{repo_name}/compare/{target_branch}...{source_branch}",
+                headers=headers
+            )
+            response.raise_for_status()
+
+            compare_data = response.json()
+
+            # Log for debugging
+            self.logger.info(f"Compare API response status: {compare_data.get('status', 'unknown')}")
+            self.logger.info(f"Total commits: {compare_data.get('total_commits', 0)}")
+            self.logger.info(f"Files count: {len(compare_data.get('files', []))}")
+
+            # Process files and their diffs
+            files = []
+            for file in compare_data.get("files", []):
+                file_info = {
+                    "filename": file.get("filename", ""),
+                    "status": file.get("status", ""),
+                    "additions": file.get("additions", 0),
+                    "deletions": file.get("deletions", 0),
+                    "changes": file.get("changes", 0),
+                    "patch": file.get("patch", ""),
+                    "previous_filename": file.get("previous_filename", ""),
+                    "blob_url": file.get("blob_url", ""),
+                    "raw_url": file.get("raw_url", ""),
+                    "contents_url": file.get("contents_url", ""),
+                }
+                files.append(file_info)
+
+            # If no files found in the first direction, try the reverse direction
+            if not files and compare_data.get("total_commits", 0) > 0:
+                self.logger.info(f"No files found in {target_branch}...{source_branch}, trying reverse direction")
+                reverse_response = requests.get(
+                    f"{api_base_url}/repos/{repo_name}/compare/{source_branch}...{target_branch}",
+                    headers=headers
+                )
+                reverse_response.raise_for_status()
+                reverse_data = reverse_response.json()
+                
+                self.logger.info(f"Reverse compare API response status: {reverse_data.get('status', 'unknown')}")
+                self.logger.info(f"Reverse total commits: {reverse_data.get('total_commits', 0)}")
+                self.logger.info(f"Reverse files count: {len(reverse_data.get('files', []))}")
+                
+                # Process files from reverse direction
+                files = []
+                for file in reverse_data.get("files", []):
+                    file_info = {
+                        "filename": file.get("filename", ""),
+                        "status": file.get("status", ""),
+                        "additions": file.get("additions", 0),
+                        "deletions": file.get("deletions", 0),
+                        "changes": file.get("changes", 0),
+                        "patch": file.get("patch", ""),
+                        "previous_filename": file.get("previous_filename", ""),
+                        "blob_url": file.get("blob_url", ""),
+                        "raw_url": file.get("raw_url", ""),
+                        "contents_url": file.get("contents_url", ""),
+                    }
+                    files.append(file_info)
+                
+                # Use reverse data if it has files
+                if files:
+                    compare_data = reverse_data
+
+            return {
+                "status": compare_data.get("status", ""),
+                "ahead_by": compare_data.get("ahead_by", 0),
+                "behind_by": compare_data.get("behind_by", 0),
+                "total_commits": compare_data.get("total_commits", 0),
+                "files": files,
+                "diff_url": compare_data.get("diff_url", ""),
+                "html_url": compare_data.get("html_url", ""),
+                "permalink_url": compare_data.get("permalink_url", ""),
+            }
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"GitHub API error: {str(e)}"
+            )

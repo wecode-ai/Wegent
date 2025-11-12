@@ -15,13 +15,26 @@
     "last_updated": "Last updated",
     "copy_commit_id": "Copy full commit ID",
     "files": "files",
-    "changes": "Changes",
     "original_prompt": "Original prompt",
     "no_file_changes": "No file changes detected",
+    "no_changes_found": "No changes found",
     "file_status": {
       "new": "New",
       "deleted": "Deleted",
-      "renamed": "Renamed"
-    }
+      "renamed": "Renamed",
+      "modified": "Modified",
+      "added": "Added",
+      "removed": "Removed"
+    },
+    "loading_diff": "Loading code diff...",
+    "diff_load_failed": "Failed to load diff data",
+    "retry": "Retry",
+    "additions": "Additions",
+    "deletions": "Deletions",
+    "expand_all": "Expand All",
+    "collapse_all": "Collapse All",
+    "changes": "Changes",
+    "loading_diff_message": "Loading diff...",
+    "no_changes_between_branches": "No changes found between branches"
   }
 }

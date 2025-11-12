@@ -47,6 +47,39 @@ export interface TaskListResponse {
   items: Task[];
 }
 
+// Diff related types
+export interface BranchDiffRequest {
+  git_repo: string;
+  source_branch: string;
+  target_branch: string;
+  type: string;
+  git_domain: string;
+}
+
+export interface GitDiffFile {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch: string;
+  previous_filename: string;
+  blob_url: string;
+  raw_url: string;
+  contents_url: string;
+}
+
+export interface BranchDiffResponse {
+  status: string;
+  ahead_by: number;
+  behind_by: number;
+  total_commits: number;
+  files: GitDiffFile[];
+  diff_url: string;
+  html_url: string;
+  permalink_url: string;
+}
+
 // Task Services
 
 export const taskApis = {
@@ -107,5 +140,16 @@ export const taskApis = {
 
   deleteTask: async (id: number): Promise<SuccessMessage> => {
     return apiClient.delete(`/tasks/${id}`);
+  },
+
+  // Get branch diff
+  getBranchDiff: async (params: BranchDiffRequest): Promise<BranchDiffResponse> => {
+    const query = new URLSearchParams();
+    query.append('git_repo', params.git_repo);
+    query.append('source_branch', params.target_branch);
+    query.append('target_branch', params.source_branch);
+    query.append('type', params.type);
+    query.append('git_domain', params.git_domain);
+    return apiClient.get(`/git/repositories/diff?${query}`);
   },
 };
