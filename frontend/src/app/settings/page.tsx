@@ -9,11 +9,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import { Tab } from '@headlessui/react';
-import { PuzzlePieceIcon, UsersIcon } from '@heroicons/react/24/outline';
+import { PuzzlePieceIcon, UsersIcon, BellIcon } from '@heroicons/react/24/outline';
 import { RiRobot2Line } from 'react-icons/ri';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
 import BotList from '@/features/settings/components/BotList';
 import TeamList from '@/features/settings/components/TeamList';
+import NotificationSettings from '@/features/settings/components/NotificationSettings';
 import { UserProvider } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -29,6 +30,7 @@ function DashboardContent() {
       0: 'integrations',
       1: 'bots',
       2: 'team',
+      3: 'notifications',
     }),
     []
   );
@@ -39,6 +41,7 @@ function DashboardContent() {
       integrations: 0,
       bots: 1,
       team: 2,
+      notifications: 3,
     }),
     []
   );
@@ -138,6 +141,19 @@ function DashboardContent() {
                       <UsersIcon className="w-4 h-4" />
                       <span>{t('settings.team')}</span>
                     </Tab>
+
+                    <Tab
+                      className={({ selected }) =>
+                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                          selected
+                            ? 'bg-muted text-text-primary'
+                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                        }`
+                      }
+                    >
+                      <BellIcon className="w-4 h-4" />
+                      <span>{t('settings.sections.general')}</span>
+                    </Tab>
                   </Tab.List>
 
                   <div className="flex-1 min-h-0 px-8 py-4 overflow-y-auto min-w-0">
@@ -150,6 +166,9 @@ function DashboardContent() {
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <NotificationSettings />
                       </Tab.Panel>
                     </Tab.Panels>
                   </div>
@@ -197,6 +216,19 @@ function DashboardContent() {
                         <UsersIcon className="w-3 h-3" />
                         <span className="hidden xs:inline">{t('settings.team')}</span>
                       </Tab>
+
+                      <Tab
+                        className={({ selected }) =>
+                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
+                            selected
+                              ? 'bg-muted text-text-primary'
+                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                          }`
+                        }
+                      >
+                        <BellIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('settings.sections.general')}</span>
+                      </Tab>
                     </Tab.List>
                   </div>
 
@@ -210,6 +242,9 @@ function DashboardContent() {
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <NotificationSettings />
                       </Tab.Panel>
                     </Tab.Panels>
                   </div>

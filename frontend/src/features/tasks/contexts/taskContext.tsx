@@ -4,9 +4,10 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Task, TaskDetail } from '@/types/api';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
+import { Task, TaskDetail, TaskStatus } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
+import { notifyTaskCompletion } from '@/utils/notification';
 
 type TaskContextType = {
   tasks: Task[];
@@ -36,6 +37,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false);
+
+  // Track task status for notification
+  const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true);
@@ -84,6 +88,28 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setHasMore(result.hasMore);
     setTaskLoading(false);
   };
+
+  // Monitor task status changes and send notifications
+  useEffect(() => {
+    tasks.forEach(task => {
+      const previousStatus = taskStatusMapRef.current.get(task.id);
+      const currentStatus = task.status;
+
+      // Check if status changed from running to completed/failed
+      if (previousStatus && previousStatus !== currentStatus) {
+        const wasRunning = previousStatus === 'RUNNING' || previousStatus === 'PENDING';
+        const isCompleted = currentStatus === 'COMPLETED';
+        const isFailed = currentStatus === 'FAILED';
+
+        if (wasRunning && (isCompleted || isFailed)) {
+          notifyTaskCompletion(task.title, isCompleted);
+        }
+      }
+
+      // Update status map
+      taskStatusMapRef.current.set(task.id, currentStatus);
+    });
+  }, [tasks]);
 
   // Initial load
   useEffect(() => {
