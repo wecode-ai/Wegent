@@ -17,6 +17,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
 import { App, Button } from 'antd';
 import QuotaUsage from './QuotaUsage';
+import WeCodeGettingStarted from './WeCodeGettingStarted';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
 
@@ -337,6 +338,13 @@ export default function ChatArea({
             )}
           </div>
         </div>
+
+        {/* WeCode Getting Started Area - only show when no messages and it's code task type */}
+        {!hasMessages && taskType === 'code' && (
+          <div className="w-full max-w-3xl px-4 sm:px-6 mt-8 sm:mt-12 mb-8">
+            <WeCodeGettingStarted />
+          </div>
+        )}
       </div>
     </div>
   );

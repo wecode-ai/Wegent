@@ -1,0 +1,212 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+image: registry.api.weibo.com/ci/ci-runner:extend
+
+variables:
+  K8S_NAMESPACE: ci-deploy-video
+  MAIL_TO: weibo_rd_video@staff.sina.com.cn
+  PAAS_NAMESPACE: wb-plat-ide
+  MASTER_BRANCH: main
+stages:
+  - validation
+  - package
+  - production
+
+# WeAgent MR Validation Job
+validate-wegent-mr:
+  stage: validation
+  image: registry.api.weibo.com/ci/ci-runner:extend
+  script:
+    - |
+      # Check if code comes from "wegent"
+      if [[ "$CI_COMMIT_REF_NAME" =~ ^wegent ]]; then
+        exit 1
+      fi
+  rules:
+    - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "develop"'
+      when: always
+
+wegent-runtime:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-runtime
+    DOCKERFILE_PATH: wecode/docker/base
+  script:
+    - build_image
+  when: manual
+  rules:
+    - when: manual
+
+wegent-executor-manager:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-executor-manager
+    DOCKERFILE_PATH: wecode/docker/executor_manager
+  script:
+    - build_image
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - executor_manager/**/*
+        - wecode/docker/executor_manager/**/*
+        - shared/**/*
+    - changes:
+      - executor_manager/**/*
+      - wecode/docker/executor_manager/**/*
+      - shared/**/*
+
+trigger_update_executor_manager:
+    stage: production
+    variables:
+        APP: wegent-executor-manager-web
+        SERVICE: wegent-executor-manager
+        IMAGE_NAME: wegent-executor-manager-web
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        MASTER_BRANCH: master
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main"'
+        changes:
+          - executor_manager/**/*
+          - wecode/docker/executor_manager/**/*
+          - shared/**/*
+
+wegent-executor:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-executor
+    DOCKERFILE_PATH: wecode/docker/executor
+  script:
+    - build_image
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - executor/**/*
+        - wecode/docker/executor/**/*
+        - shared/**/*
+    - changes:
+      - executor/**/*
+      - wecode/docker/executor/**/*
+      - shared/**/*
+
+trigger_update_executor:
+    stage: production
+    variables:
+        APP: wegent-executor-manager-web
+        SERVICE: wegent-executor
+        IMAGE_NAME: wegent-executor
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        MASTER_BRANCH: master
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main"'
+        changes:
+          - executor/**/*
+          - wecode/docker/executor/**/*
+          - shared/**/*
+
+wegent-backend:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-backend-web
+    DOCKERFILE_PATH: wecode/docker/backend
+  script:
+    - build_image
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - backend/**/*
+        - wecode/docker/backend/**/*
+    - changes:
+      - backend/**/*
+      - wecode/docker/backend/**/*
+
+trigger_update_backend_web:
+    stage: production
+    variables:
+        APP: wegent-backend-web
+        SERVICE: wegent-backend-web
+        IMAGE_NAME: wegent-backend-web
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+        MASTER_BRANCH: master
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main"'
+        changes:
+          - backend/**/*
+          - wecode/docker/backend/**/*
+
+wegent-web:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-web
+    DOCKERFILE_PATH: wecode/docker/frontend
+  script:
+    - build_image
+  rules:
+    - if: '$CI_COMMIT_BRANCH == "main"'
+      changes:
+        - frontend/**/*
+        - wecode/docker/frontend/**/*
+    - changes:
+      - frontend/**/*
+      - wecode/docker/frontend/**/*
+
+trigger_update_front_web:
+    stage: production
+    variables:
+        APP: wegent-web
+        SERVICE: wegent-web
+        IMAGE_NAME: wegent-web
+        MASTER_BRANCH: master
+        UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
+        UPSTREAM_CI_PIPELINE_ID: $CI_PIPELINE_ID
+        UPSTREAM_CI_COMMIT_REF_NAME: $CI_COMMIT_REF_NAME
+        UPSTREAM_CI_COMMIT_SHA: $CI_COMMIT_SHA
+    trigger:
+        project: weibo_rd/cloudnative/aigc_gitops_manifest
+        branch: master
+        strategy: depend
+    rules:
+      - if: '$CI_COMMIT_BRANCH == "main"'
+        changes:
+          - frontend/**/*
+          - wecode/docker/frontend/**/*
+
+wegent-preview-web:
+  stage: package
+  retry: 1
+  variables:
+    SERVICE: wegent-preview-web
+    DOCKERFILE_PATH: wecode/docker/frontend_preview
+  script:
+    - build_image
+  rules:
+    - changes:
+      - frontend/**/*
+      - wecode/docker/frontend/**/*

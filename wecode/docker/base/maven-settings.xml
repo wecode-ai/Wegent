@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0
+                      https://maven.apache.org/xsd/settings-1.0.0.xsd">
+
+    <!-- From: https://git.intra.weibo.com/im/form/-/blob/master/_files/freshman-guide/settings.xml -->
+
+    <!-- # Apache / Maven / Settings Reference -->
+    <!-- * Documentation -> Settings Reference : <https://maven.apache.org/settings.html> -->
+
+    <!-- ## localRepository -->
+    <!-- * It's the path of this build system’s local repository.   -->
+    <!-- * The default value is `${user.home}/.m2/repository`.      -->
+    <!--     * e.g.: default `/Users/$USER/.m2/repository` on macOS -->
+
+    <interactiveMode/>
+    <usePluginRegistry/>
+    <offline/>
+    <pluginGroups/>
+
+    <!-- ## Servers -->
+    <!-- * The repositories for download and deployment are defined by the repositories and distributionManagement elements of the POM. -->
+    <!-- * However, certain settings such as username and password should not be distributed along with the pom.xml.                    -->
+    <!-- * This type of information should exist on the build server in the settings.xml.                                               -->
+
+    <!--
+    <servers>
+        <server>
+            <id>weibo.default</id>
+            <username>USERNAME</username>
+            <password>PASSWORD</password>
+        </server>
+        <server>
+            <id>weibo.snapshots</id>
+            <username>USERNAME</username>
+            <password>PASSWORD</password>
+        </server>
+    </servers>
+    -->
+
+    <!-- ## Mirros -->
+    <!-- * With Repositories you specify from which locations you want to download certain artifacts,   -->
+    <!--    such as dependencies and maven-plugins.                                                     -->
+
+    <mirrors>
+        <mirror>
+            <id>Weibo</id>
+            <name>Weibo Maven Nexus Mirror</name>
+            <url>http://maven.intra.weibo.com/nexus/content/groups/public</url>
+            <mirrorOf>*</mirrorOf>
+        </mirror>
+    </mirrors>
+
+    <proxies/>
+
+    <!-- ## Profiles -->
+    <!-- * The profile element in the settings.xml is a truncated version of the pom.xml profile element.                           -->
+    <!-- * It consists of the activation, repositories, pluginRepositories and properties elements.                                 -->
+    <!-- * The profile elements only include these four elements because they concerns themselves with the build system as a whole  -->
+    <!--    (which is the role of the settings.xml file), not about individual project object model settings.                       -->
+
+    <profiles>
+        <profile>
+            <id>weibo</id>
+            <repositories>
+                <repository>
+                    <id>weibo.default</id>
+                    <name>Internal Release Repository</name>
+                    <url>http://maven.intra.weibo.com/nexus/content/repositories/releases</url>
+                    <releases>
+                        <enabled>true</enabled>
+                        <updatePolicy>interval:60</updatePolicy>
+                        <checksumPolicy>warn</checksumPolicy>
+                    </releases>
+                    <snapshots>
+                        <enabled>false</enabled>
+                        <updatePolicy>always</updatePolicy>
+                        <checksumPolicy>warn</checksumPolicy>
+                    </snapshots>
+                </repository>
+
+                <repository>
+                    <id>weibo.snapshot</id>
+                    <name>Internal Snapshot Repository</name>
+                    <url>http://maven.intra.weibo.com/nexus/content/repositories/snapshots</url>
+                    <releases>
+                        <enabled>false</enabled>
+                        <updatePolicy>interval:60</updatePolicy>
+                        <checksumPolicy>warn</checksumPolicy>
+                    </releases>
+                    <snapshots>
+                        <enabled>true</enabled>
+                        <updatePolicy>always</updatePolicy>
+                        <checksumPolicy>warn</checksumPolicy>
+                    </snapshots>
+                </repository>
+            </repositories>
+        </profile>
+    </profiles>
+
+    <!-- ## Active Profiles -->
+    <!-- * Any profile id defined as an activeProfile will be active, regardless of any environment settings. -->
+
+    <activeProfiles>
+        <activeProfile>weibo</activeProfile>
+    </activeProfiles>
+
+</settings>
