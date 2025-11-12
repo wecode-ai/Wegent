@@ -91,7 +91,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Automatically refresh all loaded pages every 30 seconds
   // Only refresh periodically when there are unfinished tasks
   useEffect(() => {
     const hasIncompleteTasks = tasks.some(
@@ -103,13 +102,14 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     if (hasIncompleteTasks) {
       interval = setInterval(() => {
         refreshTasks();
-      }, 30000);
+      }, 10000);
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [loadedPages, tasks, refreshTasks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedPages, tasks]); // Removed refreshTasks from dependencies to avoid unnecessary re-renders
 
   const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
     if (!selectedTask) return;
