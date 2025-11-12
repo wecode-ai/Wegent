@@ -90,6 +90,7 @@ def apply_patch() -> None:
     _orig_get_repositories = GitLabProvider.get_repositories
     _orig_search_repositories = GitLabProvider.search_repositories
     _orig_get_branches = GitLabProvider.get_branches
+    _orig_get_diff_branchs = GitLabProvider.get_branch_diff
 
     async def patched_get_repositories(self, user, page: int = 1, limit: int = 100):
         restored = await _resolve_tokens_for_user(user)
@@ -112,10 +113,22 @@ def apply_patch() -> None:
         finally:
             _restore_tokens(restored)
 
+    async def patched_get_diff_branches( self,
+        user,
+        repo_name,
+        source_branch,
+        target_branch,
+        git_domain):
+        restored = await _resolve_tokens_for_user(user)
+        try:
+            return await _orig_get_diff_branchs(self, user, repo_name, source_branch, target_branch, git_domain)
+        finally:
+            _restore_tokens(restored)
     # Assign patched methods
     GitLabProvider.get_repositories = patched_get_repositories  # type: ignore[attr-defined]
     GitLabProvider.search_repositories = patched_search_repositories  # type: ignore[attr-defined]
     GitLabProvider.get_branches = patched_get_branches  # type: ignore[attr-defined]
+    GitLabProvider.get_branch_diff = patched_get_diff_branches  # type: ignore[attr-defined]
 
 
 # Auto-apply on import to reduce changes elsewhere
