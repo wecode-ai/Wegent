@@ -15,13 +15,26 @@
     "last_updated": "最后更新",
     "copy_commit_id": "复制完整提交ID",
     "files": "个文件",
-    "changes": "变更",
     "original_prompt": "原始提示词",
     "no_file_changes": "未检测到文件变更",
+    "no_changes_found": "未找到变更",
     "file_status": {
       "new": "新建",
       "deleted": "已删除",
-      "renamed": "已重命名"
-    }
+      "renamed": "已重命名",
+      "modified": "已修改",
+      "added": "已添加",
+      "removed": "已移除"
+    },
+    "loading_diff": "正在加载代码差异...",
+    "diff_load_failed": "加载差异数据失败",
+    "retry": "重试",
+    "additions": "添加",
+    "deletions": "删除",
+    "expand_all": "全部展开",
+    "collapse_all": "全部收起",
+    "changes": "变更",
+    "loading_diff_message": "加载中...",
+    "no_changes_between_branches": "分支之间未发现变更"
   }
 }
