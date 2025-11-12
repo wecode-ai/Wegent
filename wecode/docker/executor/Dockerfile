@@ -23,3 +23,4 @@ COPY file_change_sender.py /app/scripts/file_change_sender.py
 COPY executor /app/executor
 COPY shared /app/shared
 CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT}"]
+
