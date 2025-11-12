@@ -25,8 +25,8 @@ fi
 
 # 2. 检查并更新 origin remote
 current_origin_url=$(git remote get-url ${ORIGIN_REMOTE_NAME})
-if [[ ! "$current_origin_url" =~ git\.[INFORMATION_DATA_ID_00] ]]; then
-    echo "⚠️  Origin remote is not pointing to git.[INFORMATION_DATA_ID_00], updating..."
+if [[ ! "$current_origin_url" =~ git\.intra\.weibo\.com ]]; then
+    echo "⚠️  Origin remote is not pointing to git.intra.weibo.com, updating..."
     git remote set-url ${ORIGIN_REMOTE_NAME} ${ORIGIN_REMOTE_URL}
     echo "✅ Origin remote updated to: ${ORIGIN_REMOTE_URL}"
 elif [ "$current_origin_url" != "$ORIGIN_REMOTE_URL" ]; then
