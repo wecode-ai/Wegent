@@ -138,12 +138,16 @@ export default function ChatArea({
     }
   };
 
-  // Save repository preference when it changes
-  useEffect(() => {
-    if (selectedRepo) {
-      saveLastRepo(selectedRepo.git_repo_id, selectedRepo.git_repo);
+  const handleRepoChange = (repo: GitRepoInfo | null) => {
+    console.log('[ChatArea] handleRepoChange called:', repo?.git_repo || 'null', repo?.git_repo_id || 'null');
+    setSelectedRepo(repo);
+
+    // Save repository preference to localStorage immediately when it changes
+    if (repo) {
+      console.log('[ChatArea] Saving repo to localStorage:', repo.git_repo_id, repo.git_repo);
+      saveLastRepo(repo.git_repo_id, repo.git_repo);
     }
-  }, [selectedRepo]);
+  };
 
   const handleSendMessage = async () => {
     setIsLoading(true);
@@ -320,7 +324,7 @@ export default function ChatArea({
               <>
                 <RepositorySelector
                   selectedRepo={selectedRepo}
-                  handleRepoChange={setSelectedRepo}
+                  handleRepoChange={handleRepoChange}
                   disabled={hasMessages}
                   selectedTaskDetail={selectedTaskDetail}
                 />
