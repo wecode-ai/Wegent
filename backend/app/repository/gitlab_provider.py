@@ -671,4 +671,129 @@ class GitLabProvider(RepositoryProvider):
             
         cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
         return await cache_manager.get(cache_key)
+
+    async def get_branch_diff(
+        self,
+        user: User,
+        repo_name: str,
+        source_branch: str,
+        target_branch: str,
+        git_domain: str
+    ) -> Dict[str, Any]:
+        """
+        Get diff between two branches for a GitLab repository
+
+        Args:
+            user: User object
+            repo_name: Repository name
+            source_branch: Source branch name
+            target_branch: Target branch name
+            git_domain: Git domain
+
+        Returns:
+            Diff information including files changed and diff content
+        """
+        git_info = self._pick_git_info(user, git_domain)
+        git_token = git_info["git_token"]
+
+        if not git_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Git token not configured"
+            )
+
+        # Get API base URL based on git domain
+        api_base_url = self._get_api_base_url(git_domain)
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {git_token}",
+                "Accept": "application/json"
+            }
+
+            # Get repository ID first (GitLab API uses project ID)
+            encoded_repo_name = requests.utils.quote(repo_name, safe='')
+            repo_response = requests.get(
+                f"{api_base_url}/projects/{encoded_repo_name}",
+                headers=headers
+            )
+            repo_response.raise_for_status()
+            repo_data = repo_response.json()
+            project_id = repo_data["id"]
+
+            # Get compare API response
+            response = requests.get(
+                f"{api_base_url}/projects/{project_id}/repository/compare",
+                headers=headers,
+                params={
+                    "from": target_branch,
+                    "to": source_branch
+                }
+            )
+            response.raise_for_status()
+
+            compare_data = response.json()
+            self.logger.info(f"Response: {compare_data}")
+
+            # Process commits
+            commits = []
+            for commit in compare_data.get("commits", []):
+                commit_info = {
+                    "id": commit.get("id", ""),
+                    "short_id": commit.get("short_id", ""),
+                    "title": commit.get("title", ""),
+                    "message": commit.get("message", ""),
+                    "author_name": commit.get("author_name", ""),
+                    "author_email": commit.get("author_email", ""),
+                    "created_at": commit.get("created_at", ""),
+                }
+                commits.append(commit_info)
+
+            # Process diffs and files - convert to GitHub-compatible format
+            files = []
+            for diff in compare_data.get("diffs", []):
+                # Determine status based on GitLab diff flags
+                status = "modified"
+                if diff.get("new_file", False):
+                    status = "added"
+                elif diff.get("deleted_file", False):
+                    status = "removed"
+                elif diff.get("renamed_file", False):
+                    status = "renamed"
+                
+                # Parse diff to count additions and deletions (simplified)
+                diff_content = diff.get("diff", "")
+                additions = diff_content.count("\n+") if diff_content else 0
+                deletions = diff_content.count("\n-") if diff_content else 0
+                
+                file_info = {
+                    "filename": diff.get("new_path", ""),
+                    "status": status,
+                    "additions": additions,
+                    "deletions": deletions,
+                    "changes": additions + deletions,
+                    "patch": diff_content,
+                    "previous_filename": diff.get("old_path", "") if diff.get("renamed_file", False) else "",
+                    "blob_url": "",  # GitLab doesn't provide this in compare API
+                    "raw_url": "",  # GitLab doesn't provide this in compare API
+                    "contents_url": "",  # GitLab doesn't provide this in compare API
+                }
+                files.append(file_info)
+
+            return {
+                "status": "ahead" if len(commits) > 0 else "identical",
+                "ahead_by": len(commits),
+                "behind_by": 0,  # GitLab compare API doesn't provide this information
+                "total_commits": len(commits),
+                "files": files,
+                "diff_url": "",  # GitLab doesn't provide this in compare API
+                "html_url": compare_data.get("web_url", ""),
+                "permalink_url": compare_data.get("web_url", ""),
+            }
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"GitLab API error: {str(e)}"
+            )
     

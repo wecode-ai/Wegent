@@ -16,6 +16,8 @@ import {
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTranslation } from '@/hooks/useTranslation';
+import { taskApis, BranchDiffResponse } from '@/apis/tasks';
+import DiffViewer from './DiffViewer';
 
 // Git commit statistics
 interface CommitStats {
@@ -72,6 +74,8 @@ interface WorkbenchData {
   originalPrompt: string;
   file_changes: FileChange[];
   git_info: GitInfo;
+  git_type?: 'github' | 'gitlab';
+  git_domain?: string;
 }
 
 interface WorkbenchProps {
@@ -114,6 +118,9 @@ export default function Workbench({
   const [activeTab, setActiveTab] = useState<'overview' | 'files'>('overview');
   const [showCommits, setShowCommits] = useState(false);
   const [copiedCommitId, setCopiedCommitId] = useState<string | null>(null);
+  const [diffData, setDiffData] = useState<BranchDiffResponse | null>(null);
+  const [isDiffLoading, setIsDiffLoading] = useState(false);
+  const [diffLoadError, setDiffLoadError] = useState<string | null>(null);
   const { theme } = useTheme();
   const { t } = useTranslation('tasks');
 
@@ -124,13 +131,84 @@ export default function Workbench({
   useEffect(() => {
     // If the API returns new workbench data (not null/undefined), update the cache
     if (workbenchData) {
+      // Check if task has changed by comparing task numbers or IDs
+      const taskChanged =
+        cachedWorkbenchData && cachedWorkbenchData.taskNumber !== workbenchData.taskNumber;
+
       setCachedWorkbenchData(workbenchData);
+
+      // Reset diff data when task changes
+      if (taskChanged) {
+        setDiffData(null);
+        setIsDiffLoading(false);
+        setDiffLoadError(null);
+      }
     }
-    // If workbenchData is null/undefined, keep the previous state (don't update cache)
-  }, [workbenchData]);
+    //If workbenchData is null/undefined, keep the previous state (don't update cache)
+  }, [workbenchData, cachedWorkbenchData]);
+
+  const loadDiffData = async () => {
+    if (!cachedWorkbenchData || !cachedWorkbenchData.git_info.target_branch) {
+      return;
+    }
+
+    setIsDiffLoading(true);
+    setDiffLoadError(null);
+    try {
+      const response = await taskApis.getBranchDiff({
+        git_repo: cachedWorkbenchData.repository,
+        source_branch: cachedWorkbenchData.git_info.source_branch,
+        target_branch: cachedWorkbenchData.git_info.target_branch,
+        type: cachedWorkbenchData.git_type || 'github',
+        git_domain: cachedWorkbenchData.git_domain || 'github.com',
+      });
+      setDiffData(response);
+      setDiffLoadError(null);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Failed to load diff data:', errorMessage);
+      setDiffLoadError(errorMessage);
+      // Don't set diffData - let error state prevent retry
+    } finally {
+      setIsDiffLoading(false);
+    }
+  };
+
+  // Auto-load diff data when task is completed
+  // Only load once per task - prevent infinite retry on error
+  useEffect(() => {
+    if (
+      cachedWorkbenchData?.status === 'completed' &&
+      cachedWorkbenchData.git_info.target_branch &&
+      !diffData &&
+      !isDiffLoading &&
+      !diffLoadError // Don't retry if there was an error
+    ) {
+      loadDiffData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    cachedWorkbenchData?.status,
+    cachedWorkbenchData?.git_info.target_branch,
+    diffData,
+    isDiffLoading,
+    diffLoadError,
+  ]);
 
   // Use cached data for rendering
   const displayData = cachedWorkbenchData;
+
+  // Check if we should show diff data
+  const shouldShowDiffData = () => {
+    return (
+      displayData?.status === 'completed' &&
+      diffData &&
+      !isDiffLoading &&
+      !diffLoadError &&
+      diffData.files &&
+      diffData.files.length > 0
+    );
+  };
 
   const navigation = [
     {
@@ -142,7 +220,9 @@ export default function Workbench({
       name: t('workbench.files_changed'),
       value: 'files' as const,
       current: activeTab === 'files',
-      badge: displayData?.file_changes?.length || 0,
+      badge: shouldShowDiffData()
+        ? diffData?.files?.length || 0
+        : displayData?.file_changes?.length || 0,
     },
   ];
 
@@ -488,114 +568,79 @@ export default function Workbench({
                     )}
                   </div>
                 ) : (
-                  // Files Changed Tab
-                  <div className="space-y-2">
-                    {displayData?.file_changes && displayData.file_changes.length > 0 ? (
-                      displayData.file_changes.map((fileChange: FileChange, index: number) => {
-                        const totalChanges = fileChange.added_lines + fileChange.removed_lines;
-                        const addedPercent =
-                          totalChanges > 0 ? (fileChange.added_lines / totalChanges) * 100 : 0;
-                        const removedPercent =
-                          totalChanges > 0 ? (fileChange.removed_lines / totalChanges) * 100 : 0;
-
-                        return (
-                          <div
-                            key={index}
-                            className="rounded-lg border border-border bg-surface hover:bg-muted/50 transition-colors"
+                  // Files Changed Tab - with integrated diff support
+                  <>
+                    {isDiffLoading ? (
+                      // Loading diff data
+                      <div className="flex items-center justify-center h-64">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                        <span className="ml-3 text-text-muted">{t('workbench.loading_diff')}</span>
+                      </div>
+                    ) : diffLoadError ? (
+                      // Show error message with retry button
+                      <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/10 dark:border-red-800 p-6 text-center">
+                        <div className="flex flex-col items-center gap-3">
+                          <svg
+                            className="w-12 h-12 text-red-500"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
                           >
-                            <div className="px-4 py-3 flex items-center justify-between">
-                              <div className="flex items-center gap-3 flex-1 min-w-0">
-                                {/* File path */}
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-sm font-mono text-text-primary truncate">
-                                      {fileChange.new_path}
-                                    </span>
-                                    {fileChange.new_file && (
-                                      <span className="inline-flex items-center rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
-                                        {t('workbench.file_status.new')}
-                                      </span>
-                                    )}
-                                    {fileChange.deleted_file && (
-                                      <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/20">
-                                        {t('workbench.file_status.deleted')}
-                                      </span>
-                                    )}
-                                    {fileChange.renamed_file && (
-                                      <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">
-                                        {t('workbench.file_status.renamed')}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Stats */}
-                                <div className="flex items-center gap-3 flex-shrink-0">
-                                  {/* Added/Removed lines */}
-                                  <div className="flex items-center gap-2 text-sm font-mono">
-                                    {fileChange.added_lines > 0 && (
-                                      <span className="text-green-600">
-                                        +{fileChange.added_lines}
-                                      </span>
-                                    )}
-                                    {fileChange.removed_lines > 0 && (
-                                      <span className="text-red-600">
-                                        -{fileChange.removed_lines}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* Visual bar */}
-                                  <div className="flex items-center gap-0.5 w-20">
-                                    {totalChanges > 0 && (
-                                      <>
-                                        {/* Green bars for additions */}
-                                        {Array.from({ length: Math.ceil(addedPercent / 20) }).map(
-                                          (_, i) => (
-                                            <div
-                                              key={`add-${i}`}
-                                              className="h-2 w-2 rounded-sm bg-green-500"
-                                            />
-                                          )
-                                        )}
-                                        {/* Red bars for deletions */}
-                                        {Array.from({ length: Math.ceil(removedPercent / 20) }).map(
-                                          (_, i) => (
-                                            <div
-                                              key={`del-${i}`}
-                                              className="h-2 w-2 rounded-sm bg-red-500"
-                                            />
-                                          )
-                                        )}
-                                        {/* Gray bars to fill remaining space */}
-                                        {Array.from({
-                                          length: Math.max(
-                                            0,
-                                            5 -
-                                              Math.ceil(addedPercent / 20) -
-                                              Math.ceil(removedPercent / 20)
-                                          ),
-                                        }).map((_, i) => (
-                                          <div
-                                            key={`empty-${i}`}
-                                            className="h-2 w-2 rounded-sm bg-border"
-                                          />
-                                        ))}
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth={2}
+                              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+                            />
+                          </svg>
+                          <div>
+                            <p className="text-sm font-medium text-red-800 dark:text-red-200">
+                              {t('workbench.diff_load_failed')}
+                            </p>
+                            <p className="mt-1 text-xs text-red-600 dark:text-red-300">
+                              {diffLoadError}
+                            </p>
                           </div>
-                        );
-                      })
+                          <button
+                            onClick={() => {
+                              setDiffLoadError(null);
+                              setDiffData(null);
+                              loadDiffData();
+                            }}
+                            className="mt-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
+                          >
+                            {t('workbench.retry')}
+                          </button>
+                        </div>
+                      </div>
+                    ) : shouldShowDiffData() ? (
+                      // Show diff data with expand/collapse
+                      <DiffViewer
+                        diffData={diffData}
+                        isLoading={false}
+                        gitType={displayData?.git_type || 'github'}
+                        showDiffContent={true}
+                      />
+                    ) : displayData?.file_changes && displayData.file_changes.length > 0 ? (
+                      // Show simple file changes without diff content
+                      <DiffViewer
+                        diffData={null}
+                        isLoading={false}
+                        gitType={displayData?.git_type || 'github'}
+                        fileChanges={displayData.file_changes}
+                        showDiffContent={false}
+                      />
                     ) : (
+                      // No changes found
                       <div className="rounded-lg border border-border bg-surface p-8 text-center">
-                        <p className="text-text-muted">{t('workbench.no_file_changes')}</p>
+                        <p className="text-text-muted">
+                          {displayData?.status === 'completed'
+                            ? t('workbench.no_changes_found')
+                            : t('workbench.no_file_changes')}
+                        </p>
                       </div>
                     )}
-                  </div>
+                  </>
                 )}
               </div>
             </div>
