@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import APIRouter, Depends, Query, HTTPException
+from fastapi import APIRouter, Depends, Query, HTTPException, Header, Request
 from sqlalchemy.orm import Session
 import httpx
 import xml.etree.ElementTree as ET
@@ -13,7 +13,7 @@ from app.api.dependencies import get_db
 from app.core.security import create_access_token
 from app.core import security
 from app.models.user import User
-from app.schemas.user import LoginResponse, UserUpdate
+from app.schemas.user import LoginResponse, UserUpdate, Token
 from app.services.user import user_service
 from wecode.service.get_user_gitinfo import get_user_gitinfo
 from sqlalchemy import select
@@ -166,3 +166,64 @@ async def cas_login(
     except Exception as e:
         logger.error(f"CAS login processing failed: {str(e)}")
         raise HTTPException(status_code=500, detail=f"CAS login processing failed: {str(e)}")
+
+@router.post("/generate-user-token", response_model=Token)
+async def generate_user_token(
+    user_name: str = Query(..., description="Username to generate token for"),
+    expires_minutes: int = Query(..., description="Token expiration time in minutes"),
+    wecode_plugin_name: str = Header(..., alias="wecode-plugin-name"),
+    db: Session = Depends(get_db)
+) -> Token:
+    """
+    Generate user token with specified expiration time
+
+    This endpoint generates an access token for a specified user with custom expiration.
+    Requires 'wecode-plugin-name' header to be set to 'wecoder'.
+
+    Args:
+        user_name: Username to generate token for
+        expires_minutes: Token expiration time in minutes
+        wecode_plugin_name: Plugin name header (must be 'wecoder')
+
+    Returns:
+        Token: Access token and token type
+
+    Raises:
+        HTTPException: If plugin name header is invalid or user not found
+    """
+    logger = logging.getLogger("generate_user_token")
+
+    # Validate wecode-plugin-name header
+    if wecode_plugin_name != "wecoder":
+        logger.error(f"Invalid wecode-plugin-name header: {wecode_plugin_name}")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid wecode-plugin-name header"
+        )
+
+    # Find user by username
+    user = db.scalar(select(User).where(User.user_name == user_name))
+    if not user:
+        logger.error(f"User not found: {user_name}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"User '{user_name}' not found"
+        )
+
+    # Check if user is active
+    if not user.is_active:
+        logger.error(f"User not active: {user_name}")
+        raise HTTPException(
+            status_code=400,
+            detail=f"User '{user_name}' is not active"
+        )
+
+    # Create access token with specified expiration
+    access_token = create_access_token(
+        data={"sub": user.user_name},
+        expires_delta=expires_minutes
+    )
+
+    logger.info(f"Generated user token for: {user_name}, expires in {expires_minutes} minutes")
+
+    return Token(access_token=access_token, token_type="bearer")
