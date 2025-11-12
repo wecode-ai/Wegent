@@ -121,12 +121,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         result = []
         
-        # Get user's own teams with pagination
+        # Get all user's own teams (without pagination)
         own_teams = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Team",
             Kind.is_active == True
-        ).order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        ).order_by(Kind.created_at.desc()).all()
             
         # Get user info for team (single query)
         own_team_user = db.query(User).filter(User.id == user_id).first()
@@ -150,16 +150,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             
             result.append(team_dict)
         
-        # If we already have enough teams from own teams, return them
-        if len(result) >= limit:
-            return result[:limit]
-        
-        # Calculate how many more teams we need
-        remaining_limit = limit - len(result)
-        
-        # Get joined teams only if we need more
-        # Note: For shared teams, we don't apply skip again since we already applied it to own teams
-        # and we want to get the most recent shared teams
+        # Get all joined teams (without pagination)
         join_shared_teams = db.query(SharedTeam, Kind).join(
             Kind, SharedTeam.team_id == Kind.id
         ).filter(
@@ -167,7 +158,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             SharedTeam.is_active == True,
             Kind.is_active == True,
             Kind.kind == "Team"
-        ).order_by(SharedTeam.created_at.desc()).limit(remaining_limit).all()
+        ).order_by(SharedTeam.created_at.desc()).all()
         
         for shared_team, team in join_shared_teams:
             team_dict = self._convert_to_team_dict(team, db, shared_team.original_user_id)
@@ -183,10 +174,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             
             result.append(team_dict)
         
-        # Sort by created_at desc
+        # Sort all teams by created_at desc
         result.sort(key=lambda x: x["created_at"], reverse=True)
         
-        return result
+        # Apply logical pagination
+        start_index = skip
+        end_index = skip + limit
+        
+        # Ensure indices are within bounds
+        if start_index >= len(result):
+            return []
+        
+        end_index = min(end_index, len(result))
+        
+        return result[start_index:end_index]
 
     def get_by_id_and_user(
         self, db: Session, *, team_id: int, user_id: int
