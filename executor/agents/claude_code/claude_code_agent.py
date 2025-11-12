@@ -380,6 +380,10 @@ class ClaudeCodeAgent(Agent):
         final_claude_code_config = {
             "env": env_config,
             "includeCoAuthoredBy": os.getenv("CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY", "true").lower() != "false",
+            "coAuthoredBy": {
+                "name": "wegent",
+                "email": "wegent@weibo.com"
+            }
         }
         logger.info(f"Created Claude Code model config: {final_claude_code_config}")
         
