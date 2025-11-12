@@ -184,7 +184,7 @@ graph TB
     
     subgraph "🤖 Agent Layer"
         Claude["🧠 Claude Code"]
-        AngoPlanned["💻 Agno (Planned)"]
+        Ango["💻 Agno"]
         DifyPlanned["✨ Dify (Planned)"]
     end
   
@@ -201,7 +201,7 @@ graph TB
     %% AI Program Integration (Currently only supports Claude Code)
     Executor1 --> Claude
     Executor2 --> Claude
-    ExecutorN --> Claude
+    ExecutorN --> Ango
 ```
 
 ## 🛠️ Development
