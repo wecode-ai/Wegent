@@ -22,14 +22,18 @@ def create_task_id(
     """Create new task with session id and return task_id"""
     return {"task_id": task_kinds_service.create_task_id(db=db, user_id=current_user.id)}
 
-@router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task(
-    task_id: int,
-    task_create: TaskCreate,
+    task_id: int = None,
+    task_create: TaskCreate = None,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Create new task with specified task_id"""
+    """Create new task with optional task_id"""
+    if task_id is None:
+        # Generate new task_id if not provided
+        task_id = task_kinds_service.create_task_id(db=db, user_id=current_user.id)
+
     return task_kinds_service.create_task_or_append(db=db, obj_in=task_create, user=current_user, task_id=task_id)
 
 @router.get("", response_model=TaskListResponse)
