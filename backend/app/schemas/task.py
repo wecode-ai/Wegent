@@ -54,24 +54,6 @@ class TaskCreate(BaseModel):
     auto_delete_executor: Optional[str] = "false" # true、fasle
     source: Optional[str] = "web"
 
-class TaskCreateWithOptionalId(BaseModel):
-    """Task creation model with optional task_id"""
-    task_id: Optional[int] = None
-    title: Optional[str] = None
-    team_id: Optional[int] = None
-    team_name: Optional[str] = None
-    team_namespace: Optional[str] = None
-    git_url: Optional[str] = ""
-    git_repo: Optional[str] = ""
-    git_repo_id: Optional[int] = 0
-    git_domain: Optional[str] = ""
-    branch_name: Optional[str] = ""
-    prompt: str
-    type: Optional[str] = "online" # online、offline
-    task_type: Optional[str] = "chat" # chat、code
-    auto_delete_executor: Optional[str] = "false" # true、fasle
-    source: Optional[str] = "web"
-
 
 class TaskUpdate(BaseModel):
     """Task update model"""

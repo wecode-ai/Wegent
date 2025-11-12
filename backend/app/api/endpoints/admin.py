@@ -56,7 +56,7 @@ async def get_user_by_id_endpoint(
 @router.post("/users/{user_id}/tasks", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 async def create_task_for_user_id(
     task: TaskCreate,
-    task_id: Optional[str] = None,
+    task_id: Optional[int] = None,
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user)
