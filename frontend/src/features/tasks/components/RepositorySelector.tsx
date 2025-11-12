@@ -222,7 +222,7 @@ export default function RepositorySelector({
       canceled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail?.git_repo, selectedRepo, disabled, user]);
+  }, [selectedTaskDetail?.git_repo, disabled, user]);
 
   /**
    * Handle dropdown open/close
