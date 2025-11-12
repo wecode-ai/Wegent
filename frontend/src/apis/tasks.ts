@@ -47,6 +47,65 @@ export interface TaskListResponse {
   items: Task[];
 }
 
+// Diff related types
+export interface BranchDiffRequest {
+  git_repo: string;
+  source_branch: string;
+  target_branch: string;
+  type: string;
+  git_domain: string;
+}
+
+export interface GitHubDiffFile {
+  filename: string;
+  status: string;
+  additions: number;
+  deletions: number;
+  changes: number;
+  patch: string;
+  previous_filename: string;
+  blob_url: string;
+  raw_url: string;
+  contents_url: string;
+}
+
+export interface GitLabDiffFile {
+  old_path: string;
+  new_path: string;
+  a_mode: string;
+  b_mode: string;
+  new_file: boolean;
+  renamed_file: boolean;
+  deleted_file: boolean;
+  diff: string;
+}
+
+export interface BranchDiffResponse {
+  status: string;
+  ahead_by: number;
+  behind_by: number;
+  total_commits: number;
+  files: GitHubDiffFile[];
+  diff_url: string;
+  html_url: string;
+  permalink_url: string;
+  // GitLab specific fields
+  commit?: Record<string, unknown>;
+  commits?: Array<{
+    id: string;
+    short_id: string;
+    title: string;
+    message: string;
+    author_name: string;
+    author_email: string;
+    created_at: string;
+  }>;
+  diffs?: GitLabDiffFile[];
+  compare_timeout?: boolean;
+  compare_same_ref?: boolean;
+  web_url?: string;
+}
+
 // Task Services
 
 export const taskApis = {
@@ -107,5 +166,16 @@ export const taskApis = {
 
   deleteTask: async (id: number): Promise<SuccessMessage> => {
     return apiClient.delete(`/tasks/${id}`);
+  },
+
+  // Get branch diff
+  getBranchDiff: async (params: BranchDiffRequest): Promise<BranchDiffResponse> => {
+    const query = new URLSearchParams();
+    query.append('git_repo', params.git_repo);
+    query.append('source_branch', params.target_branch);
+    query.append('target_branch', params.source_branch);
+    query.append('type', params.type);
+    query.append('git_domain', params.git_domain);
+    return apiClient.get(`/git/repositories/diff?${query}`);
   },
 };

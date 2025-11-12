@@ -657,4 +657,110 @@ class GitLabProvider(RepositoryProvider):
             
         cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
         return await cache_manager.get(cache_key)
+
+    async def get_branch_diff(
+        self,
+        user: User,
+        repo_name: str,
+        source_branch: str,
+        target_branch: str,
+        git_domain: str
+    ) -> Dict[str, Any]:
+        """
+        Get diff between two branches for a GitLab repository
+
+        Args:
+            user: User object
+            repo_name: Repository name
+            source_branch: Source branch name
+            target_branch: Target branch name
+            git_domain: Git domain
+
+        Returns:
+            Diff information including files changed and diff content
+        """
+        git_info = self._pick_git_info(user, git_domain)
+        git_token = git_info["git_token"]
+
+        if not git_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Git token not configured"
+            )
+
+        # Get API base URL based on git domain
+        api_base_url = self._get_api_base_url(git_domain)
+
+        try:
+            headers = {
+                "Authorization": f"Bearer {git_token}",
+                "Accept": "application/json"
+            }
+
+            # Get repository ID first (GitLab API uses project ID)
+            encoded_repo_name = requests.utils.quote(repo_name, safe='')
+            repo_response = requests.get(
+                f"{api_base_url}/projects/{encoded_repo_name}",
+                headers=headers
+            )
+            repo_response.raise_for_status()
+            repo_data = repo_response.json()
+            project_id = repo_data["id"]
+
+            # Get compare API response
+            response = requests.get(
+                f"{api_base_url}/projects/{project_id}/repository/compare",
+                headers=headers,
+                params={
+                    "from": target_branch,
+                    "to": source_branch
+                }
+            )
+            response.raise_for_status()
+
+            compare_data = response.json()
+
+            # Process commits
+            commits = []
+            for commit in compare_data.get("commits", []):
+                commit_info = {
+                    "id": commit.get("id", ""),
+                    "short_id": commit.get("short_id", ""),
+                    "title": commit.get("title", ""),
+                    "message": commit.get("message", ""),
+                    "author_name": commit.get("author_name", ""),
+                    "author_email": commit.get("author_email", ""),
+                    "created_at": commit.get("created_at", ""),
+                }
+                commits.append(commit_info)
+
+            # Process diffs and files
+            files = []
+            for diff in compare_data.get("diffs", []):
+                file_info = {
+                    "old_path": diff.get("old_path", ""),
+                    "new_path": diff.get("new_path", ""),
+                    "a_mode": diff.get("a_mode", ""),
+                    "b_mode": diff.get("b_mode", ""),
+                    "new_file": diff.get("new_file", False),
+                    "renamed_file": diff.get("renamed_file", False),
+                    "deleted_file": diff.get("deleted_file", False),
+                    "diff": diff.get("diff", ""),
+                }
+                files.append(file_info)
+
+            return {
+                "commit": compare_data.get("commit", {}),
+                "commits": commits,
+                "diffs": files,
+                "compare_timeout": compare_data.get("compare_timeout", False),
+                "compare_same_ref": compare_data.get("compare_same_ref", False),
+                "web_url": compare_data.get("web_url", ""),
+            }
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"GitLab API error: {str(e)}"
+            )
     

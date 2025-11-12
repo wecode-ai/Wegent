@@ -24,6 +24,7 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { Team } from '@/types/api';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { saveLastTab } from '@/utils/userPreferences';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 
 export default function CodePage() {
   // Get search params to check for taskId
@@ -45,6 +46,9 @@ export default function CodePage() {
 
   // Workbench state - only open if there's a taskId
   const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(hasTaskId);
+
+  // Mobile detection
+  const isMobile = useIsMobile();
 
   // Determine if workbench should show loading state
   const isWorkbenchLoading =
@@ -113,7 +117,7 @@ export default function CodePage() {
             <div
               className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
               style={{
-                width: hasTaskId && isWorkbenchOpen ? '50%' : '100%',
+                width: hasTaskId && isWorkbenchOpen && !isMobile ? '50%' : '100%',
               }}
             >
               <ChatArea
@@ -124,8 +128,8 @@ export default function CodePage() {
               />
             </div>
 
-            {/* Workbench component - only show if there's a taskId */}
-            {hasTaskId && (
+            {/* Workbench component - only show if there's a taskId and not on mobile */}
+            {hasTaskId && !isMobile && (
               <Workbench
                 isOpen={isWorkbenchOpen}
                 onClose={() => setIsWorkbenchOpen(false)}
