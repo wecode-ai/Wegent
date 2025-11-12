@@ -84,8 +84,12 @@ git fetch ${ORIGIN_REMOTE_NAME} develop
 MERGE_BASE=$(git merge-base ${ORIGIN_REMOTE_NAME}/${TARGET_BRANCH} ${ORIGIN_REMOTE_NAME}/develop)
 DEVELOP_HEAD=$(git rev-parse ${ORIGIN_REMOTE_NAME}/develop)
 
+# 首先检查 github_main 是否已经完全合并到 develop（没有新提交）
+if git merge-base --is-ancestor ${ORIGIN_REMOTE_NAME}/${TARGET_BRANCH} ${ORIGIN_REMOTE_NAME}/develop; then
+    echo "✅ ${TARGET_BRANCH} is already fully merged into develop (no new commits)"
+    echo "   No merge request needed."
 # 检查 develop 是否是 github_main 的祖先（即可以 fast-forward）
-if git merge-base --is-ancestor ${ORIGIN_REMOTE_NAME}/develop ${ORIGIN_REMOTE_NAME}/${TARGET_BRANCH}; then
+elif git merge-base --is-ancestor ${ORIGIN_REMOTE_NAME}/develop ${ORIGIN_REMOTE_NAME}/${TARGET_BRANCH}; then
     echo "✅ ${TARGET_BRANCH} can be merged into develop without conflicts (fast-forward possible)"
     echo ""
     echo "📝 Please create a merge request at:"
