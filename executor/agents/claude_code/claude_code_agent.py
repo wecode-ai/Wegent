@@ -144,23 +144,63 @@ class ClaudeCodeAgent(Agent):
 
         # Configure GitLab CLI authentication if git_domain is available
         git_domain = task_data.get("git_domain")
-        if git_domain:
-            token_path = os.path.expanduser(f"~/.ssh/{git_domain}")
-            if os.path.exists(token_path):
-                try:
-                    cmd = f"glab auth login --hostname {git_domain} --token $(cat {token_path})"
-                    result = subprocess.run(cmd, shell=True, capture_output=True, text=True, check=True)
-                    logger.info(f"GitLab CLI authentication successful for domain: {git_domain}")
-                    if result.stdout:
-                        logger.info(f"glab auth output: {result.stdout.strip()}")
-                except subprocess.CalledProcessError as e:
-                    error_msg = e.stderr if e.stderr else str(e)
-                    logger.warning(f"GitLab CLI authentication failed for {git_domain}: {error_msg}")
-                except Exception as e:
-                    logger.warning(f"GitLab CLI authentication failed with unexpected error for {git_domain}: {str(e)}")
-            else:
-                logger.info(f"Token file not found at {token_path}, skipping GitLab CLI authentication")
+        if not git_domain:
+            logger.warning("No git_domain provided, skipping CLI authentication.")
+            return
 
+        git_token = self._get_git_token(git_domain, task_data)
+        if not git_token:
+            logger.warning(f"No valid token found for {git_domain}, skipping authentication.")
+            return
+
+        self._authenticate_cli(git_domain, git_token)
+
+
+    def _authenticate_cli(self, git_domain: str, git_token: str) -> None:
+
+        is_github = "github" in git_domain.lower()
+        cmd = None
+
+        if is_github:
+            # GitHub CLI supports stdin token
+            cmd = f'echo "{git_token}" | gh auth login --with-token'
+        else:
+            # GitLab CLI uses token flag
+            cmd = f'glab auth login --hostname {git_domain} --token "{git_token}"'
+
+        try:
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            logger.info(f"{'GitHub' if is_github else 'GitLab'} CLI authenticated for {git_domain}")
+            if result.stdout.strip():
+                logger.debug(f"CLI output: {result.stdout.strip()}")
+
+        except subprocess.CalledProcessError as e:
+            stderr = e.stderr.strip() if e.stderr else str(e)
+            logger.warning(f"CLI authentication failed for {git_domain}: {stderr}")
+        except Exception as e:
+            logger.warning(f"Unexpected error during CLI authentication for {git_domain}: {e}")
+
+    def _get_git_token(self, git_domain: str, task_data: Dict[str, Any]) -> Optional[str]:
+        user_cfg = task_data.get("user", {})
+        git_token = user_cfg.get("git_token")
+
+        if git_token and git_token != "***":
+            return git_token.strip()
+
+        token_path = os.path.expanduser(f"~/.ssh/{git_domain}")
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, "r", encoding="utf-8") as f:
+                    return f.read().strip()
+            except Exception as e:
+                logger.warning(f"Failed to read token from {token_path}: {e}")
+        return None
     def add_thinking_step(self, title: str, action: str = "", reasoning: str = "",
                          result: str = "", confidence: float = -1,
                          next_action: str = "continue", report_immediately: bool = True,
