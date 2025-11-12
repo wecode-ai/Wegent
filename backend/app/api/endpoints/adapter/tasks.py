@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskListResponse
+from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskListResponse, TaskCreateWithOptionalId
 from app.services.adapters.task_kinds import task_kinds_service
 
 router = APIRouter()
@@ -21,6 +21,18 @@ def create_task_id(
 ):
     """Create new task with session id and return task_id"""
     return {"task_id": task_kinds_service.create_task_id(db=db, user_id=current_user.id)}
+
+@router.post("/create", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
+def create_task_with_optional_id(
+    task_create: TaskCreateWithOptionalId,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Create new task with optional task_id in parameters"""
+    if task_create.task_id is not None:
+        return task_kinds_service.create_task_or_append(db=db, obj_in=task_create, user=current_user, task_id=task_create.task_id)
+    else:
+        return task_kinds_service.create_task_or_append(db=db, obj_in=task_create, user=current_user)
 
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task(
