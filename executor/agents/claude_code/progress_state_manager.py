@@ -13,6 +13,7 @@ import os
 import threading
 from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
+from urllib.parse import urlparse
 
 try:
     from git import Repo, InvalidGitRepositoryError, GitCommandError
@@ -171,6 +172,13 @@ class ProgressStateManager:
         elif self.task_data.get("prompt"):
             summary = self.task_data.get("prompt")
 
+        git_domain = self.task_data["git_domain"]
+        if "github.com" in git_domain.lower():
+            git_type = "github"
+        else:
+            # All other domains are considered gitlab
+            git_type = "gitlab"
+
         workbench = {
             "taskTitle": self.task_data.get("task_title", ""),
             "taskNumber": str(self.task_data.get("task_id", "")),
@@ -191,7 +199,9 @@ class ProgressStateManager:
                 "task_commits": [],  # List of commits generated during this task
                 "source_branch": "",  # Source branch
                 "target_branch": ""  # Target branch
-            }
+            },
+            "git_domain": git_domain,
+            "git_type": git_type
         }
 
         return workbench

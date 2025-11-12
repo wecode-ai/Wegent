@@ -2,7 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import List
+import logging
+from typing import List, Dict, Any
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +12,9 @@ from app.core import security
 from app.services.repository import repository_service
 from app.models.user import User
 from app.schemas.github import RepositoryResult, Branch
+
+# Logger instance
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -46,6 +50,25 @@ async def get_branches(
     """Get branch list for specified repository"""
     return await repository_service.get_branches(current_user, git_repo, type=type, git_domain=git_domain)
 
+@router.get("/repositories/diff")
+async def get_branch_diff(
+    git_repo: str = Query(..., description="owner/repository_name"),
+    source_branch: str = Query(..., description="Source branch name"),
+    target_branch: str = Query(..., description="Target branch name"),
+    type: str = Query(..., description="Repository provider type (github/gitlab)"),
+    git_domain: str = Query(..., description="Repository git domain, required (e.g., github.com, gitlab.com)"),
+    current_user: User = Depends(security.get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get diff between two branches for specified repository"""
+    return await repository_service.get_branch_diff(
+        current_user,
+        git_repo,
+        source_branch,
+        target_branch,
+        type,
+        git_domain
+    )
 
 @router.get("/repositories/search", response_model=List[RepositoryResult])
 async def search_repositories(

@@ -98,3 +98,29 @@ class RepositoryProvider(ABC):
         Raises:
             HTTPException: Exception thrown when search fails
         """
+
+    @abstractmethod
+    async def get_branch_diff(
+        self,
+        user: User,
+        repo_name: str,
+        source_branch: str,
+        target_branch: str,
+        git_domain: str
+    ) -> Dict[str, Any]:
+        """
+        Get diff between two branches for a repository
+
+        Args:
+            user: User object
+            repo_name: Repository name
+            source_branch: Source branch name
+            target_branch: Target branch name
+            git_domain: Git domain
+
+        Returns:
+            Diff information including files changed and diff content
+
+        Raises:
+            HTTPException: Exception thrown when getting diff fails
+        """

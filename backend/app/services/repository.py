@@ -163,6 +163,41 @@ class RepositoryService:
         
         return results
     
+    async def get_branch_diff(
+        self,
+        user: User,
+        repo_name: str,
+        source_branch: str,
+        target_branch: str,
+        type: str,
+        git_domain: str
+    ) -> Dict[str, Any]:
+        """
+        Get diff between two branches for a repository
+
+        Args:
+            user: User object
+            repo_name: Repository name
+            source_branch: Source branch name
+            target_branch: Target branch name
+            type: Repository provider type (github/gitlab)
+            git_domain: Git domain
+
+        Returns:
+            Diff information including files changed and diff content
+        """
+        for info in user.git_info:
+            logging.info(f"info: {info}, type: {type}, git_domain: {git_domain}")
+            if info.get("type") == type and info.get("git_domain") == git_domain:
+                provider = self.providers[type]
+                try:
+                    return await provider.get_branch_diff(user, repo_name, source_branch, target_branch, git_domain)
+                except Exception as e:
+                    self.logger.warning(f"Error getting diff from {type}: {e}")
+                    raise HTTPException(status_code=500, detail=f"Error getting diff from {type}: {e}")
+
+        return {}
+
     async def search_repositories(
         self,
         user: User,
@@ -172,22 +207,22 @@ class RepositoryService:
     ) -> List[Dict[str, Any]]:
         """
         Search repositories across all configured providers
-        
+
         Args:
             user: User object
             query: Search keyword
             timeout: Timeout in seconds
             fullmatch: Enable exact match (true) or partial match (false)
-            
+
         Returns:
             Combined search results from all providers
         """
         user_providers = self._get_user_providers(user)
         if not user_providers:
             return []
-        
+
         all_results = []
-        
+
         for provider_type in user_providers:
             try:
                 provider = self.providers[provider_type]
@@ -196,7 +231,7 @@ class RepositoryService:
             except Exception as e:
                 self.logger.error(f"Error searching repositories in {provider_type}: {e}")
                 continue
-        
+
         # Sort by relevance (basic sorting by name match)
         query_lower = query.lower()
         all_results.sort(
@@ -205,7 +240,7 @@ class RepositoryService:
                 -len(x["name"])
             )
         )
-        
+
         return all_results
     
 

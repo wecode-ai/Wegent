@@ -18,7 +18,7 @@
     "@uiw/react-md-editor": "^4.0.8",
     "antd": "^5.27.3",
     "i18next": "^25.5.2",
-    "next": "15.1.3",
+    "next": "^15.1.3",
     "react": "19.0.0",
     "react-dom": "19.0.0",
     "react-i18next": "^15.7.3",
