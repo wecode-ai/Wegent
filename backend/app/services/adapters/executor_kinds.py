@@ -16,6 +16,7 @@ from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
 from app.models.user import User
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
+from app.services.webhook_notification import webhook_notification_service, TaskNotification
 from app.services.base import BaseService
 from app.core.config import settings
 from sqlalchemy.orm.attributes import flag_modified
@@ -482,7 +483,39 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         self._update_task_status_based_on_subtasks(db, subtask.task_id)
         
         db.commit()
-        
+
+        # Send webhook notification for task completion or failure
+        if subtask_update.status in [SubtaskStatus.COMPLETED, SubtaskStatus.FAILED]:
+            try:
+                # Get task information
+                task = db.query(Kind).filter(
+                    Kind.id == subtask.task_id,
+                    Kind.kind == "Task",
+                    Kind.is_active == True
+                ).first()
+
+                if task:
+                    task_crd = Task.model_validate(task.json)
+                    task_url = f"{settings.FRONTEND_URL}/tasks?taskId={task.id}"
+
+                    # Check if this is the final status update for the task
+                    if task_crd.status and task_crd.status.status in ["COMPLETED", "FAILED"]:
+                        notification = TaskNotification(
+                            task_id=task.id,
+                            task_created_at=task_crd.status.createdAt if task_crd.status.createdAt else task.created_at.isoformat(),
+                            task_title=task_crd.spec.title,
+                            task_url=task_url,
+                            status=task_crd.status.status,
+                            error_message=task_crd.status.errorMessage if task_crd.status.errorMessage else None
+                        )
+
+                        # Send notification asynchronously
+                        import asyncio
+                        asyncio.create_task(webhook_notification_service.send_notification(notification))
+                        logger.info(f"Webhook notification sent for task {task_crd.status.status}: {task.id}")
+            except Exception as e:
+                logger.error(f"Failed to send webhook notification for task update: {str(e)}")
+
         return {
             "subtask_id": subtask.id,
             "task_id": subtask.task_id,
