@@ -197,7 +197,7 @@ async def generate_user_token(
     if wecode_plugin_name != "wecoder":
         logger.error(f"Invalid wecode-plugin-name header: {wecode_plugin_name}")
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail="Invalid wecode-plugin-name header"
         )
 
@@ -206,7 +206,7 @@ async def generate_user_token(
     if not user:
         logger.error(f"User not found: {user_name}")
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
+            status_code=404,
             detail=f"User '{user_name}' not found"
         )
 
@@ -214,7 +214,7 @@ async def generate_user_token(
     if not user.is_active:
         logger.error(f"User not active: {user_name}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=400,
             detail=f"User '{user_name}' is not active"
         )
 
