@@ -8,7 +8,9 @@ import yaml
 from jinja2 import Environment, FileSystemLoader
 
 from executor_manager.config.config import EXECUTOR_ENV
-
+from executor_manager.wecode.config.config import (
+    REPO_PROXY_CONFIG
+)
 def to_nice_yaml(value, indent=2):
     if isinstance(value, dict) and "name" in value:
         value = {k: v for k, v in value.items() if k != "name"}
@@ -47,6 +49,9 @@ def build_pod_configuration(
     # Load the template
     template = env.get_template('pod_template.yaml')
     
+    repo_proxy_config = {}
+    if "github.com" in task.get("git_domain",""):
+        repo_proxy_config = REPO_PROXY_CONFIG
     volumes_info = build_pod_volumes(task)
     # Prepare template parameters
     template_params = {
@@ -59,6 +64,7 @@ def build_pod_configuration(
         'task_type': task.get("type", "online"),
         'mode': mode,
         'executor_env': EXECUTOR_ENV,
+        'repo_proxy_config': repo_proxy_config,
         'volumes': volumes_info.get("volumes", []),
         'volume_mounts': volumes_info.get("volume_mounts", [])
     }
