@@ -185,7 +185,7 @@ graph TB
 
     subgraph "🤖 智能体层"
         Claude["🧠 Claude Code"]
-        AngoPlanned["💻 Agno（计划中）"]
+        Ango["💻 Agno"]
         DifyPlanned["✨ Dify（计划中）"]
     end
 
@@ -202,7 +202,7 @@ graph TB
     %% AI 程序集成（目前仅支持 Claude Code）
     Executor1 --> Claude
     Executor2 --> Claude
-    ExecutorN --> Claude
+    ExecutorN --> Ango
 ```
 
 ## 🛠️ 开发
