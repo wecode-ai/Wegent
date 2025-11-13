@@ -19,8 +19,8 @@ export interface User {
 export interface GitInfo {
   git_domain: string;
   git_token: string;
-  /** Type: "github" | "gitlab" */
-  type: 'github' | 'gitlab';
+  /** Type: "github" | "gitlab" | "gitee" */
+  type: 'github' | 'gitlab' | 'gitee';
 }
 
 // Bot Types
@@ -212,8 +212,8 @@ export interface GitRepoInfo {
   git_url: string;
   git_domain: string;
   private: boolean;
-  /** Type: "github" | "gitlab" */
-  type: 'github' | 'gitlab';
+  /** Type: "github" | "gitlab" | "gitee" */
+  type: 'github' | 'gitlab' | 'gitee';
 }
 
 export interface GitBranch {
