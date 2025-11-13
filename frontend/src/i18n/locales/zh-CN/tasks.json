@@ -28,6 +28,8 @@
     },
     "loading_diff": "正在加载代码差异...",
     "diff_load_failed": "加载差异数据失败",
+    "view_error_details": "查看错误详情",
+    "error_details": "错误详情",
     "retry": "重试",
     "additions": "添加",
     "deletions": "删除",

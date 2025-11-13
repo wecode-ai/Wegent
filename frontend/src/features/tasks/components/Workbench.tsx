@@ -5,13 +5,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Disclosure, DisclosureButton, DisclosurePanel } from '@headlessui/react';
+import { Disclosure, DisclosureButton, DisclosurePanel, Dialog, DialogPanel, DialogTitle } from '@headlessui/react';
 import {
   Bars3Icon,
   CheckIcon,
   ChevronRightIcon,
   ClipboardDocumentIcon,
   XMarkIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
@@ -121,6 +122,7 @@ export default function Workbench({
   const [diffData, setDiffData] = useState<BranchDiffResponse | null>(null);
   const [isDiffLoading, setIsDiffLoading] = useState(false);
   const [diffLoadError, setDiffLoadError] = useState<string | null>(null);
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
   const { theme } = useTheme();
   const { t } = useTranslation('tasks');
 
@@ -567,62 +569,37 @@ export default function Workbench({
                       </Disclosure>
                     )}
                   </div>
-                ) : (
-                  // Files Changed Tab - with integrated diff support
-                  <>
-                    {isDiffLoading ? (
-                      // Loading diff data
-                      <div className="flex items-center justify-center h-64">
-                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
-                        <span className="ml-3 text-text-muted">{t('workbench.loading_diff')}</span>
-                      </div>
-                    ) : diffLoadError ? (
-                      // Show error message with retry button
-                      <div className="rounded-lg border border-red-200 bg-red-50 dark:bg-red-900/10 dark:border-red-800 p-6 text-center">
-                        <div className="flex flex-col items-center gap-3">
-                          <svg
-                            className="w-12 h-12 text-red-500"
-                            fill="none"
-                            stroke="currentColor"
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              strokeWidth={2}
-                              d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
-                            />
-                          </svg>
-                          <div>
-                            <p className="text-sm font-medium text-red-800 dark:text-red-200">
-                              {t('workbench.diff_load_failed')}
-                            </p>
-                            <p className="mt-1 text-xs text-red-600 dark:text-red-300">
-                              {diffLoadError}
-                            </p>
-                          </div>
+              ) : (
+                // Files Changed Tab - with integrated diff support
+                <>
+                  {isDiffLoading ? (
+                    // Loading diff data
+                    <div className="flex items-center justify-center h-64">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                      <span className="ml-3 text-text-muted">{t('workbench.loading_diff')}</span>
+                    </div>
+                  ) : shouldShowDiffData() ? (
+                    // Show diff data with expand/collapse
+                    <DiffViewer
+                      diffData={diffData}
+                      isLoading={false}
+                      gitType={displayData?.git_type || 'github'}
+                      showDiffContent={true}
+                    />
+                  ) : displayData?.file_changes && displayData.file_changes.length > 0 ? (
+                    // Show simple file changes without diff content, with error indicator if present
+                    <div className="relative">
+                      {diffLoadError && (
+                        <div className="absolute top-0 right-0 z-10 p-2">
                           <button
-                            onClick={() => {
-                              setDiffLoadError(null);
-                              setDiffData(null);
-                              loadDiffData();
-                            }}
-                            className="mt-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors"
+                            onClick={() => setShowErrorDialog(true)}
+                            className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
+                            title={t('workbench.view_error_details')}
                           >
-                            {t('workbench.retry')}
+                            <ExclamationTriangleIcon className="w-5 h-5" />
                           </button>
                         </div>
-                      </div>
-                    ) : shouldShowDiffData() ? (
-                      // Show diff data with expand/collapse
-                      <DiffViewer
-                        diffData={diffData}
-                        isLoading={false}
-                        gitType={displayData?.git_type || 'github'}
-                        showDiffContent={true}
-                      />
-                    ) : displayData?.file_changes && displayData.file_changes.length > 0 ? (
-                      // Show simple file changes without diff content
+                      )}
                       <DiffViewer
                         diffData={null}
                         isLoading={false}
@@ -630,25 +607,73 @@ export default function Workbench({
                         fileChanges={displayData.file_changes}
                         showDiffContent={false}
                       />
-                    ) : (
-                      // No changes found
-                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
-                        <p className="text-text-muted">
-                          {displayData?.status === 'completed'
-                            ? t('workbench.no_changes_found')
-                            : t('workbench.no_file_changes')}
-                        </p>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
+                    </div>
+                  ) : (
+                    // No changes found
+                    <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                      <p className="text-text-muted">
+                        {displayData?.status === 'completed'
+                          ? t('workbench.no_changes_found')
+                          : t('workbench.no_file_changes')}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
 
-      {/* Toggle button - fixed position - hidden on mobile */}
-    </>
-  );
+    {/* Error Details Dialog */}
+    <Dialog open={showErrorDialog} onClose={() => setShowErrorDialog(false)} className="relative z-50">
+      <div className="fixed inset-0 bg-black/30" aria-hidden="true" />
+      <div className="fixed inset-0 flex items-center justify-center p-4">
+        <DialogPanel className="mx-auto max-w-2xl w-full rounded-lg bg-surface border border-border shadow-xl">
+          <div className="flex items-center justify-between border-b border-border px-6 py-4">
+            <DialogTitle className="text-lg font-semibold text-text-primary flex items-center gap-2">
+              <ExclamationTriangleIcon className="w-5 h-5 text-red-600" />
+              {t('workbench.error_details')}
+            </DialogTitle>
+            <button
+              onClick={() => setShowErrorDialog(false)}
+              className="rounded-md p-1 hover:bg-muted transition-colors"
+            >
+              <XMarkIcon className="w-5 h-5 text-text-muted" />
+            </button>
+          </div>
+          <div className="px-6 py-4">
+            <div className="rounded-md bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 p-4">
+              <pre className="text-sm text-red-800 dark:text-red-200 whitespace-pre-wrap font-mono overflow-x-auto">
+                {diffLoadError}
+              </pre>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
+            <button
+              onClick={() => setShowErrorDialog(false)}
+              className="px-4 py-2 text-sm font-medium text-text-primary bg-muted hover:bg-muted/80 rounded-md transition-colors"
+            >
+              {t('workbench.close_panel')}
+            </button>
+            <button
+              onClick={() => {
+                setShowErrorDialog(false);
+                setDiffLoadError(null);
+                setDiffData(null);
+                loadDiffData();
+              }}
+              className="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-md transition-colors"
+            >
+              {t('workbench.retry')}
+            </button>
+          </div>
+        </DialogPanel>
+      </div>
+    </Dialog>
+
+    {/* Toggle button - fixed position - hidden on mobile */}
+  </>
+);
 }
