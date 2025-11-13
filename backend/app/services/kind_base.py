@@ -202,27 +202,6 @@ class KindBaseService(ABC):
         # Return the entire resource object
         return resource
     
-    def _format_resource(self, resource: Kind) -> Dict[str, Any]:
-        """Format resource for API response directly from stored JSON"""
-        # Get the stored resource data
-        stored_resource = resource.json
-        
-        # Ensure metadata has the correct name and namespace from the database
-        result = stored_resource.copy()
-        
-        # Update metadata with values from the database (in case they were changed)
-        if 'metadata' not in result:
-            result['metadata'] = {}
-            
-        result['metadata']['name'] = resource.name
-        result['metadata']['namespace'] = resource.namespace
-        
-        # Ensure apiVersion and kind are set correctly
-        result['apiVersion'] = 'agent.wecode.io/v1'
-        result['kind'] = self.kind
-        
-        return result
-    
     def _pre_delete_side_effects(self, db: Session, user_id: int, db_resource: Kind) -> None:
         """Perform side effects before resource deletion"""
         pass
