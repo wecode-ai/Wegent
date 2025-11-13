@@ -164,6 +164,33 @@ class ClaudeCodeAgent(Agent):
         if is_github:
             # GitHub CLI supports stdin token
             cmd = f'echo "{git_token}" | gh auth login --with-token'
+
+            # Configure proxy for GitHub if available in environment
+            http_proxy = os.getenv("HTTP_PROXY") or os.getenv("http_proxy")
+            https_proxy = os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
+
+            if http_proxy or https_proxy:
+                proxy_cmds = []
+                if http_proxy:
+                    proxy_cmds.append(f'gh config set http_proxy "{http_proxy}"')
+                    logger.info(f"Configuring GitHub CLI http_proxy: {http_proxy}")
+                if https_proxy:
+                    proxy_cmds.append(f'gh config set https_proxy "{https_proxy}"')
+                    logger.info(f"Configuring GitHub CLI https_proxy: {https_proxy}")
+
+                # Execute proxy configuration commands
+                for proxy_cmd in proxy_cmds:
+                    try:
+                        subprocess.run(
+                            proxy_cmd,
+                            shell=True,
+                            capture_output=True,
+                            text=True,
+                            check=True,
+                        )
+                        logger.info(f"Proxy configuration succeeded: {proxy_cmd}")
+                    except subprocess.CalledProcessError as e:
+                        logger.warning(f"Proxy configuration failed: {e.stderr.strip() if e.stderr else str(e)}")
         else:
             # GitLab CLI uses token flag
             cmd = f'glab auth login --hostname {git_domain} --token "{git_token}"'
