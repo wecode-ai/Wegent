@@ -18,6 +18,7 @@ from app.services.base import BaseService
 from app.models.kind import Kind
 from app.repository.github_provider import GitHubProvider
 from app.repository.gitlab_provider import GitLabProvider
+from app.repository.gitee_provider import GiteeProvider
 from app.services.user import user_service
 
 logger = logging.getLogger(__name__)
@@ -122,6 +123,11 @@ class RepositoryJobService(BaseService[Kind, None, None]):
                     elapsed = time.time() - start_time
                     logger.info(f"[repository_job] Successfully updated GitLab repository cache for user {user.user_name}, domain {git_domain}, took {elapsed:.2f} seconds")
                     success = True
+                elif git_type == "gitee":
+                    await self._update_gitee_repositories(user, git_token, git_domain)
+                    elapsed = time.time() - start_time
+                    logger.info(f"[repository_job] Successfully updated Gitee repository cache for user {user.user_name}, domain {git_domain}, took {elapsed:.2f} seconds")
+                    success = True
                 else:
                     logger.warning(f"Unsupported git provider type: {git_type}, user {user.user_name}")
             except Exception as e:
@@ -145,7 +151,7 @@ class RepositoryJobService(BaseService[Kind, None, None]):
     async def _update_gitlab_repositories(self, user: User, git_token: str, git_domain: str) -> None:
         """
         Update GitLab repositories cache for a user
-        
+
         Args:
             user: User object
             git_token: GitLab token
@@ -153,6 +159,19 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         """
         provider = GitLabProvider()
         logger.info(f"[repository_job] Starting to update GitLab repository cache for user {user.user_name}, domain {git_domain}")
+        await provider._fetch_all_repositories_async(user, git_token, git_domain)
+
+    async def _update_gitee_repositories(self, user: User, git_token: str, git_domain: str) -> None:
+        """
+        Update Gitee repositories cache for a user
+
+        Args:
+            user: User object
+            git_token: Gitee token
+            git_domain: Gitee domain
+        """
+        provider = GiteeProvider()
+        logger.info(f"[repository_job] Starting to update Gitee repository cache for user {user.user_name}, domain {git_domain}")
         await provider._fetch_all_repositories_async(user, git_token, git_domain)
 
 
