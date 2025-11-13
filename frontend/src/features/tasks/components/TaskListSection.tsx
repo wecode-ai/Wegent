@@ -169,7 +169,11 @@ export default function TaskListSection({ tasks, title, onTaskClick }: TaskListS
     const HOUR_MS = 60 * MINUTE_MS;
     const DAY_MS = 24 * HOUR_MS;
 
-    if (diffMs < HOUR_MS) {
+    // Handle negative time difference (client time earlier than server time)
+    // or very small positive differences (< 1 minute)
+    if (diffMs < MINUTE_MS) {
+      return '0m';
+    } else if (diffMs < HOUR_MS) {
       return `${Math.floor(diffMs / MINUTE_MS)}m`;
     } else if (diffMs < DAY_MS) {
       return `${Math.floor(diffMs / HOUR_MS)}h`;
