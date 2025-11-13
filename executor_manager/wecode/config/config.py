@@ -13,3 +13,5 @@ EXECUTOR_DEFAULT_MAGE = os.getenv(
 
 MAX_USER_TASKS = int(os.getenv("MAX_USER_TASKS", 10))
 USER_WHITELIST_TASK_LIMIT_MAP = os.getenv("USER_WHITELIST_TASK_LIMIT_MAP", "{}")
+
+REPO_PROXY_CONFIG = os.getenv("REPO_PROXY_CONFIG", '{"github.com":{"http.proxy":"http://wproxy.intra.weibo.com:8889","https.proxy":"http://wproxy.intra.weibo.com:8889"}}')
