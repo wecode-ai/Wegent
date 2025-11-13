@@ -49,13 +49,14 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
   const [platforms, setPlatforms] = useState<GitInfo[]>([]);
   const [domain, setDomain] = useState('');
   const [token, setToken] = useState('');
-  const [type, setType] = useState<'github' | 'gitlab'>('github');
+  const [type, setType] = useState<GitInfo['type']>('github');
   const [tokenSaving, setTokenSaving] = useState(false);
+  const isGitlabLike = type === 'gitlab' || type === 'gitee';
 
   const isGitlabDomainInvalid = useMemo(() => {
-    if (type !== 'gitlab' || !domain) return false;
+    if (!isGitlabLike || !domain) return false;
     return !isValidDomain(domain);
-  }, [type, domain]);
+  }, [isGitlabLike, domain]);
 
   const hasGithubPlatform = useMemo(
     () => platforms.some(info => sanitizeDomainInput(info.git_domain) === 'github.com'),
@@ -89,7 +90,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       message.error(t('github.error.required'));
       return;
     }
-    if (type === 'gitlab' && !isValidDomain(domainToSave)) {
+    if (isGitlabLike && !isValidDomain(domainToSave)) {
       message.error(t('github.error.invalid_domain'));
       setDomain(sanitizedDomain);
       return;
@@ -140,7 +141,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               <input
                 type="radio"
                 value="gitlab"
-                checked={type === 'gitlab'}
+                checked={isGitlabLike}
                 onChange={() => {
                   setType('gitlab');
                   setDomain('');
@@ -159,7 +160,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             type="text"
             value={type === 'github' ? 'github.com' : domain}
             onChange={e => {
-              if (type === 'gitlab') {
+              if (isGitlabLike) {
                 setDomain(sanitizeDomainInput(e.target.value));
               }
             }}
@@ -218,7 +219,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 {t('github.howto.step1_visit')}
                 <a
                   href={
-                    type === 'gitlab' && domain
+                    isGitlabLike && domain
                       ? `https://${domain}/-/profile/personal_access_tokens`
                       : '#'
                   }
@@ -226,12 +227,12 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                   rel="noopener noreferrer"
                   className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
                   title={
-                    type === 'gitlab' && domain
+                    isGitlabLike && domain
                       ? `https://${domain}/-/profile/personal_access_tokens`
                       : 'your-gitlab-domain/-/profile/personal_access_tokens'
                   }
                 >
-                  {type === 'gitlab' && domain
+                  {isGitlabLike && domain
                     ? `https://${domain}/-/profile/personal_access_tokens`
                     : 'your-gitlab-domain/-/profile/personal_access_tokens'}
                 </a>
@@ -250,9 +251,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         <Button
           onClick={handleSave}
           disabled={
-            (type === 'gitlab' && (!domain || isGitlabDomainInvalid)) ||
-            !token.trim() ||
-            tokenSaving
+            (isGitlabLike && (!domain || isGitlabDomainInvalid)) || !token.trim() || tokenSaving
           }
           type="primary"
           size="small"

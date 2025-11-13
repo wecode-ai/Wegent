@@ -23,11 +23,13 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         """Validate git info fields and tokens"""
         from app.repository.github_provider import GitHubProvider
         from app.repository.gitlab_provider import GitLabProvider
-        
+        from app.repository.gitee_provider import GiteeProvider
+
         # Provider mapping
         providers = {
             "github": GitHubProvider(),
-            "gitlab": GitLabProvider()
+            "gitlab": GitLabProvider(),
+            "gitee": GiteeProvider()
         }
         
         validated_git_info = []
