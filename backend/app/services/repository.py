@@ -13,18 +13,20 @@ from fastapi import HTTPException
 from app.models.user import User
 from app.repository.github_provider import GitHubProvider
 from app.repository.gitlab_provider import GitLabProvider
+from app.repository.gitee_provider import GiteeProvider
 
 
 class RepositoryService:
     """
     Service for aggregating results from multiple repository providers
     """
-    
+
     def __init__(self):
         self.logger = logging.getLogger(__name__)
         self.providers = {
             "github": GitHubProvider(),
-            "gitlab": GitLabProvider()
+            "gitlab": GitLabProvider(),
+            "gitee": GiteeProvider()
         }
     
     def _get_user_providers(self, user: User) -> List[str]:
