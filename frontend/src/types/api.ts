@@ -120,6 +120,14 @@ export interface WorkbenchData {
   git_info: GitInfoWorkbench;
 }
 
+export interface OpenLinks {
+  session_id: string | null;
+  vscode_link: string | null;
+  git_link: string | null;
+  git_url: string;
+  target_branch: string | null;
+}
+
 export interface TaskDetail {
   id: number;
   title: string;

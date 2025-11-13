@@ -78,10 +78,10 @@ If you need to modify code and develop, follow these steps to set up your local 
 ```bash
 docker run -d \
   --name wegent-mysql \
-  -e MYSQL_ROOT_[INFORMATION_DATA_ID_03]=123456 \
+  -e MYSQL_ROOT_PASSWORD=123456 \
   -e MYSQL_DATABASE=task_manager \
   -e MYSQL_USER=task_user \
-  -e MYSQL_[INFORMATION_DATA_ID_03]=task_[INFORMATION_DATA_ID_04] \
+  -e MYSQL_PASSWORD=task_password \
   -p 3306:3306 \
   mysql:9.4
 ```
@@ -98,7 +98,7 @@ mysql -u root -p
 CREATE DATABASE task_manager;
 
 # Create user
-CREATE USER 'task_user'@'localhost' IDENTIFIED BY 'task_[INFORMATION_DATA_ID_04]';
+CREATE USER 'task_user'@'localhost' IDENTIFIED BY 'task_password';
 
 # Grant privileges
 GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';
@@ -169,9 +169,9 @@ cp .env.example .env
 
 # Edit .env file
 # Main configuration items:
-# DATABASE_URL=mysql+pymysql://task_user:task_[INFORMATION_DATA_ID_04]@localhost:3306/task_manager
+# DATABASE_URL=mysql+pymysql://task_user:task_password@localhost:3306/task_manager
 # REDIS_URL=redis://127.0.0.1:6379/0
-# [INFORMATION_DATA_ID_05]_KEY=your-[INFORMATION_DATA_ID_06]-key-here
+# PASSWORD_KEY=your-password-key-here
 # EXECUTOR_DELETE_TASK_URL=http://localhost:8001/executor-manager/executor/delete
 ```
 

@@ -326,7 +326,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         self, db: Session, *, task_id: int, user_id: int
     ) -> Dict[str, Any]:
         """
-        Get detailed task information including related user, team and subtasks
+        Get detailed task information including related user, team, subtasks and open links
         """
         from app.services.subtask import subtask_service
         

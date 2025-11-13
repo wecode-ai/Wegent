@@ -242,7 +242,10 @@
     "no_search_results": "没有匹配的任务",
     "copy_task_id": "复制任务ID",
     "delete_task": "删除任务",
-    "searching": "搜索中..."
+    "searching": "搜索中...",
+    "open_from": "<> Code",
+    "open_from_vscode": "VSCode",
+    "open_from_git": "Git"
   },
   "settings": {
     "integrations": "集成",
