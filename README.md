@@ -15,7 +15,7 @@ English | [简体中文](README_zh.md)
 
 *From coding assistants to news analysts - deploy intelligent agents that actually work*
 
-[Quick Start](#-quick-start) · [Use Cases](#-what-can-you-build) · [Documentation](docs/en/resource-definition-formats.md)
+[Quick Start](#-quick-start) · [Use Cases](#-what-can-you-build) · [Documentation](docs/en/resource-definition-formats.md) · [Development Guide](docs/en/develop-guide.md)
 
 </div>
 
@@ -184,7 +184,7 @@ graph TB
     
     subgraph "🤖 Agent Layer"
         Claude["🧠 Claude Code"]
-        AngoPlanned["💻 Agno (Planned)"]
+        Ango["💻 Agno"]
         DifyPlanned["✨ Dify (Planned)"]
     end
   
@@ -201,10 +201,12 @@ graph TB
     %% AI Program Integration (Currently only supports Claude Code)
     Executor1 --> Claude
     Executor2 --> Claude
-    ExecutorN --> Claude
+    ExecutorN --> Ango
 ```
 
 ## 🛠️ Development
+
+For detailed development setup instructions, please see the [Development Guide](docs/en/develop-guide.md).
 
 ### Project Structure
 
@@ -218,7 +220,7 @@ wegent/
 └── docker/           # Container configurations
 ```
 
-### Development Setup
+### Quick Development Setup
 
 1. **Backend Development**
    ```bash
@@ -238,10 +240,12 @@ wegent/
    ```bash
    # Backend tests
    cd backend && python -m pytest
-   
+
    # Frontend tests
    cd frontend && npm test
    ```
+
+For comprehensive setup instructions including database configuration, environment variables, and troubleshooting, refer to the [Development Guide](docs/en/develop-guide.md).
 
 
 ## 🤝 Contributing

@@ -15,7 +15,7 @@
 
 *从编程助手到新闻分析 - 部署真正能干活的智能代理*
 
-[快速开始](#-快速开始) · [应用场景](#-你能构建什么) · [文档](docs/zh/资源定义格式.md)
+[快速开始](#-快速开始) · [应用场景](#-你能构建什么) · [文档](docs/zh/资源定义格式.md) · [开发指南](docs/zh/develop-guide.md)
 
 </div>
 
@@ -185,7 +185,7 @@ graph TB
 
     subgraph "🤖 智能体层"
         Claude["🧠 Claude Code"]
-        AngoPlanned["💻 Agno（计划中）"]
+        Ango["💻 Agno"]
         DifyPlanned["✨ Dify（计划中）"]
     end
 
@@ -202,10 +202,12 @@ graph TB
     %% AI 程序集成（目前仅支持 Claude Code）
     Executor1 --> Claude
     Executor2 --> Claude
-    ExecutorN --> Claude
+    ExecutorN --> Ango
 ```
 
 ## 🛠️ 开发
+
+详细的开发环境搭建说明请参阅 [开发指南](docs/zh/develop-guide.md)。
 
 ### 项目结构
 
@@ -219,7 +221,7 @@ wegent/
 └── docker/           # 容器配置
 ```
 
-### 开发环境设置
+### 快速开发环境设置
 
 1. **后端开发**
    ```bash
@@ -243,6 +245,8 @@ wegent/
    # 前端测试
    cd frontend && npm test
    ```
+
+完整的开发环境搭建说明（包括数据库配置、环境变量设置和故障排查）请参阅 [开发指南](docs/zh/develop-guide.md)。
 
 
 ## 🤝 贡献
