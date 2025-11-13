@@ -164,11 +164,11 @@ class ClaudeCodeAgent(Agent):
         if is_github:
             # GitHub CLI supports stdin token
             cmd = f'echo "{git_token}" | gh auth login --with-token'
-
-            self._configure_github_proxy()
         else:
             # GitLab CLI uses token flag
             cmd = f'glab auth login --hostname {git_domain} --token "{git_token}"'
+
+        self._configure_repo_proxy(git_domain)
 
         try:
             result = subprocess.run(
@@ -188,20 +188,41 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.warning(f"Unexpected error during CLI authentication for {git_domain}: {e}")
 
-    def _configure_github_proxy(self) -> None:
-        """Configure GitHub CLI proxy settings from environment, if available."""
+    def _configure_repo_proxy(self, git_domain: str) -> None:
+        """
+        Configure repository CLI proxy settings using REPO_PROXY_CONFIG env mapping.
+
+        The REPO_PROXY_CONFIG environment variable should contain JSON with domains
+        as keys and proxy definitions (http_proxy/https_proxy) as values.
+        """
+        proxy_config_raw = os.getenv("REPO_PROXY_CONFIG")
+        if not proxy_config_raw:
+            logger.info("No REPO_PROXY_CONFIG environment variable set, skipping proxy configuration.")
+            return
+
+        try:
+            proxy_config = json.loads(proxy_config_raw)
+        except json.JSONDecodeError as e:
+            logger.warning(f"Invalid REPO_PROXY_CONFIG JSON: {e}")
+            return
+
+        domain_config = proxy_config.get(git_domain) or proxy_config.get(git_domain.lower()) or proxy_config.get("*")
+        if not isinstance(domain_config, dict):
+            logger.info(f"No proxy configuration found for domain {git_domain}")
+            return
+
         proxy_values = {
-            "http_proxy": os.getenv("HTTP_PROXY") or os.getenv("http_proxy"),
-            "https_proxy": os.getenv("HTTPS_PROXY") or os.getenv("https_proxy"),
+            key.lower(): value
+            for key, value in domain_config.items()
+            if key.lower() in {"http.proxy", "https.proxy"} and value
         }
 
+        if not proxy_values:
+            logger.info(f"Proxy configuration for domain {git_domain} is empty, skipping.")
+            return
+
         for proxy_key, proxy_value in proxy_values.items():
-            if not proxy_value:
-                continue
-
-            logger.info(f"Configuring GitHub CLI {proxy_key}: {proxy_value}")
-            cmd = f'gh config set {proxy_key} "{proxy_value}"'
-
+            cmd = f'git config --global {proxy_key} {proxy_value}'
             try:
                 subprocess.run(
                     cmd,
@@ -210,7 +231,7 @@ class ClaudeCodeAgent(Agent):
                     text=True,
                     check=True,
                 )
-                logger.info(f"Proxy configuration succeeded: {cmd}")
+                logger.info(f"Configured environment {proxy_key} for domain {git_domain}")
             except subprocess.CalledProcessError as e:
                 stderr = e.stderr.strip() if e.stderr else str(e)
                 logger.warning(f"Proxy configuration failed: {stderr}")
