@@ -165,32 +165,7 @@ class ClaudeCodeAgent(Agent):
             # GitHub CLI supports stdin token
             cmd = f'echo "{git_token}" | gh auth login --with-token'
 
-            # Configure proxy for GitHub if available in environment
-            http_proxy = os.getenv("HTTP_PROXY") or os.getenv("http_proxy")
-            https_proxy = os.getenv("HTTPS_PROXY") or os.getenv("https_proxy")
-
-            if http_proxy or https_proxy:
-                proxy_cmds = []
-                if http_proxy:
-                    proxy_cmds.append(f'gh config set http_proxy "{http_proxy}"')
-                    logger.info(f"Configuring GitHub CLI http_proxy: {http_proxy}")
-                if https_proxy:
-                    proxy_cmds.append(f'gh config set https_proxy "{https_proxy}"')
-                    logger.info(f"Configuring GitHub CLI https_proxy: {https_proxy}")
-
-                # Execute proxy configuration commands
-                for proxy_cmd in proxy_cmds:
-                    try:
-                        subprocess.run(
-                            proxy_cmd,
-                            shell=True,
-                            capture_output=True,
-                            text=True,
-                            check=True,
-                        )
-                        logger.info(f"Proxy configuration succeeded: {proxy_cmd}")
-                    except subprocess.CalledProcessError as e:
-                        logger.warning(f"Proxy configuration failed: {e.stderr.strip() if e.stderr else str(e)}")
+            self._configure_github_proxy()
         else:
             # GitLab CLI uses token flag
             cmd = f'glab auth login --hostname {git_domain} --token "{git_token}"'
@@ -212,6 +187,33 @@ class ClaudeCodeAgent(Agent):
             logger.warning(f"CLI authentication failed for {git_domain}: {stderr}")
         except Exception as e:
             logger.warning(f"Unexpected error during CLI authentication for {git_domain}: {e}")
+
+    def _configure_github_proxy(self) -> None:
+        """Configure GitHub CLI proxy settings from environment, if available."""
+        proxy_values = {
+            "http_proxy": os.getenv("HTTP_PROXY") or os.getenv("http_proxy"),
+            "https_proxy": os.getenv("HTTPS_PROXY") or os.getenv("https_proxy"),
+        }
+
+        for proxy_key, proxy_value in proxy_values.items():
+            if not proxy_value:
+                continue
+
+            logger.info(f"Configuring GitHub CLI {proxy_key}: {proxy_value}")
+            cmd = f'gh config set {proxy_key} "{proxy_value}"'
+
+            try:
+                subprocess.run(
+                    cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                )
+                logger.info(f"Proxy configuration succeeded: {cmd}")
+            except subprocess.CalledProcessError as e:
+                stderr = e.stderr.strip() if e.stderr else str(e)
+                logger.warning(f"Proxy configuration failed: {stderr}")
 
     def _get_git_token(self, git_domain: str, task_data: Dict[str, Any]) -> Optional[str]:
         user_cfg = task_data.get("user", {})
