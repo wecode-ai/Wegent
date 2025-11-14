@@ -28,6 +28,8 @@
     },
     "loading_diff": "Loading code diff...",
     "diff_load_failed": "Failed to load diff data",
+    "view_error_details": "View error details",
+    "error_details": "Error Details",
     "retry": "Retry",
     "additions": "Additions",
     "deletions": "Deletions",
