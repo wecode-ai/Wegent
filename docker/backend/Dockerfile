@@ -13,6 +13,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY backend /app
+COPY shared /app/shared
 
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
