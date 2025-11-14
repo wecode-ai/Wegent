@@ -3,4 +3,5 @@
 # SPDX-License-Identifier: Apache-2.0
 
 cp -r ../../../backend ./backend
+cp -r ../../../shared ./shared
 cp -rf .env.example ./backend/.env.example
