@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 env:
-  GIT_REF: ${{ github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha || 'main' }}
+  GIT_REF: ${{ (github.event_name == 'pull_request' && github.event.pull_request.merge_commit_sha) || github.ref }}
   REGISTRY: ghcr.io
   IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}
 
