@@ -22,12 +22,12 @@
 ---
 
 ## 💡 你能构建什么？
-
+<img src="./docs/assets/example.gif" width="75%" alt="演示视频"/>
 Wegent 让你通过智能体编排创建强大的 AI 应用：
 
 ### 🖥️ **网页版编程助手**
-在浏览器中构建全功能开发环境
-<img src="./docs/assets/example.gif" width="75%" alt="演示视频"/>
+在浏览器中构建全功能开发环境，可与Github集成，支持本地或云端的独立开发空间，可运行多个Coding Agent同时编码
+
 
 ### 📰 **新闻智能平台**
 创建智能新闻聚合和分析系统

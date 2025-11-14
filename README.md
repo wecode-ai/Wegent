@@ -22,12 +22,12 @@ English | [简体中文](README_zh.md)
 ---
 
 ## 💡 What Can You Build?
-
+<img src="./docs/assets/example.gif" width="75%" alt="Demo Video"/>
 Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
 
 ### 🖥️ **Web-Based Coding Assistant**
-Build a full-featured development environment in your browser 
-<img src="./docs/assets/example.gif" width="75%" alt="Demo Video"/>
+Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously
+
 
 ### 📰 **News Intelligence Platform**
 Create a smart news aggregation and analysis system 
