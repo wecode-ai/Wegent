@@ -32,11 +32,11 @@ class SensitiveDataMasker:
 
         # AWS Keys
         (r'(AKIA[0-9A-Z]{16})', 'AWS_ACCESS_KEY'),
-        (r'([a-zA-Z0-9/+=]{40})', 'AWS_[INFORMATION_DATA_ID_00]_KEY'),  # AWS secret key pattern
+        (r'([a-zA-Z0-9/+=]{40})', 'AWS_SECRET_KEY'),  # AWS secret key pattern
 
         # Generic tokens and secrets
         (r'(token["\s:=]+)([a-zA-Z0-9_\-\.]+)', 'TOKEN'),
-        (r'([INFORMATION_DATA_ID_00]["\s:=]+)([a-zA-Z0-9_\-\.]+)', '[INFORMATION_DATA_ID_00]'),
+        (r'(secret["\s:=]+)([a-zA-Z0-9_\-\.]+)', 'SECRET'),
         (r'(api[_-]?key["\s:=]+)([a-zA-Z0-9_\-\.]+)', 'API_KEY'),
         (r'(auth[_-]?token["\s:=]+)([a-zA-Z0-9_\-\.]+)', 'AUTH_TOKEN'),
 
@@ -58,12 +58,19 @@ class SensitiveDataMasker:
     ]
 
     # Environment variable patterns that contain sensitive data
+    # Using more specific patterns to avoid false positives
     SENSITIVE_ENV_VARS = [
-        'TOKEN', 'KEY', 'PASSWORD', 'PASSWD', '[INFORMATION_DATA_ID_00]',
-        'AUTH', 'CREDENTIAL', 'DATABASE_URL', 'DB_URL',
-        'ANTHROPIC', 'OPENAI', 'GITHUB', 'GITLAB',
-        'AWS_ACCESS', 'AWS_[INFORMATION_DATA_ID_00]', 'OIDC',
+        '_TOKEN', '_KEY', 'PASSWORD', 'PASSWD', '_SECRET',
+        '_AUTH', 'CREDENTIAL', 'DATABASE_URL', 'DB_URL',
+        'ANTHROPIC', 'OPENAI', 'GITHUB_TOKEN', 'GITLAB_TOKEN',
+        'AWS_ACCESS', 'AWS_SECRET', 'OIDC_',
         'AES_KEY', 'AES_IV', 'ENCRYPTION'
+    ]
+    
+    # Non-sensitive patterns that should be excluded even if they match above
+    NON_SENSITIVE_PATTERNS = [
+        '_HOST', '_PORT', '_ADDR', 'SERVICE_',
+        'KUBERNETES_', '_TCP_', '_UDP_', 'PORT_', '_URL'
     ]
 
     def __init__(self, mask_char: str = '*', show_prefix_len: int = 4, show_suffix_len: int = 4):
@@ -170,6 +177,15 @@ class SensitiveDataMasker:
             value = match.group(5)     # Value
             quote_end = match.group(6)  # Closing quote
 
+            # First check if it matches non-sensitive patterns (should be excluded)
+            is_non_sensitive = any(
+                non_sensitive_pattern in var_name.upper()
+                for non_sensitive_pattern in self.NON_SENSITIVE_PATTERNS
+            )
+            
+            if is_non_sensitive:
+                return match.group(0)
+
             # Check if this is a sensitive environment variable
             is_sensitive = any(
                 sensitive_keyword in var_name.upper()
@@ -201,11 +217,17 @@ class SensitiveDataMasker:
         masked_data = {}
 
         for key, value in data.items():
+            # First check if it matches non-sensitive patterns (should be excluded)
+            is_non_sensitive = any(
+                non_sensitive_pattern in key.upper()
+                for non_sensitive_pattern in self.NON_SENSITIVE_PATTERNS
+            )
+            
             # Check if key name suggests sensitive data
             is_sensitive_key = any(
                 sensitive_keyword in key.upper()
                 for sensitive_keyword in self.SENSITIVE_ENV_VARS
-            )
+            ) and not is_non_sensitive
 
             if is_sensitive_key and isinstance(value, str):
                 masked_data[key] = self._mask_value(value)
