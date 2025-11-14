@@ -27,6 +27,7 @@ from executor.config import config
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.models.task import ThinkingStep, ExecutionResult
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 from utils.mcp_utils import extract_mcp_servers_config
 
@@ -463,7 +464,7 @@ class ClaudeCodeAgent(Agent):
                     env_config, model_id, bot_config, user_name, git_url
                 )
                 logger.info("Applied post_create_claude_model hook")
-                logger.info(f"Created Claude Code model config with hook: {final_claude_code_config_with_hook}")
+                logger.info(f"Created Claude Code model config with hook: {mask_sensitive_data(final_claude_code_config_with_hook)}")
         
                 return final_claude_code_config_with_hook
             except Exception as e:
@@ -473,7 +474,7 @@ class ClaudeCodeAgent(Agent):
             "env": env_config,
             "includeCoAuthoredBy": os.getenv("CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY", "true").lower() != "false",
         }
-        logger.info(f"Created Claude Code model config: {final_claude_code_config}")
+        logger.info(f"Created Claude Code model config: {mask_sensitive_data(final_claude_code_config)}")
         
         return final_claude_code_config
 
@@ -506,7 +507,7 @@ class ClaudeCodeAgent(Agent):
             "cwd",
         ]
 
-        logger.info(f"Extracting Claude options from task data: {task_data}")
+        logger.info(f"Extracting Claude options from task data: {mask_sensitive_data(task_data)}")
 
         # Collect all non-None configuration parameters
         options = {
@@ -526,7 +527,7 @@ class ClaudeCodeAgent(Agent):
                 if key in bot_config and bot_config[key] is not None:
                     options[key] = bot_config[key]
 
-        logger.info(f"Extracted Claude options: {options}")
+        logger.info(f"Extracted Claude options: {mask_sensitive_data(options)}")
         return options
 
     def pre_execute(self) -> TaskStatus:
@@ -665,7 +666,7 @@ class ClaudeCodeAgent(Agent):
                 logger.info(
                     f"Creating new Claude client for session_id: {self.session_id}"
                 )
-                logger.info(f"Initializing Claude client with options: {self.options}")
+                logger.info(f"Initializing Claude client with options: {mask_sensitive_data(self.options)}")
 
                 if self.options.get("cwd") is None or self.options.get("cwd") == "":
                     cwd =os.path.join(config.WORKSPACE_ROOT, str(self.task_id))

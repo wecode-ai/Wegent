@@ -13,6 +13,7 @@ from authlib.oidc.core import CodeIDToken
 from authlib.jose import jwt
 from fastapi import HTTPException
 from ..core.config import settings
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +115,7 @@ class OIDCService:
                 code=code,
                 redirect_uri=self.redirect_uri
             )
-            logger.info(f"Successfully obtained access token, token:{token}")
+            logger.info(f"Successfully obtained access token, token:{mask_sensitive_data(token)}")
             return token
         except Exception as e:
             logger.error(f"Token exchange failed: {e}")

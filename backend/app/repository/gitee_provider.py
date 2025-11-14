@@ -17,6 +17,7 @@ from app.models.user import User
 from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
+from shared.utils.sensitive_data_masker import mask_string
 
 
 class GiteeProvider(RepositoryProvider):
@@ -320,7 +321,7 @@ class GiteeProvider(RepositoryProvider):
             )
 
             if response.status_code == 401:
-                self.logger.warning(f"Gitee token validation failed: 401 Unauthorized, git_domain: {git_domain}, token: {token}")
+                self.logger.warning(f"Gitee token validation failed: 401 Unauthorized, git_domain: {git_domain}, token: {mask_string(token)}")
                 return {
                     "valid": False,
                 }
