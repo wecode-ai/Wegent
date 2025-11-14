@@ -373,7 +373,7 @@ Executor 目前支持以下 Agent：
 export ANTHROPIC_MODEL=openrouter,anthropic/claude-sonnet-4
 export ANTHROPIC_AUTH_TOKEN=sk-xxxxxx
 export ANTHROPIC_BASE_URL=http://xxxxx
-export ANTHROPIC_SMALL_FAST_MODEL=openrouter,anthropic/claude-3.5-haiku
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=openrouter,anthropic/claude-3.5-haiku
 ```
 
 **Agno Agent:**
