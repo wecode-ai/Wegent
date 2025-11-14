@@ -13,6 +13,7 @@ stages:
   - validation
   - package
   - production
+  - auto-merge-request
 
 # WeAgent MR Validation Job
 validate-wegent-mr:
@@ -210,3 +211,69 @@ wegent-preview-web:
     - changes:
       - frontend/**/*
       - wecode/docker/frontend/**/*
+
+# Auto create MR from develop to main when branch merged to develop
+auto-create-develop-to-main-mr:
+  stage: auto-merge-request
+  image: registry.api.weibo.com/ci/ci-runner:extend
+  script:
+    - |
+      #!/bin/bash
+      set -e
+
+      echo "Checking if MR from develop to main already exists..."
+
+      # GitLab API endpoint
+      GITLAB_API="https://git.intra.weibo.com/api/v4"
+      PROJECT_ID="${CI_PROJECT_ID}"
+
+      # Get existing MRs from develop to main with error handling
+      HTTP_CODE=$(curl -w "%{http_code}" --silent --output /tmp/check_mr.json \
+        --header "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" \
+        "${GITLAB_API}/projects/${PROJECT_ID}/merge_requests?state=opened&source_branch=develop&target_branch=main")
+
+      if [ "$HTTP_CODE" -ne 200 ]; then
+        echo "Error: Failed to check existing MRs. HTTP status code: $HTTP_CODE"
+        echo "Response: $(cat /tmp/check_mr.json)"
+        exit 1
+      fi
+
+      EXISTING_MR=$(jq '.[0].iid' /tmp/check_mr.json)
+
+      # Improved validation: check if MR is a valid number
+      if [[ "$EXISTING_MR" != "null" ]] && [[ "$EXISTING_MR" =~ ^[0-9]+$ ]]; then
+        echo "MR from develop to main already exists (MR !${EXISTING_MR}), skipping creation."
+        exit 0
+      fi
+
+      echo "No existing MR found, creating new MR from develop to main..."
+
+      # Create MR from develop to main with error handling
+      HTTP_CODE=$(curl -w "%{http_code}" --silent --output /tmp/create_mr.json \
+        --request POST --header "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" \
+        --data "source_branch=develop" \
+        --data "target_branch=main" \
+        --data "title=Auto MR: Merge develop to main" \
+        --data "description=Automatically created MR to merge develop branch into main branch." \
+        "${GITLAB_API}/projects/${PROJECT_ID}/merge_requests")
+
+      if [ "$HTTP_CODE" -ne 201 ]; then
+        echo "Error: Failed to create MR. HTTP status code: $HTTP_CODE"
+        echo "Response: $(cat /tmp/create_mr.json | jq '.')"
+        exit 1
+      fi
+
+      MR_IID=$(jq -r '.iid' /tmp/create_mr.json)
+      MR_URL=$(jq -r '.web_url' /tmp/create_mr.json)
+
+      if [[ "$MR_IID" =~ ^[0-9]+$ ]]; then
+        echo "Successfully created MR !${MR_IID}"
+        echo "MR URL: ${MR_URL}"
+      else
+        echo "Error: Failed to extract MR IID from response."
+        echo "Response: $(cat /tmp/create_mr.json | jq '.')"
+        exit 1
+      fi
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: on_success
