@@ -21,6 +21,7 @@ from executor.config import config
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.utils.http_util import build_payload
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("callback_client")
 
@@ -158,7 +159,11 @@ class CallbackClient:
         Returns:
             Tuple of (success, result)
         """
-        logger.info("Sending callback to %s, body: %s", self.callback_url, data)
+        # Mask sensitive data in callback payload for logging
+        masked_data = mask_sensitive_data(data)
+        logger.info("Sending callback to %s, body: %s", self.callback_url, masked_data)
+
+        # Send original unmasked data
         response = requests.post(self.callback_url, json=data, timeout=self.timeout)
         return self._handle_response(response)
 

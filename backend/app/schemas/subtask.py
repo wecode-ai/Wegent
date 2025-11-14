@@ -6,7 +6,17 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Optional, List
 
-from pydantic import BaseModel
+from pydantic import BaseModel, field_serializer
+
+# Import the masking utility - using relative import from backend
+import sys
+import os
+# Add the project root to sys.path if not already there
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
+
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 class SubtaskStatus(str, Enum):
     PENDING = "PENDING"
@@ -62,6 +72,20 @@ class SubtaskInDB(SubtaskBase):
     updated_at: datetime
     completed_at: Optional[datetime] = None
     executor_deleted_at: Optional[bool] = False
+
+    @field_serializer('result')
+    def mask_result(self, value: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+        """Mask sensitive data in result field before serialization"""
+        if value is None:
+            return None
+        return mask_sensitive_data(value)
+
+    @field_serializer('error_message')
+    def mask_error_message(self, value: Optional[str]) -> Optional[str]:
+        """Mask sensitive data in error_message field before serialization"""
+        if value is None:
+            return None
+        return mask_sensitive_data(value)
 
     class Config:
         from_attributes = True
