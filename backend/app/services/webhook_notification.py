@@ -15,7 +15,8 @@ logger = logging.getLogger(__name__)
 class TaskNotification(BaseModel):
     """Task notification data model"""
     task_id: int
-    task_created_at: str
+    task_start_time: str
+    task_end_time: str
     task_title: str
     task_url: str
     status: str
@@ -57,19 +58,26 @@ class WebhookNotificationService:
 
     def _build_notification_payload(self, notification: TaskNotification) -> Dict[str, Any]:
         """Build webhook notification payload"""
-        display_title = notification.task_title[:50] + "..." if len(notification.task_title) > 50 else notification.task_title
+        display_title = notification.task_title[:10] + "..." if len(notification.task_title) > 10 else notification.task_title
 
         status_text = notification.status
         if notification.error_message:
             status_text += f" - {notification.error_message}"
 
+        # Build notification text
+        notification_text = (
+            f"#### Task Notification\n\n"
+            f"**Task ID**: {notification.task_id}\n\n"
+            f"**Start Time**: {notification.task_start_time}\n\n"
+            f"**End Time**: {notification.task_end_time}\n\n"
+            f"**Description**: {display_title}\n\n"
+            f"**Status**: {status_text}\n\n"
+            f"[View Details]({notification.task_url})"
+        )
+
         markdown_content = {
-            "text": f"#### 任务通知\n\n"
-                    f"**任务ID**: {notification.task_id}\n\n"
-                    f"**任务创建时间**: {notification.task_created_at}\n\n"
-                    f"**任务描述**: {display_title}\n\n"
-                    f"**状态**: {status_text}\n\n"
-                    f"[点击查看详情]({notification.task_url})"
+            "title": "Wegent Task Notification",
+            "text": notification_text
         }
 
         return markdown_content
@@ -148,6 +156,12 @@ class WebhookNotificationService:
 
         except requests.exceptions.RequestException as e:
             logger.error(f"HTTP error sending webhook notification: {str(e)}")
+            # Log response body if available for debugging
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    logger.error(f"Response body: {e.response.text}")
+                except:
+                    pass
             return False
         except Exception as e:
             logger.error(f"Error sending webhook notification: {str(e)}")

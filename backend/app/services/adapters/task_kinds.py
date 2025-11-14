@@ -237,27 +237,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         db.refresh(task)
         db.flush()
 
-        # Send webhook notification for new task creation (only when creating, not appending)
-        if task is None and existing_task is None:
-            try:
-                task_crd = Task.model_validate(task.json)
-                task_url = f"{settings.FRONTEND_URL}/tasks?taskId={task.id}"
-
-                notification = TaskNotification(
-                    task_id=task.id,
-                    task_created_at=task_crd.status.createdAt if task_crd.status.createdAt else task.created_at.isoformat(),
-                    task_title=task_crd.spec.title,
-                    task_url=task_url,
-                    status="CREATED"
-                )
-
-                # Send notification asynchronously
-                import asyncio
-                asyncio.create_task(webhook_notification_service.send_notification(notification))
-                logger.info(f"Webhook notification sent for new task creation: {task.id}")
-            except Exception as e:
-                logger.error(f"Failed to send webhook notification for task creation: {str(e)}")
-
         return self._convert_to_task_dict(task, db, user.id)
     
     def get_user_tasks_with_pagination(
