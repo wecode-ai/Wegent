@@ -229,7 +229,7 @@ auto-create-develop-to-main-mr:
 
       # Get existing MRs from develop to main with error handling
       HTTP_CODE=$(curl -w "%{http_code}" --silent --output /tmp/check_mr.json \
-        --header "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" \
+        --header "PRIVATE-TOKEN: ${WECODER_TOKEN}" \
         "${GITLAB_API}/projects/${PROJECT_ID}/merge_requests?state=opened&source_branch=develop&target_branch=main")
 
       if [ "$HTTP_CODE" -ne 200 ]; then
@@ -250,7 +250,7 @@ auto-create-develop-to-main-mr:
 
       # Create MR from develop to main with error handling
       HTTP_CODE=$(curl -w "%{http_code}" --silent --output /tmp/create_mr.json \
-        --request POST --header "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" \
+        --request POST --header "PRIVATE-TOKEN: ${WECODER_TOKEN}" \
         --data "source_branch=develop" \
         --data "target_branch=main" \
         --data "title=Auto MR: Merge develop to main" \
