@@ -149,7 +149,7 @@ graph LR
        "ANTHROPIC_MODEL": "openrouter,anthropic/claude-sonnet-4",
        "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxx",
        "ANTHROPIC_BASE_URL": "http://xxxxx",
-       "ANTHROPIC_SMALL_FAST_MODEL": "openrouter,anthropic/claude-3.5-haiku"
+       "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openrouter,anthropic/claude-3.5-haiku"
      }
    }
    ```
