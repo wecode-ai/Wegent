@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { TaskDetail, OpenLinks, WorkbenchData } from '@/types/api';
+import { TaskDetail, OpenLinks } from '@/types/api';
 
 /**
  * Calculate open links from task detail data
