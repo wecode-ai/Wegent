@@ -57,11 +57,15 @@ export default function ChatArea({
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
 
+  const chatAreaRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isUserNearBottomRef = useRef(true);
+  const floatingInputRef = useRef<HTMLDivElement>(null);
   const AUTO_SCROLL_THRESHOLD = 32;
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [floatingMetrics, setFloatingMetrics] = useState({ width: 0, left: 0 });
+  const [inputHeight, setInputHeight] = useState(0);
 
   // New: Get selectedTask to determine if there are messages
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
@@ -242,10 +246,64 @@ export default function ChatArea({
     }
   }, [selectedTaskDetail?.id]);
 
+  // Keep floating input aligned with the chat area width to avoid overflow
+  useEffect(() => {
+    if (!hasMessages) {
+      setFloatingMetrics({ width: 0, left: 0 });
+      return;
+    }
+
+    const updateFloatingMetrics = () => {
+      if (!chatAreaRef.current) return;
+      const rect = chatAreaRef.current.getBoundingClientRect();
+      setFloatingMetrics({
+        width: rect.width,
+        left: rect.left,
+      });
+    };
+
+    updateFloatingMetrics();
+    window.addEventListener('resize', updateFloatingMetrics);
+
+    let observer: ResizeObserver | null = null;
+    if (chatAreaRef.current && typeof ResizeObserver !== 'undefined') {
+      observer = new ResizeObserver(updateFloatingMetrics);
+      observer.observe(chatAreaRef.current);
+    }
+
+    return () => {
+      window.removeEventListener('resize', updateFloatingMetrics);
+      observer?.disconnect();
+    };
+  }, [hasMessages]);
+
+  // Measure floating input height to pad the scroll area so content is not hidden under it
+  useEffect(() => {
+    if (!hasMessages || !floatingInputRef.current) {
+      setInputHeight(0);
+      return;
+    }
+
+    const element = floatingInputRef.current;
+    const updateHeight = () => setInputHeight(element.offsetHeight);
+
+    updateHeight();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const resizeObserver = new ResizeObserver(updateHeight);
+      resizeObserver.observe(element);
+      return () => resizeObserver.disconnect();
+    }
+
+    window.addEventListener('resize', updateHeight);
+    return () => window.removeEventListener('resize', updateHeight);
+  }, [hasMessages]);
+
   // Style reference: TaskParamWrapper.tsx
   return (
     <div
-      className="flex-1 flex flex-col min-h-0 w-full"
+      ref={chatAreaRef}
+      className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
       {/* Messages Area: always mounted to keep scroll container stable */}
@@ -257,6 +315,7 @@ export default function ChatArea({
           (hasMessages ? 'opacity-100' : 'opacity-0 pointer-events-none h-0')
         }
         aria-hidden={!hasMessages}
+        style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
       >
         <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
           <MessagesArea />
@@ -269,72 +328,86 @@ export default function ChatArea({
           hasMessages ? 'w-full' : 'flex-1 flex flex-col items-center justify-center w-full'
         }
       >
-        {/* Input Area */}
+        {/* Floating Input Area */}
         <div
+          ref={floatingInputRef}
           className={
-            hasMessages ? 'w-full max-w-3xl mx-auto px-4 sm:px-6' : 'w-full max-w-3xl px-4 sm:px-6'
+            hasMessages
+              ? 'fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0'
+              : 'w-full max-w-3xl px-4 sm:px-6'
+          }
+          style={
+            hasMessages
+              ? {
+                  left: floatingMetrics.width ? floatingMetrics.left : 0,
+                  width: floatingMetrics.width || '100%',
+                  right: floatingMetrics.width ? undefined : 0,
+                }
+              : {}
           }
         >
-          {/* Chat Input Card */}
-          <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface">
-            <ChatInput
-              message={taskInputMessage}
-              setMessage={setTaskInputMessage}
-              handleSendMessage={handleSendMessage}
-              isLoading={isLoading}
-              taskType={taskType}
-            />
-            {/* Team Selector and Send Button */}
-            <div className="flex items-end justify-between px-3 py-0">
-              <div>
-                {teams.length > 0 && (
-                  <TeamSelector
-                    selectedTeam={selectedTeam}
-                    setSelectedTeam={handleTeamChange}
-                    teams={teams}
-                    disabled={hasMessages}
-                    isLoading={isTeamsLoading}
+          <div className={hasMessages ? 'w-full max-w-3xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
+            {/* Chat Input Card */}
+            <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface shadow-lg">
+              <ChatInput
+                message={taskInputMessage}
+                setMessage={setTaskInputMessage}
+                handleSendMessage={handleSendMessage}
+                isLoading={isLoading}
+                taskType={taskType}
+              />
+              {/* Team Selector and Send Button */}
+              <div className="flex items-end justify-between px-3 py-0">
+                <div>
+                  {teams.length > 0 && (
+                    <TeamSelector
+                      selectedTeam={selectedTeam}
+                      setSelectedTeam={handleTeamChange}
+                      teams={teams}
+                      disabled={hasMessages}
+                      isLoading={isTeamsLoading}
+                    />
+                  )}
+                </div>
+                <div className="ml-auto flex items-center">
+                  {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
+                  <Button
+                    type="text"
+                    onClick={handleSendMessage}
+                    disabled={isLoading}
+                    icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
+                    style={{
+                      color: 'rgb(var(--color-text-muted))',
+                      padding: '0',
+                      height: 'auto',
+                    }}
                   />
-                )}
-              </div>
-              <div className="ml-auto flex items-center">
-                {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
-                <Button
-                  type="text"
-                  onClick={handleSendMessage}
-                  disabled={isLoading}
-                  icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
-                  style={{
-                    color: 'rgb(var(--color-text-muted))',
-                    padding: '0',
-                    height: 'auto',
-                  }}
-                />
+                </div>
               </div>
             </div>
-          </div>
 
-          {/* Bottom Controls */}
-          <div className="flex flex-row gap-1 mb-4 ml-3 mt-1 items-center flex-wrap">
-            {showRepositorySelector && (
-              <>
-                <RepositorySelector
-                  selectedRepo={selectedRepo}
-                  handleRepoChange={setSelectedRepo}
-                  disabled={hasMessages}
-                  selectedTaskDetail={selectedTaskDetail}
-                />
-
-                {selectedRepo && (
-                  <BranchSelector
+            {/* Bottom Controls */}
+            <div className="flex flex-row gap-1 mb-2 ml-3 mt-1 items-center flex-wrap">
+              {showRepositorySelector && (
+                <>
+                  <RepositorySelector
                     selectedRepo={selectedRepo}
-                    selectedBranch={selectedBranch}
-                    handleBranchChange={setSelectedBranch}
+                    handleRepoChange={setSelectedRepo}
                     disabled={hasMessages}
+                    selectedTaskDetail={selectedTaskDetail}
                   />
-                )}
-              </>
-            )}
+
+                  {selectedRepo && (
+                    <BranchSelector
+                      selectedRepo={selectedRepo}
+                      selectedBranch={selectedBranch}
+                      handleBranchChange={setSelectedBranch}
+                      disabled={hasMessages}
+                    />
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>

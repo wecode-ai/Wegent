@@ -373,7 +373,7 @@ Each agent requires different environment variable configurations:
 export ANTHROPIC_MODEL=openrouter,anthropic/claude-sonnet-4
 export ANTHROPIC_AUTH_TOKEN=sk-xxxxxx
 export ANTHROPIC_BASE_URL=http://xxxxx
-export ANTHROPIC_DEFAULT_HAIKU_MODEL=openrouter,anthropic/claude-3.5-haiku
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=openrouter,anthropic/claude-haiku-4.5
 ```
 
 **Agno Agent:**
