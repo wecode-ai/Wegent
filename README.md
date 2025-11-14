@@ -22,12 +22,12 @@ English | [简体中文](README_zh.md)
 ---
 
 ## 💡 What Can You Build?
-
+<img src="./docs/assets/example.gif" width="75%" alt="Demo Video"/>
 Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
 
 ### 🖥️ **Web-Based Coding Assistant**
-Build a full-featured development environment in your browser 
-<img src="./docs/assets/example.gif" width="75%" alt="Demo Video"/>
+Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously
+
 
 ### 📰 **News Intelligence Platform**
 Create a smart news aggregation and analysis system 
@@ -45,6 +45,14 @@ The possibilities are endless - build agents for:
 ## 📖 What is Wegent?
 
 Wegent is an open-source AI native operating system that enables you to define, organize, and run intelligent agents at scale. Built on Kubernetes-style declarative API and CRD (Custom Resource Definition) design patterns, Wegent provides a standardized framework for creating and managing AI agent ecosystems.
+
+### 🌟 Core Capabilities
+
+1. **🎨 Configuration-Driven Agent Teams**: Define and run personalized agent teams through YAML configuration with web UI - no secondary development required
+2. **⚙️ Multi Execution Engines**: Built on Agno and Claude Code agent engines at the bottom layer, supporting both dialogue and coding modes at the upper layer
+3. **🔒 Isolated Sandbox Environments**: Each agent team runs in an independent sandbox, enabling multiple teams to execute simultaneously
+4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, and other agent collaboration patterns for complex workflows like news insights and content retrieval
+5. **💻 AI Coding Integration**: Coding mode integrates with GitHub/GitLab and other code services to implement AI-driven development, code review, and other coding workflows
 
 ```mermaid
 graph LR
@@ -107,15 +115,6 @@ graph LR
 
 > 💡 **Detailed YAML Configuration Documentation**:
 - [Complete YAML configuration examples and field descriptions](docs/en/resource-definition-formats.md)
-
-### ✨ Why Wegent?
-
-- **Standardized**: Universal AI agent runtime specifications, like Kubernetes for containers
-- **Declarative**: Define and manage agents through simple YAML configurations
-- **Collaborative**: Built-in support for multi-agent teamwork and orchestration
-- **Multi-Model Support**: Currently supports Claude Code, with plans for Codex and Gemini
-- **Flexible Configuration**: Customizable agent personalities and capabilities
-- **Task Orchestration**: Intelligent scheduling and execution
 
 ## 🚀 Quick Start
 

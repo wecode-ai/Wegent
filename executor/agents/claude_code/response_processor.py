@@ -14,6 +14,7 @@ from claude_agent_sdk import ClaudeSDKClient
 from shared.status import TaskStatus
 from shared.logger import setup_logger
 from shared.models.task import ExecutionResult
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 from claude_agent_sdk.types import (
     Message,
     SystemMessage,
@@ -96,22 +97,28 @@ async def process_response(
 
 def _handle_system_message(msg: SystemMessage, state_manager, thinking_manager=None):
     """处理系统消息，提取详细信息"""
-    
+
     # 构建系统消息的详细信息，符合目标格式
     system_detail = {
         "type": "system",
         "subtype": msg.subtype,
         **msg.data  # 包含原有的系统消息数据
     }
-    
-    logger.info(f"SystemMessage: subtype = {msg.subtype}. msg = {json.dumps(asdict(msg), ensure_ascii=False)}")
-    
+
+    # Mask sensitive data in system details before sending
+    masked_system_detail = mask_sensitive_data(system_detail)
+
+    # Log with masked data
+    msg_dict = asdict(msg)
+    masked_msg_dict = mask_sensitive_data(msg_dict)
+    logger.info(f"SystemMessage: subtype = {msg.subtype}. msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}")
+
     if thinking_manager:
         thinking_manager.add_thinking_step(
             title="thinking.system_message_received",
             report_immediately=True,
             use_i18n_keys=True,
-            details=system_detail
+            details=masked_system_detail
         )
 
 
@@ -148,7 +155,11 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
                        f"ToolUseBlock={isinstance(block, ToolUseBlock)}, "
                        f"TextBlock={isinstance(block, TextBlock)}, "
                        f"ToolResultBlock={isinstance(block, ToolResultBlock)}")
-            logger.info(f"UserMessage Block content: {asdict(block) if hasattr(block, '__dataclass_fields__') else block}")
+
+            # Mask sensitive data in block content for logging
+            block_dict = asdict(block) if hasattr(block, '__dataclass_fields__') else block
+            masked_block_dict = mask_sensitive_data(block_dict)
+            logger.info(f"UserMessage Block content: {masked_block_dict}")
             
             if isinstance(block, ToolUseBlock):
                 # 工具使用详情，符合目标格式
@@ -192,16 +203,19 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
                     "block_data": asdict(block) if hasattr(block, '__dict__') else str(block)
                 }
                 message_details["message"]["content"].append(unknown_detail)
-                
+
                 logger.debug(f"UserMessage Unknown block type: {type(block)}")
-    
+
+    # Mask sensitive data in message details before sending
+    masked_message_details = mask_sensitive_data(message_details)
+
     # 记录整体消息
     if thinking_manager:
         thinking_manager.add_thinking_step(
             title="thinking.user_message_received",
             report_immediately=True,
             use_i18n_keys=True,
-            details=message_details
+            details=masked_message_details
         )
 
 
@@ -226,11 +240,17 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
     for block in msg.content:
         content_dicts.append(asdict(block))
     msg_dict = {"content": content_dicts, "model": msg.model, "parent_tool_use_id": msg.parent_tool_use_id}
-    logger.info(f"AssistantMessage: {len(msg.content)} content blocks, msg = {json.dumps(msg_dict, ensure_ascii=False)}")
-    
+
+    # Mask sensitive data in message for logging
+    masked_msg_dict = mask_sensitive_data(msg_dict)
+    logger.info(f"AssistantMessage: {len(msg.content)} content blocks, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}")
+
     # 处理每个内容块
     for block in msg.content:
-        logger.info(f"Block content: {asdict(block) if hasattr(block, '__dataclass_fields__') else block}")
+        # Mask sensitive data in block for logging
+        block_dict = asdict(block) if hasattr(block, '__dataclass_fields__') else block
+        masked_block_dict = mask_sensitive_data(block_dict)
+        logger.info(f"Block content: {masked_block_dict}")
         
         if isinstance(block, ToolUseBlock):
             # 工具使用详情，符合目标格式
@@ -276,23 +296,27 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
                 "block_data": asdict(block) if hasattr(block, '__dict__') else str(block)
             }
             message_details["message"]["content"].append(unknown_detail)
-            
+
             logger.debug(f"Unknown block type: {type(block)}")
-    
-    # 记录整体消息
+
+    # Mask sensitive data in message details before sending
+    masked_message_details = mask_sensitive_data(message_details)
+
     # 记录整体消息
     if thinking_manager:
         thinking_manager.add_thinking_step(
             title="thinking.assistant_message_received",
             report_immediately=True,
             use_i18n_keys=True,
-            details=message_details
+            details=masked_message_details
         )
 
 def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
     msg_type = msg.get("type", "unknown")
 
-    logger.info(f"Legacy Message: type = {msg_type}. msg = {json.dumps(msg, ensure_ascii=False)}")
+    # Mask sensitive data in legacy message for logging
+    masked_msg = mask_sensitive_data(msg)
+    logger.info(f"Legacy Message: type = {msg_type}. msg = {json.dumps(masked_msg, ensure_ascii=False)}")
 
     if msg_type == "tool_use":
         tool_name = msg.get("tool", {}).get("name", "unknown")
@@ -350,8 +374,14 @@ def _process_result_message(msg: ResultMessage, state_manager, thinking_manager=
         "usage": msg.usage,
         "result": msg.result
     }
-    
-    logger.info(f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}, msg = {json.dumps(asdict(msg), ensure_ascii=False)}")
+
+    # Mask sensitive data in result details
+    masked_result_details = mask_sensitive_data(result_details)
+
+    # Mask sensitive data in message for logging
+    msg_dict = asdict(msg)
+    masked_msg_dict = mask_sensitive_data(msg_dict)
+    logger.info(f"Result message received: subtype={msg.subtype}, is_error={msg.is_error}, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}")
 
     # If it's a successful result message, send the result back via callback
     if msg.subtype == "success" and not msg.is_error:
@@ -365,7 +395,7 @@ def _process_result_message(msg: ResultMessage, state_manager, thinking_manager=
                 title="thinking.task_execution_success",
                 report_immediately=False,
                 use_i18n_keys=True,
-                details=result_details
+                details=masked_result_details
             )
 
         # If there's a result, pass it as result parameter to report_progress
@@ -429,7 +459,7 @@ def _process_result_message(msg: ResultMessage, state_manager, thinking_manager=
                 title="thinking.task_execution_failed",
                 report_immediately=False,
                 use_i18n_keys=True,
-                details=result_details
+                details=masked_result_details
             )
         
         # Update workbench status to failed
