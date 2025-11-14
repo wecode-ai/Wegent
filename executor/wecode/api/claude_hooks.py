@@ -54,6 +54,16 @@ def post_create_claude_model_hook(
         env_config["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = 96000
         logger.info(f"Applied special configuration for {model_id}: CLAUDE_CODE_MAX_OUTPUT_TOKENS=96000")
 
+    # Configure Claude-specific environment variables when model_id starts with 'claude'
+    if model_id.startswith('claude'):
+        env_config["ANTHROPIC_DEFAULT_HAIKU_MODEL"] = "claude-haiku-4-5-20251001"
+        env_config["ANTHROPIC_DEFAULT_SONNET_MODEL"] = model_id
+        env_config["CLAUDE_CODE_SUBAGENT_MODEL"] = model_id
+        # Remove ANTHROPIC_SMALL_FAST_MODEL if present
+        if "ANTHROPIC_SMALL_FAST_MODEL" in env_config:
+            del env_config["ANTHROPIC_SMALL_FAST_MODEL"]
+        logger.info(f"Applied Claude-specific configuration for {model_id}")
+
     final_claude_code_config = {
         "env": env_config,
         "includeCoAuthoredBy": os.getenv("CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY", "true").lower() != "false",
