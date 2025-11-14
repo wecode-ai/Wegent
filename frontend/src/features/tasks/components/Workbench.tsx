@@ -85,6 +85,8 @@ interface WorkbenchProps {
   onOpen: () => void;
   workbenchData?: WorkbenchData | null;
   isLoading?: boolean;
+  taskTitle?: string;
+  taskNumber?: string;
 }
 
 function classNames(...classes: string[]) {
@@ -115,6 +117,8 @@ export default function Workbench({
   onOpen: _onOpen,
   workbenchData,
   isLoading: _isLoading = false,
+  taskTitle,
+  taskNumber,
 }: WorkbenchProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'files'>('overview');
   const [showCommits, setShowCommits] = useState(false);
@@ -349,10 +353,24 @@ export default function Workbench({
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto max-w-7xl px-2 pt-4 pb-2 sm:px-3 lg:px-4">
                 {!displayData ? (
-                  // Loading state with animation
-                  <div className="flex flex-col items-center justify-center h-64 space-y-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-                    <p className="text-text-muted">{t('workbench.waiting_result')}</p>
+                  // Loading state with animation - now showing task title if available
+                  <div className="space-y-6">
+                    {/* Task Title Section - shown even during loading */}
+                    {(taskTitle || taskNumber) && (
+                      <div className="flex items-baseline gap-2">
+                        <h2 className="text-lg font-semibold text-text-primary">
+                          {taskTitle || ''}
+                        </h2>
+                        <span className="text-sm text-text-muted">
+                          {taskNumber || ''}
+                        </span>
+                      </div>
+                    )}
+                    {/* Loading indicator */}
+                    <div className="flex flex-col items-center justify-center h-64 space-y-4">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                      <p className="text-text-muted">{t('workbench.waiting_result')}</p>
+                    </div>
                   </div>
                 ) : activeTab === 'overview' ? (
                   <div className="space-y-6">

@@ -144,6 +144,8 @@ export default function CodePage() {
                 onOpen={() => setIsWorkbenchOpen(true)}
                 workbenchData={selectedTaskDetail?.workbench}
                 isLoading={isWorkbenchLoading}
+                taskTitle={selectedTaskDetail?.title}
+                taskNumber={selectedTaskDetail ? `#${selectedTaskDetail.id}` : undefined}
               />
             )}
           </div>
