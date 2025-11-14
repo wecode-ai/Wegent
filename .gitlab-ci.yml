@@ -50,6 +50,8 @@ wegent-executor-manager:
   script:
     - build_image
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - executor_manager/**/*
@@ -91,6 +93,8 @@ wegent-executor:
   script:
     - build_image
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - executor/**/*
@@ -132,6 +136,8 @@ wegent-backend:
   script:
     - build_image
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - backend/**/*
@@ -170,6 +176,8 @@ wegent-web:
   script:
     - build_image
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
     - if: '$CI_COMMIT_BRANCH == "main"'
       changes:
         - frontend/**/*
@@ -208,6 +216,8 @@ wegent-preview-web:
   script:
     - build_image
   rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
+      when: never
     - changes:
       - frontend/**/*
       - wecode/docker/frontend/**/*
