@@ -20,6 +20,7 @@ RUN pip install --no-cache-dir -r requirements.txt -i http://mirrors.cloud.aliyu
 
 # Copy application code
 COPY backend /app
+COPY shared /app/shared
 COPY resource.json /app/resource.json
 # Create .env file (if it doesn't exist)
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
