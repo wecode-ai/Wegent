@@ -131,10 +131,10 @@ jobs:
 
       - name: Detect changed paths
         id: filter
-        uses: dorny/paths-filter@v3
+        uses: dorny/paths-filter@v3.0.2
         with:
-          base_ref: ${{ steps.compare.outputs.base_ref }}
-          head_ref: ${{ steps.compare.outputs.head_ref }}
+          base: ${{ steps.compare.outputs.base_ref }}
+          ref: ${{ steps.compare.outputs.head_ref }}
           filters: |
             backend:
               - 'backend/**'
