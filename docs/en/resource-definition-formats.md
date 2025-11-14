@@ -79,7 +79,7 @@ spec:
       ANTHROPIC_MODEL: "openrouter,anthropic/claude-sonnet-4"
       ANTHROPIC_BASE_URL: "http://xxxxx"
       ANTHROPIC_AUTH_TOKEN: "sk-xxxxxx"
-      ANTHROPIC_SMALL_FAST_MODEL: "openrouter,anthropic/claude-3.5-haiku"
+      ANTHROPIC_DEFAULT_HAIKU_MODEL: "openrouter,anthropic/claude-3.5-haiku"
 ```
 
 ### Field Description
@@ -98,7 +98,7 @@ spec:
 | `ANTHROPIC_MODEL` | Main model configuration | `openrouter,anthropic/claude-sonnet-4` |
 | `ANTHROPIC_BASE_URL` | API base URL | `http://xxxxx` |
 | `ANTHROPIC_AUTH_TOKEN` | Authentication token | `sk-xxxxxx` |
-| `ANTHROPIC_SMALL_FAST_MODEL` | Fast model configuration | `openrouter,anthropic/claude-3.5-haiku` |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Fast model configuration | `openrouter,anthropic/claude-3.5-haiku` |
 
 ---
 
