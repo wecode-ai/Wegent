@@ -7,6 +7,7 @@ Repository provider interface, defining methods related to code repositories
 """
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Optional
+from shared.utils.crypto import encrypt_git_token, decrypt_git_token, is_token_encrypted
 
 from app.models.user import User
 
@@ -58,6 +59,19 @@ class RepositoryProvider(ABC):
         Raises:
             HTTPException: Exception thrown when fetching fails
         """
+    
+    def encrypt_token(self, token: str) -> str:
+        if self._is_token_encrypted(token):
+            return token
+        return encrypt_git_token(token)
+
+    def decrypt_token(self, token: str) -> str:
+        if self._is_token_encrypted(token):
+            return decrypt_git_token(token)
+        return token
+    
+    def _is_token_encrypted(self, token: str) -> bool:
+        return is_token_encrypted(token)
     
     @abstractmethod
     def validate_token(
