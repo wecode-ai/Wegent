@@ -17,7 +17,7 @@ from app.models.user import User
 from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
-from app.core.crypto import decrypt_git_token
+from shared.utils.crypto import decrypt_git_token
 
 
 class GitHubProvider(RepositoryProvider):
@@ -339,9 +339,10 @@ class GitHubProvider(RepositoryProvider):
         # Use custom domain if provided, otherwise use default
         api_base_url = self._get_api_base_url(git_domain)
 
+        decrypt_token = self.decrypt_token(token)
         try:
             headers = {
-                "Authorization": f"token {token}",
+                "Authorization": f"token {decrypt_token}",
                 "Accept": "application/vnd.github.v3+json"
             }
             

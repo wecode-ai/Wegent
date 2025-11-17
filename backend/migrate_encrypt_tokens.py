@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
 from app.core.config import settings
-from app.core.crypto import encrypt_git_token, is_token_encrypted
+from shared.utils.crypto import encrypt_git_token, is_token_encrypted
 from app.models.user import User
 
 logging.basicConfig(level=logging.INFO)

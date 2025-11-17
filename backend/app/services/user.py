@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.user import UserUpdate, UserCreate
 from app.core import security
-from app.core.crypto import encrypt_git_token, decrypt_git_token
+from shared.utils.crypto import encrypt_git_token, decrypt_git_token, is_token_encrypted
 from app.services.base import BaseService
 from app.core.exceptions import ValidationException
 
@@ -69,7 +69,8 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 git_item["git_email"] = user_data.get("email", "")
 
                 # Encrypt the token before storing
-                git_item["git_token"] = encrypt_git_token(plain_token)
+                if is_token_encrypted(plain_token) is False:
+                    git_item["git_token"] = encrypt_git_token(plain_token)
 
             except ValidationException:
                 raise

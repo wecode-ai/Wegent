@@ -8,13 +8,12 @@ Cryptography utilities for encrypting sensitive data like git tokens
 
 import base64
 import logging
+import os
 from typing import Optional
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.backends import default_backend
-
-from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -27,9 +26,12 @@ def _get_git_token_encryption_key():
     """Get or initialize git token encryption key and IV from settings"""
     global _git_token_aes_key, _git_token_aes_iv
     if _git_token_aes_key is None:
-        # Reuse the same AES key from settings for consistency
-        _git_token_aes_key = settings.SHARE_TOKEN_AES_KEY.encode('utf-8')
-        _git_token_aes_iv = settings.SHARE_TOKEN_AES_IV.encode('utf-8')
+        # Try to load keys from the backend settings if available
+        aes_key = os.environ.get('SHARE_TOKEN_AES_KEY', '12345678901234567890123456789012')
+        aes_iv = os.environ.get('SHARE_TOKEN_AES_IV', '1234567890123456')
+        _git_token_aes_key = aes_key.encode('utf-8')
+        _git_token_aes_iv = aes_iv.encode('utf-8')
+        logger.info("Loaded encryption keys from environment variables")
     return _git_token_aes_key, _git_token_aes_iv
 
 
@@ -45,6 +47,9 @@ def encrypt_git_token(plain_token: str) -> str:
     """
     if not plain_token:
         return ""
+
+    if plain_token == "***":
+        return "***"
 
     try:
         aes_key, aes_iv = _get_git_token_encryption_key()
@@ -83,6 +88,9 @@ def decrypt_git_token(encrypted_token: str) -> Optional[str]:
     """
     if not encrypted_token:
         return ""
+
+    if encrypted_token == "***":
+        return "***"
 
     try:
         aes_key, aes_iv = _get_git_token_encryption_key()

@@ -16,7 +16,7 @@ from app.models.user import User
 from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
-from app.core.crypto import decrypt_git_token
+from shared.utils.crypto import decrypt_git_token
 
 
 class GitLabProvider(RepositoryProvider):
@@ -314,9 +314,11 @@ class GitLabProvider(RepositoryProvider):
         # Use custom domain if provided, otherwise use default
         api_base_url = self._get_api_base_url(git_domain)
 
+        decrypt_token = self.decrypt_token(token)
+        logging.info(f"Validating gitlab token: {decrypt_token} for domain: {git_domain}")
         try:
             headers = {
-                "Authorization": f"Bearer {token}",
+                "Authorization": f"Bearer {decrypt_token}",
                 "Accept": "application/json"
             }
             
