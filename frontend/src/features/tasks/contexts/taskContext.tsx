@@ -8,6 +8,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useRe
 import { Task, TaskDetail, TaskStatus } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
 import { notifyTaskCompletion } from '@/utils/notification';
+import { markTaskAsViewed, getUnreadCount, markAllTasksAsViewed } from '@/utils/taskViewStatus';
 
 type TaskContextType = {
   tasks: Task[];
@@ -25,6 +26,9 @@ type TaskContextType = {
   searchTasks: (term: string) => Promise<void>;
   isSearching: boolean;
   isSearchResult: boolean;
+  markTaskAsViewed: (taskId: number, status: TaskStatus) => void;
+  getUnreadCount: (tasks: Task[]) => number;
+  markAllTasksAsViewed: () => void;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -192,6 +196,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   useEffect(() => {
     if (selectedTask) {
+      // Mark task as viewed when selected
+      markTaskAsViewed(selectedTask.id, selectedTask.status);
       refreshSelectedTaskDetail(false); // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null);
@@ -220,6 +226,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Handle marking all tasks as viewed
+  const handleMarkAllTasksAsViewed = () => {
+    markAllTasksAsViewed(tasks);
+  };
+
   return (
     <TaskContext.Provider
       value={{
@@ -238,6 +249,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         searchTasks,
         isSearching,
         isSearchResult,
+        markTaskAsViewed,
+        getUnreadCount,
+        markAllTasksAsViewed: handleMarkAllTasksAsViewed,
       }}
     >
       {children}

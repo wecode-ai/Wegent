@@ -243,6 +243,7 @@
     "copy_task_id": "Copy TaskId",
     "delete_task": "Delete Task",
     "searching": "Searching...",
+    "mark_all_read": "Mark all as read",
     "open_from": "<> Code",
     "open_from_vscode": "VSCode",
     "open_from_git": "Git"
