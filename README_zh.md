@@ -15,19 +15,19 @@
 
 *从编程助手到新闻分析 - 部署真正能干活的智能代理*
 
-[快速开始](#-快速开始) · [应用场景](#-你能构建什么) · [文档](docs/zh/资源定义格式.md)
+[快速开始](#-快速开始) · [应用场景](#-你能构建什么) · [文档](docs/zh/资源定义格式.md) · [开发指南](docs/zh/develop-guide.md)
 
 </div>
 
 ---
 
 ## 💡 你能构建什么？
-
+<img src="./docs/assets/example.gif" width="75%" alt="演示视频"/>
 Wegent 让你通过智能体编排创建强大的 AI 应用：
 
 ### 🖥️ **网页版编程助手**
-在浏览器中构建全功能开发环境
-<img src="./docs/assets/example.gif" width="75%" alt="演示视频"/>
+在浏览器中构建全功能开发环境，可与Github集成，支持本地或云端的独立开发空间，可运行多个Coding Agent同时编码
+
 
 ### 📰 **新闻智能平台**
 创建智能新闻聚合和分析系统
@@ -45,6 +45,14 @@ Wegent 让你通过智能体编排创建强大的 AI 应用：
 ## 📖 什么是 Wegent？
 
 Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、组织和运行智能代理。基于 Kubernetes 风格的声明式 API 和 CRD（自定义资源定义）设计模式，Wegent 为创建和管理 AI 智能体生态系统提供了标准化框架。
+
+### 🌟 核心能力
+
+1. **🎨 配置驱动的智能体团队**：通过 YAML 配置定义和运行个性化 Agent 团队，提供网页 UI，无需二次开发
+2. **⚙️ 多引擎架构**：底层支持 Agno 和 Claude Code 两个 Agent 执行引擎，上层支持对话和编码两种模式
+3. **🔒 独立沙箱环境**：每个 Agent 团队运行在独立沙箱环境中，支持多个 Agent 团队同时运行
+4. **🤝 高级协作模式**：对话模式可以实现并行、Leader 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
+5. **💻 AI 编码集成**：编码模式可以与 GitHub/GitLab 等代码服务对接，实现代码开发、review 等 AI Coding 工作流
 
 ```mermaid
 graph LR
@@ -108,14 +116,6 @@ graph LR
 > 💡 **详细的 YAML 配置文档**:
 - [完整的 YAML 配置示例和字段说明](docs/zh/资源定义格式.md)
 
-### ✨ 为什么选择 Wegent？
-
-- **标准化**：通用的 AI 智能体运行时规范，就像容器的 Kubernetes
-- **声明式**：通过简单的 YAML 配置定义和管理智能体
-- **协作式**：内置多智能体团队协作和编排支持
-- **多模型支持**：目前支持 Claude Code，计划支持 Codex 和 Gemini
-- **灵活配置**：可自定义智能体个性和能力
-- **任务编排**：智能调度和执行
 
 ## 🚀 快速开始
 
@@ -151,7 +151,7 @@ graph LR
        "ANTHROPIC_MODEL": "openrouter,anthropic/claude-sonnet-4",
        "ANTHROPIC_AUTH_TOKEN": "sk-xxxxxx",
        "ANTHROPIC_BASE_URL": "http://xxxxx",
-       "ANTHROPIC_SMALL_FAST_MODEL": "openrouter,anthropic/claude-3.5-haiku"
+       "ANTHROPIC_DEFAULT_HAIKU_MODEL": "openrouter,anthropic/claude-haiku-4.5"
      }
    }
    ```
@@ -185,7 +185,7 @@ graph TB
 
     subgraph "🤖 智能体层"
         Claude["🧠 Claude Code"]
-        AngoPlanned["💻 Agno（计划中）"]
+        Ango["💻 Agno"]
         DifyPlanned["✨ Dify（计划中）"]
     end
 
@@ -202,10 +202,12 @@ graph TB
     %% AI 程序集成（目前仅支持 Claude Code）
     Executor1 --> Claude
     Executor2 --> Claude
-    ExecutorN --> Claude
+    ExecutorN --> Ango
 ```
 
 ## 🛠️ 开发
+
+详细的开发环境搭建说明请参阅 [开发指南](docs/zh/develop-guide.md)。
 
 ### 项目结构
 
@@ -219,7 +221,7 @@ wegent/
 └── docker/           # 容器配置
 ```
 
-### 开发环境设置
+### 快速开发环境设置
 
 1. **后端开发**
    ```bash
@@ -243,6 +245,8 @@ wegent/
    # 前端测试
    cd frontend && npm test
    ```
+
+完整的开发环境搭建说明（包括数据库配置、环境变量设置和故障排查）请参阅 [开发指南](docs/zh/develop-guide.md)。
 
 
 ## 🤝 贡献

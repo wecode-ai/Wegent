@@ -4,9 +4,10 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Task, TaskDetail } from '@/types/api';
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
+import { Task, TaskDetail, TaskStatus } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
+import { notifyTaskCompletion } from '@/utils/notification';
 
 type TaskContextType = {
   tasks: Task[];
@@ -36,6 +37,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false);
+
+  // Track task status for notification
+  const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true);
@@ -85,13 +89,34 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setTaskLoading(false);
   };
 
+  // Monitor task status changes and send notifications
+  useEffect(() => {
+    tasks.forEach(task => {
+      const previousStatus = taskStatusMapRef.current.get(task.id);
+      const currentStatus = task.status;
+
+      // Check if status changed from running to completed/failed
+      if (previousStatus && previousStatus !== currentStatus) {
+        const wasRunning = previousStatus === 'RUNNING' || previousStatus === 'PENDING';
+        const isCompleted = currentStatus === 'COMPLETED';
+        const isFailed = currentStatus === 'FAILED';
+
+        if (wasRunning && (isCompleted || isFailed)) {
+          notifyTaskCompletion(task.title, isCompleted);
+        }
+      }
+
+      // Update status map
+      taskStatusMapRef.current.set(task.id, currentStatus);
+    });
+  }, [tasks]);
+
   // Initial load
   useEffect(() => {
     refreshTasks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Automatically refresh all loaded pages every 30 seconds
   // Only refresh periodically when there are unfinished tasks
   useEffect(() => {
     const hasIncompleteTasks = tasks.some(
@@ -103,13 +128,14 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     if (hasIncompleteTasks) {
       interval = setInterval(() => {
         refreshTasks();
-      }, 30000);
+      }, 10000);
     }
 
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [loadedPages, tasks, refreshTasks]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedPages, tasks]); // Removed refreshTasks from dependencies to avoid unnecessary re-renders
 
   const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
     if (!selectedTask) return;

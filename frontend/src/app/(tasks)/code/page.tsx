@@ -4,7 +4,7 @@
 
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
@@ -18,12 +18,15 @@ import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import Workbench from '@/features/tasks/components/Workbench';
 import WorkbenchToggle from '@/features/layout/WorkbenchToggle';
+import OpenMenu from '@/features/tasks/components/OpenMenu';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { Team } from '@/types/api';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { saveLastTab } from '@/utils/userPreferences';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+import { calculateOpenLinks } from '@/utils/openLinks';
 
 export default function CodePage() {
   // Get search params to check for taskId
@@ -46,6 +49,9 @@ export default function CodePage() {
   // Workbench state - only open if there's a taskId
   const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(hasTaskId);
 
+  // Mobile detection
+  const isMobile = useIsMobile();
+
   // Determine if workbench should show loading state
   const isWorkbenchLoading =
     hasTaskId &&
@@ -53,6 +59,11 @@ export default function CodePage() {
     selectedTaskDetail?.status !== 'COMPLETED' &&
     selectedTaskDetail?.status !== 'FAILED' &&
     selectedTaskDetail?.status !== 'CANCELLED';
+
+  // Calculate open links from task detail
+  const openLinks = useMemo(() => {
+    return calculateOpenLinks(selectedTaskDetail);
+  }, [selectedTaskDetail]);
 
   // Save last active tab to localStorage
   useEffect(() => {
@@ -98,6 +109,7 @@ export default function CodePage() {
           >
             <GithubStarButton />
             <UserMenu />
+            {hasTaskId && <OpenMenu openLinks={openLinks} />}
             {hasTaskId && (
               <WorkbenchToggle
                 isOpen={isWorkbenchOpen}
@@ -113,7 +125,7 @@ export default function CodePage() {
             <div
               className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
               style={{
-                width: hasTaskId && isWorkbenchOpen ? '50%' : '100%',
+                width: hasTaskId && isWorkbenchOpen && !isMobile ? '50%' : '100%',
               }}
             >
               <ChatArea
@@ -124,14 +136,16 @@ export default function CodePage() {
               />
             </div>
 
-            {/* Workbench component - only show if there's a taskId */}
-            {hasTaskId && (
+            {/* Workbench component - only show if there's a taskId and not on mobile */}
+            {hasTaskId && !isMobile && (
               <Workbench
                 isOpen={isWorkbenchOpen}
                 onClose={() => setIsWorkbenchOpen(false)}
                 onOpen={() => setIsWorkbenchOpen(true)}
                 workbenchData={selectedTaskDetail?.workbench}
                 isLoading={isWorkbenchLoading}
+                taskTitle={selectedTaskDetail?.title}
+                taskNumber={selectedTaskDetail ? `#${selectedTaskDetail.id}` : undefined}
               />
             )}
           </div>

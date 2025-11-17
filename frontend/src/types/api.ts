@@ -19,8 +19,8 @@ export interface User {
 export interface GitInfo {
   git_domain: string;
   git_token: string;
-  /** Type: "github" | "gitlab" */
-  type: 'github' | 'gitlab';
+  /** Type: "github" | "gitlab" | "gitee" */
+  type: 'github' | 'gitlab' | 'gitee';
 }
 
 // Bot Types
@@ -120,6 +120,14 @@ export interface WorkbenchData {
   git_info: GitInfoWorkbench;
 }
 
+export interface OpenLinks {
+  session_id: string | null;
+  vscode_link: string | null;
+  git_link: string | null;
+  git_url: string;
+  target_branch: string | null;
+}
+
 export interface TaskDetail {
   id: number;
   title: string;
@@ -212,8 +220,8 @@ export interface GitRepoInfo {
   git_url: string;
   git_domain: string;
   private: boolean;
-  /** Type: "github" | "gitlab" */
-  type: 'github' | 'gitlab';
+  /** Type: "github" | "gitlab" | "gitee" */
+  type: 'github' | 'gitlab' | 'gitee';
 }
 
 export interface GitBranch {

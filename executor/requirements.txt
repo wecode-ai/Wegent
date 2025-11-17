@@ -7,7 +7,7 @@ pymysql==1.1.0
 fastapi==0.109.1
 uvicorn==0.25.0
 pydantic==2.11.2
-claude_agent_sdk==0.1.4
+claude_agent_sdk==0.1.6
 agno==2.1.5
 ag-ui-protocol==0.1.8
 anthropic==0.67.0
