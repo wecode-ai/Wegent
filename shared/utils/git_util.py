@@ -6,6 +6,7 @@ import subprocess
 from urllib.parse import urlparse
 
 from shared.logger import setup_logger
+from shared.utils.crypto import is_token_encrypted, decrypt_git_token
 
 logger = setup_logger(__name__)
 
@@ -34,8 +35,12 @@ def clone_repo(project_url, branch, project_path, user_name=None, token=None):
         - On success: (True, None)
         - On failure: (False, error_message)
     """
-    if  not token or token == "***":
+    if not token or token == "***":
         token = get_git_token_from_url(project_url)
+    elif is_token_encrypted(token):
+        logger.debug(f"Decrypting git token for cloning repository")
+        token = decrypt_git_token(token)
+
     if user_name is None:
         user_name = "token"
     logger.info(
@@ -89,7 +94,7 @@ def clone_repo_with_token(project_url, branch, project_path, username, token):
         # Use subprocess.run to capture output and errors
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
         logger.info(
-            f"git clone url: {project_url}, cmd: {cmd}, code: {result.returncode}"
+            f"git clone url: {project_url}, code: {result.returncode}"
         )
         return True, None
     except subprocess.CalledProcessError as e:
@@ -110,7 +115,12 @@ def get_git_token_from_url(git_url):
     token_file = f"/root/.ssh/{domain}"
     try:
         with open(token_file, "r") as f:
-            return f.read().strip()
+            token = f.read().strip()
+            # Check if token is encrypted and decrypt if needed
+            if is_token_encrypted(token):
+                logger.debug(f"Decrypting git token from file for domain: {domain}")
+                return decrypt_git_token(token)
+            return token
     except IOError:
         raise Exception(f"get domain from file failed: {git_url}, file: {token_file}")
 
