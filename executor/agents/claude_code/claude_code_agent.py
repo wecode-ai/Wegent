@@ -27,6 +27,7 @@ from executor.config import config
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.models.task import ThinkingStep, ExecutionResult
+from shared.utils.crypto import is_token_encrypted, decrypt_git_token
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 from utils.mcp_utils import extract_mcp_servers_config
@@ -242,13 +243,22 @@ class ClaudeCodeAgent(Agent):
         git_token = user_cfg.get("git_token")
 
         if git_token and git_token != "***":
+            # Check if the token is encrypted and decrypt if needed
+            if is_token_encrypted(git_token):
+                logger.debug(f"Decrypting git token for domain: {git_domain}")
+                return decrypt_git_token(git_token)
             return git_token.strip()
 
         token_path = os.path.expanduser(f"~/.ssh/{git_domain}")
         if os.path.exists(token_path):
             try:
                 with open(token_path, "r", encoding="utf-8") as f:
-                    return f.read().strip()
+                    token = f.read().strip()
+                    # Check if the token is encrypted and decrypt if needed
+                    if is_token_encrypted(token):
+                        logger.debug(f"Decrypting git token from file for domain: {git_domain}")
+                        return decrypt_git_token(token)
+                    return token
             except Exception as e:
                 logger.warning(f"Failed to read token from {token_path}: {e}")
         return None

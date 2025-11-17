@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.models.user import User
 from app.schemas.user import UserUpdate, UserCreate
 from app.core import security
+from shared.utils.crypto import encrypt_git_token, decrypt_git_token, is_token_encrypted
 from app.services.base import BaseService
 from app.core.exceptions import ValidationException
 
@@ -48,31 +49,38 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 raise ValidationException(f"Unsupported provider type: {provider_type}")
             
             provider = providers[provider_type]
-            
+
+            # Get the plain token for validation
+            plain_token = git_item["git_token"]
+
             try:
                 # Use specific provider's validate_token method with custom domain
                 git_domain = git_item.get("git_domain")
-                validation_result = provider.validate_token(git_item["git_token"], git_domain=git_domain)
-                
+                validation_result = provider.validate_token(plain_token, git_domain=git_domain)
+
                 if not validation_result.get("valid", False):
                     raise ValidationException(
                         f"Invalid {provider_type} token"
                     )
-                
+
                 user_data = validation_result.get("user", {})
-                
+
                 # Update git_info fields
                 git_item["git_id"] = str(user_data.get("id", ""))
                 git_item["git_login"] = user_data.get("login", "")
                 git_item["git_email"] = user_data.get("email", "")
-                
+
+                # Encrypt the token before storing
+                if is_token_encrypted(plain_token) is False:
+                    git_item["git_token"] = encrypt_git_token(plain_token)
+
             except ValidationException:
                 raise
             except Exception as e:
                 raise ValidationException(f"{provider_type} token validation failed: {str(e)}")
-            
+
             validated_git_info.append(git_item)
-        
+
         return validated_git_info
 
     def create_user(
