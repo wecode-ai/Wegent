@@ -46,11 +46,18 @@ export default function CodePage() {
   // Selected team state for sharing
   const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null);
 
-  // Workbench state - only open if there's a taskId
-  const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(hasTaskId);
+  // Workbench state - default to true when taskId exists
+  const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(true);
 
   // Mobile detection
   const isMobile = useIsMobile();
+
+  // Auto-open workbench when taskId is present
+  useEffect(() => {
+    if (hasTaskId) {
+      setIsWorkbenchOpen(true);
+    }
+  }, [hasTaskId]);
 
   // Determine if workbench should show loading state
   const isWorkbenchLoading =
