@@ -66,6 +66,15 @@ class Settings(BaseSettings):
     SHARE_TOKEN_AES_KEY: str = "12345678901234567890123456789012"  # 32 bytes for AES-256
     SHARE_TOKEN_AES_IV: str = "1234567890123456"  # 16 bytes for AES IV
 
+    # Webhook notification configuration
+    WEBHOOK_ENABLED: bool = False
+    WEBHOOK_ENDPOINT_URL: str = ""
+    WEBHOOK_HTTP_METHOD: str = "POST"
+    WEBHOOK_AUTH_TYPE: str = ""
+    WEBHOOK_AUTH_TOKEN: str = ""
+    WEBHOOK_HEADERS: str = ""
+    WEBHOOK_TIMEOUT: int = 30
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
