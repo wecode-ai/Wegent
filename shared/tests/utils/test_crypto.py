@@ -120,7 +120,7 @@ class TestGitTokenEncryption:
         monkeypatch.setenv("GIT_TOKEN_AES_IV", custom_iv)
 
         # Reset the global key cache
-        import shared.utils.crypto as crypto_module
+        import utils.crypto as crypto_module
         crypto_module._git_token_aes_key = None
         crypto_module._git_token_aes_iv = None
 

@@ -73,7 +73,7 @@ class ExecutorDispatcher:
                 
         return executors
 
-    _executors = _load_executors()
+    _executors = _load_executors.__func__()
 
     @classmethod
     def get_executor(cls, task_type: str):
