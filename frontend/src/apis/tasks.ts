@@ -142,6 +142,10 @@ export const taskApis = {
     return apiClient.delete(`/tasks/${id}`);
   },
 
+  cancelTask: async (id: number): Promise<Task> => {
+    return apiClient.post(`/tasks/${id}/cancel`);
+  },
+
   // Get branch diff
   getBranchDiff: async (params: BranchDiffRequest): Promise<BranchDiffResponse> => {
     const query = new URLSearchParams();

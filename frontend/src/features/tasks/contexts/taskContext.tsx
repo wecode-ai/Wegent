@@ -25,6 +25,8 @@ type TaskContextType = {
   searchTasks: (term: string) => Promise<void>;
   isSearching: boolean;
   isSearchResult: boolean;
+  cancelTask: (taskId: number) => Promise<void>;
+  isCancelling: boolean;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -37,6 +39,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false);
+  const [isCancelling, setIsCancelling] = useState<boolean>(false);
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
@@ -220,6 +223,30 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Cancel task
+  const cancelTask = async (taskId: number) => {
+    setIsCancelling(true);
+    try {
+      const updatedTask = await taskApis.cancelTask(taskId);
+
+      // Update task in list
+      setTasks(prev => prev.map(t => (t.id === taskId ? updatedTask : t)));
+
+      // Update selected task detail if it's the same task
+      if (selectedTaskDetail?.id === taskId) {
+        await refreshSelectedTaskDetail(false);
+      }
+
+      // Refresh tasks to ensure consistency
+      await refreshTasks();
+    } catch (error) {
+      console.error('Failed to cancel task:', error);
+      throw error;
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   return (
     <TaskContext.Provider
       value={{
@@ -238,6 +265,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         searchTasks,
         isSearching,
         isSearchResult,
+        cancelTask,
+        isCancelling,
       }}
     >
       {children}
