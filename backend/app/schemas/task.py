@@ -53,6 +53,7 @@ class TaskCreate(BaseModel):
     task_type: Optional[str] = "chat" # chat、code
     auto_delete_executor: Optional[str] = "false" # true、fasle
     source: Optional[str] = "web"
+    override_model: Optional[str] = None
 
 
 class TaskUpdate(BaseModel):

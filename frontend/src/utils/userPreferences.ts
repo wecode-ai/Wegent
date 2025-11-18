@@ -11,6 +11,7 @@ const STORAGE_KEYS = {
   LAST_TEAM_ID: 'wegent_last_team_id',
   LAST_REPO_ID: 'wegent_last_repo_id',
   LAST_REPO_NAME: 'wegent_last_repo_name',
+  LAST_MODEL: 'wegent_last_model',
 } as const;
 
 export type TabType = 'chat' | 'code';
@@ -107,6 +108,29 @@ export function getLastRepo(): { repoId: number; repoName: string } | null {
     return null;
   } catch (error) {
     console.warn('Failed to get last repo from localStorage:', error);
+    return null;
+  }
+}
+
+/**
+ * Save user's last selected model
+ */
+export function saveLastModel(modelName: string): void {
+  try {
+    localStorage.setItem(STORAGE_KEYS.LAST_MODEL, modelName);
+  } catch (error) {
+    console.warn('Failed to save last model to localStorage:', error);
+  }
+}
+
+/**
+ * Get user's last selected model
+ */
+export function getLastModel(): string | null {
+  try {
+    return localStorage.getItem(STORAGE_KEYS.LAST_MODEL);
+  } catch (error) {
+    console.warn('Failed to get last model from localStorage:', error);
     return null;
   }
 }

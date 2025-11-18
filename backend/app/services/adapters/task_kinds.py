@@ -230,7 +230,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             db.add(task)
 
         # Create subtasks for the task
-        self._create_subtasks(db, task, team, user.id, obj_in.prompt)
+        self._create_subtasks(db, task, team, user.id, obj_in.prompt, obj_in.override_model)
 
         db.commit()
         db.refresh(task)
@@ -436,6 +436,17 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Convert subtasks to dict and replace bot_ids with bot objects
         subtasks_dict = []
         for subtask in subtasks:
+            # Apply override_model_config to bot configs if present
+            subtask_bots = []
+            for bot_id in subtask.bot_ids:
+                if bot_id in bots:
+                    bot_dict = bots[bot_id].copy()
+                    # If subtask has override_model_config, use it to override agent_config
+                    if subtask.override_model_config:
+                        bot_dict["agent_config"] = subtask.override_model_config
+                        logger.info(f"Applied override_model_config to bot {bot_id} in subtask {subtask.id}: {subtask.override_model_config}")
+                    subtask_bots.append(bot_dict)
+
             # Convert subtask to dict
             subtask_dict = {
                 # Subtask base fields
@@ -458,8 +469,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "created_at": subtask.created_at,
                 "updated_at": subtask.updated_at,
                 "completed_at": subtask.completed_at,
-                # Add bot objects as dict for each bot_id
-                "bots": [bots.get(bot_id) for bot_id in subtask.bot_ids if bot_id in bots]
+                # Add bot objects with potentially overridden config
+                "bots": subtask_bots
             }
             subtasks_dict.append(subtask_dict)
 
@@ -832,11 +843,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "updated_at": team.updated_at,
         }
 
-    def _create_subtasks(self, db: Session, task: Kind, team: Kind, user_id: int, user_prompt: str) -> None:
+    def _create_subtasks(self, db: Session, task: Kind, team: Kind, user_id: int, user_prompt: str, override_model: Optional[str] = None) -> None:
         """
         Create subtasks based on team's workflow configuration
         """
-        logger.info(f"_create_subtasks called with task_id={task.id}, team_id={team.id}, user_id={user_id}")
+        logger.info(f"_create_subtasks called with task_id={task.id}, team_id={team.id}, user_id={user_id}, override_model={override_model}")
         team_crd = Team.model_validate(team.json)
         task_crd = Task.model_validate(task.json)
         
@@ -902,6 +913,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         )
         db.add(user_subtask)
 
+        # Prepare override_model_config if override_model is provided
+        override_model_config = None
+        if override_model:
+            override_model_config = {"private_model": override_model}
+            logger.info(f"Using override_model_config: {override_model_config}")
+
         # Update id of next message and parent
         if parent_id == 0:
             parent_id = 1
@@ -944,6 +961,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     error_message="",
                     completed_at=datetime.now(),
                     result=None,
+                    override_model_config=override_model_config,
                 )
 
                 # Update id of next message and parent
@@ -977,6 +995,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 error_message="",
                 completed_at=datetime.now(),
                 result=None,
+                override_model_config=override_model_config,
             )
             db.add(assistant_subtask)
 
