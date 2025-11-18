@@ -17,7 +17,7 @@ from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
 from app.models.user import User
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
-from app.services.webhook_notification import webhook_notification_service, TaskNotification
+from app.services.webhook_notification import webhook_notification_service, Notification
 from app.services.base import BaseService
 from app.core.config import settings
 from sqlalchemy.orm.attributes import flag_modified
@@ -617,12 +617,14 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             user_message = task_crd.spec.title
             task_start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             task_end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            user_id = None
 
             subtasks = db.query(Subtask).filter(
                 Subtask.task_id == task_id
             ).order_by(Subtask.message_id.asc()).all()
 
             for subtask in subtasks:
+                user_id = subtask.user_id
                 if subtask.status == SubtaskStatus.PENDING:
                     continue
                 if subtask.role == SubtaskRole.USER:
@@ -631,16 +633,28 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 if subtask.role == SubtaskRole.ASSISTANT:
                     task_end_time = subtask.updated_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(subtask.updated_at, datetime) else subtask.updated_at
 
+            user_name = "Unknown"
+            if user_id:
+                user = db.query(User).filter(User.id == user_id).first()
+                user_name = user.user_name
+
             task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
             task_url = f"{settings.FRONTEND_URL}/{task_type}?taskId={task_id}"
             
-            notification = TaskNotification(
-                task_id=task_id,
-                task_start_time=task_start_time,
-                task_end_time=task_end_time,
-                task_title=user_message,
-                task_url=task_url,
-                status=task_crd.status.status
+            # Truncate description if too long
+            description = user_message
+            if len(user_message) > 20:
+                description = user_message[:20] + "..."
+            
+            notification = Notification(
+                user_name=user_name,
+                event="task.end",
+                id=str(task_id),
+                start_time=task_start_time,
+                end_time=task_end_time,
+                description=description,
+                status=task_crd.status.status,
+                detail_url=task_url
             )
             
             # Send notification asynchronously in background daemon thread to avoid blocking

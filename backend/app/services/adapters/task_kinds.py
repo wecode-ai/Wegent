@@ -21,7 +21,6 @@ from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskS
 from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
 from app.services.adapters.executor_kinds import executor_kinds_service
 from app.services.adapters.team_kinds import team_kinds_service
-from app.services.webhook_notification import webhook_notification_service, TaskNotification
 from app.services.base import BaseService
 from app.core.config import settings
 

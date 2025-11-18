@@ -5,22 +5,23 @@
 import json
 import logging
 import httpx
+import requests
 from typing import Dict, Any, Optional
-from datetime import datetime
 from pydantic import BaseModel
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-class TaskNotification(BaseModel):
-    """Task notification data model"""
-    task_id: int
-    task_start_time: str
-    task_end_time: str
-    task_title: str
-    task_url: str
+class Notification(BaseModel):
+    """Notification data model"""
+    user_name: str
+    event: str
+    id: str
+    start_time: str
+    end_time: str
+    description: str
     status: str
-    error_message: Optional[str] = None
+    detail_url: str
 
 class WebhookNotificationService:
     """Webhook notification service for task events"""
@@ -56,33 +57,36 @@ class WebhookNotificationService:
             auth_headers["X-Auth-Token"] = self.auth_token
         return auth_headers
 
-    def _build_notification_payload(self, notification: TaskNotification) -> Dict[str, Any]:
+    def _replace_username_placeholder(self, headers: Dict[str, str], user_name: str) -> Dict[str, str]:
+        """Replace username placeholder in headers with actual user name"""
+        replaced_headers = {}
+        for key, value in headers.items():
+            if isinstance(value, str):
+                # Replace {username} or {{username}} placeholder with actual user name
+                replaced_value = value.replace("$username", user_name)
+                replaced_headers[key] = replaced_value
+            else:
+                replaced_headers[key] = value
+        return replaced_headers
+
+    def _build_notification_payload(self, notification: Notification) -> Dict[str, Any]:
         """Build webhook notification payload"""
-        display_title = notification.task_title[:10] + "..." if len(notification.task_title) > 10 else notification.task_title
-
-        status_text = notification.status
-        if notification.error_message:
-            status_text += f" - {notification.error_message}"
-
-        # Build notification text
-        notification_text = (
-            f"#### Task Notification\n\n"
-            f"**Task ID**: {notification.task_id}\n\n"
-            f"**Start Time**: {notification.task_start_time}\n\n"
-            f"**End Time**: {notification.task_end_time}\n\n"
-            f"**Description**: {display_title}\n\n"
-            f"**Status**: {status_text}\n\n"
-            f"[View Details]({notification.task_url})"
-        )
-
-        markdown_content = {
-            "title": "Wegent Task Notification",
-            "text": notification_text
+        # Build payload in the new format
+        payload = {
+            "event": notification.event,
+            "data": {
+                "id": notification.id,
+                "start_time": notification.start_time,
+                "end_time": notification.end_time,
+                "description": notification.description,
+                "status": notification.status,
+                "detail_url": notification.detail_url
+            }
         }
 
-        return markdown_content
+        return payload
 
-    async def send_notification(self, notification: TaskNotification) -> bool:
+    async def send_notification(self, notification: Notification) -> bool:
         """Send webhook notification"""
         if not self.enabled or not self.endpoint_url:
             logger.info("Webhook notification is disabled or endpoint not configured")
@@ -91,6 +95,8 @@ class WebhookNotificationService:
         try:
             payload = self._build_notification_payload(notification)
             headers = {**self.headers, **self._get_auth_headers()}
+            # Replace username placeholder in headers
+            headers = self._replace_username_placeholder(headers, notification.user_name)
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 if self.http_method == "POST":
@@ -110,7 +116,7 @@ class WebhookNotificationService:
                     return False
 
                 response.raise_for_status()
-                logger.info(f"Webhook notification sent successfully for task {notification.task_id}")
+                logger.info(f"Webhook notification sent successfully for {notification.event} id={notification.id}")
                 return True
 
         except httpx.HTTPError as e:
@@ -120,17 +126,21 @@ class WebhookNotificationService:
             logger.error(f"Error sending webhook notification: {str(e)}")
             return False
 
-    def send_notification_sync(self, notification: TaskNotification) -> bool:
+    def send_notification_sync(self, notification: Notification) -> bool:
         """Send webhook notification synchronously"""
         if not self.enabled or not self.endpoint_url:
             logger.info("Webhook notification is disabled or endpoint not configured")
             return False
 
         try:
-            import requests
-
             payload = self._build_notification_payload(notification)
             headers = {**self.headers, **self._get_auth_headers()}
+            # Replace username placeholder in headers
+            headers = self._replace_username_placeholder(headers, notification.user_name)
+
+            logger.info(f"Sending webhook notification to {self.endpoint_url}")
+            logger.info(f"Headers: {headers}")
+            logger.info(f"Payload: {payload}")
 
             if self.http_method == "POST":
                 response = requests.post(
@@ -151,7 +161,7 @@ class WebhookNotificationService:
                 return False
 
             response.raise_for_status()
-            logger.info(f"Webhook notification sent successfully for task {notification.task_id}")
+            logger.info(f"Webhook notification sent successfully for {notification.event} id={notification.id}")
             return True
 
         except requests.exceptions.RequestException as e:
