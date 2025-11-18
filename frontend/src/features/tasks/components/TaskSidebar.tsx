@@ -274,6 +274,7 @@ export default function TaskSidebar({
           size="small"
           icon={<Cog6ToothIcon className="h-3.5 w-3.5" />}
           className="!text-text-muted hover:!text-text-primary"
+          data-tour="settings-link"
         >
           {t('tasks.settings')}
         </Button>
@@ -284,13 +285,14 @@ export default function TaskSidebar({
   return (
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
-      <div className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full">{sidebarContent}</div>
+      <div className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full" data-tour="task-sidebar">{sidebarContent}</div>
 
       {/* Mobile Sidebar */}
       <MobileSidebar
         isOpen={isMobileSidebarOpen}
         onClose={() => setIsMobileSidebarOpen(false)}
         title={t('navigation.tasks')}
+        data-tour="task-sidebar"
       >
         {sidebarContent}
       </MobileSidebar>
