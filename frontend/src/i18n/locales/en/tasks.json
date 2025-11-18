@@ -5,6 +5,19 @@
     "close_panel": "Close panel",
     "open_main_menu": "Open main menu",
     "waiting_result": "Waiting for task execution result...",
+    "loading_states": [
+      "Loading task data...",
+      "Fetching code changes...",
+      "Analyzing execution results..."
+    ],
+    "tips": [
+      "💡 Summary and change list will be generated automatically after completion",
+      "⚡ Click on commit records to view detailed changes",
+      "🔍 Switch to \"Files Changed\" tab to view full code diff",
+      "📋 Click commit ID to quickly copy to clipboard",
+      "🎯 Workbench displays task execution progress and status in real-time",
+      "✨ Expand \"Original Prompt\" to review initial task requirements"
+    ],
     "status": {
       "completed": "Completed",
       "failed": "Failed",

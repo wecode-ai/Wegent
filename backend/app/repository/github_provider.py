@@ -17,7 +17,6 @@ from app.models.user import User
 from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
-from shared.utils.crypto import decrypt_git_token
 from shared.utils.sensitive_data_masker import mask_string
 
 
@@ -31,10 +30,7 @@ class GitHubProvider(RepositoryProvider):
         self.api_base_url = "https://api.github.com"
         self.domain = "github.com"
         self.type = "github"
-
-    def _decrypt_token(self, encrypted_token: str) -> str:
-        """Decrypt git token before use"""
-        return decrypt_git_token(encrypted_token) or encrypted_token
+        
     
     def _get_git_infos(self, user: User, git_domain: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -130,9 +126,6 @@ class GitHubProvider(RepositoryProvider):
                 # skip empty token entries
                 continue
 
-            # Decrypt the token before use
-            git_token = self._decrypt_token(git_token)
-
             # Get API base URL based on git domain
             api_base_url = self._get_api_base_url(git_domain)
 
@@ -219,9 +212,6 @@ class GitHubProvider(RepositoryProvider):
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
         git_domain = git_info["git_domain"]
-
-        # Decrypt the token before use
-        git_token = self._decrypt_token(git_token)
 
         if not git_token:
             raise HTTPException(
@@ -426,9 +416,6 @@ class GitHubProvider(RepositoryProvider):
             if not git_token:
                 # skip empty token entries
                 continue
-
-            # Decrypt the token before use
-            git_token = self._decrypt_token(git_token)
 
             # 1) Try to get from full cache first (per domain)
             full_cached = await self._get_all_repositories_from_cache(user, git_domain)

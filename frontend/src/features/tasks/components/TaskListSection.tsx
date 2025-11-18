@@ -18,17 +18,24 @@ import { ArrowPathIcon } from '@heroicons/react/24/outline';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { taskApis } from '@/apis/tasks';
+import { isTaskUnread } from '@/utils/taskViewStatus';
 
 interface TaskListSectionProps {
   tasks: Task[];
   title: string;
+  unreadCount?: number;
   onTaskClick?: () => void;
 }
 
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
 
-export default function TaskListSection({ tasks, title, onTaskClick }: TaskListSectionProps) {
+export default function TaskListSection({
+  tasks,
+  title,
+  unreadCount = 0,
+  onTaskClick,
+}: TaskListSectionProps) {
   const router = useRouter();
   const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
   const { t } = useTranslation('common');
@@ -133,7 +140,10 @@ export default function TaskListSection({ tasks, title, onTaskClick }: TaskListS
         return <FaRegCircleStop className="w-4 h-4 text-gray-400" />;
       case 'RUNNING':
         return (
-          <ArrowPathIcon className="w-4 h-4 text-blue-500 animate-spin" style={{ animationDuration: '2s' }} />
+          <ArrowPathIcon
+            className="w-4 h-4 text-blue-500 animate-spin"
+            style={{ animationDuration: '2s' }}
+          />
         );
       case 'PENDING':
         return <FaRegCirclePause className="w-4 h-4 text-yellow-500" />;
@@ -193,6 +203,19 @@ export default function TaskListSection({ tasks, title, onTaskClick }: TaskListS
     }
   };
 
+  const getUnreadDotColor = (status: string) => {
+    switch (status) {
+      case 'COMPLETED':
+        return 'bg-green-500';
+      case 'FAILED':
+        return 'bg-red-500';
+      case 'CANCELLED':
+        return 'bg-gray-400';
+      default:
+        return 'bg-gray-400';
+    }
+  };
+
   return (
     <div className="mb-2">
       <h3
@@ -200,6 +223,7 @@ export default function TaskListSection({ tasks, title, onTaskClick }: TaskListS
         style={{ fontSize: '10px' }}
       >
         {title}
+        {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
       </h3>
       <div className="space-y-0">
         {tasks.map(task => {
@@ -236,7 +260,13 @@ export default function TaskListSection({ tasks, title, onTaskClick }: TaskListS
                 </div>
               </div>
 
-              <div className="flex-shrink-0">
+              <div className="flex-shrink-0 flex items-center gap-2">
+                {isTaskUnread(task) && (
+                  <span
+                    className={`w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                    style={{ flexShrink: 0 }}
+                  />
+                )}
                 {hoveredTaskId === task.id && (
                   <TaskMenu
                     taskId={task.id}

@@ -521,19 +521,24 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         progress = int((completed_subtasks / total_subtasks) * 100)
         if task_crd.status:
             task_crd.status.progress = progress
-        
-        # Check if there are failed subtasks
-        if failed_subtasks > 0:
+
+        # Find the last non-pending subtask
+        last_non_pending_subtask = None
+        for subtask in reversed(subtasks):
+            if subtask.status != SubtaskStatus.PENDING:
+                last_non_pending_subtask = subtask
+                break
+
+        # Check if the last non-pending subtask is failed
+        if last_non_pending_subtask and last_non_pending_subtask.status == SubtaskStatus.FAILED:
             if task_crd.status:
                 task_crd.status.status = "FAILED"
-                # Get error message from last failed subtask
-                failed_subtask = next((s for s in reversed(subtasks) if s.status == SubtaskStatus.FAILED), None)
-                if failed_subtask and failed_subtask.error_message:
-                    task_crd.status.errorMessage = failed_subtask.error_message
-                if failed_subtask and failed_subtask.result:
-                    task_crd.status.result = failed_subtask.result
-        # Check if all subtasks are completed
-        elif completed_subtasks == total_subtasks:
+                if last_non_pending_subtask.error_message:
+                    task_crd.status.errorMessage = last_non_pending_subtask.error_message
+                if last_non_pending_subtask.result:
+                    task_crd.status.result = last_non_pending_subtask.result
+        # Check if the last subtask is completed
+        elif subtasks and subtasks[-1].status == SubtaskStatus.COMPLETED:
             # Get last completed subtask
             last_subtask = subtasks[-1] if subtasks else None
             if last_subtask and task_crd.status:
