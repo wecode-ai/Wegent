@@ -581,13 +581,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         task_subtasks = db.query(Subtask).filter(
             Subtask.task_id == task_id
         ).all()
-        
+
         # Collect unique executor keys to avoid duplicate calls (namespace + name)
         unique_executor_keys = set()
         for subtask in task_subtasks:
             if subtask.executor_name and not subtask.executor_deleted_at:
                 unique_executor_keys.add((subtask.executor_namespace, subtask.executor_name))
-        
+
         # Stop running subtasks on executor (deduplicated by (namespace, name))
         for executor_namespace, executor_name in unique_executor_keys:
             try:
@@ -597,14 +597,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             except Exception as e:
                 # Log error but continue with status update
                 logger.warning(f"Failed to delete executor task ns={executor_namespace} name={executor_name}: {str(e)}")
-        
+
         # Update all subtasks to DELETE status
         db.query(Subtask).filter(Subtask.task_id == task_id).update({
             Subtask.executor_deleted_at: True,
             Subtask.status: SubtaskStatus.DELETE,
             Subtask.updated_at: datetime.now()
         })
-        
+
         # Update task status to DELETE
         task_crd = Task.model_validate(task.json)
         if task_crd.status:
@@ -617,6 +617,105 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         flag_modified(task, "json")
 
         db.commit()
+
+    def cancel_task(
+        self, db: Session, *, task_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Cancel user Task and stop running subtasks without deleting the executor
+        Similar to pause, allows user to continue conversation in the same session
+        """
+        logger.info(f"Cancelling task with id: {task_id}")
+
+        # Get and validate task
+        task = db.query(Kind).filter(
+            Kind.id == task_id,
+            Kind.user_id == user_id,
+            Kind.kind == "Task",
+            Kind.is_active == True
+        ).first()
+
+        if not task:
+            raise HTTPException(
+                status_code=404,
+                detail="Task not found"
+            )
+
+        # Validate task ownership
+        task_crd = Task.model_validate(task.json)
+        current_status = task_crd.status.status if task_crd.status else "PENDING"
+
+        # Only RUNNING or PENDING tasks can be cancelled
+        if current_status not in ["RUNNING", "PENDING"]:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task with status {current_status} cannot be cancelled. Only RUNNING or PENDING tasks can be cancelled."
+            )
+
+        try:
+            # Update task status to CANCELLED using optimistic locking
+            if task_crd.status:
+                # Only update if still in RUNNING or PENDING status
+                if task_crd.status.status in ["RUNNING", "PENDING"]:
+                    task_crd.status.status = "CANCELLED"
+                    task_crd.status.errorMessage = "User cancelled"
+                    task_crd.status.completedAt = datetime.now()
+                    task_crd.status.updatedAt = datetime.now()
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Task status changed to {task_crd.status.status}, cannot cancel"
+                    )
+
+            task.json = task_crd.model_dump(mode='json', exclude_none=True)
+            task.updated_at = datetime.now()
+            flag_modified(task, "json")
+
+            # Get all subtasks for the task
+            task_subtasks = db.query(Subtask).filter(
+                Subtask.task_id == task_id
+            ).all()
+
+            # Update subtasks status to CANCELLED
+            for subtask in task_subtasks:
+                if subtask.status in [SubtaskStatus.RUNNING, SubtaskStatus.PENDING]:
+                    subtask.status = SubtaskStatus.CANCELLED
+                    subtask.error_message = "User cancelled"
+                    subtask.completed_at = datetime.now()
+                    subtask.updated_at = datetime.now()
+
+            # Collect unique executor keys to notify (namespace + name)
+            unique_executor_keys = set()
+            for subtask in task_subtasks:
+                if subtask.executor_name and subtask.status == SubtaskStatus.RUNNING:
+                    unique_executor_keys.add((subtask.executor_namespace, subtask.executor_name))
+
+            # Notify executors to stop task (best effort, don't delete containers)
+            for executor_namespace, executor_name in unique_executor_keys:
+                try:
+                    logger.info(f"cancelling task - stop_executor_task ns={executor_namespace} name={executor_name}")
+                    # Use sync version to avoid event loop issues
+                    executor_kinds_service.stop_executor_task_sync(executor_name, executor_namespace)
+                except Exception as e:
+                    # Log error but continue with status update (best effort)
+                    logger.warning(f"Failed to stop executor task ns={executor_namespace} name={executor_name}: {str(e)}")
+
+            # Commit all changes
+            db.commit()
+            db.refresh(task)
+
+            return self._convert_to_task_dict(task, db, user_id)
+
+        except HTTPException:
+            db.rollback()
+            raise
+        except Exception as e:
+            db.rollback()
+            logger.error(f"Error cancelling task {task_id}: {str(e)}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error cancelling task: {str(e)}"
+            )
 
     def create_task_id(self, db: Session, user_id: int) -> int:
         """

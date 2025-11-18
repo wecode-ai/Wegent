@@ -34,6 +34,19 @@ class Executor(abc.ABC):
         pass
 
     @abc.abstractmethod
+    def stop_task(self, executor_name: str) -> Dict[str, Any]:
+        """
+        Stop the task running in the executor without deleting the executor.
+
+        Args:
+            executor_name: Name of the executor
+
+        Returns:
+            Dict containing stop result
+        """
+        pass
+
+    @abc.abstractmethod
     def get_executor_count(
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:

@@ -327,6 +327,83 @@ class DockerExecutor(Executor):
                 "error_msg": f"Error deleting container: {str(e)}"
             }
 
+    def stop_task(self, executor_name: str) -> Dict[str, Any]:
+        """
+        Stop the task running in the executor without deleting the executor.
+        Sends a stop signal to the executor container via HTTP request.
+
+        Args:
+            executor_name (str): Name of the executor container.
+
+        Returns:
+            Dict[str, Any]: Stop result with unified structure.
+        """
+        try:
+            # Check if container exists and is owned by executor_manager
+            if not check_container_ownership(executor_name):
+                return {
+                    "status": "unauthorized",
+                    "error_msg": f"Container '{executor_name}' is not owned by {CONTAINER_OWNER}",
+                }
+
+            # Get container port
+            port_result = get_container_ports(executor_name)
+            logger.info(f"Container port info for stop: {executor_name}, {port_result}")
+
+            if port_result.get("status") != "success":
+                return {
+                    "status": "failed",
+                    "error_msg": f"Failed to get container port: {port_result.get('error_msg', 'Unknown error')}"
+                }
+
+            ports = port_result.get("ports", [])
+            if not ports:
+                return {
+                    "status": "failed",
+                    "error_msg": f"Executor {executor_name} has no exposed ports"
+                }
+
+            port = ports[0].get("host_port")
+
+            # Send stop request to container
+            stop_endpoint = f"http://{DEFAULT_DOCKER_HOST}:{port}/stop"
+            logger.info(f"Sending stop request to {stop_endpoint}")
+
+            try:
+                response = self.requests.post(stop_endpoint, timeout=5.0)
+                if response.status_code == 200:
+                    logger.info(f"Successfully sent stop signal to executor {executor_name}")
+                    return {
+                        "status": "success",
+                        "message": f"Stop signal sent to executor {executor_name}"
+                    }
+                else:
+                    logger.warning(f"Executor {executor_name} returned status {response.status_code}")
+                    return {
+                        "status": "partial",
+                        "message": f"Stop request sent but got status {response.status_code}"
+                    }
+            except self.requests.exceptions.Timeout:
+                # Timeout is acceptable - container might be processing the stop
+                logger.info(f"Stop request to {executor_name} timed out (acceptable)")
+                return {
+                    "status": "success",
+                    "message": f"Stop signal sent to executor {executor_name} (timeout)"
+                }
+            except self.requests.exceptions.RequestException as e:
+                logger.warning(f"Failed to send stop request to {executor_name}: {e}")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Failed to send stop request: {str(e)}"
+                }
+
+        except Exception as e:
+            logger.error(f"Error stopping task in container {executor_name}: {e}")
+            return {
+                "status": "failed",
+                "error_msg": f"Error stopping task: {str(e)}"
+            }
+
     def get_executor_count(
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:
