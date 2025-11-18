@@ -5,12 +5,13 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon } from '@heroicons/react/24/outline';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
 import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
+import LoadingDots from './LoadingDots';
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { sendMessage } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -374,8 +375,20 @@ export default function ChatArea({
                   <Button
                     type="text"
                     onClick={handleSendMessage}
-                    disabled={isLoading}
-                    icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
+                    disabled={
+                      isLoading ||
+                      selectedTaskDetail?.status === 'PENDING' ||
+                      selectedTaskDetail?.status === 'RUNNING'
+                    }
+                    icon={
+                      isLoading ||
+                      selectedTaskDetail?.status === 'PENDING' ||
+                      selectedTaskDetail?.status === 'RUNNING' ? (
+                        <LoadingDots />
+                      ) : (
+                        <PaperAirplaneIcon className="w-4 h-4" />
+                      )
+                    }
                     style={{
                       color: 'rgb(var(--color-text-muted))',
                       padding: '0',
