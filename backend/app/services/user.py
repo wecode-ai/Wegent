@@ -235,8 +235,11 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if user is None:
             return user
 
+        if not user.git_info:
+            return user
+
         decrypt_git_info = []
- 
+
         for git_item in user.git_info:
             plain_token = git_item["git_token"]
             if is_token_encrypted(plain_token):
