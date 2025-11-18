@@ -18,6 +18,7 @@ ENV PATH="/usr/local/bin:${PATH}"
 RUN pip install -r /app/executor/requirements.txt -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com
 ENV PORT=10001
 ENV PYTHONPATH=/app
+ENV CUSTOM_CONFIG='{"wecode_config": "executor.wecode.config.config.WeCodeConfig"}'
 COPY claude_hooks.json /app/config/claude_hooks.json
 COPY file_change_sender.py /app/scripts/file_change_sender.py
 COPY executor /app/executor
