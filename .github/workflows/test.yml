@@ -1,0 +1,113 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+name: Run Tests
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    branches:
+      - main
+      - master
+
+jobs:
+  test-backend:
+    name: Test Backend
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-backend-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-backend-
+
+      - name: Install dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        working-directory: backend
+        run: |
+          pytest tests --cov=app --cov-report=xml --cov-report=term --cov-report=html
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: backend/coverage.xml
+          flags: backend
+          name: backend-coverage
+
+  test-shared:
+    name: Test Shared
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Cache pip packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-shared-${{ hashFiles('shared/requirements.txt', 'backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-shared-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # Install pytest and related packages
+          pip install pytest pytest-cov pytest-asyncio
+          # Install cryptography for shared/utils/crypto
+          pip install cryptography pycryptodome
+
+      - name: Run tests with coverage
+        working-directory: shared
+        run: |
+          pytest tests --cov=utils --cov-report=xml --cov-report=term --cov-report=html
+
+      - name: Upload coverage reports
+        uses: codecov/codecov-action@v3
+        with:
+          files: shared/coverage.xml
+          flags: shared
+          name: shared-coverage
+
+  test-summary:
+    name: Test Summary
+    runs-on: ubuntu-latest
+    needs: [test-backend, test-shared]
+    if: always()
+
+    steps:
+      - name: Check test results
+        run: |
+          if [ "${{ needs.test-backend.result }}" == "success" ] && [ "${{ needs.test-shared.result }}" == "success" ]; then
+            echo "All tests passed!"
+            exit 0
+          else
+            echo "Some tests failed!"
+            exit 1
+          fi
