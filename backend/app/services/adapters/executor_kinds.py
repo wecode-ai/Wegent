@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 import httpx
 import logging
 import asyncio
+import threading
 from fastapi import HTTPException
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import and_, func, text
@@ -16,6 +17,7 @@ from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
 from app.models.user import User
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.schemas.kind import Task, Workspace, Team, Bot, Ghost, Shell, Model
+from app.services.webhook_notification import webhook_notification_service, Notification
 from app.services.base import BaseService
 from app.core.config import settings
 from sqlalchemy.orm.attributes import flag_modified
@@ -472,7 +474,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             setattr(subtask, field, value)
         
         # Set completion time
-        if subtask_update.status == SubtaskStatus.COMPLETED and not subtask.completed_at:
+        if subtask_update.status == SubtaskStatus.COMPLETED:
             subtask.completed_at = datetime.now()
         
         db.add(subtask)
@@ -482,7 +484,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         self._update_task_status_based_on_subtasks(db, subtask.task_id)
         
         db.commit()
-        
+
         return {
             "subtask_id": subtask.id,
             "task_id": subtask.task_id,
@@ -513,7 +515,6 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         completed_subtasks = len([s for s in subtasks if s.status == SubtaskStatus.COMPLETED])
         failed_subtasks = len([s for s in subtasks if s.status == SubtaskStatus.FAILED])
         
-        task_json = task.json
         task_crd = Task.model_validate(task.json)
         
         # Calculate task progress
@@ -561,6 +562,9 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         # auto delete executor
         self._auto_delete_executors_if_enabled(db, task_id, task_crd, subtasks)
         
+        # Send notification when task is completed or failed
+        self._send_task_completion_notification(db, task_id, task_crd)
+
         db.add(task)
 
     def _auto_delete_executors_if_enabled(self, db: Session, task_id: int, task_crd: Task, subtasks: List[Subtask]) -> None:
@@ -602,6 +606,70 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             
             # Schedule async execution
             asyncio.create_task(delete_executors_async())
+
+    def _send_task_completion_notification(self, db: Session, task_id: int, task_crd: Task) -> None:
+        """Send webhook notification when task is completed or failed"""
+        # Only send notification when task status is COMPLETED or FAILED
+        if not task_crd.status or task_crd.status.status not in ["COMPLETED", "FAILED"]:
+            return
+        
+        try:
+            user_message = task_crd.spec.title
+            task_start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            task_end_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            user_id = None
+
+            subtasks = db.query(Subtask).filter(
+                Subtask.task_id == task_id
+            ).order_by(Subtask.message_id.asc()).all()
+
+            for subtask in subtasks:
+                user_id = subtask.user_id
+                if subtask.status == SubtaskStatus.PENDING:
+                    continue
+                if subtask.role == SubtaskRole.USER:
+                    user_message = subtask.prompt
+                    task_start_time = subtask.created_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(subtask.created_at, datetime) else subtask.created_at
+                if subtask.role == SubtaskRole.ASSISTANT:
+                    task_end_time = subtask.updated_at.strftime('%Y-%m-%d %H:%M:%S') if isinstance(subtask.updated_at, datetime) else subtask.updated_at
+
+            user_name = "Unknown"
+            if user_id:
+                user = db.query(User).filter(User.id == user_id).first()
+                user_name = user.user_name
+
+            task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
+            task_url = f"{settings.FRONTEND_URL}/{task_type}?taskId={task_id}"
+            
+            # Truncate description if too long
+            description = user_message
+            if len(user_message) > 20:
+                description = user_message[:20] + "..."
+            
+            notification = Notification(
+                user_name=user_name,
+                event="task.end",
+                id=str(task_id),
+                start_time=task_start_time,
+                end_time=task_end_time,
+                description=description,
+                status=task_crd.status.status,
+                detail_url=task_url
+            )
+            
+            # Send notification asynchronously in background daemon thread to avoid blocking
+            def send_notification_background():
+                try:
+                    webhook_notification_service.send_notification_sync(notification)
+                except Exception as e:
+                    logger.error(f"Background webhook notification failed for task {task_id}: {str(e)}")
+            
+            thread = threading.Thread(target=send_notification_background, daemon=True)
+            thread.start()
+            logger.info(f"Webhook notification scheduled for task {task_id} with status {task_crd.status.status}")
+            
+        except Exception as e:
+            logger.error(f"Failed to schedule webhook notification for task {task_id}: {str(e)}")
 
     def delete_executor_task_sync(self, executor_name: str, executor_namespace: str) -> Dict:
         """
