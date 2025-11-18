@@ -87,6 +87,36 @@ class TestSensitiveDataMasker(unittest.TestCase):
         masked = self.masker.mask_dict(data)
         self.assertIsNone(masked["field"])
 
+    def test_no_false_positive_on_file_paths(self):
+        """Test that file paths are not incorrectly masked"""
+        # Common file path patterns that should NOT be masked
+        test_cases = [
+            "/workspace/11540/Wegent/noticecenter-serv/src/main/java/com/weibo/api/motan/core/push/core/DebugPolicy.java",
+            "/workspace/11540/Wegent/features/tasks/components/ChatArea.tsx",
+            "src/main/java/com/example/MyClass.java",
+            "/usr/local/bin/some-executable-file",
+            "/home/user/Documents/my-project/file.txt",
+            "C:\\Users\\Admin\\Desktop\\project\\src\\main.py"
+        ]
+
+        for path in test_cases:
+            masked = self.masker.mask_string(path)
+            # Path should remain unchanged (no asterisks added)
+            self.assertEqual(path, masked, f"File path '{path}' was incorrectly masked to '{masked}'")
+
+    def test_no_false_positive_on_urls(self):
+        """Test that URLs without credentials are not masked"""
+        test_cases = [
+            "https://github.com/wecode-ai/Wegent.git",
+            "http://example.com/api/v1/users",
+            "https://api.example.com/endpoint?param=value"
+        ]
+
+        for url in test_cases:
+            masked = self.masker.mask_string(url)
+            # URL should remain unchanged (no asterisks added)
+            self.assertEqual(url, masked, f"URL '{url}' was incorrectly masked to '{masked}'")
+
 
 if __name__ == '__main__':
     unittest.main()
