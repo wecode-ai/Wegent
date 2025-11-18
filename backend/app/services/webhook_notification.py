@@ -139,7 +139,6 @@ class WebhookNotificationService:
             headers = self._replace_username_placeholder(headers, notification.user_name)
 
             logger.info(f"Sending webhook notification to {self.endpoint_url}")
-            logger.info(f"Headers: {headers}")
             logger.info(f"Payload: {payload}")
 
             if self.http_method == "POST":
@@ -164,14 +163,8 @@ class WebhookNotificationService:
             logger.info(f"Webhook notification sent successfully for {notification.event} id={notification.id}")
             return True
 
-        except requests.exceptions.RequestException as e:
+        except httpx.HTTPError as e:
             logger.error(f"HTTP error sending webhook notification: {str(e)}")
-            # Log response body if available for debugging
-            if hasattr(e, 'response') and e.response is not None:
-                try:
-                    logger.error(f"Response body: {e.response.text}")
-                except:
-                    pass
             return False
         except Exception as e:
             logger.error(f"Error sending webhook notification: {str(e)}")
