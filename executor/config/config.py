@@ -5,6 +5,8 @@
 # coding: utf-8
 import os
 
+from executor.config.config_loader import load_custom_config
+
 """
 Global configuration for workspace paths and other shared settings.
 """
@@ -15,3 +17,5 @@ CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
 # Agno Agent default headers configuration
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 DEBUG_RUN = os.environ.get("DEBUG_RUN", "")
+
+CUSTOM_CONFIG = load_custom_config()
