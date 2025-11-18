@@ -32,7 +32,9 @@ class SensitiveDataMasker:
 
         # AWS Keys
         (r'(AKIA[0-9A-Z]{16})', 'AWS_ACCESS_KEY'),
-        (r'([a-zA-Z0-9/+=]{40})', 'AWS_SECRET_KEY'),  # AWS secret key pattern
+        # AWS Secret Key pattern - more specific with word boundaries and context
+        (r'\b(aws[_-]?secret[_-]?(?:access[_-]?)?key["\s:=]+)([a-zA-Z0-9/+=]{40})\b', 'AWS_SECRET_KEY'),
+        (r'(secret[_-]?(?:access[_-]?)?key["\s:=]+)([a-zA-Z0-9/+=]{40})\b', 'AWS_SECRET_KEY'),
 
         # Generic tokens and secrets
         (r'(token["\s:=]+)([a-zA-Z0-9_\-\.]+)', 'TOKEN'),
@@ -137,14 +139,18 @@ class SensitiveDataMasker:
                 if len(match.groups()) == 1:
                     # Single group: entire match is sensitive
                     return self._mask_value(match.group(1))
-                elif len(match.groups()) >= 2:
-                    # Multiple groups: first is context, second is sensitive value
+                elif len(match.groups()) == 2:
+                    # Two groups: first is context, second is sensitive value
                     prefix = match.group(1) if match.group(1) else ''
                     sensitive_value = match.group(2)
                     masked_value = self._mask_value(sensitive_value)
-
-                    # Handle third group (suffix) if exists
-                    suffix = match.group(3) if len(match.groups()) >= 3 else ''
+                    return f"{prefix}{masked_value}"
+                elif len(match.groups()) >= 3:
+                    # Multiple groups: first is context, second is sensitive value, third is suffix
+                    prefix = match.group(1) if match.group(1) else ''
+                    sensitive_value = match.group(2)
+                    masked_value = self._mask_value(sensitive_value)
+                    suffix = match.group(3) if match.group(3) else ''
                     return f"{prefix}{masked_value}{suffix}"
 
                 return match.group(0)
