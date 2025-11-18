@@ -247,6 +247,11 @@
     "open_from_vscode": "VSCode",
     "open_from_git": "Git"
   },
+  "task": {
+    "stop": "停止任务",
+    "cancel_success": "任务已成功取消",
+    "cancel_failed": "取消任务失败"
+  },
   "settings": {
     "integrations": "集成",
     "bot": "机器人",

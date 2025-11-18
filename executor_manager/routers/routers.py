@@ -141,6 +141,11 @@ class DeleteExecutorRequest(BaseModel):
     executor_name: str
 
 
+class StopExecutorRequest(BaseModel):
+    executor_name: str
+    executor_namespace: Optional[str] = None
+
+
 @app.post("/executor-manager/executor/delete")
 async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:
@@ -151,6 +156,19 @@ async def delete_executor(request: DeleteExecutorRequest, http_request: Request)
         return result
     except Exception as e:
         logger.error(f"Error deleting executor '{request.executor_name}': {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/executor-manager/executor/stop")
+async def stop_executor(request: StopExecutorRequest, http_request: Request):
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(f"Received request to stop executor: {request.executor_name} from {client_ip}")
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        result = executor.stop_task(request.executor_name)
+        return result
+    except Exception as e:
+        logger.error(f"Error stopping executor '{request.executor_name}': {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

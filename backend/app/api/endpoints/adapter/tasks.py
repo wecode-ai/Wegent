@@ -112,3 +112,12 @@ def delete_task(
     """Delete task"""
     task_kinds_service.delete_task(db=db, task_id=task_id, user_id=current_user.id)
     return {"message": "Task deleted successfully"}
+
+@router.post("/{task_id}/cancel", response_model=TaskInDB)
+def cancel_task(
+    task_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Cancel task - stop execution without deleting executor"""
+    return task_kinds_service.cancel_task(db=db, task_id=task_id, user_id=current_user.id)

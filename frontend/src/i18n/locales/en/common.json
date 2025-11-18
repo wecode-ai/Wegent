@@ -247,6 +247,11 @@
     "open_from_vscode": "VSCode",
     "open_from_git": "Git"
   },
+  "task": {
+    "stop": "Stop Task",
+    "cancel_success": "Task cancelled successfully",
+    "cancel_failed": "Failed to cancel task"
+  },
   "settings": {
     "integrations": "Integrations",
     "bot": "Bot",

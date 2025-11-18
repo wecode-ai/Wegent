@@ -638,7 +638,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
     async def delete_executor_task_async(self, executor_name: str, executor_namespace: str) -> Dict:
         """
         Asynchronous version of delete_executor_task
-        
+
         Args:
             executor_name: The executor task name to delete
             executor_namespace: Executor namespace (required)
@@ -664,6 +664,71 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             raise HTTPException(
                 status_code=500,
                 detail=f"Error deleting executor task: {str(e)}"
+            )
+
+    def stop_executor_task_sync(self, executor_name: str, executor_namespace: str) -> Dict:
+        """
+        Synchronous version of stop_executor_task to avoid event loop issues
+        Stop the executor task without deleting the container
+
+        Args:
+            executor_name: The executor task name to stop
+            executor_namespace: Executor namespace (required)
+        """
+        if not executor_name:
+            raise HTTPException(status_code=400, detail="executor_name are required")
+        try:
+            import requests
+            payload = {
+                "executor_name": executor_name,
+                "executor_namespace": executor_namespace,
+            }
+            logger.info(f"executor.stop sync request url={settings.EXECUTOR_STOP_TASK_URL} {payload}")
+
+            response = requests.post(
+                settings.EXECUTOR_STOP_TASK_URL,
+                json=payload,
+                headers={"Content-Type": "application/json"},
+                timeout=30.0
+            )
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error stopping executor task: {str(e)}"
+            )
+
+    async def stop_executor_task_async(self, executor_name: str, executor_namespace: str) -> Dict:
+        """
+        Asynchronous version of stop_executor_task
+        Stop the executor task without deleting the container
+
+        Args:
+            executor_name: The executor task name to stop
+            executor_namespace: Executor namespace (required)
+        """
+        if not executor_name:
+            raise HTTPException(status_code=400, detail="executor_name are required")
+        try:
+            payload = {
+                "executor_name": executor_name,
+                "executor_namespace": executor_namespace,
+            }
+            logger.info(f"executor.stop async request url={settings.EXECUTOR_STOP_TASK_URL} {payload}")
+
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.post(
+                    settings.EXECUTOR_STOP_TASK_URL,
+                    json=payload,
+                    headers={"Content-Type": "application/json"}
+                )
+                response.raise_for_status()
+                return response.json()
+        except httpx.HTTPError as e:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Error stopping executor task: {str(e)}"
             )
 
 

@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { ArrowTurnDownLeftIcon } from '@heroicons/react/24/outline';
+import { ArrowTurnDownLeftIcon, StopIcon } from '@heroicons/react/24/outline';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -19,6 +19,7 @@ import { App, Button } from 'antd';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
+import { useTranslation } from '@/hooks/useTranslation';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -38,6 +39,7 @@ export default function ChatArea({
   taskType = 'chat',
 }: ChatAreaProps) {
   const { message } = App.useApp();
+  const { t } = useTranslation('common');
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -68,7 +70,7 @@ export default function ChatArea({
   const [inputHeight, setInputHeight] = useState(0);
 
   // New: Get selectedTask to determine if there are messages
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
+  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask, cancelTask, isCancelling } =
     useTaskContext();
   const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id);
 
@@ -204,6 +206,20 @@ export default function ChatArea({
       setTimeout(() => scrollToBottom(true), 0);
     }
     setIsLoading(false);
+  };
+
+  const handleStopTask = async () => {
+    if (!selectedTaskDetail?.id) return;
+
+    try {
+      await cancelTask(selectedTaskDetail.id);
+      message.success(t('task.cancel_success'));
+      // Refresh task details after cancellation
+      refreshSelectedTaskDetail(false);
+    } catch (error) {
+      message.error(t('task.cancel_failed'));
+      console.error('Failed to cancel task:', error);
+    }
   };
 
   const scrollToBottom = (force = false) => {
@@ -356,7 +372,7 @@ export default function ChatArea({
                 isLoading={isLoading}
                 taskType={taskType}
               />
-              {/* Team Selector and Send Button */}
+              {/* Team Selector and Send/Stop Button */}
               <div className="flex items-end justify-between px-3 py-0">
                 <div>
                   {teams.length > 0 && (
@@ -371,17 +387,33 @@ export default function ChatArea({
                 </div>
                 <div className="ml-auto flex items-center">
                   {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
-                  <Button
-                    type="text"
-                    onClick={handleSendMessage}
-                    disabled={isLoading}
-                    icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
-                    style={{
-                      color: 'rgb(var(--color-text-muted))',
-                      padding: '0',
-                      height: 'auto',
-                    }}
-                  />
+                  {selectedTaskDetail && (selectedTaskDetail.status === 'RUNNING' || selectedTaskDetail.status === 'PENDING') ? (
+                    <Button
+                      type="text"
+                      onClick={handleStopTask}
+                      disabled={isCancelling}
+                      loading={isCancelling}
+                      icon={<StopIcon className="w-4 h-4" />}
+                      title={t('task.stop')}
+                      style={{
+                        color: 'rgb(var(--color-text-muted))',
+                        padding: '0',
+                        height: 'auto',
+                      }}
+                    />
+                  ) : (
+                    <Button
+                      type="text"
+                      onClick={handleSendMessage}
+                      disabled={isLoading}
+                      icon={<ArrowTurnDownLeftIcon className="w-4 h-4" />}
+                      style={{
+                        color: 'rgb(var(--color-text-muted))',
+                        padding: '0',
+                        height: 'auto',
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             </div>
