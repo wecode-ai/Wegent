@@ -3,6 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+import warnings
+import logging
+import atexit
 from unittest.mock import Mock, MagicMock
 
 
@@ -37,3 +40,28 @@ def mock_callback_client(mocker):
     mock_client = mocker.MagicMock()
     mock_client.post.return_value = Mock(status_code=200)
     return mock_client
+
+
+@pytest.fixture(scope="session", autouse=True)
+def suppress_resource_warnings():
+    """Suppress ResourceWarning about unclosed sockets during test cleanup"""
+    warnings.filterwarnings("ignore", category=ResourceWarning, message="unclosed.*")
+    yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def cleanup_logging():
+    """Clean up logging handlers and queue listeners at test session end"""
+    yield
+    
+    # Stop all queue listeners to prevent daemon thread errors
+    for logger_name in list(logging.Logger.manager.loggerDict.keys()):
+        logger = logging.getLogger(logger_name)
+        if hasattr(logger, '_queue_listener'):
+            try:
+                logger._queue_listener.stop()
+            except Exception:
+                pass
+    
+    # Shutdown logging to flush all handlers
+    logging.shutdown()
