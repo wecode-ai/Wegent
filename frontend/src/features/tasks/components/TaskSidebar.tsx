@@ -39,6 +39,8 @@ export default function TaskSidebar({
     searchTasks,
     isSearching,
     isSearchResult,
+    getUnreadCount,
+    markAllTasksAsViewed,
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
@@ -94,15 +96,22 @@ export default function TaskSidebar({
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
 
+    const todayTasks = tasks.filter(task => new Date(task.created_at) >= today);
+    const thisWeekTasks = tasks.filter(task => {
+      const taskDate = new Date(task.created_at);
+      return taskDate >= weekAgo && taskDate < today;
+    });
+    const earlierTasks = tasks.filter(task => new Date(task.created_at) < weekAgo);
+
     return {
-      today: tasks.filter(task => new Date(task.created_at) >= today),
-      thisWeek: tasks.filter(task => {
-        const taskDate = new Date(task.created_at);
-        return taskDate >= weekAgo && taskDate < today;
-      }),
-      earlier: tasks.filter(task => new Date(task.created_at) < weekAgo),
+      today: todayTasks,
+      thisWeek: thisWeekTasks,
+      earlier: earlierTasks,
+      todayUnread: getUnreadCount(todayTasks),
+      thisWeekUnread: getUnreadCount(thisWeekTasks),
+      earlierUnread: getUnreadCount(earlierTasks),
     };
-  }, [tasks]);
+  }, [tasks, getUnreadCount]);
 
   // New task
   const handleNewAgentClick = () => {
@@ -121,6 +130,16 @@ export default function TaskSidebar({
     // Close mobile sidebar after navigation
     setIsMobileSidebarOpen(false);
   };
+
+  // Mark all tasks as viewed
+  const handleMarkAllAsViewed = () => {
+    markAllTasksAsViewed();
+  };
+
+  // Calculate total unread count
+  const totalUnreadCount = React.useMemo(() => {
+    return getUnreadCount(tasks);
+  }, [tasks, getUnreadCount]);
 
   // Scroll to bottom to load more
   useEffect(() => {
@@ -187,6 +206,18 @@ export default function TaskSidebar({
         </Button>
       </div>
 
+      {/* Mark All As Read Button */}
+      {totalUnreadCount > 0 && (
+        <div className="px-3 mb-2">
+          <button
+            onClick={handleMarkAllAsViewed}
+            className="w-full text-xs text-text-muted hover:text-text-primary py-1 px-2 rounded hover:bg-muted transition-colors text-center"
+          >
+            {t('tasks.mark_all_read')} ({totalUnreadCount})
+          </button>
+        </div>
+      )}
+
       {/* Tasks Section */}
       <div className="flex-1 px-3 overflow-y-auto custom-scrollbar" ref={scrollRef}>
         {isSearching ? (
@@ -199,6 +230,7 @@ export default function TaskSidebar({
           <TaskListSection
             tasks={tasks}
             title={t('tasks.search_results')}
+            unreadCount={getUnreadCount(tasks)}
             onTaskClick={() => setIsMobileSidebarOpen(false)}
           />
         ) : (
@@ -206,16 +238,19 @@ export default function TaskSidebar({
             <TaskListSection
               tasks={groupTasksByDate.today}
               title={t('tasks.today')}
+              unreadCount={groupTasksByDate.todayUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
             />
             <TaskListSection
               tasks={groupTasksByDate.thisWeek}
               title={t('tasks.this_week')}
+              unreadCount={groupTasksByDate.thisWeekUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
             />
             <TaskListSection
               tasks={groupTasksByDate.earlier}
               title={t('tasks.earlier')}
+              unreadCount={groupTasksByDate.earlierUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
             />
           </>

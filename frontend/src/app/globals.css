@@ -532,3 +532,20 @@ button:focus-visible {
 .animation-delay-400 {
   animation-delay: 0.4s;
 }
+
+/* Pulse animation for unread task notification dots */
+@keyframes pulse-dot {
+  0%,
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 0.8;
+  }
+}
+
+.animate-pulse-dot {
+  animation: pulse-dot 2s ease-in-out infinite;
+}

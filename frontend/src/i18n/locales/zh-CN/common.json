@@ -243,6 +243,7 @@
     "copy_task_id": "复制任务ID",
     "delete_task": "删除任务",
     "searching": "搜索中...",
+    "mark_all_read": "全部标记为已读",
     "open_from": "<> Code",
     "open_from_vscode": "VSCode",
     "open_from_git": "Git"

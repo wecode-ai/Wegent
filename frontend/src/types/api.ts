@@ -245,3 +245,13 @@ export interface PaginationParams {
   page?: number;
   limit?: number;
 }
+
+// Task View Status Types
+export interface TaskViewStatus {
+  viewedAt: string;
+  status: TaskStatus;
+}
+
+export interface TaskViewStatusMap {
+  [taskId: string]: TaskViewStatus;
+}
