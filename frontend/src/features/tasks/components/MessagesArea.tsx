@@ -297,15 +297,27 @@ export default function MessagesArea() {
     };
   }, [selectedTaskDetail?.id, displayMessages.length > 0, AUTO_SCROLL_THRESHOLD]);
 
+  // Track previous message count to detect new messages
+  const previousMessageCountRef = useRef(displayMessages.length);
+
   useLayoutEffect(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
 
     const previous = scrollStateRef.current;
-    const shouldStickToBottom = isUserNearBottomRef.current;
+    const currentMessageCount = displayMessages.length;
+    const previousMessageCount = previousMessageCountRef.current;
+
+    // Check if new messages were added
+    const hasNewMessages = currentMessageCount > previousMessageCount;
+
+    // Force scroll to bottom when new messages are added, otherwise use previous behavior
+    const shouldStickToBottom = hasNewMessages || isUserNearBottomRef.current;
 
     if (shouldStickToBottom) {
       container.scrollTop = container.scrollHeight;
+      // When we force scroll due to new messages, update the bottom tracking flag
+      isUserNearBottomRef.current = true;
     } else {
       container.scrollTop = previous.scrollTop;
     }
@@ -317,6 +329,9 @@ export default function MessagesArea() {
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD;
+
+    // Update previous message count
+    previousMessageCountRef.current = currentMessageCount;
   }, [displayMessages, AUTO_SCROLL_THRESHOLD]);
 
   const renderProgressBar = (status: string, progress: number) => {

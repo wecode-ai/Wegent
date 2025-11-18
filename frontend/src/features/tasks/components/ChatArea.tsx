@@ -200,9 +200,12 @@ export default function ChatArea({
         refreshTasks();
         // Actively refresh task details to ensure latest status and messages
         refreshSelectedTaskDetail(false); // false means not auto-refresh, allow fetching completed task details
+        // Ensure scroll to bottom after data refresh with longer delay
+        setTimeout(() => scrollToBottom(true), 300);
+      } else {
+        // For new task creation, scroll immediately
+        setTimeout(() => scrollToBottom(true), 0);
       }
-      // Manually trigger scroll to bottom after sending message
-      setTimeout(() => scrollToBottom(true), 0);
     }
     setIsLoading(false);
   };
