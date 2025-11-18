@@ -92,7 +92,7 @@ jobs:
       - name: Run executor tests
         working-directory: ./executor
         env:
-          PYTHONPATH: ${{ github.workspace }}
+          PYTHONPATH: ${{ github.workspace }}:${{ github.workspace }}/executor
         run: |
           pytest tests/ --cov=agents --cov-report=xml --cov-report=term-missing -v
 
