@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import select
 from jose import jwt, JWTError
 from passlib.context import CryptContext
+from app.services.user import user_service
 
 from app.core.config import settings
 from app.api.dependencies import get_db
@@ -33,7 +34,7 @@ def get_current_user(
     username = token_data.get("username")
     
     # Query user
-    user = db.query(User).filter(User.user_name == username).first()
+    user = user_service.get_user_by_name(db=db, user_name=username)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

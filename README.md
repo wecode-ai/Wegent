@@ -15,14 +15,14 @@ English | [简体中文](README_zh.md)
 
 *From coding assistants to news analysts - deploy intelligent agents that actually work*
 
-[Quick Start](#-quick-start) · [Use Cases](#-what-can-you-build) · [Documentation](docs/en/resource-definition-formats.md) · [Development Guide](docs/en/develop-guide.md)
+[Quick Start](docs/en/getting-started/quick-start.md) · [Use Cases](#-what-can-you-build) · [Documentation](docs/en/README.md) · [Development Guide](docs/en/guides/developer/setup.md)
 
 </div>
 
 ---
 
 ## 💡 What Can You Build?
-<img src="./docs/assets/example.gif" width="75%" alt="Demo Video"/>
+<img src="./docs/assets/images/example.gif" width="75%" alt="Demo Video"/>
 Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
 
 ### 🖥️ **Web-Based Coding Assistant**
@@ -114,7 +114,7 @@ graph LR
 - **🎯 Task**: Executable units of work assigned to teams
 
 > 💡 **Detailed YAML Configuration Documentation**:
-- [Complete YAML configuration examples and field descriptions](docs/en/resource-definition-formats.md)
+- [Complete YAML configuration examples and field descriptions](docs/en/reference/yaml-specification.md)
 
 ## 🚀 Quick Start
 
@@ -205,7 +205,7 @@ graph TB
 
 ## 🛠️ Development
 
-For detailed development setup instructions, please see the [Development Guide](docs/en/develop-guide.md).
+For detailed development setup instructions, please see the [Development Guide](docs/en/guides/developer/setup.md).
 
 ### Project Structure
 
@@ -244,7 +244,7 @@ wegent/
    cd frontend && npm test
    ```
 
-For comprehensive setup instructions including database configuration, environment variables, and troubleshooting, refer to the [Development Guide](docs/en/develop-guide.md).
+For comprehensive setup instructions including database configuration, environment variables, and troubleshooting, refer to the [Development Guide](docs/en/guides/developer/setup.md).
 
 
 ## 🤝 Contributing

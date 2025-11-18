@@ -62,7 +62,7 @@ export async function requestNotificationPermission(): Promise<boolean> {
 /**
  * Send a browser notification
  */
-export function sendNotification(title: string, options?: NotificationOptions): void {
+export function sendNotification(title: string, options?: NotificationOptions, targetUrl?: string): void {
   if (!isNotificationSupported()) return;
   if (Notification.permission !== 'granted') return;
   if (!isNotificationEnabled()) return;
@@ -74,6 +74,15 @@ export function sendNotification(title: string, options?: NotificationOptions): 
       ...options,
     });
 
+    // Add click handler for navigation
+    if (targetUrl) {
+      notification.onclick = (event) => {
+        event.preventDefault();
+        window.open(targetUrl, '_blank')?.focus();
+        notification.close();
+      };
+    }
+
     // Auto close after 5 seconds
     setTimeout(() => notification.close(), 5000);
   } catch (error) {
@@ -84,13 +93,23 @@ export function sendNotification(title: string, options?: NotificationOptions): 
 /**
  * Send task completion notification
  */
-export function notifyTaskCompletion(taskTitle: string, success: boolean): void {
+export function notifyTaskCompletion(
+  taskId: number,
+  taskTitle: string,
+  success: boolean,
+  taskType?: 'chat' | 'code'
+): void {
   const title = success ? '✅ Task Completed' : '❌ Task Failed';
   const body = taskTitle.length > 100 ? `${taskTitle.substring(0, 100)}...` : taskTitle;
+
+  // Build target URL based on task type
+  const targetUrl = taskType === 'code'
+    ? `${window.location.origin}/code?taskId=${taskId}`
+    : `${window.location.origin}/chat?taskId=${taskId}`;
 
   sendNotification(title, {
     body,
     tag: 'task-completion',
     requireInteraction: false,
-  });
+  }, targetUrl);
 }
