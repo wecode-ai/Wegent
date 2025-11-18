@@ -15,10 +15,10 @@ datas = []
 binaries = []
 hiddenimports = []
 
-# Collect shared module
+# Add shared directory to Python path for proper module import
 shared_path = os.path.join(os.path.dirname(os.getcwd()), 'shared')
 if os.path.exists(shared_path):
-    datas += [(shared_path, 'shared')]
+    sys.path.insert(0, shared_path)
 
 # Collect all submodules for critical dependencies
 hiddenimports += collect_submodules('fastapi')
@@ -35,6 +35,10 @@ hiddenimports += collect_submodules('git')
 hiddenimports += collect_submodules('cryptography')
 hiddenimports += collect_submodules('requests')
 hiddenimports += collect_submodules('pymysql')
+
+# Collect shared module submodules
+if os.path.exists(shared_path):
+    hiddenimports += collect_submodules('shared')
 
 # Additional hidden imports
 hiddenimports += [
@@ -63,7 +67,7 @@ for package in ['fastapi', 'uvicorn', 'pydantic', 'anthropic', 'claude_agent_sdk
 
 a = Analysis(
     ['main.py'],
-    pathex=[],
+    pathex=[shared_path],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
@@ -90,12 +94,12 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,  # 禁用 UPX 压缩以提高兼容性
     upx_exclude=[],
     runtime_tmpdir=None,
     console=True,
     disable_windowed_traceback=False,
-    target_arch=None,
+    target_arch=None,  # 保持为 None 以自动检测
     codesign_identity=None,
     entitlements_file=None,
 )

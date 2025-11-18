@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Dict, Any, Optional, List, Tuple
 from agno.tools.mcp import MCPTools
 from agno.tools.mcp import StreamableHTTPClientParams, SSEClientParams, StdioServerParameters
-from utils.mcp_utils import extract_mcp_servers_config
+from executor.utils.mcp_utils import extract_mcp_servers_config
 from shared.logger import setup_logger
 
 logger = setup_logger("agno_mcp_manager")

@@ -30,7 +30,7 @@ from shared.models.task import ThinkingStep, ExecutionResult
 from shared.utils.crypto import is_token_encrypted, decrypt_git_token
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
-from utils.mcp_utils import extract_mcp_servers_config
+from executor.utils.mcp_utils import extract_mcp_servers_config
 
 logger = setup_logger("claude_code_agent")
 

@@ -7,5 +7,5 @@
 # -*- coding: utf-8 -*-
 
 """
-Wegent Executor - Task execution engine
+Shared utilities and models for Wegent project
 """

@@ -54,7 +54,6 @@ RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.
 
 # Copy only the standalone binary from builder
 COPY --from=builder /app/executor/dist/executor /app/executor
-COPY --from=builder /app/shared /app/shared
 
 ENV PORT=10001
 ENV PYTHONPATH=/app
