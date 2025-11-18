@@ -192,8 +192,8 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"User with id {user_id} not found"
             )
-        return user
-        
+        return self.decrypt_user_git_info(user)
+
     def get_user_by_name(self, db: Session, user_name: str) -> User:
         """
         Get user object by username
@@ -214,7 +214,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"User with username '{user_name}' not found"
             )
-        return user
+        return self.decrypt_user_git_info(user)
 
     def get_all_users(self, db: Session) -> List[User]:
         """
@@ -226,7 +226,23 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         Returns:
             List of all active users
         """
-        return db.query(User).filter(User.is_active == True).all()
+        user_list = db.query(User).filter(User.is_active == True).all()
+        for i in range(len(user_list)):
+            user_list[i] = self.decrypt_user_git_info(user_list[i])
+        return user_list
 
+    def decrypt_user_git_info(self, user: User) -> User:
+        if user is None:
+            return user
+
+        decrypt_git_info = []
+ 
+        for git_item in user.git_info:
+            plain_token = git_item["git_token"]
+            if is_token_encrypted(plain_token):
+                git_item["git_token"] = decrypt_git_token(plain_token)
+            decrypt_git_info.append(git_item)
+        user.git_info = decrypt_git_info
+        return user
 
 user_service = UserService(User)
