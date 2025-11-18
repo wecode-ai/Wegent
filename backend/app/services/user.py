@@ -235,6 +235,10 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if user is None:
             return user
 
+        # Check if git_info is None or empty
+        if user.git_info is None:
+            return user
+
         decrypt_git_info = []
  
         for git_item in user.git_info:
