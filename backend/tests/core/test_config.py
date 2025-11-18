@@ -22,7 +22,7 @@ class TestSettings:
         assert s.API_PREFIX == "/api"
         assert s.ENABLE_API_DOCS is True
         assert s.ALGORITHM == "HS256"
-        assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 24 * 60
+        assert s.ACCESS_TOKEN_EXPIRE_MINUTES == 10080  # 7 days
 
     def test_settings_from_env_variables(self, monkeypatch):
         """Test loading settings from environment variables"""

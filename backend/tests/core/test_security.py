@@ -266,9 +266,9 @@ class TestGetCurrentUser:
         with pytest.raises(HTTPException) as exc_info:
             get_current_user(token=token, db=test_db)
 
-        # get_current_user catches the 404 and returns 401 for security
-        assert exc_info.value.status_code == 401
-        assert "Could not validate credentials" in exc_info.value.detail
+        # user_service.get_user_by_name raises 404 when user not found
+        assert exc_info.value.status_code == 404
+        assert "not found" in exc_info.value.detail
 
     def test_get_current_user_with_inactive_user(self, test_db: Session, test_inactive_user: User, mocker):
         """Test getting current user when user is inactive"""

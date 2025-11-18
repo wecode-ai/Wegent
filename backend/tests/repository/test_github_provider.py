@@ -29,7 +29,8 @@ class TestGitHubProvider:
         mock_response.raise_for_status = Mock()
 
         # Mock decrypt_git_token to return the token as-is
-        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="valid_token")
+        mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="valid_token")
+        mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
         mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token("valid_token", git_domain="github.com")
@@ -48,7 +49,8 @@ class TestGitHubProvider:
         mock_response.status_code = 401
 
         # Mock decrypt_git_token to return the token as-is
-        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="invalid_token")
+        mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="invalid_token")
+        mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
         mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token("invalid_token", git_domain="github.com")
@@ -60,7 +62,8 @@ class TestGitHubProvider:
         provider = GitHubProvider()
 
         # Mock decrypt_git_token to return the token as-is
-        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="any_token")
+        mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="any_token")
+        mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
         
         # Mock requests.get to raise RequestException
         mock_get = mocker.patch(
@@ -89,7 +92,8 @@ class TestGitHubProvider:
         mock_response.raise_for_status = Mock()
 
         # Mock decrypt_git_token to return the token as-is
-        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="enterprise_token")
+        mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="enterprise_token")
+        mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
         mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token(
@@ -116,7 +120,8 @@ class TestGitHubProvider:
         mock_response.raise_for_status = Mock()
 
         # Mock decrypt_git_token to return the token as-is
-        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="token")
+        mocker.patch("shared.utils.crypto.decrypt_git_token", return_value="token")
+        mocker.patch("shared.utils.crypto.is_token_encrypted", return_value=True)
         mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token("token", git_domain="github.com")
