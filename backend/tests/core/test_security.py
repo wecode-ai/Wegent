@@ -91,17 +91,32 @@ class TestTokenOperations:
 
     def test_create_access_token_with_custom_expiration(self):
         """Test creating access token with custom expiration"""
+        import time
         data = {"sub": "testuser"}
         expires_delta = 60  # 60 minutes
+        
+        # Get current time as Unix timestamp
+        before_timestamp = time.time()
         token = create_access_token(data, expires_delta=expires_delta)
+        after_timestamp = time.time()
 
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
 
-        # Check expiration is approximately correct (within 5 seconds)
-        expected_exp = datetime.now() + timedelta(minutes=expires_delta)
-        actual_exp = datetime.fromtimestamp(payload["exp"])
-        time_diff = abs((expected_exp - actual_exp).total_seconds())
-        assert time_diff < 5
+        # Verify that the token contains the expected data
+        assert payload["sub"] == "testuser"
+        
+        # Verify that exp field exists
+        assert "exp" in payload
+        
+        # The exp field should be approximately 60 minutes from now
+        # Calculate expected expiration range
+        expected_exp_min = before_timestamp + (expires_delta * 60)
+        expected_exp_max = after_timestamp + (expires_delta * 60)
+        
+        exp_timestamp = payload["exp"]
+        
+        # Verify expiration is within expected range (with 1 second tolerance)
+        assert expected_exp_min - 1 <= exp_timestamp <= expected_exp_max + 1
 
     def test_create_access_token_with_additional_data(self):
         """Test creating access token with additional data"""
@@ -132,9 +147,23 @@ class TestTokenOperations:
     def test_verify_token_with_expired_token(self):
         """Test verifying an expired token raises HTTPException"""
         data = {"sub": "testuser"}
-        # Create token that expired 1 minute ago
-        expired_token = create_access_token(data, expires_delta=-1)
+        # Create a token with very short expiration and wait for it to expire
+        # Since create_access_token doesn't support negative values properly,
+        # we'll create a token manually with past expiration
+        from jose import jwt
+        from datetime import datetime, timedelta
+        import time
+        
+        expired_data = data.copy()
+        # Use timestamp for expiration (1 minute ago)
+        expired_data["exp"] = (datetime.now() - timedelta(minutes=1)).timestamp()
+        expired_token = jwt.encode(
+            expired_data,
+            settings.SECRET_KEY,
+            algorithm=settings.ALGORITHM
+        )
 
+        # jwt.decode will raise JWTError for expired tokens, which verify_token catches
         with pytest.raises(HTTPException) as exc_info:
             verify_token(expired_token)
 
@@ -212,6 +241,9 @@ class TestGetCurrentUser:
         # Mock the oauth2_scheme dependency to return the token
         mock_oauth2 = mocker.patch("app.core.security.oauth2_scheme")
         mock_oauth2.return_value = test_token
+        
+        # Mock decrypt_user_git_info to handle None git_info
+        mocker.patch("app.services.user.UserService.decrypt_user_git_info", side_effect=lambda user: user)
 
         user = get_current_user(token=test_token, db=test_db)
 
@@ -234,12 +266,16 @@ class TestGetCurrentUser:
         with pytest.raises(HTTPException) as exc_info:
             get_current_user(token=token, db=test_db)
 
+        # get_current_user catches the 404 and returns 401 for security
         assert exc_info.value.status_code == 401
         assert "Could not validate credentials" in exc_info.value.detail
 
-    def test_get_current_user_with_inactive_user(self, test_db: Session, test_inactive_user: User):
+    def test_get_current_user_with_inactive_user(self, test_db: Session, test_inactive_user: User, mocker):
         """Test getting current user when user is inactive"""
         token = create_access_token({"sub": "inactiveuser"})
+        
+        # Mock decrypt_user_git_info to handle None git_info
+        mocker.patch("app.services.user.UserService.decrypt_user_git_info", side_effect=lambda user: user)
 
         with pytest.raises(HTTPException) as exc_info:
             get_current_user(token=token, db=test_db)

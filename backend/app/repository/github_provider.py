@@ -340,7 +340,7 @@ class GitHubProvider(RepositoryProvider):
         # Use custom domain if provided, otherwise use default
         api_base_url = self._get_api_base_url(git_domain)
 
-        decrypt_token = self.decrypt_token(token)
+        decrypt_token = self._decrypt_token(token)
         try:
             headers = {
                 "Authorization": f"token {decrypt_token}",

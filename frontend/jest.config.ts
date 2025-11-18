@@ -2,12 +2,12 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import type { Config } from 'jest'
-import nextJest from 'next/jest'
+import type { Config } from 'jest';
+import nextJest from 'next/jest';
 
 const createJestConfig = nextJest({
   dir: './',
-})
+});
 
 const config: Config = {
   testEnvironment: 'jsdom',
@@ -21,7 +21,7 @@ const config: Config = {
     '!src/**/*.stories.{js,jsx,ts,tsx}',
     '!src/app/**',
   ],
-  coverageThresholds: {
+  coverageThreshold: {
     global: {
       branches: 40,
       functions: 40,
@@ -29,9 +29,7 @@ const config: Config = {
       statements: 40,
     },
   },
-  testMatch: [
-    '<rootDir>/src/__tests__/**/*.test.{js,jsx,ts,tsx}',
-  ],
-}
+  testMatch: ['<rootDir>/src/__tests__/**/*.test.{js,jsx,ts,tsx}'],
+};
 
-export default createJestConfig(config)
+export default createJestConfig(config);

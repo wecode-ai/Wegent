@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
-import httpx
+import requests
 from unittest.mock import Mock, patch
 
 from app.repository.github_provider import GitHubProvider
@@ -17,7 +17,7 @@ class TestGitHubProvider:
         """Test validate_token with a valid GitHub token"""
         provider = GitHubProvider()
 
-        # Mock httpx.Client.get response
+        # Mock requests.get response
         mock_response = Mock()
         mock_response.status_code = 200
         mock_response.json.return_value = {
@@ -26,8 +26,11 @@ class TestGitHubProvider:
             "email": "test@example.com",
             "name": "Test User"
         }
+        mock_response.raise_for_status = Mock()
 
-        mock_get = mocker.patch("httpx.Client.get", return_value=mock_response)
+        # Mock decrypt_git_token to return the token as-is
+        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="valid_token")
+        mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token("valid_token", git_domain="github.com")
 
@@ -40,16 +43,13 @@ class TestGitHubProvider:
         """Test validate_token with an invalid GitHub token"""
         provider = GitHubProvider()
 
-        # Mock httpx.Client.get to raise HTTPError
+        # Mock requests.get to return 401
         mock_response = Mock()
         mock_response.status_code = 401
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError(
-            "Unauthorized",
-            request=Mock(),
-            response=mock_response
-        )
 
-        mock_get = mocker.patch("httpx.Client.get", return_value=mock_response)
+        # Mock decrypt_git_token to return the token as-is
+        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="invalid_token")
+        mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token("invalid_token", git_domain="github.com")
 
@@ -59,15 +59,21 @@ class TestGitHubProvider:
         """Test validate_token handles network errors"""
         provider = GitHubProvider()
 
-        # Mock httpx.Client.get to raise RequestError
+        # Mock decrypt_git_token to return the token as-is
+        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="any_token")
+        
+        # Mock requests.get to raise RequestException
         mock_get = mocker.patch(
-            "httpx.Client.get",
-            side_effect=httpx.RequestError("Network error", request=Mock())
+            "requests.get",
+            side_effect=requests.exceptions.RequestException("Network error")
         )
 
-        result = provider.validate_token("any_token", git_domain="github.com")
-
-        assert result["valid"] is False
+        # The method should raise HTTPException with 502 status code
+        with pytest.raises(Exception) as exc_info:
+            provider.validate_token("any_token", git_domain="github.com")
+        
+        # Verify it's an HTTPException with status 502
+        assert exc_info.value.status_code == 502
 
     def test_validate_token_with_custom_domain(self, mocker):
         """Test validate_token with custom GitHub domain"""
@@ -80,8 +86,11 @@ class TestGitHubProvider:
             "login": "enterpriseuser",
             "email": "user@enterprise.com"
         }
+        mock_response.raise_for_status = Mock()
 
-        mock_get = mocker.patch("httpx.Client.get", return_value=mock_response)
+        # Mock decrypt_git_token to return the token as-is
+        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="enterprise_token")
+        mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token(
             "enterprise_token",
@@ -91,7 +100,7 @@ class TestGitHubProvider:
         assert result["valid"] is True
         # Verify the correct domain was used in the API call
         call_args = mock_get.call_args
-        assert "github.enterprise.com" in str(call_args) or call_args is not None
+        assert "github.enterprise.com" in str(call_args[0][0])
 
     def test_validate_token_without_email(self, mocker):
         """Test validate_token when user doesn't have public email"""
@@ -104,8 +113,11 @@ class TestGitHubProvider:
             "login": "no_email_user",
             "email": None  # No public email
         }
+        mock_response.raise_for_status = Mock()
 
-        mock_get = mocker.patch("httpx.Client.get", return_value=mock_response)
+        # Mock decrypt_git_token to return the token as-is
+        mocker.patch("app.repository.github_provider.decrypt_git_token", return_value="token")
+        mock_get = mocker.patch("requests.get", return_value=mock_response)
 
         result = provider.validate_token("token", git_domain="github.com")
 

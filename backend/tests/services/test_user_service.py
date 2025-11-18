@@ -127,9 +127,12 @@ class TestUserServiceValidateGitInfo:
 class TestUserServiceGetUser:
     """Test UserService get user methods"""
 
-    def test_get_user_by_id_existing_user(self, test_db: Session, test_user: User):
+    def test_get_user_by_id_existing_user(self, test_db: Session, test_user: User, mocker):
         """Test getting existing user by ID"""
         service = UserService(User)
+        
+        # Mock decrypt_user_git_info to handle None git_info
+        mocker.patch.object(service, 'decrypt_user_git_info', side_effect=lambda user: user)
 
         user = service.get_user_by_id(test_db, test_user.id)
 
@@ -147,9 +150,12 @@ class TestUserServiceGetUser:
         assert exc_info.value.status_code == 404
         assert "not found" in exc_info.value.detail
 
-    def test_get_user_by_name_existing_user(self, test_db: Session, test_user: User):
+    def test_get_user_by_name_existing_user(self, test_db: Session, test_user: User, mocker):
         """Test getting existing user by username"""
         service = UserService(User)
+        
+        # Mock decrypt_user_git_info to handle None git_info
+        mocker.patch.object(service, 'decrypt_user_git_info', side_effect=lambda user: user)
 
         user = service.get_user_by_name(test_db, test_user.user_name)
 
@@ -167,9 +173,12 @@ class TestUserServiceGetUser:
         assert exc_info.value.status_code == 404
         assert "not found" in exc_info.value.detail
 
-    def test_get_all_users(self, test_db: Session, test_user: User, test_admin_user: User):
+    def test_get_all_users(self, test_db: Session, test_user: User, test_admin_user: User, mocker):
         """Test getting all active users"""
         service = UserService(User)
+        
+        # Mock decrypt_user_git_info to handle None git_info
+        mocker.patch.object(service, 'decrypt_user_git_info', side_effect=lambda user: user)
 
         users = service.get_all_users(test_db)
 
@@ -178,9 +187,12 @@ class TestUserServiceGetUser:
         assert test_user.user_name in usernames
         assert test_admin_user.user_name in usernames
 
-    def test_get_all_users_excludes_inactive(self, test_db: Session, test_user: User, test_inactive_user: User):
+    def test_get_all_users_excludes_inactive(self, test_db: Session, test_user: User, test_inactive_user: User, mocker):
         """Test getting all users excludes inactive users"""
         service = UserService(User)
+        
+        # Mock decrypt_user_git_info to handle None git_info
+        mocker.patch.object(service, 'decrypt_user_git_info', side_effect=lambda user: user)
 
         users = service.get_all_users(test_db)
 

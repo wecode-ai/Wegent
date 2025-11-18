@@ -228,5 +228,33 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         """
         return db.query(User).filter(User.is_active == True).all()
 
+    def decrypt_user_git_info(self, user: User) -> User:
+        """
+        Decrypt git_info tokens for a user
+        
+        Args:
+            user: User object
+            
+        Returns:
+            User object with decrypted git_info
+        """
+        if user is None:
+            return user
+        
+        # Check if git_info is None or empty
+        if not user.git_info:
+            return user
+        
+        decrypt_git_info = []
+        
+        for git_item in user.git_info:
+            decrypt_git_item = git_item.copy()
+            git_token = git_item.get("git_token")
+            if git_token and is_token_encrypted(git_token):
+                decrypt_git_item["git_token"] = decrypt_git_token(git_token)
+            decrypt_git_info.append(decrypt_git_item)
+        
+        user.git_info = decrypt_git_info
+        return user
 
 user_service = UserService(User)
