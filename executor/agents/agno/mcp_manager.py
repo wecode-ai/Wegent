@@ -141,6 +141,7 @@ class MCPManager:
         # Set default timeout to 5 minutes, allow user override
         timeout_value = server_config.get("timeout")
         sse_read_timeout_value = server_config.get("sse_read_timeout")
+        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5,
 
         server_params = StreamableHTTPClientParams(
             url=server_config.get("url"),
@@ -148,7 +149,7 @@ class MCPManager:
             timeout=timedelta(seconds=timeout_value) if timeout_value is not None else timedelta(seconds=60 * 5),
             sse_read_timeout=timedelta(seconds=sse_read_timeout_value) if sse_read_timeout_value is not None else timedelta(seconds=60 * 5)
         )
-        return MCPTools(transport="streamable-http", server_params=server_params)
+        return MCPTools(transport="streamable-http", server_params=server_params, timeout_seconds=timeout_seconds)
     
     def _create_sse_tools(self, server_config: Dict[str, Any]) -> MCPTools:
         """
@@ -173,6 +174,7 @@ class MCPManager:
         # Set default timeout to 5 minutes, allow user override
         timeout_value = server_config.get("timeout")
         sse_read_timeout_value = server_config.get("sse_read_timeout")
+        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5,
 
         server_params = SSEClientParams(
             url=server_config.get("url"),
@@ -180,7 +182,8 @@ class MCPManager:
             timeout=timeout_value if timeout_value is not None else 60 * 5,
             sse_read_timeout=sse_read_timeout_value if sse_read_timeout_value is not None else 60 * 5
         )
-        return MCPTools(transport="sse", server_params=server_params)
+
+        return MCPTools(transport="sse", server_params=server_params, timeout_seconds=timeout_seconds)
     
     def _create_stdio_tools(self, server_config: Dict[str, Any]) -> MCPTools:
         """
@@ -227,7 +230,9 @@ class MCPManager:
             args=server_config.get("args", []),
             command=server_config.get("command"),
         )
-        return MCPTools(transport="stdio", server_params=server_params)
+        timeout_value = server_config.get("timeout")
+        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5,
+        return MCPTools(transport="stdio", server_params=server_params, timeout_seconds=timeout_seconds)
     
     async def cleanup_tools(self) -> None:
         """
