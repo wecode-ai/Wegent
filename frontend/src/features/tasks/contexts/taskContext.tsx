@@ -102,7 +102,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         const isFailed = currentStatus === 'FAILED';
 
         if (wasRunning && (isCompleted || isFailed)) {
-          notifyTaskCompletion(task.title, isCompleted);
+          notifyTaskCompletion(task.id, task.title, isCompleted, task.task_type);
         }
       }
 
