@@ -7,7 +7,13 @@
 import { useState } from 'react';
 import { Task, TaskType } from '@/types/api';
 import TaskMenu from './TaskMenu';
-import { FaRegCircleCheck, FaRegCircleStop, FaRegCircleXmark } from 'react-icons/fa6';
+import {
+  FaRegCircleCheck,
+  FaRegCircleStop,
+  FaRegCircleXmark,
+  FaRegCirclePause,
+} from 'react-icons/fa6';
+import { ArrowPathIcon } from '@heroicons/react/24/outline';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -120,14 +126,19 @@ export default function TaskListSection({ tasks, title, onTaskClick }: TaskListS
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'COMPLETED':
-        return <FaRegCircleCheck className="w-4 h-4 text-text-muted" />;
+        return <FaRegCircleCheck className="w-4 h-4 text-green-500" />;
       case 'FAILED':
+        return <FaRegCircleXmark className="w-4 h-4 text-red-500" />;
       case 'CANCELLED':
-        return <FaRegCircleXmark className="w-4 h-4 text-text-muted" />;
+        return <FaRegCircleStop className="w-4 h-4 text-gray-400" />;
       case 'RUNNING':
-        return <FaRegCircleStop className="w-4 h-4 text-text-muted" />;
+        return (
+          <ArrowPathIcon className="w-4 h-4 text-blue-500 animate-spin" style={{ animationDuration: '2s' }} />
+        );
+      case 'PENDING':
+        return <FaRegCirclePause className="w-4 h-4 text-yellow-500" />;
       default:
-        return <FaRegCircleStop className="w-4 h-4 text-text-muted" />;
+        return <FaRegCirclePause className="w-4 h-4 text-gray-400" />;
     }
   };
 
@@ -169,7 +180,11 @@ export default function TaskListSection({ tasks, title, onTaskClick }: TaskListS
     const HOUR_MS = 60 * MINUTE_MS;
     const DAY_MS = 24 * HOUR_MS;
 
-    if (diffMs < HOUR_MS) {
+    // Handle negative time difference (client time earlier than server time)
+    // or very small positive differences (< 1 minute)
+    if (diffMs < MINUTE_MS) {
+      return '0m';
+    } else if (diffMs < HOUR_MS) {
       return `${Math.floor(diffMs / MINUTE_MS)}m`;
     } else if (diffMs < DAY_MS) {
       return `${Math.floor(diffMs / HOUR_MS)}h`;

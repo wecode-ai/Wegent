@@ -328,17 +328,6 @@ class TaskKindService(KindBaseService):
         result['apiVersion'] = 'agent.wecode.io/v1'
         result['kind'] = self.kind
         
-        # Build enhanced status field
-        status = {
-            'state': 'PENDING',
-            'progress': 0,
-            'result': None,
-            'errorMessage': None,
-            'startedAt': None,
-            'completedAt': None,
-            'subTasks': []
-        }
-        
         # Get database connection
         with self.get_db() as db:
             # Query all Subtasks for this Task
@@ -366,10 +355,7 @@ class TaskKindService(KindBaseService):
                     'completedAt': subtask.completed_at
                 })
             
-            status['subTasks'] = subtask_list
-        
-        # Update status in result
-        result['status'] = status
+            result["status"]['subTasks'] = subtask_list
         
         return result
     

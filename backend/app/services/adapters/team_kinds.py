@@ -9,6 +9,7 @@ import json
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
+from sqlalchemy import union_all, literal_column
 
 from app.models.kind import Kind
 from app.models.user import User
@@ -118,54 +119,105 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     ) -> List[Dict[str, Any]]:
         """
         Get user's Team list (only active teams) including shared teams
+        Uses database union query for better performance and pagination
         """
-        result = []
-        
-        # Get user's own teams
-        own_teams = db.query(Kind).filter(
+        # Query for user's own teams
+        own_teams_query = db.query(
+            Kind.id.label('team_id'),
+            Kind.user_id.label('team_user_id'),
+            Kind.name.label('team_name'),
+            Kind.namespace.label('team_namespace'),
+            Kind.json.label('team_json'),
+            Kind.created_at.label('team_created_at'),
+            Kind.updated_at.label('team_updated_at'),
+            literal_column('0').label('share_status'),  # Default 0 for own teams
+            literal_column(str(user_id)).label('context_user_id')  # Use current user for context
+        ).filter(
             Kind.user_id == user_id,
             Kind.kind == "Team",
             Kind.is_active == True
-        ).order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
-            
-        # Get user info for team (single query)
-        own_team_user = db.query(User).filter(User.id == user_id).first()
-            
-        for team in own_teams:
-            team_dict = self._convert_to_team_dict(team, db, user_id)
-            
-            if own_team_user:
-                team_dict["user"] = {
-                    "id": own_team_user.id,
-                    "user_name": own_team_user.user_name
-                }
-            
-            team_crd = Team.model_validate(team.json)
-            share_status = "0"  # Default to private
-            
-            if team_crd.metadata.labels and "share_status" in team_crd.metadata.labels:
-                share_status = team_crd.metadata.labels["share_status"]
-            
-            team_dict["share_status"] = int(share_status)
-            
-            result.append(team_dict)
+        )
         
-        # Get joined teams
-        join_shared_teams = db.query(SharedTeam, Kind).join(
-            Kind, SharedTeam.team_id == Kind.id
+        # Query for shared teams
+        shared_teams_query = db.query(
+            Kind.id.label('team_id'),
+            Kind.user_id.label('team_user_id'),
+            Kind.name.label('team_name'),
+            Kind.namespace.label('team_namespace'),
+            Kind.json.label('team_json'),
+            Kind.created_at.label('team_created_at'),
+            Kind.updated_at.label('team_updated_at'),
+            literal_column('2').label('share_status'),  # 2 for shared teams
+            SharedTeam.original_user_id.label('context_user_id')  # Use original user for context
+        ).join(
+            SharedTeam, SharedTeam.team_id == Kind.id
         ).filter(
             SharedTeam.user_id == user_id,
             SharedTeam.is_active == True,
             Kind.is_active == True,
             Kind.kind == "Team"
-        ).order_by(SharedTeam.created_at.desc()).offset(skip).limit(limit).all()
+        )
         
-        for shared_team, team in join_shared_teams:
-            team_dict = self._convert_to_team_dict(team, db, shared_team.original_user_id)
-            team_dict["share_status"] = 2 # shared from others
+        # Combine queries using union all
+        combined_query = union_all(own_teams_query, shared_teams_query).alias('combined_teams')
+        
+        # Create final query with pagination
+        final_query = db.query(
+            combined_query.c.team_id,
+            combined_query.c.team_user_id,
+            combined_query.c.team_name,
+            combined_query.c.team_namespace,
+            combined_query.c.team_json,
+            combined_query.c.team_created_at,
+            combined_query.c.team_updated_at,
+            combined_query.c.share_status,
+            combined_query.c.context_user_id
+        ).order_by(
+            combined_query.c.team_created_at.desc()
+        ).offset(skip).limit(limit)
+        
+        # Execute the query
+        teams_data = final_query.all()
+        
+        # Get all unique user IDs for batch fetching user info
+        user_ids = set()
+        for team_data in teams_data:
+            user_ids.add(team_data.team_user_id)
+        
+        # Batch fetch user info
+        users_info = {}
+        if user_ids:
+            users = db.query(User).filter(User.id.in_(user_ids)).all()
+            users_info = {user.id: user for user in users}
+        
+        # Convert to result format
+        result = []
+        for team_data in teams_data:
+            # Create a temporary Kind object for conversion
+            temp_team = Kind(
+                id=team_data.team_id,
+                user_id=team_data.team_user_id,
+                name=team_data.team_name,
+                namespace=team_data.team_namespace,
+                json=team_data.team_json,
+                created_at=team_data.team_created_at,
+                updated_at=team_data.team_updated_at,
+                is_active=True
+            )
             
-            # Get user info for team
-            team_user = db.query(User).filter(User.id == team.user_id).first()
+            # Convert to team dict using the appropriate context user ID
+            team_dict = self._convert_to_team_dict(temp_team, db, team_data.context_user_id)
+            
+            # For own teams, check if share_status is set in metadata.labels
+            if team_data.share_status == 0:  # This is an own team
+                team_crd = Team.model_validate(team_data.team_json)
+                if team_crd.metadata.labels and "share_status" in team_crd.metadata.labels:
+                    team_dict["share_status"] = int(team_crd.metadata.labels["share_status"])
+            else:  # This is a shared team
+                team_dict["share_status"] = 2
+            
+            # Add user info
+            team_user = users_info.get(team_data.team_user_id)
             if team_user:
                 team_dict["user"] = {
                     "id": team_user.id,
@@ -173,15 +225,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 }
             
             result.append(team_dict)
-        
-        # Sort by created_at desc
-        result.sort(key=lambda x: x["created_at"], reverse=True)
-        
-        # Apply pagination
-        if skip > 0:
-            result = result[skip:]
-        if limit > 0 and len(result) > limit:
-            result = result[:limit]
         
         return result
 

@@ -11,6 +11,7 @@ import os
 import re
 from typing import Dict, Any, Optional
 from shared.logger import setup_logger
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("agno_config_utils")
 
@@ -244,5 +245,5 @@ class ConfigManager:
                     if key in bot_config and bot_config[key] is not None:
                         options[key] = bot_config[key]
 
-        logger.info(f"Extracted Agno options: {options}")
+        logger.info(f"Extracted Agno options: {mask_sensitive_data(options)}")
         return options

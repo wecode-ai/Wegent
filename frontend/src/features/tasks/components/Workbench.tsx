@@ -5,17 +5,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Disclosure, DisclosureButton, DisclosurePanel } from '@headlessui/react';
+import { Disclosure, DisclosureButton, DisclosurePanel, Dialog, DialogPanel, DialogTitle } from '@headlessui/react';
 import {
   Bars3Icon,
   CheckIcon,
   ChevronRightIcon,
   ClipboardDocumentIcon,
   XMarkIcon,
+  ExclamationTriangleIcon,
 } from '@heroicons/react/24/outline';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTranslation } from '@/hooks/useTranslation';
+import { taskApis, BranchDiffResponse } from '@/apis/tasks';
+import DiffViewer from './DiffViewer';
 
 // Git commit statistics
 interface CommitStats {
@@ -72,6 +75,8 @@ interface WorkbenchData {
   originalPrompt: string;
   file_changes: FileChange[];
   git_info: GitInfo;
+  git_type?: 'github' | 'gitlab';
+  git_domain?: string;
 }
 
 interface WorkbenchProps {
@@ -80,6 +85,8 @@ interface WorkbenchProps {
   onOpen: () => void;
   workbenchData?: WorkbenchData | null;
   isLoading?: boolean;
+  taskTitle?: string;
+  taskNumber?: string;
 }
 
 function classNames(...classes: string[]) {
@@ -110,10 +117,16 @@ export default function Workbench({
   onOpen: _onOpen,
   workbenchData,
   isLoading: _isLoading = false,
+  taskTitle,
+  taskNumber,
 }: WorkbenchProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'files'>('overview');
   const [showCommits, setShowCommits] = useState(false);
   const [copiedCommitId, setCopiedCommitId] = useState<string | null>(null);
+  const [diffData, setDiffData] = useState<BranchDiffResponse | null>(null);
+  const [isDiffLoading, setIsDiffLoading] = useState(false);
+  const [diffLoadError, setDiffLoadError] = useState<string | null>(null);
+  const [showErrorDialog, setShowErrorDialog] = useState(false);
   const { theme } = useTheme();
   const { t } = useTranslation('tasks');
 
@@ -124,13 +137,84 @@ export default function Workbench({
   useEffect(() => {
     // If the API returns new workbench data (not null/undefined), update the cache
     if (workbenchData) {
+      // Check if task has changed by comparing task numbers or IDs
+      const taskChanged =
+        cachedWorkbenchData && cachedWorkbenchData.taskNumber !== workbenchData.taskNumber;
+
       setCachedWorkbenchData(workbenchData);
+
+      // Reset diff data when task changes
+      if (taskChanged) {
+        setDiffData(null);
+        setIsDiffLoading(false);
+        setDiffLoadError(null);
+      }
     }
-    // If workbenchData is null/undefined, keep the previous state (don't update cache)
-  }, [workbenchData]);
+    //If workbenchData is null/undefined, keep the previous state (don't update cache)
+  }, [workbenchData, cachedWorkbenchData]);
+
+  const loadDiffData = async () => {
+    if (!cachedWorkbenchData || !cachedWorkbenchData.git_info.target_branch) {
+      return;
+    }
+
+    setIsDiffLoading(true);
+    setDiffLoadError(null);
+    try {
+      const response = await taskApis.getBranchDiff({
+        git_repo: cachedWorkbenchData.repository,
+        source_branch: cachedWorkbenchData.git_info.source_branch,
+        target_branch: cachedWorkbenchData.git_info.target_branch,
+        type: cachedWorkbenchData.git_type || 'github',
+        git_domain: cachedWorkbenchData.git_domain || 'github.com',
+      });
+      setDiffData(response);
+      setDiffLoadError(null);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error('Failed to load diff data:', errorMessage);
+      setDiffLoadError(errorMessage);
+      // Don't set diffData - let error state prevent retry
+    } finally {
+      setIsDiffLoading(false);
+    }
+  };
+
+  // Auto-load diff data when task is completed
+  // Only load once per task - prevent infinite retry on error
+  useEffect(() => {
+    if (
+      cachedWorkbenchData?.status === 'completed' &&
+      cachedWorkbenchData.git_info.target_branch &&
+      !diffData &&
+      !isDiffLoading &&
+      !diffLoadError // Don't retry if there was an error
+    ) {
+      loadDiffData();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    cachedWorkbenchData?.status,
+    cachedWorkbenchData?.git_info.target_branch,
+    diffData,
+    isDiffLoading,
+    diffLoadError,
+  ]);
 
   // Use cached data for rendering
   const displayData = cachedWorkbenchData;
+
+  // Check if we should show diff data
+  const shouldShowDiffData = () => {
+    return (
+      displayData?.status === 'completed' &&
+      diffData &&
+      !isDiffLoading &&
+      !diffLoadError &&
+      diffData.files &&
+      diffData.files.length > 0
+    );
+  };
 
   const navigation = [
     {
@@ -142,7 +226,9 @@ export default function Workbench({
       name: t('workbench.files_changed'),
       value: 'files' as const,
       current: activeTab === 'files',
-      badge: displayData?.file_changes?.length || 0,
+      badge: shouldShowDiffData()
+        ? diffData?.files?.length || 0
+        : displayData?.file_changes?.length || 0,
     },
   ];
 
@@ -267,10 +353,24 @@ export default function Workbench({
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto max-w-7xl px-2 pt-4 pb-2 sm:px-3 lg:px-4">
                 {!displayData ? (
-                  // Loading state with animation
-                  <div className="flex flex-col items-center justify-center h-64 space-y-4">
-                    <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-                    <p className="text-text-muted">{t('workbench.waiting_result')}</p>
+                  // Loading state with animation - now showing task title if available
+                  <div className="space-y-6">
+                    {/* Task Title Section - shown even during loading */}
+                    {(taskTitle || taskNumber) && (
+                      <div className="flex items-baseline gap-2">
+                        <h2 className="text-lg font-semibold text-text-primary">
+                          {taskTitle || ''}
+                        </h2>
+                        <span className="text-sm text-text-muted">
+                          {taskNumber || ''}
+                        </span>
+                      </div>
+                    )}
+                    {/* Loading indicator */}
+                    <div className="flex flex-col items-center justify-center h-64 space-y-4">
+                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+                      <p className="text-text-muted">{t('workbench.waiting_result')}</p>
+                    </div>
                   </div>
                 ) : activeTab === 'overview' ? (
                   <div className="space-y-6">
@@ -487,123 +587,111 @@ export default function Workbench({
                       </Disclosure>
                     )}
                   </div>
-                ) : (
-                  // Files Changed Tab
-                  <div className="space-y-2">
-                    {displayData?.file_changes && displayData.file_changes.length > 0 ? (
-                      displayData.file_changes.map((fileChange: FileChange, index: number) => {
-                        const totalChanges = fileChange.added_lines + fileChange.removed_lines;
-                        const addedPercent =
-                          totalChanges > 0 ? (fileChange.added_lines / totalChanges) * 100 : 0;
-                        const removedPercent =
-                          totalChanges > 0 ? (fileChange.removed_lines / totalChanges) * 100 : 0;
-
-                        return (
-                          <div
-                            key={index}
-                            className="rounded-lg border border-border bg-surface hover:bg-muted/50 transition-colors"
+              ) : (
+                // Files Changed Tab - with integrated diff support
+                <>
+                  {isDiffLoading ? (
+                    // Loading diff data
+                    <div className="flex items-center justify-center h-64">
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                      <span className="ml-3 text-text-muted">{t('workbench.loading_diff')}</span>
+                    </div>
+                  ) : shouldShowDiffData() ? (
+                    // Show diff data with expand/collapse
+                    <DiffViewer
+                      diffData={diffData}
+                      isLoading={false}
+                      gitType={displayData?.git_type || 'github'}
+                      showDiffContent={true}
+                    />
+                  ) : displayData?.file_changes && displayData.file_changes.length > 0 ? (
+                    // Show simple file changes without diff content, with error indicator if present
+                    <div className="relative">
+                      {diffLoadError && (
+                        <div className="absolute top-0 right-0 z-10 p-2">
+                          <button
+                            onClick={() => setShowErrorDialog(true)}
+                            className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
+                            title={t('workbench.view_error_details')}
                           >
-                            <div className="px-4 py-3 flex items-center justify-between">
-                              <div className="flex items-center gap-3 flex-1 min-w-0">
-                                {/* File path */}
-                                <div className="flex-1 min-w-0">
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-sm font-mono text-text-primary truncate">
-                                      {fileChange.new_path}
-                                    </span>
-                                    {fileChange.new_file && (
-                                      <span className="inline-flex items-center rounded-md bg-green-50 px-2 py-0.5 text-xs font-medium text-green-700 ring-1 ring-inset ring-green-600/20">
-                                        {t('workbench.file_status.new')}
-                                      </span>
-                                    )}
-                                    {fileChange.deleted_file && (
-                                      <span className="inline-flex items-center rounded-md bg-red-50 px-2 py-0.5 text-xs font-medium text-red-700 ring-1 ring-inset ring-red-600/20">
-                                        {t('workbench.file_status.deleted')}
-                                      </span>
-                                    )}
-                                    {fileChange.renamed_file && (
-                                      <span className="inline-flex items-center rounded-md bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700 ring-1 ring-inset ring-blue-600/20">
-                                        {t('workbench.file_status.renamed')}
-                                      </span>
-                                    )}
-                                  </div>
-                                </div>
-
-                                {/* Stats */}
-                                <div className="flex items-center gap-3 flex-shrink-0">
-                                  {/* Added/Removed lines */}
-                                  <div className="flex items-center gap-2 text-sm font-mono">
-                                    {fileChange.added_lines > 0 && (
-                                      <span className="text-green-600">
-                                        +{fileChange.added_lines}
-                                      </span>
-                                    )}
-                                    {fileChange.removed_lines > 0 && (
-                                      <span className="text-red-600">
-                                        -{fileChange.removed_lines}
-                                      </span>
-                                    )}
-                                  </div>
-
-                                  {/* Visual bar */}
-                                  <div className="flex items-center gap-0.5 w-20">
-                                    {totalChanges > 0 && (
-                                      <>
-                                        {/* Green bars for additions */}
-                                        {Array.from({ length: Math.ceil(addedPercent / 20) }).map(
-                                          (_, i) => (
-                                            <div
-                                              key={`add-${i}`}
-                                              className="h-2 w-2 rounded-sm bg-green-500"
-                                            />
-                                          )
-                                        )}
-                                        {/* Red bars for deletions */}
-                                        {Array.from({ length: Math.ceil(removedPercent / 20) }).map(
-                                          (_, i) => (
-                                            <div
-                                              key={`del-${i}`}
-                                              className="h-2 w-2 rounded-sm bg-red-500"
-                                            />
-                                          )
-                                        )}
-                                        {/* Gray bars to fill remaining space */}
-                                        {Array.from({
-                                          length: Math.max(
-                                            0,
-                                            5 -
-                                              Math.ceil(addedPercent / 20) -
-                                              Math.ceil(removedPercent / 20)
-                                          ),
-                                        }).map((_, i) => (
-                                          <div
-                                            key={`empty-${i}`}
-                                            className="h-2 w-2 rounded-sm bg-border"
-                                          />
-                                        ))}
-                                      </>
-                                    )}
-                                  </div>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="rounded-lg border border-border bg-surface p-8 text-center">
-                        <p className="text-text-muted">{t('workbench.no_file_changes')}</p>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
+                            <ExclamationTriangleIcon className="w-5 h-5" />
+                          </button>
+                        </div>
+                      )}
+                      <DiffViewer
+                        diffData={null}
+                        isLoading={false}
+                        gitType={displayData?.git_type || 'github'}
+                        fileChanges={displayData.file_changes}
+                        showDiffContent={false}
+                      />
+                    </div>
+                  ) : (
+                    // No changes found
+                    <div className="rounded-lg border border-border bg-surface p-8 text-center">
+                      <p className="text-text-muted">
+                        {displayData?.status === 'completed'
+                          ? t('workbench.no_changes_found')
+                          : t('workbench.no_file_changes')}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
 
-      {/* Toggle button - fixed position - hidden on mobile */}
-    </>
-  );
+    {/* Error Details Dialog */}
+    <Dialog open={showErrorDialog} onClose={() => setShowErrorDialog(false)} className="relative z-50">
+      <div className="fixed inset-0 bg-black/30" aria-hidden="true" />
+      <div className="fixed inset-0 flex items-center justify-center p-4">
+        <DialogPanel className="mx-auto max-w-2xl w-full rounded-lg bg-surface border border-border shadow-xl">
+          <div className="flex items-center justify-between border-b border-border px-6 py-4">
+            <DialogTitle className="text-lg font-semibold text-text-primary flex items-center gap-2">
+              <ExclamationTriangleIcon className="w-5 h-5 text-red-600" />
+              {t('workbench.error_details')}
+            </DialogTitle>
+            <button
+              onClick={() => setShowErrorDialog(false)}
+              className="rounded-md p-1 hover:bg-muted transition-colors"
+            >
+              <XMarkIcon className="w-5 h-5 text-text-muted" />
+            </button>
+          </div>
+          <div className="px-6 py-4">
+            <div className="rounded-md bg-red-50 dark:bg-red-900/10 border border-red-200 dark:border-red-800 p-4">
+              <pre className="text-sm text-red-800 dark:text-red-200 whitespace-pre-wrap font-mono overflow-x-auto">
+                {diffLoadError}
+              </pre>
+            </div>
+          </div>
+          <div className="flex justify-end gap-3 border-t border-border px-6 py-4">
+            <button
+              onClick={() => setShowErrorDialog(false)}
+              className="px-4 py-2 text-sm font-medium text-text-primary bg-muted hover:bg-muted/80 rounded-md transition-colors"
+            >
+              {t('workbench.close_panel')}
+            </button>
+            <button
+              onClick={() => {
+                setShowErrorDialog(false);
+                setDiffLoadError(null);
+                setDiffData(null);
+                loadDiffData();
+              }}
+              className="px-4 py-2 text-sm font-medium text-white bg-primary hover:bg-primary/90 rounded-md transition-colors"
+            >
+              {t('workbench.retry')}
+            </button>
+          </div>
+        </DialogPanel>
+      </div>
+    </Dialog>
+
+    {/* Toggle button - fixed position - hidden on mobile */}
+  </>
+);
 }

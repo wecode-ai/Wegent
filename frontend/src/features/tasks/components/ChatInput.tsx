@@ -7,6 +7,7 @@
 import React, { useState } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 
 interface ChatInputProps {
   message: string;
@@ -27,6 +28,7 @@ export default function ChatInput({
   const { t } = useTranslation('common');
   const placeholderKey = taskType === 'chat' ? 'chat.placeholder_chat' : 'chat.placeholder_code';
   const [isComposing, setIsComposing] = useState(false);
+  const isMobile = useIsMobile();
 
   const handleCompositionStart = () => {
     setIsComposing(true);
@@ -37,6 +39,12 @@ export default function ChatInput({
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
+    // Mobile: Allow Enter to create new lines, users send via button
+    if (isMobile) {
+      return;
+    }
+
+    // Desktop: Enter sends message, Shift+Enter creates new line
     if (e.key === 'Enter' && !e.shiftKey && !disabled && !isComposing) {
       e.preventDefault();
       handleSendMessage();
@@ -56,8 +64,8 @@ export default function ChatInput({
         placeholder={t(placeholderKey)}
         className={`w-full p-3 bg-transparent custom-scrollbar text-text-primary text-base placeholder:text-text-muted placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         disabled={disabled}
-        minRows={3}
-        maxRows={8}
+        minRows={isMobile ? 2 : 3}
+        maxRows={isMobile ? 6 : 8}
         style={{ resize: 'none', overflow: 'auto' }}
       />
     </div>

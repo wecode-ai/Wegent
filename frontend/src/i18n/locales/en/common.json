@@ -242,12 +242,26 @@
     "no_search_results": "No matching tasks",
     "copy_task_id": "Copy TaskId",
     "delete_task": "Delete Task",
-    "searching": "Searching..."
+    "searching": "Searching...",
+    "open_from": "<> Code",
+    "open_from_vscode": "VSCode",
+    "open_from_git": "Git"
   },
   "settings": {
     "integrations": "Integrations",
     "bot": "Bot",
-    "team": "Team"
+    "team": "Team",
+    "sections": {
+      "general": "General"
+    }
+  },
+  "notifications": {
+    "enable": "Enable Browser Notifications",
+    "enable_description": "Get notified when tasks are completed or failed",
+    "permission_denied": "Notification permission denied. Please enable it in browser settings.",
+    "not_supported": "Browser notifications are not supported in this browser.",
+    "enable_success": "Browser notifications enabled successfully",
+    "disable_success": "Browser notifications disabled"
   },
   "guide": {
     "title": "Welcome",

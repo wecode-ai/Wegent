@@ -242,12 +242,26 @@
     "no_search_results": "没有匹配的任务",
     "copy_task_id": "复制任务ID",
     "delete_task": "删除任务",
-    "searching": "搜索中..."
+    "searching": "搜索中...",
+    "open_from": "<> Code",
+    "open_from_vscode": "VSCode",
+    "open_from_git": "Git"
   },
   "settings": {
     "integrations": "集成",
     "bot": "机器人",
-    "team": "团队"
+    "team": "团队",
+    "sections": {
+      "general": "通用"
+    }
+  },
+  "notifications": {
+    "enable": "启用浏览器通知",
+    "enable_description": "当任务完成或失败时接收通知",
+    "permission_denied": "通知权限被拒绝。请在浏览器设置中启用。",
+    "not_supported": "此浏览器不支持浏览器通知。",
+    "enable_success": "浏览器通知已成功启用",
+    "disable_success": "浏览器通知已禁用"
   },
   "guide": {
     "title": "欢迎",

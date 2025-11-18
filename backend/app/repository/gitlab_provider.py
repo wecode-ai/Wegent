@@ -16,6 +16,7 @@ from app.models.user import User
 from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
+from shared.utils.crypto import decrypt_git_token
 
 
 class GitLabProvider(RepositoryProvider):
@@ -28,6 +29,10 @@ class GitLabProvider(RepositoryProvider):
         self.api_base_url = "https://gitlab.com/api/v4"
         self.domain = "gitlab.com"
         self.type = "gitlab"
+
+    def _decrypt_token(self, encrypted_token: str) -> str:
+        """Decrypt git token before use"""
+        return decrypt_git_token(encrypted_token) or encrypted_token
     
     def _get_git_infos(self, user: User, git_domain: Optional[str] = None) -> List[Dict[str, Any]]:
         """
@@ -85,12 +90,118 @@ class GitLabProvider(RepositoryProvider):
         """Get API base URL based on git domain"""
         if not git_domain or git_domain == self.domain:
             return self.api_base_url
-        
+
         if git_domain == "gitlab.com":
             return "https://gitlab.com/api/v4"
         else:
             # Custom GitLab domain
             return f"https://{git_domain}/api/v4"
+
+    def _make_request_with_auth_retry(
+        self,
+        method: str,
+        url: str,
+        token: str,
+        params: Dict[str, Any] = None,
+        **kwargs
+    ) -> requests.Response:
+        """
+        Make HTTP request with authentication retry logic.
+        First tries Bearer token, if 401 then retries with Private-Token.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL
+            token: GitLab token
+            params: Query parameters
+            **kwargs: Additional arguments for requests
+
+        Returns:
+            Response object
+
+        Raises:
+            requests.exceptions.RequestException: If both authentication methods fail
+        """
+        # Try Bearer token first (for OAuth tokens)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+
+        try:
+            response = requests.request(method, url, headers=headers, params=params, **kwargs)
+            if response.status_code != 401:
+                response.raise_for_status()
+                return response
+        except requests.exceptions.RequestException as e:
+            if not (hasattr(e, 'response') and e.response and e.response.status_code == 401):
+                raise
+
+        # If 401, retry with Private-Token (for Personal Access Tokens)
+        self.logger.info(f"Bearer auth failed with 401, retrying with Private-Token")
+        headers = {
+            "Private-Token": token,
+            "Accept": "application/json"
+        }
+
+        response = requests.request(method, url, headers=headers, params=params, **kwargs)
+        response.raise_for_status()
+        return response
+
+    async def _make_request_with_auth_retry_async(
+        self,
+        method: str,
+        url: str,
+        token: str,
+        params: Dict[str, Any] = None,
+        **kwargs
+    ) -> requests.Response:
+        """
+        Async version of _make_request_with_auth_retry.
+        Make HTTP request with authentication retry logic in async context.
+
+        Args:
+            method: HTTP method (GET, POST, etc.)
+            url: Request URL
+            token: GitLab token
+            params: Query parameters
+            **kwargs: Additional arguments for requests
+
+        Returns:
+            Response object
+
+        Raises:
+            requests.exceptions.RequestException: If both authentication methods fail
+        """
+        # Try Bearer token first (for OAuth tokens)
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "Accept": "application/json"
+        }
+
+        try:
+            response = await asyncio.to_thread(
+                requests.request, method, url, headers=headers, params=params, **kwargs
+            )
+            if response.status_code != 401:
+                response.raise_for_status()
+                return response
+        except requests.exceptions.RequestException as e:
+            if not (hasattr(e, 'response') and e.response and e.response.status_code == 401):
+                raise
+
+        # If 401, retry with Private-Token (for Personal Access Tokens)
+        self.logger.info(f"Bearer auth failed with 401, retrying with Private-Token")
+        headers = {
+            "Private-Token": token,
+            "Accept": "application/json"
+        }
+
+        response = await asyncio.to_thread(
+            requests.request, method, url, headers=headers, params=params, **kwargs
+        )
+        response.raise_for_status()
+        return response
 
     async def get_repositories(
         self,
@@ -123,6 +234,9 @@ class GitLabProvider(RepositoryProvider):
                 # skip empty token entries
                 continue
 
+            # Decrypt the token before use
+            git_token = self._decrypt_token(git_token)
+
             # Get API base URL based on git domain
             api_base_url = self._get_api_base_url(git_domain)
 
@@ -146,14 +260,10 @@ class GitLabProvider(RepositoryProvider):
                 continue
 
             try:
-                headers = {
-                    "Authorization": f"Bearer {git_token}",
-                    "Accept": "application/json"
-                }
-
-                response = requests.get(
-                    f"{api_base_url}/projects",
-                    headers=headers,
+                response = self._make_request_with_auth_retry(
+                    method="GET",
+                    url=f"{api_base_url}/projects",
+                    token=git_token,
                     params={
                         "per_page": limit,
                         "page": page,
@@ -161,7 +271,6 @@ class GitLabProvider(RepositoryProvider):
                         "membership": "true"
                     }
                 )
-                response.raise_for_status()
 
                 repos = response.json()
                
@@ -212,7 +321,10 @@ class GitLabProvider(RepositoryProvider):
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
         git_domain = git_info["git_domain"]
-        
+
+        # Decrypt the token before use
+        git_token = self._decrypt_token(git_token)
+
         if not git_token:
             raise HTTPException(
                 status_code=400,
@@ -223,28 +335,23 @@ class GitLabProvider(RepositoryProvider):
         api_base_url = self._get_api_base_url(git_domain)
 
         try:
-            headers = {
-                "Authorization": f"Bearer {git_token}",
-                "Accept": "application/json"
-            }
-            
             # First, get the project ID from the repo name
             encoded_repo_name = repo_name.replace("/", "%2F")
-            
+
             all_branches = []
             page = 1
             per_page = 100
-            
+
             while True:
-                response = requests.get(
-                    f"{api_base_url}/projects/{encoded_repo_name}/repository/branches",
-                    headers=headers,
+                response = self._make_request_with_auth_retry(
+                    method="GET",
+                    url=f"{api_base_url}/projects/{encoded_repo_name}/repository/branches",
+                    token=git_token,
                     params={
                         "per_page": per_page,
                         "page": page
                     }
                 )
-                response.raise_for_status()
                 
                 branches = response.json()
                 if not branches:
@@ -303,27 +410,17 @@ class GitLabProvider(RepositoryProvider):
         # Use custom domain if provided, otherwise use default
         api_base_url = self._get_api_base_url(git_domain)
 
+        decrypt_token = self.decrypt_token(token)
+
         try:
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "Accept": "application/json"
-            }
-            
-            response = requests.get(
-                f"{api_base_url}/user",
-                headers=headers
+            response = self._make_request_with_auth_retry(
+                method="GET",
+                url=f"{api_base_url}/user",
+                token=decrypt_token
             )
-            
-            if response.status_code == 401:
-                self.logger.warning(f"GitLab token validation failed: 401 Unauthorizedm, git_domain: {git_domain}, token: {token}")
-                return {
-                    "valid": False,
-                }
-            
-            response.raise_for_status()
-            
+
             user_data = response.json()
-            
+
             return {
                 "valid": True,
                 "user": {
@@ -334,14 +431,15 @@ class GitLabProvider(RepositoryProvider):
                     "email": user_data.get("email")
                 }
             }
-            
+
         except requests.exceptions.RequestException as e:
             self.logger.error(f"GitLab API request failed: {str(e)}")
-            if "401" in str(e):
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid GitLab token"
-                )
+            # If both auth methods failed with 401, token is invalid
+            if hasattr(e, 'response') and e.response and e.response.status_code == 401:
+                self.logger.warning(f"GitLab token validation failed: 401 Unauthorized, git_domain: {git_domain}")
+                return {
+                    "valid": False,
+                }
             raise HTTPException(
                 status_code=502,
                 detail=f"GitLab API error: {str(e)}"
@@ -388,6 +486,9 @@ class GitLabProvider(RepositoryProvider):
             if not git_token:
                 # skip empty token entries
                 continue
+
+            # Decrypt the token before use
+            git_token = self._decrypt_token(git_token)
 
             # 1) Try to get from full cache first (per domain)
             full_cached = await self._get_all_repositories_from_cache(user, git_domain)
@@ -485,13 +586,10 @@ class GitLabProvider(RepositoryProvider):
             # 5) Fallback: fetch first page for this domain only (avoid cross-domain aggregation)
             try:
                 api_base_url = self._get_api_base_url(git_domain)
-                headers = {
-                    "Authorization": f"Bearer {git_token}",
-                    "Accept": "application/json"
-                }
-                response = requests.get(
-                    f"{api_base_url}/projects",
-                    headers=headers,
+                response = self._make_request_with_auth_retry(
+                    method="GET",
+                    url=f"{api_base_url}/projects",
+                    token=git_token,
                     params={
                         "per_page": 100,
                         "page": 1,
@@ -499,7 +597,6 @@ class GitLabProvider(RepositoryProvider):
                         "membership": "true"
                     }
                 )
-                response.raise_for_status()
                 repos = response.json()
                 mapped = [
                     {
@@ -559,32 +656,22 @@ class GitLabProvider(RepositoryProvider):
             return
         
         await cache_manager.set_building(user.id, git_domain, True)
-        
+
         try:
-            headers = {
-                "Authorization": f"Bearer {git_token}",
-                "Accept": "application/json"
-            }
-            
             # Get API base URL based on git domain
             api_base_url = self._get_api_base_url(git_domain)
-            
-            headers = {
-                "Authorization": f"Bearer {git_token}",
-                "Accept": "application/json"
-            }
-            
+
             all_repos = []
             page = 1
             per_page = 100
-            
+
             self.logger.info(f"Fetching gitlab all repositories for user {user.user_name}")
-            
+
             while True:
-                response = await asyncio.to_thread(
-                    requests.get,
-                    f"{api_base_url}/projects",
-                    headers=headers,
+                response = await self._make_request_with_auth_retry_async(
+                    method="GET",
+                    url=f"{api_base_url}/projects",
+                    token=git_token,
                     params={
                         "per_page": per_page,
                         "page": page,
@@ -592,7 +679,6 @@ class GitLabProvider(RepositoryProvider):
                         "membership": "true"
                     }
                 )
-                response.raise_for_status()
                 
                 repos = response.json()
                 if not repos:
@@ -657,4 +743,124 @@ class GitLabProvider(RepositoryProvider):
             
         cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
         return await cache_manager.get(cache_key)
+
+    async def get_branch_diff(
+        self,
+        user: User,
+        repo_name: str,
+        source_branch: str,
+        target_branch: str,
+        git_domain: str
+    ) -> Dict[str, Any]:
+        """
+        Get diff between two branches for a GitLab repository
+
+        Args:
+            user: User object
+            repo_name: Repository name
+            source_branch: Source branch name
+            target_branch: Target branch name
+            git_domain: Git domain
+
+        Returns:
+            Diff information including files changed and diff content
+        """
+        git_info = self._pick_git_info(user, git_domain)
+        git_token = git_info["git_token"]
+
+        if not git_token:
+            raise HTTPException(
+                status_code=400,
+                detail="Git token not configured"
+            )
+
+        # Get API base URL based on git domain
+        api_base_url = self._get_api_base_url(git_domain)
+
+        try:
+            # Get repository ID first (GitLab API uses project ID)
+            encoded_repo_name = requests.utils.quote(repo_name, safe='')
+            repo_response = self._make_request_with_auth_retry(
+                method="GET",
+                url=f"{api_base_url}/projects/{encoded_repo_name}",
+                token=git_token
+            )
+            repo_data = repo_response.json()
+            project_id = repo_data["id"]
+
+            # Get compare API response
+            response = self._make_request_with_auth_retry(
+                method="GET",
+                url=f"{api_base_url}/projects/{project_id}/repository/compare",
+                token=git_token,
+                params={
+                    "from": target_branch,
+                    "to": source_branch
+                }
+            )
+
+            compare_data = response.json()
+            self.logger.info(f"Response: {compare_data}")
+
+            # Process commits
+            commits = []
+            for commit in compare_data.get("commits", []):
+                commit_info = {
+                    "id": commit.get("id", ""),
+                    "short_id": commit.get("short_id", ""),
+                    "title": commit.get("title", ""),
+                    "message": commit.get("message", ""),
+                    "author_name": commit.get("author_name", ""),
+                    "author_email": commit.get("author_email", ""),
+                    "created_at": commit.get("created_at", ""),
+                }
+                commits.append(commit_info)
+
+            # Process diffs and files - convert to GitHub-compatible format
+            files = []
+            for diff in compare_data.get("diffs", []):
+                # Determine status based on GitLab diff flags
+                status = "modified"
+                if diff.get("new_file", False):
+                    status = "added"
+                elif diff.get("deleted_file", False):
+                    status = "removed"
+                elif diff.get("renamed_file", False):
+                    status = "renamed"
+                
+                # Parse diff to count additions and deletions (simplified)
+                diff_content = diff.get("diff", "")
+                additions = diff_content.count("\n+") if diff_content else 0
+                deletions = diff_content.count("\n-") if diff_content else 0
+                
+                file_info = {
+                    "filename": diff.get("new_path", ""),
+                    "status": status,
+                    "additions": additions,
+                    "deletions": deletions,
+                    "changes": additions + deletions,
+                    "patch": diff_content,
+                    "previous_filename": diff.get("old_path", "") if diff.get("renamed_file", False) else "",
+                    "blob_url": "",  # GitLab doesn't provide this in compare API
+                    "raw_url": "",  # GitLab doesn't provide this in compare API
+                    "contents_url": "",  # GitLab doesn't provide this in compare API
+                }
+                files.append(file_info)
+
+            return {
+                "status": "ahead" if len(commits) > 0 else "identical",
+                "ahead_by": len(commits),
+                "behind_by": 0,  # GitLab compare API doesn't provide this information
+                "total_commits": len(commits),
+                "files": files,
+                "diff_url": "",  # GitLab doesn't provide this in compare API
+                "html_url": compare_data.get("web_url", ""),
+                "permalink_url": compare_data.get("web_url", ""),
+            }
+
+        except requests.exceptions.RequestException as e:
+            raise HTTPException(
+                status_code=502,
+                detail=f"GitLab API error: {str(e)}"
+            )
     

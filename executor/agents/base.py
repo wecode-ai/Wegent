@@ -15,6 +15,7 @@ from executor.config import config
 from shared.status import TaskStatus
 from shared.logger import setup_logger
 from executor.callback.callback_client import CallbackClient
+from shared.utils.crypto import is_token_encrypted, decrypt_git_token
 
 logger = setup_logger("agent_base")
 
@@ -150,6 +151,11 @@ class Agent:
         
         user_config = self.task_data.get("user")
         git_token = user_config.get("git_token")
+        # Handle encrypted tokens
+        if git_token and is_token_encrypted(git_token):
+            logger.debug(f"Agent[{self.get_name()}][{self.task_id}] Decrypting git token")
+            git_token = decrypt_git_token(git_token)
+
         username = user_config.get("user_name")
         branch_name = self.task_data.get("branch_name")
         repo_name = git_util.get_repo_name_from_url(git_url)
