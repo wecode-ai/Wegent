@@ -8,7 +8,12 @@ import React, { createContext, useContext, useState, useEffect, ReactNode, useRe
 import { Task, TaskDetail, TaskStatus } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
 import { notifyTaskCompletion } from '@/utils/notification';
-import { markTaskAsViewed, getUnreadCount, markAllTasksAsViewed } from '@/utils/taskViewStatus';
+import {
+  markTaskAsViewed,
+  getUnreadCount,
+  markAllTasksAsViewed,
+  initializeTaskViewStatus,
+} from '@/utils/taskViewStatus';
 
 type TaskContextType = {
   tasks: Task[];
@@ -91,6 +96,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setLoadedPages(result.pages || []);
     setHasMore(result.hasMore);
     setTaskLoading(false);
+
+    // Initialize task view status on first load (if not already initialized)
+    if (result.items.length > 0) {
+      initializeTaskViewStatus(result.items);
+    }
   };
 
   // Monitor task status changes and send notifications

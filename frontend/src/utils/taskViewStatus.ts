@@ -5,6 +5,7 @@
 import { Task, TaskStatus, TaskViewStatus, TaskViewStatusMap } from '@/types/api';
 
 const STORAGE_KEY = 'task_view_status';
+const INIT_FLAG_KEY = 'task_view_status_initialized';
 const MAX_RECORDS = 5000;
 
 /**
@@ -119,4 +120,64 @@ export function markAllTasksAsViewed(tasks: Task[]): void {
  */
 export function getUnreadCount(tasks: Task[]): number {
   return tasks.filter(isTaskUnread).length;
+}
+
+/**
+ * Check if the system has been initialized
+ */
+function isInitialized(): boolean {
+  if (typeof window === 'undefined') return true;
+
+  try {
+    return localStorage.getItem(INIT_FLAG_KEY) === 'true';
+  } catch (error) {
+    console.error('Failed to check initialization status:', error);
+    return true; // Assume initialized on error to avoid mass-marking
+  }
+}
+
+/**
+ * Mark system as initialized
+ */
+function markAsInitialized(): void {
+  if (typeof window === 'undefined') return;
+
+  try {
+    localStorage.setItem(INIT_FLAG_KEY, 'true');
+  } catch (error) {
+    console.error('Failed to mark as initialized:', error);
+  }
+}
+
+/**
+ * Initialize task view status for first-time users or after cache clear
+ * Auto-mark all existing terminal-state tasks as viewed
+ */
+export function initializeTaskViewStatus(tasks: Task[]): void {
+  // Skip if already initialized
+  if (isInitialized()) return;
+
+  // Mark all existing terminal-state tasks as viewed
+  const statusMap = getTaskViewStatusMap();
+  let hasChanges = false;
+
+  tasks.forEach(task => {
+    if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) {
+      // Use task completion/update time as viewed time to avoid showing as unread
+      const viewedAt = task.completed_at || task.updated_at;
+      statusMap[task.id] = {
+        viewedAt,
+        status: task.status,
+      };
+      hasChanges = true;
+    }
+  });
+
+  if (hasChanges) {
+    const prunedMap = pruneOldViewStatus(statusMap);
+    saveTaskViewStatusMap(prunedMap);
+  }
+
+  // Mark as initialized
+  markAsInitialized();
 }
