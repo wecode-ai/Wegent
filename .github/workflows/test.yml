@@ -49,6 +49,8 @@ jobs:
 
       - name: Run backend tests
         working-directory: ./backend
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest tests/ --cov=app --cov-report=xml --cov-report=term-missing -v
 
@@ -89,6 +91,8 @@ jobs:
 
       - name: Run executor tests
         working-directory: ./executor
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest tests/ --cov=agents --cov-report=xml --cov-report=term-missing -v
 
@@ -129,6 +133,8 @@ jobs:
 
       - name: Run executor manager tests
         working-directory: ./executor_manager
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest tests/ --cov=executors --cov-report=xml --cov-report=term-missing -v
 
