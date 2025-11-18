@@ -4,8 +4,12 @@
 
 import pytest
 import os
+import sys
 
-from shared.utils.crypto import (
+# Add shared directory to path for imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
+
+from utils.crypto import (
     encrypt_git_token,
     decrypt_git_token,
     is_token_encrypted
