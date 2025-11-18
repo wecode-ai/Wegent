@@ -135,6 +135,7 @@ jobs:
         working-directory: ./executor_manager
         env:
           PYTHONPATH: ${{ github.workspace }}
+          COVERAGE_CORE: sysmon
         run: |
           pytest tests/ --cov=executors --cov-report=xml --cov-report=term-missing -v
 
