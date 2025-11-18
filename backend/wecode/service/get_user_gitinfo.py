@@ -25,11 +25,11 @@ class GetUserGitInfo:
             "gitlab.weibo.cn"
         ]
     
-    async def fetch_git_tokens(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
+    def fetch_git_tokens(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
         """Fetch git tokens from external API"""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
+            with httpx.Client() as client:
+                response = client.get(
                     self.git_token_api_url,
                     params={"user": username, "cluster": cluster},
                     headers={"Authorization": self.git_token_auth},
@@ -45,7 +45,7 @@ class GetUserGitInfo:
                     return []
                 
                 git_data = data["data"]["data"]
-                return await self._process_git_tokens(git_data)
+                return self._process_git_tokens(git_data)
                 
         except httpx.RequestError as e:
             self.logger.error(f"Failed to request git token: {str(e)}")
@@ -54,7 +54,7 @@ class GetUserGitInfo:
             self.logger.error(f"Failed to process git token data: {str(e)}")
             return []
     
-    async def _process_git_tokens(self, git_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _process_git_tokens(self, git_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Process and validate git tokens from API response"""
         validated_git_info = []
         
@@ -77,7 +77,7 @@ class GetUserGitInfo:
                 }
                 
                 # Validate token
-                await self._validate_git_token(git_info_item)
+                self._validate_git_token(git_info_item)
 
                 validated_git_info.append(git_info_item)
                     
@@ -87,7 +87,7 @@ class GetUserGitInfo:
         
         return validated_git_info
     
-    async def _validate_git_token(self, git_info_item: Dict[str, Any]) -> bool:
+    def _validate_git_token(self, git_info_item: Dict[str, Any]) -> bool:
         """Validate git token using appropriate provider"""
         try:
             provider = GitLabProvider()
@@ -112,19 +112,19 @@ class GetUserGitInfo:
             self.logger.error(f"Error occurred while validating git token: {str(e)}")
             return False
     
-    async def get_and_validate_git_info(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
+    def get_and_validate_git_info(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
         """Main method to get and validate git info"""
         self.logger.info(f"Start fetching user git token: username={username}")
-        git_info = await self.fetch_git_tokens(username, cluster)
+        git_info = self.fetch_git_tokens(username, cluster)
         self.logger.info(f"Completed fetching and validating git tokens: count={len(git_info)}")
         return git_info
 
-    async def get_real_git_tokens(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
+    def get_real_git_tokens(self, username: str, cluster: str = "cn") -> List[Dict[str, Any]]:
         """Get real git tokens for display purposes (without validation)"""
         """This method fetches real tokens for display without storing them"""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(
+            with httpx.Client() as client:
+                response = client.get(
                     self.git_token_api_url,
                     params={"user": username, "cluster": cluster},
                     headers={"Authorization": self.git_token_auth},

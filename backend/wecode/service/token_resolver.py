@@ -27,7 +27,7 @@ class TokenResolver:
             "gitlab.com",
         ]
 
-    async def resolve_git_token(
+    def resolve_git_token(
         self,
         username: str,
         git_domain: str,
@@ -43,8 +43,8 @@ class TokenResolver:
             return fallback_token
 
         try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.get(
+            with httpx.Client() as client:
+                resp = client.get(
                     self.git_token_api_url,
                     params={"user": username, "cluster": cluster},
                     headers={"Authorization": self.git_token_auth},

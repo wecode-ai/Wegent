@@ -30,13 +30,13 @@ def _needs_replace(item: Dict[str, Any]) -> bool:
     return item.get("git_token") == "***"
 
 
-async def _replace_placeholders(current_user: Any) -> Any:
+def _replace_placeholders(current_user: Any) -> Any:
     """Replace '***' with real tokens for current_user.git_info"""
     if current_user is None or not getattr(current_user, "git_info", None):
         return current_user
 
     try:
-        real_git_info: List[Dict[str, Any]] = await get_user_gitinfo.get_real_git_tokens(current_user.user_name)
+        real_git_info: List[Dict[str, Any]] = get_user_gitinfo.get_real_git_tokens(current_user.user_name)
         updated_git_info: List[Dict[str, Any]] = []
         for existing_item in current_user.git_info:
             new_item = dict(existing_item)
@@ -60,9 +60,9 @@ def apply_patch() -> None:
         _orig_get_current_user = getattr(security_module, "get_current_user", None)
         if _orig_get_current_user is not None and not getattr(_orig_get_current_user, "_wecode_patched", False):
             @wraps(_orig_get_current_user)
-            async def patched_get_current_user(*args, **kwargs):
+            def patched_get_current_user(*args, **kwargs):
                 user = _orig_get_current_user(*args, **kwargs)
-                return await _replace_placeholders(user)
+                return _replace_placeholders(user)
             setattr(patched_get_current_user, "_wecode_patched", True)
             setattr(security_module, "get_current_user", patched_get_current_user)
 
@@ -80,7 +80,7 @@ def apply_patch() -> None:
                     @wraps(orig_endpoint)
                     async def patched_endpoint(*args, **kwargs):
                         current_user = await orig_endpoint(*args, **kwargs)
-                        return await _replace_placeholders(current_user)
+                        return _replace_placeholders(current_user)
                     setattr(patched_endpoint, "_wecode_patched", True)
                     # Replace route.endpoint so FastAPI uses our wrapper
                     route.endpoint = patched_endpoint
