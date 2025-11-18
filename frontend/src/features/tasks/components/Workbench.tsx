@@ -127,11 +127,38 @@ export default function Workbench({
   const [isDiffLoading, setIsDiffLoading] = useState(false);
   const [diffLoadError, setDiffLoadError] = useState<string | null>(null);
   const [showErrorDialog, setShowErrorDialog] = useState(false);
+  const [loadingStateIndex, setLoadingStateIndex] = useState(0);
+  const [tipIndex, setTipIndex] = useState(0);
   const { theme } = useTheme();
   const { t } = useTranslation('tasks');
 
   // Internal state: cache the latest workbench data
   const [cachedWorkbenchData, setCachedWorkbenchData] = useState<WorkbenchData | null>(null);
+
+  // Use cached data for rendering
+  const displayData = cachedWorkbenchData;
+
+  // Loading state rotation (4 seconds)
+  useEffect(() => {
+    if (!displayData) {
+      const loadingStates = t('workbench.loading_states', { returnObjects: true }) as string[];
+      const interval = setInterval(() => {
+        setLoadingStateIndex(prev => (prev + 1) % loadingStates.length);
+      }, 4000);
+      return () => clearInterval(interval);
+    }
+  }, [displayData, t]);
+
+  // Tips rotation (6 seconds, random)
+  useEffect(() => {
+    if (!displayData) {
+      const tips = t('workbench.tips', { returnObjects: true }) as string[];
+      const interval = setInterval(() => {
+        setTipIndex(Math.floor(Math.random() * tips.length));
+      }, 6000);
+      return () => clearInterval(interval);
+    }
+  }, [displayData, t]);
 
   // Observer pattern: listen to workbenchData changes
   useEffect(() => {
@@ -200,9 +227,6 @@ export default function Workbench({
     isDiffLoading,
     diffLoadError,
   ]);
-
-  // Use cached data for rendering
-  const displayData = cachedWorkbenchData;
 
   // Check if we should show diff data
   const shouldShowDiffData = () => {
@@ -353,7 +377,7 @@ export default function Workbench({
             <div className="flex-1 overflow-y-auto">
               <div className="mx-auto max-w-7xl px-2 pt-4 pb-2 sm:px-3 lg:px-4">
                 {!displayData ? (
-                  // Loading state with animation - now showing task title if available
+                  // Loading state with skeleton screen, progress text, and tips
                   <div className="space-y-6">
                     {/* Task Title Section - shown even during loading */}
                     {(taskTitle || taskNumber) && (
@@ -366,10 +390,43 @@ export default function Workbench({
                         </span>
                       </div>
                     )}
-                    {/* Loading indicator */}
-                    <div className="flex flex-col items-center justify-center h-64 space-y-4">
-                      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
-                      <p className="text-text-muted">{t('workbench.waiting_result')}</p>
+
+                    {/* Skeleton Screen */}
+                    <div className="space-y-6 animate-pulse">
+                      {/* Skeleton: Task Title Bar */}
+                      <div className="h-6 bg-muted rounded-md w-3/5"></div>
+
+                      {/* Skeleton: Status Badge */}
+                      <div className="h-7 bg-muted rounded-full w-1/5"></div>
+
+                      {/* Skeleton: Repository Info Card */}
+                      <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
+                        <div className="h-4 bg-muted rounded-md w-2/5"></div>
+                        <div className="h-4 bg-muted rounded-md w-1/3"></div>
+                      </div>
+
+                      {/* Skeleton: Summary Area */}
+                      <div className="rounded-lg border border-border bg-surface p-4 space-y-3">
+                        <div className="h-4 bg-muted rounded-md w-1/4"></div>
+                        <div className="h-3.5 bg-muted rounded-md w-[90%]"></div>
+                        <div className="h-3.5 bg-muted rounded-md w-[85%]"></div>
+                        <div className="h-3.5 bg-muted rounded-md w-[80%]"></div>
+                      </div>
+                    </div>
+
+                    {/* Progress Text with Icon */}
+                    <div className="flex items-center justify-center gap-3 pt-4 transition-opacity duration-300">
+                      <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary border-t-transparent"></div>
+                      <p className="text-sm text-text-primary">
+                        {(t('workbench.loading_states', { returnObjects: true }) as string[])[loadingStateIndex]}
+                      </p>
+                    </div>
+
+                    {/* Tips */}
+                    <div className="flex items-center justify-center transition-opacity duration-300">
+                      <p className="text-xs text-text-muted text-center">
+                        {(t('workbench.tips', { returnObjects: true }) as string[])[tipIndex]}
+                      </p>
                     </div>
                   </div>
                 ) : activeTab === 'overview' ? (
