@@ -43,6 +43,13 @@ env/
 logs/
 *.log
 
+# Coverage reports
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest_cache/
+
 # Database
 *.db
 *.sqlite3
@@ -63,3 +70,4 @@ Thumbs.db
 # pyenv
 .python-version
 *.tsbuildinfo
+coverage/

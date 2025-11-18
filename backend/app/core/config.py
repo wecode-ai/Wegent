@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 24*60  # 24 hours in minutes
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 7*24*60  # 7 days in minutes
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"
