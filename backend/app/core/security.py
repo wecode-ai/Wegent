@@ -85,11 +85,12 @@ def create_access_token(data: Dict[str, Any], expires_delta: Optional[int] = Non
     Returns:
         Access token
     """
+    from datetime import timezone
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.now() + timedelta(minutes=expires_delta)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=expires_delta)
     else:
-        expire = datetime.now() + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     encoded_jwt = jwt.encode(
         to_encode,
