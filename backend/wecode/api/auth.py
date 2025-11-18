@@ -124,7 +124,7 @@ async def cas_login(
         # Get and validate git token information
         try:
             # Get new gitlab information
-            new_gitlab_info = await get_user_gitinfo.get_and_validate_git_info(user_name)
+            new_gitlab_info = get_user_gitinfo.get_and_validate_git_info(user_name)
             
             # Merge existing git_info (keep non-gitlab information like github)
             merged_git_info = []

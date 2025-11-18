@@ -7,9 +7,7 @@ Monkey-patch GitLabProvider methods to resolve real token at runtime,
 without modifying open-source app/ code. This keeps changes confined
 to wecode directory and adheres to the minimal-intrusion principle.
 """
-
 from typing import Dict, Any, List, Tuple
-import asyncio
 
 try:
     # Import target class from app
@@ -26,7 +24,7 @@ def _is_gitlab_item(item: Dict[str, Any]) -> bool:
     return (item or {}).get("type") == "gitlab"
 
 
-async def _resolve_tokens_for_user(user) -> List[Tuple[Dict[str, Any], str]]:
+def _resolve_tokens_for_user(user) -> List[Tuple[Dict[str, Any], str]]:
     """
     Resolve real tokens for gitlab items in user's git_info when placeholder '***' is present.
     Returns a list of (item_ref, original_token) to allow restoration afterwards.
@@ -36,8 +34,6 @@ async def _resolve_tokens_for_user(user) -> List[Tuple[Dict[str, Any], str]]:
         return restored
 
     # Resolve tokens for gitlab entries with placeholder
-    tasks = []
-    indices = []
     for idx, item in enumerate(user.git_info):
         if not isinstance(item, dict):
             # Some ORM setups may give mutable dict-like objects; convert via copy interface if present
@@ -51,22 +47,16 @@ async def _resolve_tokens_for_user(user) -> List[Tuple[Dict[str, Any], str]]:
         if _is_gitlab_item(d) and d.get("git_token") == "***":
             git_domain = d.get("git_domain", "")
             user_name = d.get("git_login", "")
-            tasks.append(token_resolver.resolve_git_token(user_name, git_domain, fallback_token="***"))
-            indices.append(idx)
-
-    if not tasks:
-        return restored
-
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-
-    for idx, token_result in zip(indices, results):
-        if isinstance(token_result, Exception) or not token_result:
-            continue
-        # store original
-        original_token = user.git_info[idx].get("git_token")
-        restored.append((user.git_info[idx], original_token))
-        # replace with real token temporarily
-        user.git_info[idx]["git_token"] = token_result
+            try:
+                token_result = token_resolver.resolve_git_token(user_name, git_domain, fallback_token="***")
+                if token_result:
+                    # store original
+                    original_token = user.git_info[idx].get("git_token")
+                    restored.append((user.git_info[idx], original_token))
+                    # replace with real token temporarily
+                    user.git_info[idx]["git_token"] = token_result
+            except Exception:
+                continue
 
     return restored
 
@@ -93,21 +83,21 @@ def apply_patch() -> None:
     _orig_get_diff_branchs = GitLabProvider.get_branch_diff
 
     async def patched_get_repositories(self, user, page: int = 1, limit: int = 100):
-        restored = await _resolve_tokens_for_user(user)
+        restored = _resolve_tokens_for_user(user)
         try:
             return await _orig_get_repositories(self, user, page=page, limit=limit)
         finally:
             _restore_tokens(restored)
 
     async def patched_search_repositories(self, user, query: str, timeout: int = 30, fullmatch: bool = False):
-        restored = await _resolve_tokens_for_user(user)
+        restored = _resolve_tokens_for_user(user)
         try:
             return await _orig_search_repositories(self, user, query=query, timeout=timeout, fullmatch=fullmatch)
         finally:
             _restore_tokens(restored)
 
     async def patched_get_branches(self, user, repo_name: str, git_domain: str):
-        restored = await _resolve_tokens_for_user(user)
+        restored = _resolve_tokens_for_user(user)
         try:
             return await _orig_get_branches(self, user, repo_name, git_domain)
         finally:
@@ -119,7 +109,7 @@ def apply_patch() -> None:
         source_branch,
         target_branch,
         git_domain):
-        restored = await _resolve_tokens_for_user(user)
+        restored = _resolve_tokens_for_user(user)
         try:
             return await _orig_get_diff_branchs(self, user, repo_name, source_branch, target_branch, git_domain)
         finally:

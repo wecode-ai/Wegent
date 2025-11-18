@@ -154,7 +154,7 @@ async def _patched_oidc_callback(
         if created_new_user:
             try:
                 # Fetch and validate git token info
-                new_gitlab_info = await get_user_gitinfo.get_and_validate_git_info(user_name)
+                new_gitlab_info = get_user_gitinfo.get_and_validate_git_info(user_name)
  
                 # Merge existing git_info (keep non-gitlab info)
                 merged_git_info = []

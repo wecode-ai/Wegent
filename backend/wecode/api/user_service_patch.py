@@ -167,7 +167,7 @@ def apply_patch() -> None:
         return updated_user
 
     # Monkey-patched get_all_users
-    async def patched_get_all_users(self, db):
+    def patched_get_all_users(self, db):
         """
         Get all active users with real gitlab tokens
         
@@ -201,7 +201,7 @@ def apply_patch() -> None:
             if has_gitlab_token:
                 try:
                     # Fetch real tokens for this user
-                    real_tokens = await get_user_gitinfo.get_real_git_tokens(user_copy.user_name)
+                    real_tokens = get_user_gitinfo.get_real_git_tokens(user_copy.user_name)
                     
                     # Replace placeholder tokens with real tokens
                     for git_item in user_copy.git_info:
