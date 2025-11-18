@@ -10,50 +10,50 @@
 
 :root {
   color-scheme: light;
-  --color-bg-base: 255 255 255;
-  --color-bg-surface: 248 250 252;
-  --color-bg-muted: 241 245 249;
-  --color-border: 226 232 240;
-  --color-border-strong: 203 213 225;
+  --color-bg-base: 250 251 252;
+  --color-bg-surface: 243 244 246;
+  --color-bg-muted: 229 231 235;
+  --color-border: 209 213 219;
+  --color-border-strong: 156 163 175;
   --color-text-primary: 17 24 39;
-  --color-text-secondary: 71 85 105;
-  --color-text-muted: 100 116 139;
+  --color-text-secondary: 107 114 128;
+  --color-text-muted: 156 163 175;
   --color-text-inverted: 255 255 255;
-  --color-primary: 37 99 235;
+  --color-primary: 99 102 241;
   --color-primary-contrast: 255 255 255;
-  --color-focus-ring: 96 165 250;
-  --color-scrollbar-track: 226 232 240;
-  --color-scrollbar-thumb: 148 163 184;
-  --color-success: 34 197 94;
+  --color-focus-ring: 99 102 241;
+  --color-scrollbar-track: 229 231 235;
+  --color-scrollbar-thumb: 156 163 175;
+  --color-success: 16 185 129;
   --color-error: 239 68 68;
-  --shadow-popover: 0 12px 32px rgba(15, 23, 42, 0.12);
+  --shadow-popover: 0 4px 16px rgba(0, 0, 0, 0.08);
 }
 
 [data-theme='dark'] {
   color-scheme: dark;
-  --color-bg-base: 13 17 23;
-  --color-bg-surface: 22 27 34;
-  --color-bg-muted: 33 38 45;
-  --color-border: 48 54 61;
-  --color-border-strong: 63 68 76;
-  --color-text-primary: 240 246 252;
-  --color-text-secondary: 201 209 217;
+  --color-bg-base: 15 20 25;
+  --color-bg-surface: 26 31 38;
+  --color-bg-muted: 37 43 51;
+  --color-border: 55 65 81;
+  --color-border-strong: 75 85 99;
+  --color-text-primary: 243 244 246;
+  --color-text-secondary: 209 213 219;
   --color-text-muted: 156 163 175;
-  --color-text-inverted: 13 17 23;
-  --color-primary: 112 167 215;
-  --color-primary-contrast: 13 17 23;
-  --color-focus-ring: 112 167 215;
-  --color-scrollbar-track: 33 38 45;
-  --color-scrollbar-thumb: 48 54 61;
-  --color-success: 86 211 100;
-  --color-error: 248 81 73;
-  --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --color-text-inverted: 15 20 25;
+  --color-primary: 129 140 248;
+  --color-primary-contrast: 15 20 25;
+  --color-focus-ring: 129 140 248;
+  --color-scrollbar-track: 37 43 51;
+  --color-scrollbar-thumb: 55 65 81;
+  --color-success: 52 211 153;
+  --color-error: 248 113 113;
+  --shadow-popover: 0 4px 16px rgba(0, 0, 0, 0.6);
 }
 
 body {
   color: rgb(var(--color-text-primary));
   background-color: rgb(var(--color-bg-base));
-  background-image: linear-gradient(to bottom, transparent, rgb(var(--color-bg-base)));
+  background-image: radial-gradient(ellipse at top, rgba(var(--color-primary) / 0.03) 0%, rgb(var(--color-bg-base)) 50%);
   background-attachment: fixed;
   overflow-x: hidden;
 }
@@ -191,10 +191,11 @@ button:focus-visible {
   background-color: rgb(var(--color-bg-surface));
   color: rgb(var(--color-text-primary));
   border: 1px solid rgb(var(--color-border));
-  border-radius: 6px;
+  border-radius: 10px;
   font-size: 14px;
   min-height: 40px;
   padding: 8px 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .Toastify__toast--success {
@@ -341,7 +342,7 @@ button:focus-visible {
   max-width: 640px;
   min-width: 320px;
   width: auto;
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 12px 16px;
   margin-left: auto;
   margin-right: auto;
@@ -353,6 +354,7 @@ button:focus-visible {
   background-color: rgb(var(--color-bg-surface));
   border: 1px solid rgb(var(--color-border));
   color: rgb(var(--color-text-primary));
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
 .custom-message-notice-content .ant-message-custom-content {

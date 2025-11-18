@@ -27,6 +27,17 @@ module.exports = {
         primary: withOpacity('--color-primary'),
         'primary-contrast': withOpacity('--color-primary-contrast'),
       },
+      borderRadius: {
+        DEFAULT: '10px',
+        lg: '12px',
+        md: '8px',
+        sm: '6px',
+        xl: '16px',
+      },
+      boxShadow: {
+        soft: '0 2px 8px rgba(0, 0, 0, 0.08)',
+        medium: '0 4px 16px rgba(0, 0, 0, 0.12)',
+      },
     },
   },
   plugins: [],
