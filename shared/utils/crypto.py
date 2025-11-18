@@ -27,8 +27,8 @@ def _get_git_token_encryption_key():
     global _git_token_aes_key, _git_token_aes_iv
     if _git_token_aes_key is None:
         # Try to load keys from the backend settings if available
-        aes_key = os.environ.get('SHARE_TOKEN_AES_KEY', '12345678901234567890123456789012')
-        aes_iv = os.environ.get('SHARE_TOKEN_AES_IV', '1234567890123456')
+        aes_key = os.environ.get('GIT_TOKEN_AES_KEY', '12345678901234567890123456789012')
+        aes_iv = os.environ.get('GIT_TOKEN_AES_IV', '1234567890123456')
         _git_token_aes_key = aes_key.encode('utf-8')
         _git_token_aes_iv = aes_iv.encode('utf-8')
         logger.info("Loaded encryption keys from environment variables")
