@@ -277,8 +277,10 @@ export interface ClarificationData {
 
 export interface ClarificationAnswer {
   question_id: string;
+  question_text: string;
   answer_type: 'choice' | 'custom';
   value: string | string[];
+  selected_labels?: string | string[];
 }
 
 export interface ClarificationAnswerPayload {

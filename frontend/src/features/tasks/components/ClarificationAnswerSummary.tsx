@@ -36,28 +36,36 @@ export default function ClarificationAnswerSummary({ data }: ClarificationAnswer
         {data.answers.map((answer, idx) => (
           <div
             key={answer.question_id}
-            className="p-2 rounded bg-surface/30 border border-border/50"
+            className="p-3 rounded bg-surface/30 border border-border/50"
           >
-            <div className="flex items-start gap-2">
-              <div className="text-xs text-text-tertiary font-medium min-w-[60px]">
+            {/* Question Text */}
+            <div className="mb-2 text-sm font-medium text-text-secondary">
+              <span className="text-text-tertiary mr-1">
                 {t('clarification.question') || 'Q'}{idx + 1}:
-              </div>
-              <div className="flex-1">
-                {answer.answer_type === 'custom' ? (
-                  <div className="text-sm text-text-secondary">
-                    <span className="text-xs text-text-tertiary mr-1">
-                      ({t('clarification.custom_answer') || 'Custom'}):
-                    </span>
-                    <span className="text-text-primary">{answer.value as string}</span>
-                  </div>
-                ) : (
-                  <div className="text-sm text-text-primary">
-                    {Array.isArray(answer.value)
-                      ? answer.value.join(', ')
-                      : answer.value}
-                  </div>
-                )}
-              </div>
+              </span>
+              <span>{answer.question_text}</span>
+            </div>
+
+            {/* Answer */}
+            <div className="pl-4 border-l-2 border-primary/30">
+              {answer.answer_type === 'custom' ? (
+                <div className="text-sm">
+                  <span className="text-xs text-text-tertiary mr-1">
+                    ({t('clarification.custom_answer') || 'Custom'}):
+                  </span>
+                  <span className="text-text-primary">{answer.value as string}</span>
+                </div>
+              ) : (
+                <div className="text-sm text-text-primary">
+                  {answer.selected_labels
+                    ? (Array.isArray(answer.selected_labels)
+                        ? answer.selected_labels.join(', ')
+                        : answer.selected_labels)
+                    : (Array.isArray(answer.value)
+                        ? answer.value.join(', ')
+                        : answer.value)}
+                </div>
+              )}
             </div>
           </div>
         ))}
