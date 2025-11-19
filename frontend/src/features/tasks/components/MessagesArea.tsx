@@ -433,37 +433,53 @@ export default function MessagesArea() {
       );
     });
 
+  // Helper function to extract JSON from markdown code blocks or plain text
+  const extractJsonFromContent = (content: string): any | null => {
+    // Try to extract JSON from markdown code blocks (```json ... ```)
+    const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?```/;
+    const codeBlockMatch = content.match(codeBlockRegex);
+
+    if (codeBlockMatch) {
+      try {
+        const jsonStr = codeBlockMatch[1].trim();
+        const parsed = JSON.parse(jsonStr);
+        if (parsed && typeof parsed === 'object' && parsed.type) {
+          return parsed;
+        }
+      } catch {
+        // Not valid JSON in code block
+      }
+    }
+
+    // Try to parse entire content as JSON (fallback for direct JSON)
+    try {
+      const parsed = JSON.parse(content.trim());
+      if (parsed && typeof parsed === 'object' && parsed.type) {
+        return parsed;
+      }
+    } catch {
+      // Not valid JSON
+    }
+
+    return null;
+  };
+
   const renderAiMessage = (msg: Message) => {
     const content = msg.content ?? '';
 
     // Try to parse as clarification or final_prompt data
     try {
-      // Check if content contains clarification or final_prompt JSON
       let jsonMatch = null;
 
-      // Try to extract JSON from content
+      // Handle content with ${$$}$ separator
       if (content.includes('${$$}$')) {
         const [, result] = content.split('${$$}$');
         if (result) {
-          try {
-            const parsed = JSON.parse(result.trim());
-            if (parsed && typeof parsed === 'object' && parsed.type) {
-              jsonMatch = parsed;
-            }
-          } catch {
-            // Not JSON, continue with normal rendering
-          }
+          jsonMatch = extractJsonFromContent(result);
         }
       } else {
-        // Try to parse entire content as JSON
-        try {
-          const parsed = JSON.parse(content.trim());
-          if (parsed && typeof parsed === 'object' && parsed.type) {
-            jsonMatch = parsed;
-          }
-        } catch {
-          // Not JSON, continue with normal rendering
-        }
+        // Try to extract JSON from entire content
+        jsonMatch = extractJsonFromContent(content);
       }
 
       // Handle clarification data
