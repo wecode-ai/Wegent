@@ -2,7 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { adaptMcpConfigForAgent, isValidMcpTypeForAgent, getSupportedMcpTypes } from '../mcpTypeAdapter';
+import {
+  adaptMcpConfigForAgent,
+  isValidMcpTypeForAgent,
+  getSupportedMcpTypes,
+} from '../mcpTypeAdapter';
 
 describe('mcpTypeAdapter', () => {
   describe('adaptMcpConfigForAgent', () => {
@@ -25,7 +29,7 @@ describe('mcpTypeAdapter', () => {
         };
 
         const result = adaptMcpConfigForAgent(config, 'Agno');
-        expect(result.server1.type).toBe(expected);
+        expect((result.server1 as Record<string, unknown>).type).toBe(expected);
       });
     });
 
@@ -38,7 +42,7 @@ describe('mcpTypeAdapter', () => {
       };
 
       const result = adaptMcpConfigForAgent(config, 'Agno');
-      expect(result.server1.type).toBe('streamable-http');
+      expect((result.server1 as Record<string, unknown>).type).toBe('streamable-http');
     });
 
     it('should convert streamable-http to http for ClaudeCode', () => {
@@ -50,7 +54,7 @@ describe('mcpTypeAdapter', () => {
       };
 
       const result = adaptMcpConfigForAgent(config, 'ClaudeCode');
-      expect(result.server1.type).toBe('http');
+      expect((result.server1 as Record<string, unknown>).type).toBe('http');
     });
 
     it('should handle sse and stdio types without conversion', () => {
@@ -60,12 +64,12 @@ describe('mcpTypeAdapter', () => {
       };
 
       const agnoResult = adaptMcpConfigForAgent(config, 'Agno');
-      expect(agnoResult.server1.type).toBe('sse');
-      expect(agnoResult.server2.type).toBe('stdio');
+      expect((agnoResult.server1 as Record<string, unknown>).type).toBe('sse');
+      expect((agnoResult.server2 as Record<string, unknown>).type).toBe('stdio');
 
       const claudeResult = adaptMcpConfigForAgent(config, 'ClaudeCode');
-      expect(claudeResult.server1.type).toBe('sse');
-      expect(claudeResult.server2.type).toBe('stdio');
+      expect((claudeResult.server1 as Record<string, unknown>).type).toBe('sse');
+      expect((claudeResult.server2 as Record<string, unknown>).type).toBe('stdio');
     });
 
     it('should handle case variations', () => {
@@ -76,9 +80,9 @@ describe('mcpTypeAdapter', () => {
       };
 
       const result = adaptMcpConfigForAgent(config, 'Agno');
-      expect(result.server1.type).toBe('sse');
-      expect(result.server2.type).toBe('stdio');
-      expect(result.server3.type).toBe('streamable-http');
+      expect((result.server1 as Record<string, unknown>).type).toBe('sse');
+      expect((result.server2 as Record<string, unknown>).type).toBe('stdio');
+      expect((result.server3 as Record<string, unknown>).type).toBe('streamable-http');
     });
 
     it('should preserve other properties', () => {
@@ -92,14 +96,16 @@ describe('mcpTypeAdapter', () => {
       };
 
       const result = adaptMcpConfigForAgent(config, 'Agno');
-      expect(result.server1.url).toBe('http://example.com');
-      expect(result.server1.headers).toEqual({ 'X-Custom': 'value' });
-      expect(result.server1.timeout).toBe(5000);
+      expect((result.server1 as Record<string, unknown>).url).toBe('http://example.com');
+      expect((result.server1 as Record<string, unknown>).headers).toEqual({ 'X-Custom': 'value' });
+      expect((result.server1 as Record<string, unknown>).timeout).toBe(5000);
     });
 
     it('should handle empty or null config', () => {
       expect(adaptMcpConfigForAgent({}, 'Agno')).toEqual({});
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect(adaptMcpConfigForAgent(null as any, 'Agno')).toBeNull();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       expect(adaptMcpConfigForAgent(undefined as any, 'Agno')).toBeUndefined();
     });
 
@@ -112,7 +118,7 @@ describe('mcpTypeAdapter', () => {
 
       const result = adaptMcpConfigForAgent(config, 'Agno');
       // Should default to 'sse' when type is missing
-      expect(result.server1.type).toBe('sse');
+      expect((result.server1 as Record<string, unknown>).type).toBe('sse');
     });
   });
 
