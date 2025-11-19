@@ -39,7 +39,7 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
   ];
 
   return (
-    <div className="flex items-center bg-surface/50 backdrop-blur-sm rounded-full p-1 border border-border/50 shadow-sm min-w-0 max-w-full">
+    <div className="flex items-center bg-surface/50 backdrop-blur-sm rounded-full p-1 border border-border/50 shadow-sm min-w-0 max-w-full" data-tour="mode-toggle">
       {tabs.map(tab => {
         const Icon = tab.icon;
         const isActive = activePage === tab.key;

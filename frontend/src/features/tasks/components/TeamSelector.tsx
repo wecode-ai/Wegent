@@ -121,7 +121,7 @@ export default function TeamSelector({
   if (!selectedTeam || teams.length === 0) return null;
 
   return (
-    <div className="flex items-baseline space-x-1 min-w-0">
+    <div className="flex items-baseline space-x-1 min-w-0" data-tour="team-selector">
       <FaUsers
         className={`w-3 h-3 text-text-muted flex-shrink-0  ${isLoading ? 'animate-pulse' : ''}`}
       />

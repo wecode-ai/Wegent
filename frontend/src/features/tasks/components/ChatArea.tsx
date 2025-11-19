@@ -72,6 +72,10 @@ export default function ChatArea({
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
     useTaskContext();
   const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id);
+  const subtaskList = selectedTaskDetail?.subtasks ?? [];
+  const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
+  const lastSubtaskId = lastSubtask?.id;
+  const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at;
 
   // Restore user preferences from localStorage when teams load
   useEffect(() => {
@@ -246,6 +250,17 @@ export default function ChatArea({
       setTimeout(() => scrollToBottom(true), 100);
     }
   }, [selectedTaskDetail?.id]);
+
+  useEffect(() => {
+    if (!hasMessages || !lastSubtaskId) return;
+
+    const timer = setTimeout(() => {
+      // Auto scroll when new subtasks/messages are appended
+      scrollToBottom();
+    }, 60);
+
+    return () => clearTimeout(timer);
+  }, [hasMessages, lastSubtaskId, lastSubtaskUpdatedAt]);
 
   // Keep floating input aligned with the chat area width to avoid overflow
   useEffect(() => {
