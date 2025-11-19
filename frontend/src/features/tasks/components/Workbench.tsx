@@ -155,6 +155,7 @@ export default function Workbench({
   const [showErrorDialog, setShowErrorDialog] = useState(false);
   const [loadingStateIndex, setLoadingStateIndex] = useState(0);
   const [tipIndex, setTipIndex] = useState(0);
+  const [isTimelineExpanded, setIsTimelineExpanded] = useState(false); // Timeline collapse state
   const { theme } = useTheme();
   const { t } = useTranslation('tasks');
 
@@ -397,6 +398,26 @@ export default function Workbench({
 
   const timelineSteps = thinking ? buildTimeline(thinking) : [];
 
+  // Auto-collapse timeline when task is completed
+  useEffect(() => {
+    if (displayData?.status === 'completed' && timelineSteps.length > 0) {
+      setIsTimelineExpanded(false);
+    }
+  }, [displayData?.status, timelineSteps.length]);
+
+  // Generate collapsed timeline summary
+  const getTimelineSummary = (): string => {
+    if (timelineSteps.length === 0) return '';
+
+    const summary: string[] = [];
+    timelineSteps.forEach(step => {
+      const icon = TOOL_ICONS[step.toolName] || '⚡';
+      summary.push(`${icon}×${step.count}`);
+    });
+
+    return summary.join(' ');
+  };
+
   return (
     <>
       {/* Right panel */}
@@ -597,59 +618,77 @@ export default function Workbench({
                     {/* Execution Timeline */}
                     {timelineSteps.length > 0 && (
                       <div className="rounded-lg border border-border bg-surface overflow-hidden">
-                        <div className="border-b border-border bg-muted px-4 py-3">
-                          <h3 className="text-base font-semibold text-text-primary">
-                            {t('workbench.execution_timeline')}
-                          </h3>
-                        </div>
-                        <div className="px-4 py-4">
-                          <div className="relative space-y-4">
-                            {timelineSteps.map((step, index) => {
-                              const isLast = index === timelineSteps.length - 1;
-                              const toolActionKey = `thinking.tool_actions.${step.toolName}`;
-                              const toolActionName = t(toolActionKey);
-                              const displayName =
-                                toolActionName !== toolActionKey
-                                  ? toolActionName
-                                  : step.toolName;
-                              const icon = TOOL_ICONS[step.toolName] || '⚡';
-
-                              return (
-                                <div key={index} className="relative flex items-start gap-3">
-                                  {/* Timeline connector line */}
-                                  {!isLast && (
-                                    <div
-                                      className="absolute left-[9px] top-6 w-[2px] h-full bg-border"
-                                      style={{ height: 'calc(100% + 1rem)' }}
-                                    />
-                                  )}
-
-                                  {/* Timeline dot */}
-                                  <div className="relative z-10 flex-shrink-0 w-5 h-5 mt-0.5">
-                                    <div className="w-5 h-5 rounded-full bg-primary border-2 border-surface" />
-                                  </div>
-
-                                  {/* Timeline content */}
-                                  <div className="flex-1 min-w-0 pb-1">
-                                    <div className="flex items-center gap-2 mb-1">
-                                      <span className="text-sm font-medium text-text-primary">
-                                        {displayName}
-                                      </span>
-                                      <span className="text-sm text-text-muted">
-                                        {icon}×{step.count}
-                                      </span>
-                                    </div>
-                                    {step.timestamp && (
-                                      <div className="text-xs text-text-tertiary">
-                                        {step.timestamp}
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                              );
-                            })}
+                        <button
+                          onClick={() => setIsTimelineExpanded(!isTimelineExpanded)}
+                          className="w-full border-b border-border bg-muted px-4 py-3 text-left hover:bg-muted/80 transition-colors"
+                        >
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-base font-semibold text-text-primary">
+                              {t('workbench.execution_timeline')}
+                            </h3>
+                            <ChevronRightIcon
+                              className={classNames(
+                                isTimelineExpanded ? 'rotate-90 transform' : '',
+                                'h-5 w-5 text-text-muted transition-transform'
+                              )}
+                            />
                           </div>
-                        </div>
+                          {!isTimelineExpanded && (
+                            <div className="mt-2 text-sm text-text-muted">
+                              {getTimelineSummary()}
+                            </div>
+                          )}
+                        </button>
+                        {isTimelineExpanded && (
+                          <div className="px-4 py-4">
+                            <div className="relative space-y-4">
+                              {timelineSteps.map((step, index) => {
+                                const isLast = index === timelineSteps.length - 1;
+                                const toolActionKey = `thinking.tool_actions.${step.toolName}`;
+                                const toolActionName = t(toolActionKey);
+                                const displayName =
+                                  toolActionName !== toolActionKey
+                                    ? toolActionName
+                                    : step.toolName;
+                                const icon = TOOL_ICONS[step.toolName] || '⚡';
+
+                                return (
+                                  <div key={index} className="relative flex items-start gap-3">
+                                    {/* Timeline connector line */}
+                                    {!isLast && (
+                                      <div
+                                        className="absolute left-[9px] top-6 w-[2px] h-full bg-border"
+                                        style={{ height: 'calc(100% + 1rem)' }}
+                                      />
+                                    )}
+
+                                    {/* Timeline dot */}
+                                    <div className="relative z-10 flex-shrink-0 w-5 h-5 mt-0.5">
+                                      <div className="w-5 h-5 rounded-full bg-primary border-2 border-surface" />
+                                    </div>
+
+                                    {/* Timeline content */}
+                                    <div className="flex-1 min-w-0 pb-1">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-sm font-medium text-text-primary">
+                                          {displayName}
+                                        </span>
+                                        <span className="text-sm text-text-muted">
+                                          {icon}×{step.count}
+                                        </span>
+                                      </div>
+                                      {step.timestamp && (
+                                        <div className="text-xs text-text-tertiary">
+                                          {step.timestamp}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
 

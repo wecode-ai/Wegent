@@ -24,6 +24,7 @@ interface Message {
   content: string;
   timestamp: number;
   botName?: string;
+  subtaskStatus?: string; // Add subtask-specific status
   thinking?: Array<{
     title: string;
     next_action: string;
@@ -274,6 +275,7 @@ export default function MessagesArea({
               ? detail.team.name
               : sub?.bots?.[0]?.name?.trim() || 'Bot',
           thinking: thinkingData,
+          subtaskStatus: sub.status, // Add subtask status
         });
       });
     }
@@ -717,7 +719,7 @@ export default function MessagesArea({
                   {msg.type === 'ai' && msg.thinking && (
                     <ThinkingComponent
                       thinking={msg.thinking}
-                      taskStatus={selectedTaskDetail?.status}
+                      taskStatus={msg.subtaskStatus}
                     />
                   )}
                   <div className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}>
