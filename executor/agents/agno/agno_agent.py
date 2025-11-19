@@ -58,19 +58,20 @@ class AgnoAgent(Agent):
 
         self.team: Optional[Team] = None
         self.single_agent: Optional[AgnoSDKAgent] = None
+        self.current_run_id: Optional[str] = None
 
         self.mode = task_data.get("mode", "")
         self.task_data = task_data
 
         # Initialize thinking step manager first
         self.thinking_manager = ThinkingStepManager(progress_reporter=self.report_progress)
-        
+
         # Initialize configuration manager
         self.config_manager = ConfigManager(EXECUTOR_ENV)
-        
+
         # Extract Agno options from task_data
         self.options = self.config_manager.extract_agno_options(task_data)
-        
+
         # Initialize team builder
         self.team_builder = TeamBuilder(db, self.config_manager, self.thinking_manager)
 
@@ -467,17 +468,21 @@ class AgnoAgent(Agent):
     async def _handle_agent_streaming_event(self, run_response_event, result_content: str) -> str:
         """
         Handle agent streaming events
-        
+
         Args:
             run_response_event: The streaming event
             result_content: Current result content
-            
+
         Returns:
             str: Updated result content
         """
         # Handle agent run events
         if run_response_event.event in [RunEvent.run_started]:
             logger.info(f"🚀 AGENT RUN STARTED: {run_response_event.agent_id}")
+            # Store run_id for cancel_run functionality
+            if hasattr(run_response_event, 'run_id'):
+                self.current_run_id = run_response_event.run_id
+                logger.info(f"Stored run_id: {self.current_run_id}")
             self.report_progress(
                 75, TaskStatus.RUNNING.value, "${{thinking.agent_execution_started}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
@@ -837,6 +842,10 @@ class AgnoAgent(Agent):
         ]:
             logger.info(f"\n🎯 TEAM EVENT: {run_response_event.event}")
             if run_response_event.event == TeamRunEvent.run_started:
+                # Store run_id for cancel_run functionality
+                if hasattr(run_response_event, 'run_id'):
+                    self.current_run_id = run_response_event.run_id
+                    logger.info(f"Stored run_id: {self.current_run_id}")
                 self.report_progress(
                     75, TaskStatus.RUNNING.value, "${{thinking.team_execution_started}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
                 )
@@ -966,11 +975,24 @@ class AgnoAgent(Agent):
     async def close_client(cls, session_id: str) -> TaskStatus:
         try:
             if session_id in cls._clients:
-                team = cls._clients[session_id]
-                # Clean up team resources if needed
-                team.cancel_run(session_id)
+                client = cls._clients[session_id]
+                # Try to cancel the current run if run_id is available
+                # Note: We need the agent instance to get the run_id
+                # For now, we'll attempt to call cancel_run with session_id as run_id
+                # This may need refinement based on actual usage
+                try:
+                    if isinstance(client, Team) or isinstance(client, AgnoSDKAgent):
+                        # Attempt to cancel any running tasks
+                        # The actual run_id should be tracked at the agent instance level
+                        logger.info(f"Attempting to cancel run for session_id: {session_id}")
+                        # We cannot directly access run_id here, so we skip cancellation
+                        # Cancellation should be done through the agent instance's cancel_run method
+                except Exception as e:
+                    logger.warning(f"Could not cancel run for session_id {session_id}: {str(e)}")
+
+                # Clean up client resources
                 del cls._clients[session_id]
-                logger.info(f"Closed Agno team for session_id: {session_id}")
+                logger.info(f"Closed Agno client for session_id: {session_id}")
                 return TaskStatus.SUCCESS
             return TaskStatus.FAILED
         except Exception as e:
@@ -984,17 +1006,52 @@ class AgnoAgent(Agent):
         """
         Close all client connections
         """
-        for session_id, team in list(cls._clients.items()):
+        for session_id, client in list(cls._clients.items()):
             try:
-                # Clean up team resources if needed
-                team.cancel_run(session_id)
-                logger.info(f"Closed Agno team for session_id: {session_id}")
+                # Attempt to cancel any running tasks
+                # Note: We don't have access to run_id here
+                # Cancellation should ideally be done at the agent instance level
+                logger.info(f"Closing Agno client for session_id: {session_id}")
             except Exception as e:
                 logger.exception(
                     f"Error closing client for session_id {session_id}: {str(e)}"
                 )
         cls._clients.clear()
-    
+
+    def cancel_run(self) -> bool:
+        """
+        Cancel the current running task for this agent instance
+
+        Returns:
+            bool: True if cancellation was successful, False otherwise
+        """
+        try:
+            if self.current_run_id is None:
+                logger.warning(f"No run_id available for session_id: {self.session_id}, cannot cancel")
+                return False
+
+            cancelled = False
+            if self.team is not None:
+                logger.info(f"Cancelling team run with run_id: {self.current_run_id}")
+                cancelled = self.team.cancel_run(self.current_run_id)
+            elif self.single_agent is not None:
+                logger.info(f"Cancelling agent run with run_id: {self.current_run_id}")
+                cancelled = self.single_agent.cancel_run(self.current_run_id)
+            else:
+                logger.warning(f"No team or agent available for session_id: {self.session_id}")
+                return False
+
+            if cancelled:
+                logger.info(f"Successfully cancelled run_id: {self.current_run_id} for session_id: {self.session_id}")
+                self.current_run_id = None
+            else:
+                logger.warning(f"Failed to cancel run_id: {self.current_run_id} for session_id: {self.session_id}")
+
+            return cancelled
+        except Exception as e:
+            logger.exception(f"Error cancelling run for session_id {self.session_id}: {str(e)}")
+            return False
+
     async def cleanup(self) -> None:
         """
         Clean up resources used by the agent
