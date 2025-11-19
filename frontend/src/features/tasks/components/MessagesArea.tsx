@@ -17,12 +17,7 @@ import ThinkingComponent from './ThinkingComponent';
 import ClarificationForm from './ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from './ClarificationAnswerSummary';
-import type {
-  ClarificationData,
-  FinalPromptData,
-  ClarificationAnswerPayload,
-  ClarificationAnswer,
-} from '@/types/api';
+import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
 
 interface Message {
   type: 'user' | 'ai';
@@ -482,20 +477,6 @@ export default function MessagesArea({
       }
     }
 
-    // Fallback: Check if this is a clarification answer JSON (user message) - for backward compatibility
-    if (msg.type === 'user') {
-      try {
-        const parsed = JSON.parse(msg.content.trim());
-        if (parsed && parsed.type === 'clarification_answer') {
-          // Render user's answers with the new component
-          const answerData = parsed as ClarificationAnswerPayload;
-          return <ClarificationAnswerSummary data={answerData} />;
-        }
-      } catch {
-        // Not JSON, continue with normal rendering
-      }
-    }
-
     return (msg.content?.split('\n') || []).map((line, idx) => {
       if (line.startsWith('__PROMPT_TRUNCATED__:')) {
         const match = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/);
@@ -634,38 +615,7 @@ export default function MessagesArea({
     };
   };
 
-  // Helper function to extract JSON from markdown code blocks or plain text
-  const extractJsonFromContent = (content: string): ClarificationData | FinalPromptData | null => {
-    // Try to extract JSON from markdown code blocks (```json ... ```)
-    const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?```/;
-    const codeBlockMatch = content.match(codeBlockRegex);
-
-    if (codeBlockMatch) {
-      try {
-        const jsonStr = codeBlockMatch[1].trim();
-        const parsed = JSON.parse(jsonStr);
-        if (parsed && typeof parsed === 'object' && parsed.type) {
-          return parsed;
-        }
-      } catch {
-        // Not valid JSON in code block
-      }
-    }
-
-    // Try to parse entire content as JSON (fallback for direct JSON)
-    try {
-      const parsed = JSON.parse(content.trim());
-      if (parsed && typeof parsed === 'object' && parsed.type) {
-        return parsed;
-      }
-    } catch {
-      // Not valid JSON
-    }
-
-    return null;
-  };
-
-  const renderAiMessage = (msg: Message) => {
+  const renderAiMessage = (msg: Message, messageIndex: number) => {
     const content = msg.content ?? '';
 
     // Try to parse as clarification or final_prompt data
@@ -684,7 +634,11 @@ export default function MessagesArea({
       const markdownClarification = parseMarkdownClarification(contentToParse);
       if (markdownClarification) {
         return (
-          <ClarificationForm data={markdownClarification} taskId={selectedTaskDetail?.id || 0} />
+          <ClarificationForm
+            data={markdownClarification}
+            taskId={selectedTaskDetail?.id || 0}
+            currentMessageIndex={messageIndex}
+          />
         );
       }
 
@@ -693,28 +647,6 @@ export default function MessagesArea({
         return (
           <FinalPromptMessage
             data={markdownFinalPrompt}
-            selectedTeam={selectedTeam}
-            selectedRepo={selectedRepo}
-            selectedBranch={selectedBranch}
-          />
-        );
-      }
-
-      // Fallback to JSON parsing (old format for backward compatibility)
-      const jsonMatch = extractJsonFromContent(contentToParse);
-
-      // Handle clarification data
-      if (jsonMatch?.type === 'clarification') {
-        const clarificationData = jsonMatch as ClarificationData;
-        return <ClarificationForm data={clarificationData} taskId={selectedTaskDetail?.id || 0} />;
-      }
-
-      // Handle final_prompt data
-      if (jsonMatch?.type === 'final_prompt') {
-        const finalPromptData = jsonMatch as FinalPromptData;
-        return (
-          <FinalPromptMessage
-            data={finalPromptData}
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
             selectedBranch={selectedBranch}
@@ -739,8 +671,8 @@ export default function MessagesArea({
     );
   };
 
-  const renderMessageBody = (msg: Message) =>
-    msg.type === 'ai' ? renderAiMessage(msg) : renderPlainMessage(msg);
+  const renderMessageBody = (msg: Message, messageIndex: number) =>
+    msg.type === 'ai' ? renderAiMessage(msg, messageIndex) : renderPlainMessage(msg);
 
   const formatTimestamp = (timestamp: number | undefined) => {
     if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return '';
@@ -794,7 +726,7 @@ export default function MessagesArea({
                       <span className="font-semibold">{headerLabel}</span>
                       {timestampLabel && <span>{timestampLabel}</span>}
                     </div>
-                    {renderMessageBody(msg)}
+                    {renderMessageBody(msg, index)}
                   </div>
                 </div>
               </div>
