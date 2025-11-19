@@ -165,7 +165,7 @@ export default function TaskSidebar({
             height={20}
             className="object-container"
           />
-          <span className="text-sm font-medium text-text-primary">Wegent</span>
+          <span className="text-sm text-text-primary">Wegent</span>
         </div>
       </div>
 
@@ -174,7 +174,7 @@ export default function TaskSidebar({
         <Button
           variant="ghost"
           onClick={handleNewAgentClick}
-          className="w-full justify-start px-2 text-sm font-medium text-text-primary"
+          className="w-full justify-start px-2 text-sm text-text-primary hover:bg-muted"
           size="default"
         >
           <Plus className="h-4 w-4 mr-2" />
@@ -191,7 +191,7 @@ export default function TaskSidebar({
             value={localSearchTerm}
             onChange={handleSearchChange}
             placeholder={t('tasks.search_placeholder')}
-            className="w-full pl-8 pr-8 py-1.5 bg-transparent group-hover:bg-surface border border-transparent group-hover:border-border rounded text-sm font-medium text-text-primary placeholder:text-text-primary placeholder:font-medium focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent focus:bg-surface cursor-text"
+            className="w-full pl-8 pr-8 py-1.5 bg-transparent group-hover:bg-surface border border-transparent group-hover:border-border rounded text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent focus:bg-surface cursor-text"
           />
           {localSearchTerm && (
             <button

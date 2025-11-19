@@ -218,9 +218,7 @@ export default function TaskListSection({
 
   return (
     <div className="mb-2">
-      <h3
-        className="text-sm font-medium text-text-primary tracking-wide mb-1 px-2"
-      >
+      <h3 className="text-sm text-text-primary tracking-wide mb-1 px-2">
         {title}
         {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
       </h3>
@@ -229,7 +227,7 @@ export default function TaskListSection({
           return (
             <div
               key={task.id}
-              className={`flex items-center justify-between py-1 rounded hover:bg-muted cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-muted' : ''}`}
+              className={`flex items-center justify-between py-2 px-2 rounded hover:bg-muted cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-muted' : ''}`}
               onClick={() => handleTaskClick(task)}
               onTouchStart={handleTaskTouchStart(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
@@ -238,7 +236,6 @@ export default function TaskListSection({
                 touchAction: 'manipulation',
                 WebkitTapHighlightColor: 'transparent',
                 minHeight: '44px',
-                padding: '8px 12px',
                 userSelect: 'none',
               }}
             >
@@ -248,12 +245,12 @@ export default function TaskListSection({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <p className="text-xs text-text-muted hover:text-text-primary transition-colors leading-tight truncate m-0 flex-1">
+                    <p className="text-xs text-text-muted leading-tight truncate m-0 flex-1">
                       {task.title}
                     </p>
                     {getTaskTypeTag(task)}
                   </div>
-                  <p className="text-xs text-text-secondary hover:text-text-primary transition-colors m-0">
+                  <p className="text-xs text-text-secondary m-0">
                     {formatTimeAgo(task.created_at)}
                   </p>
                 </div>
