@@ -395,7 +395,7 @@ export default function ChatArea({
         >
           <div className={hasMessages ? 'w-full max-w-3xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
             {/* Chat Input Card */}
-            <div className="relative w-full flex flex-col rounded-2xl border border-border bg-surface shadow-lg">
+            <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
               <ChatInput
                 message={taskInputMessage}
                 setMessage={setTaskInputMessage}

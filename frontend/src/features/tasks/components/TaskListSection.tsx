@@ -8,12 +8,12 @@ import { useState } from 'react';
 import { Task, TaskType } from '@/types/api';
 import TaskMenu from './TaskMenu';
 import {
-  FaRegCircleCheck,
-  FaRegCircleStop,
-  FaRegCircleXmark,
-  FaRegCirclePause,
-} from 'react-icons/fa6';
-import { ArrowPathIcon } from '@heroicons/react/24/outline';
+  CheckCircle2,
+  XCircle,
+  StopCircle,
+  PauseCircle,
+  RotateCw,
+} from 'lucide-react';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -133,22 +133,22 @@ export default function TaskListSection({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'COMPLETED':
-        return <FaRegCircleCheck className="w-4 h-4 text-green-500" />;
+        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
       case 'FAILED':
-        return <FaRegCircleXmark className="w-4 h-4 text-red-500" />;
+        return <XCircle className="w-4 h-4 text-red-500" />;
       case 'CANCELLED':
-        return <FaRegCircleStop className="w-4 h-4 text-gray-400" />;
+        return <StopCircle className="w-4 h-4 text-gray-400" />;
       case 'RUNNING':
         return (
-          <ArrowPathIcon
+          <RotateCw
             className="w-4 h-4 text-blue-500 animate-spin"
             style={{ animationDuration: '2s' }}
           />
         );
       case 'PENDING':
-        return <FaRegCirclePause className="w-4 h-4 text-yellow-500" />;
+        return <PauseCircle className="w-4 h-4 text-yellow-500" />;
       default:
-        return <FaRegCirclePause className="w-4 h-4 text-gray-400" />;
+        return <PauseCircle className="w-4 h-4 text-gray-400" />;
     }
   };
 
