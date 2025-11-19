@@ -89,12 +89,26 @@ interface ThinkingComponentProps {
   taskStatus?: string;
 }
 
+// Tool icon mapping
+const TOOL_ICONS: Record<string, string> = {
+  Read: '📖',
+  Edit: '✏️',
+  Write: '📝',
+  Bash: '⚙️',
+  Grep: '🔍',
+  Glob: '📁',
+  Task: '🤖',
+  WebFetch: '🌐',
+  WebSearch: '🔎',
+};
+
 export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComponentProps) {
-  const { t } = useTranslation('chat');
+  const { t } = useTranslation('tasks');
   const items = thinking ?? [];
   const [isOpen, setIsOpen] = useState(true);
   const previousSignatureRef = useRef<string | null>(null);
   const userCollapsedRef = useRef(false);
+  const previousStatusRef = useRef<string | undefined>(taskStatus);
   const [expandedParams, setExpandedParams] = useState<Set<string>>(new Set());
 
   // Refs for scroll management
@@ -121,6 +135,20 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     }
     previousSignatureRef.current = signature;
   }, [items]);
+
+  // Auto-collapse when subtask status changes to COMPLETED/FAILED/CANCELLED
+  useEffect(() => {
+    const shouldCollapse =
+      taskStatus === 'COMPLETED' || taskStatus === 'FAILED' || taskStatus === 'CANCELLED';
+
+    // Only auto-collapse when status changes to a terminal state
+    if (shouldCollapse && previousStatusRef.current !== taskStatus) {
+      setIsOpen(false);
+      userCollapsedRef.current = false; // Reset user collapsed state
+    }
+
+    previousStatusRef.current = taskStatus;
+  }, [taskStatus]);
 
   // Handle scroll events
   useEffect(() => {
@@ -185,9 +213,111 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     return null;
   }
 
+  // Extract tool calls from thinking array
+  const extractToolCalls = (thinkingSteps: ThinkingStep[]): Record<string, number> => {
+    const toolCounts: Record<string, number> = {};
+
+    thinkingSteps.forEach(step => {
+      if (step.details?.message?.content) {
+        step.details.message.content.forEach(content => {
+          if (content.type === 'tool_use' && content.name) {
+            toolCounts[content.name] = (toolCounts[content.name] || 0) + 1;
+          }
+        });
+      }
+      // Also check direct tool_use type
+      if (step.details?.type === 'tool_use' && step.details?.name) {
+        toolCounts[step.details.name] = (toolCounts[step.details.name] || 0) + 1;
+      }
+    });
+
+    return toolCounts;
+  };
+
+  // Calculate duration from thinking array
+  const calculateDuration = (thinkingSteps: ThinkingStep[]): string | null => {
+    if (thinkingSteps.length === 0) return null;
+
+    // Try to extract timestamps from details
+    let startTime: number | null = null;
+    let endTime: number | null = null;
+
+    // Get first timestamp
+    for (const step of thinkingSteps) {
+      if (step.details?.message?.id) {
+        // Assuming message id might contain timestamp info, or we need to find timestamp field
+        // For now, we'll try to use created_at or timestamp if available
+        const timestamp = (step.details as any).timestamp || (step.details as any).created_at;
+        if (timestamp) {
+          startTime = new Date(timestamp).getTime();
+          break;
+        }
+      }
+    }
+
+    // Get last timestamp
+    for (let i = thinkingSteps.length - 1; i >= 0; i--) {
+      const step = thinkingSteps[i];
+      if (step.details?.message?.id) {
+        const timestamp = (step.details as any).timestamp || (step.details as any).created_at;
+        if (timestamp) {
+          endTime = new Date(timestamp).getTime();
+          break;
+        }
+      }
+    }
+
+    if (!startTime || !endTime) return null;
+
+    const durationMs = endTime - startTime;
+    const durationSec = durationMs / 1000;
+
+    if (durationSec < 1) return '<1s';
+    if (durationSec < 60) return `${durationSec.toFixed(1)}s`;
+
+    const minutes = Math.floor(durationSec / 60);
+    const seconds = Math.floor(durationSec % 60);
+    return `${minutes}m ${seconds}s`;
+  };
+
+  // Format collapsed title with status, tool icons, and duration
+  const formatCollapsedTitle = (): string => {
+    let statusText = '';
+    if (taskStatus === 'COMPLETED') {
+      statusText = t('thinking.execution_completed');
+    } else if (taskStatus === 'FAILED') {
+      statusText = t('thinking.execution_failed');
+    } else if (taskStatus === 'CANCELLED') {
+      statusText = t('thinking.execution_cancelled');
+    }
+
+    const toolCounts = extractToolCalls(items);
+    const toolParts: string[] = [];
+
+    Object.entries(toolCounts).forEach(([toolName, count]) => {
+      if (count > 0 && TOOL_ICONS[toolName]) {
+        toolParts.push(`${TOOL_ICONS[toolName]}×${count}`);
+      }
+    });
+
+    const duration = calculateDuration(items);
+    let result = statusText;
+
+    if (toolParts.length > 0) {
+      result += ' ' + toolParts.join(' ');
+    }
+
+    if (duration) {
+      result += ' · ' + duration;
+    }
+
+    return result;
+  };
+
   const isThinkingCompleted =
     taskStatus === 'COMPLETED' ||
     taskStatus === 'FAILED' ||
+    taskStatus === 'CANCELLED' ||
     items.some(item => item.value !== null && item.value !== undefined && item.value !== '');
 
   const toggleOpen = () =>
@@ -994,9 +1124,11 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
           <span
             className={`text-sm font-medium ${isThinkingCompleted ? 'text-blue-300' : 'text-blue-400'}`}
           >
-            {isThinkingCompleted
-              ? t('messages.thinking_completed') || 'Thinking Completed'
-              : t('messages.thinking') || 'Thinking'}
+            {!isOpen && isThinkingCompleted
+              ? formatCollapsedTitle()
+              : isThinkingCompleted
+                ? t('thinking.execution_completed')
+                : t('messages.thinking') || 'Thinking'}
           </span>
         </div>
         {isOpen ? (
