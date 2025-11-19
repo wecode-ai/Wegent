@@ -227,7 +227,7 @@ export default function TaskListSection({
           return (
             <div
               key={task.id}
-              className={`flex items-center justify-between py-2 px-2 rounded hover:bg-muted cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-muted' : ''}`}
+              className={`flex items-center justify-between py-2 px-2 rounded hover:bg-surface/80 cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-surface/80' : ''}`}
               onClick={() => handleTaskClick(task)}
               onTouchStart={handleTaskTouchStart(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
@@ -245,7 +245,7 @@ export default function TaskListSection({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <p className="text-xs text-text-muted leading-tight truncate m-0 flex-1">
+                    <p className="text-sm text-text-primary leading-tight truncate m-0 flex-1">
                       {task.title}
                     </p>
                     {getTaskTypeTag(task)}
