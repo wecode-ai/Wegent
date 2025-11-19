@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { driver, DriveStep, Driver } from 'driver.js';
+import { driver, Driver, AllowedButtons, Config } from 'driver.js';
 import { useTranslation } from 'react-i18next';
 import 'driver.js/dist/driver.css';
 import { getTourSteps } from './tourSteps';
@@ -71,7 +71,7 @@ export const useOnboarding = ({
 
     const steps = getTourSteps(t, hasTeams, hasGitToken, currentPage);
 
-    const driverConfig = {
+    const driverConfig: Config = {
       showProgress: true,
       animate: true,
       overlayOpacity: 0.7,
@@ -80,7 +80,7 @@ export const useOnboarding = ({
       nextBtnText: t('onboarding.next'),
       prevBtnText: t('onboarding.previous'),
       doneBtnText: t('onboarding.done'),
-      showButtons: ['next', 'previous', 'close'],
+      showButtons: ['next', 'previous', 'close'] as AllowedButtons[],
       onCloseClick: () => {
         markOnboardingCompleted();
         driverInstance.current?.destroy();
@@ -90,8 +90,8 @@ export const useOnboarding = ({
           markOnboardingCompleted();
         }
       },
-      onNextClick: (element: Element | undefined, step: DriveStep, options: { config: { activeIndex?: number } }) => {
-        const activeIndex = options.config.activeIndex ?? 0;
+      onNextClick: (_element, _step, { state }) => {
+        const activeIndex = state.activeIndex ?? 0;
         setCurrentStep(activeIndex + 1);
 
         // Check if we need to navigate to code page after step 3 (team selector)

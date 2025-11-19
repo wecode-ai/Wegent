@@ -41,7 +41,7 @@ export default function ChatPage() {
   const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null);
 
   // Check if user has git token
-  const hasGitToken = user?.git_info && user.git_info.length > 0;
+  const hasGitToken = !!(user?.git_info && user.git_info.length > 0);
 
   // Save last active tab to localStorage
   useEffect(() => {
