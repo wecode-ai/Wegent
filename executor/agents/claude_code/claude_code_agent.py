@@ -836,6 +836,7 @@ class ClaudeCodeAgent(Agent):
         Returns:
             bool: True if cancellation was successful, False otherwise
         """
+        cancelled = False
         try:
             if self.client is None:
                 logger.warning(f"No client available for session_id: {self.session_id}, cannot cancel")
@@ -852,16 +853,25 @@ class ClaudeCodeAgent(Agent):
                 # If we're in an async context, create a task
                 asyncio.create_task(self._async_cancel_run())
                 logger.info(f"Initiated interrupt for session_id: {self.session_id}")
-                return True
+                cancelled = True
             else:
                 # If not in async context, run the interrupt synchronously
                 loop.run_until_complete(self._async_cancel_run())
                 logger.info(f"Successfully interrupted session_id: {self.session_id}")
-                return True
+                cancelled = True
+
+            if cancelled:
+                self.report_progress(
+                    100,
+                    TaskStatus.COMPLETED.value,
+                    f"${{tasks.cancel_task}}",
+                    result=ExecutionResult(value="", thinking=self.thinking_manager.get_thinking_steps()).dict(),
+                )
 
         except Exception as e:
             logger.exception(f"Error cancelling run for session_id {self.session_id}: {str(e)}")
-            return False
+
+        return cancelled
 
     async def _async_cancel_run(self) -> None:
         """

@@ -1047,6 +1047,14 @@ class AgnoAgent(Agent):
             else:
                 logger.warning(f"Failed to cancel run_id: {self.current_run_id} for session_id: {self.session_id}")
 
+            if cancelled:
+                self.report_progress(
+                    100,
+                    TaskStatus.COMPLETED.value,
+                    f"${{tasks.cancel_task}}",
+                    result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict(),
+                )
+
             return cancelled
         except Exception as e:
             logger.exception(f"Error cancelling run for session_id {self.session_id}: {str(e)}")

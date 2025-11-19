@@ -339,9 +339,11 @@ class DockerExecutor(Executor):
         """
         try:
             # Find the container running this task
-            result = get_running_task_details(f"task_id={task_id}")
+            result = get_running_task_details()
 
-            if result["status"] != "success":
+            logger.info(f"Running task details for cancellation: {result}")
+
+            if result.get("status") != "success":
                 logger.warning(f"Failed to find container for task {task_id}: {result.get('error_msg', 'Unknown error')}")
                 return {
                     "status": "failed",
@@ -349,7 +351,7 @@ class DockerExecutor(Executor):
                 }
 
             task_ids = result.get("task_ids", [])
-            if not task_ids or task_id not in task_ids:
+            if str(task_id) not in task_ids:
                 logger.warning(f"Task {task_id} is not currently running")
                 return {
                     "status": "failed",
@@ -357,8 +359,8 @@ class DockerExecutor(Executor):
                 }
 
             # Get container details
-            details = result.get("details", [])
-            container_detail = next((d for d in details if d.get("task_id") == task_id), None)
+            containers = result.get("containers", [])
+            container_detail = next((d for d in containers if str(d.get("task_id")) == str(task_id)), None)
 
             if not container_detail:
                 logger.error(f"Could not find container details for task {task_id}")
@@ -367,8 +369,8 @@ class DockerExecutor(Executor):
                     "error_msg": f"Could not find container details for task {task_id}"
                 }
 
-            executor_name = container_detail.get("executor_name")
-            if not executor_name:
+            container_name = container_detail.get("container_name")
+            if not container_name:
                 logger.error(f"Could not find executor name for task {task_id}")
                 return {
                     "status": "failed",
@@ -376,16 +378,19 @@ class DockerExecutor(Executor):
                 }
 
             # Get container port
-            port = self._get_container_port(executor_name)
+            port = self._get_container_port(container_name)
             if not port:
-                logger.error(f"Could not find port for container {executor_name}")
+                logger.error(f"Could not find port for container {container_name}")
                 return {
                     "status": "failed",
-                    "error_msg": f"Could not find port for container {executor_name}"
+                    "error_msg": f"Could not find port for container {container_name}"
                 }
 
+            
             # Call the executor's cancel API
-            cancel_url = f"http://localhost:{port}/api/tasks/cancel?task_id={task_id}"
+            cancel_url = f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel?task_id={task_id}"
+
+            # Call the executor's cancel API
             logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
 
             try:
@@ -395,6 +400,8 @@ class DockerExecutor(Executor):
                 logger.info(f"Successfully cancelled task {task_id}")
                 return {
                     "status": "success",
+                    "task_ids": task_ids,
+                    "containers": containers,
                     "message": f"Task {task_id} cancellation requested successfully"
                 }
             except self.requests.exceptions.RequestException as e:
