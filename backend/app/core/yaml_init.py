@@ -370,6 +370,15 @@ def run_yaml_initialization(db: Session) -> Dict[str, Any]:
 
     # Scan and apply YAML resources
     init_dir = Path(settings.INIT_DATA_DIR)
+
+    # If path doesn't exist and is an absolute path, try relative to backend directory
+    if not init_dir.exists() and init_dir.is_absolute():
+        # Try relative path for local development
+        relative_dir = Path(__file__).parent.parent.parent / "init_data"
+        if relative_dir.exists():
+            init_dir = relative_dir
+            logger.info(f"Using relative path for local development: {init_dir}")
+
     logger.info(f"Scanning initialization directory: {init_dir}")
 
     summary = scan_and_apply_yaml_directory(user_id, init_dir, db)
