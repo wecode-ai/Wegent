@@ -103,9 +103,15 @@ const TOOL_ICONS: Record<string, string> = {
 };
 
 export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComponentProps) {
-  const { t } = useTranslation('tasks');
+  const { t: tTasks } = useTranslation('tasks');
+  const { t: tChat } = useTranslation('chat');
   const items = thinking ?? [];
-  const [isOpen, setIsOpen] = useState(true);
+
+  // Initialize isOpen based on taskStatus
+  const shouldBeCollapsed =
+    taskStatus === 'COMPLETED' || taskStatus === 'FAILED' || taskStatus === 'CANCELLED';
+  const [isOpen, setIsOpen] = useState(!shouldBeCollapsed);
+
   const previousSignatureRef = useRef<string | null>(null);
   const userCollapsedRef = useRef(false);
   const previousStatusRef = useRef<string | undefined>(taskStatus);
@@ -284,11 +290,11 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   const formatCollapsedTitle = (): string => {
     let statusText = '';
     if (taskStatus === 'COMPLETED') {
-      statusText = t('thinking.execution_completed');
+      statusText = tTasks('thinking.execution_completed');
     } else if (taskStatus === 'FAILED') {
-      statusText = t('thinking.execution_failed');
+      statusText = tTasks('thinking.execution_failed');
     } else if (taskStatus === 'CANCELLED') {
-      statusText = t('thinking.execution_cancelled');
+      statusText = tTasks('thinking.execution_cancelled');
     }
 
     const toolCounts = extractToolCalls(items);
@@ -487,7 +493,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
           return (
             <div className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
               <div className="text-xs font-medium text-blue-400 mb-2">
-                {t('thinking.todo_list') || 'Todo List'}
+                {tChat('thinking.todo_list') || 'Todo List'}
               </div>
               <div className="space-y-2">
                 {Array.isArray(todosData) &&
@@ -502,17 +508,17 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                           {todoItem.status === 'in_progress' ? (
                             <div
                               className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"
-                              title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                              title={tChat('thinking.todo_status_in_progress') || 'In Progress'}
                             ></div>
                           ) : todoItem.status === 'completed' ? (
                             <div
                               className="w-3 h-3 rounded-full bg-green-400"
-                              title={t('thinking.todo_status_completed') || 'Completed'}
+                              title={tChat('thinking.todo_status_completed') || 'Completed'}
                             ></div>
                           ) : (
                             <div
                               className="w-3 h-3 rounded-full bg-gray-400"
-                              title={t('thinking.todo_status_pending') || 'Pending'}
+                              title={tChat('thinking.todo_status_pending') || 'Pending'}
                             ></div>
                           )}
                         </div>
@@ -554,12 +560,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                 {isExpanded ? (
                   <>
                     <FiMinimize2 className="h-3 w-3" />
-                    <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
+                    <span className="text-xs">{tChat('thinking.collapse') || 'Collapse'}</span>
                   </>
                 ) : (
                   <>
                     <FiMaximize2 className="h-3 w-3" />
-                    <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
+                    <span className="text-xs">{tChat('thinking.expand') || 'Expand'}</span>
                   </>
                 )}
               </button>
@@ -584,7 +590,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         {parsed.toolName === 'TodoWrite' && parsed.args.todos ? (
           <div className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
             <div className="text-xs font-medium text-blue-400 mb-2">
-              {t('thinking.todo_write') || 'Todo List'}
+              {tChat('thinking.todo_write') || 'Todo List'}
             </div>
             <div className="space-y-2">
               {(() => {
@@ -603,17 +609,17 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                             {todoItem.status === 'in_progress' ? (
                               <div
                                 className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"
-                                title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                                title={tChat('thinking.todo_status_in_progress') || 'In Progress'}
                               ></div>
                             ) : todoItem.status === 'completed' ? (
                               <div
                                 className="w-3 h-3 rounded-full bg-green-400"
-                                title={t('thinking.todo_status_completed') || 'Completed'}
+                                title={tChat('thinking.todo_status_completed') || 'Completed'}
                               ></div>
                             ) : (
                               <div
                                 className="w-3 h-3 rounded-full bg-gray-400"
-                                title={t('thinking.todo_status_pending') || 'Pending'}
+                                title={tChat('thinking.todo_status_pending') || 'Pending'}
                               ></div>
                             )}
                           </div>
@@ -644,7 +650,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         ) : (
           <div className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
             <div className="text-xs font-medium text-blue-400 mb-2">
-              {t('thinking.pre_tool_call') || 'Tool Call'}: {parsed.toolName}
+              {tChat('thinking.pre_tool_call') || 'Tool Call'}: {parsed.toolName}
             </div>
             <div className="space-y-2">
               {Object.entries(parsed.args).map(([key, value]) =>
@@ -679,18 +685,18 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               onClick={() => toggleParamExpansion(paramKey)}
               className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
               title={
-                isExpanded ? t('thinking.collapse') || 'Collapse' : t('thinking.expand') || 'Expand'
+                isExpanded ? tChat('thinking.collapse') || 'Collapse' : tChat('thinking.expand') || 'Expand'
               }
             >
               {isExpanded ? (
                 <>
                   <FiMinimize2 className="h-3 w-3" />
-                  <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
+                  <span className="text-xs">{tChat('thinking.collapse') || 'Collapse'}</span>
                 </>
               ) : (
                 <>
                   <FiMaximize2 className="h-3 w-3" />
-                  <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
+                  <span className="text-xs">{tChat('thinking.expand') || 'Expand'}</span>
                 </>
               )}
             </button>
@@ -726,7 +732,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                 return (
                   <div key={idx} className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
                     <div className="text-xs font-medium text-blue-400 mb-2">
-                      {t('thinking.todo_list') || 'Todo List'}
+                      {tChat('thinking.todo_list') || 'Todo List'}
                     </div>
                     <div className="space-y-2">
                       {Array.isArray(inputObj.todos) &&
@@ -739,17 +745,17 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                               {todo.status === 'in_progress' ? (
                                 <div
                                   className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"
-                                  title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                                  title={tChat('thinking.todo_status_in_progress') || 'In Progress'}
                                 ></div>
                               ) : todo.status === 'completed' ? (
                                 <div
                                   className="w-3 h-3 rounded-full bg-green-400"
-                                  title={t('thinking.todo_status_completed') || 'Completed'}
+                                  title={tChat('thinking.todo_status_completed') || 'Completed'}
                                 ></div>
                               ) : (
                                 <div
                                   className="w-3 h-3 rounded-full bg-gray-400"
-                                  title={t('thinking.todo_status_pending') || 'Pending'}
+                                  title={tChat('thinking.todo_status_pending') || 'Pending'}
                                 ></div>
                               )}
                             </div>
@@ -773,7 +779,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               return (
                 <div key={idx} className="rounded bg-blue-500/5 p-2 border border-blue-500/20">
                   <div className="text-xs font-medium text-blue-400 mb-2">
-                    {t('thinking.tool_use') || 'Tool Use'}: {content.name}
+                    {tChat('thinking.tool_use') || 'Tool Use'}: {content.name}
                   </div>
                   {content.input && (
                     <div className="space-y-2">
@@ -810,7 +816,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                     <div
                       className={`text-xs font-medium ${content.is_error ? 'text-red-400' : 'text-green-400'}`}
                     >
-                      {content.is_error ? '❌' : '✅'} {t('thinking.tool_result') || 'Tool Result'}
+                      {content.is_error ? '❌' : '✅'} {tChat('thinking.tool_result') || 'Tool Result'}
                     </div>
                     {isCollapsible && (
                       <button
@@ -820,12 +826,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                         {isExpanded ? (
                           <>
                             <FiMinimize2 className="h-3 w-3" />
-                            <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
+                            <span className="text-xs">{tChat('thinking.collapse') || 'Collapse'}</span>
                           </>
                         ) : (
                           <>
                             <FiMaximize2 className="h-3 w-3" />
-                            <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
+                            <span className="text-xs">{tChat('thinking.expand') || 'Expand'}</span>
                           </>
                         )}
                       </button>
@@ -863,7 +869,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         return (
           <div className="mt-2 rounded bg-blue-500/5 p-2 border border-blue-500/20">
             <div className="text-xs font-medium text-blue-400 mb-2">
-              {t('thinking.todo_list') || 'Todo List'}
+              {tChat('thinking.todo_list') || 'Todo List'}
             </div>
             <div className="space-y-2">
               {Array.isArray(inputObj.todos) &&
@@ -873,17 +879,17 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                       {todo.status === 'in_progress' ? (
                         <div
                           className="w-3 h-3 rounded-full bg-yellow-400 animate-pulse"
-                          title={t('thinking.todo_status_in_progress') || 'In Progress'}
+                          title={tChat('thinking.todo_status_in_progress') || 'In Progress'}
                         ></div>
                       ) : todo.status === 'completed' ? (
                         <div
                           className="w-3 h-3 rounded-full bg-green-400"
-                          title={t('thinking.todo_status_completed') || 'Completed'}
+                          title={tChat('thinking.todo_status_completed') || 'Completed'}
                         ></div>
                       ) : (
                         <div
                           className="w-3 h-3 rounded-full bg-gray-400"
-                          title={t('thinking.todo_status_pending') || 'Pending'}
+                          title={tChat('thinking.todo_status_pending') || 'Pending'}
                         ></div>
                       )}
                     </div>
@@ -905,7 +911,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       return (
         <div className="mt-2 rounded bg-blue-500/5 p-2 border border-blue-500/20">
           <div className="text-xs font-medium text-blue-400 mb-2">
-            {t('thinking.tool_use') || 'Tool Use'}: {details.name}
+            {tChat('thinking.tool_use') || 'Tool Use'}: {details.name}
           </div>
           {details.input && (
             <div className="space-y-2">
@@ -944,7 +950,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             <div
               className={`text-xs font-medium ${details.is_error ? 'text-red-400' : 'text-green-400'}`}
             >
-              {details.is_error ? '❌' : '✅'} {t('thinking.tool_result') || 'Tool Result'}
+              {details.is_error ? '❌' : '✅'} {tChat('thinking.tool_result') || 'Tool Result'}
             </div>
             {isCollapsible && (
               <button
@@ -954,12 +960,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                 {isExpanded ? (
                   <>
                     <FiMinimize2 className="h-3 w-3" />
-                    <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
+                    <span className="text-xs">{tChat('thinking.collapse') || 'Collapse'}</span>
                   </>
                 ) : (
                   <>
                     <FiMaximize2 className="h-3 w-3" />
-                    <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
+                    <span className="text-xs">{tChat('thinking.expand') || 'Expand'}</span>
                   </>
                 )}
               </button>
@@ -978,7 +984,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       return (
         <div className="mt-2 rounded bg-purple-500/5 p-2 border border-purple-500/20">
           <div className="text-xs font-medium text-purple-400 mb-1">
-            📋 {t('thinking.result_message') || 'Result Message'}
+            📋 {tChat('thinking.result_message') || 'Result Message'}
           </div>
           <div className="space-y-1 text-xs text-text-tertiary">
             {details.subtype && <div>Subtype: {details.subtype}</div>}
@@ -1001,7 +1007,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       return (
         <div className="mt-2 rounded bg-gray-500/5 p-2 border border-gray-500/20">
           <div className="text-xs font-medium text-gray-400 mb-2">
-            ⚙️ {t('thinking.system_message') || 'System Message'}: {details.subtype}
+            ⚙️ {tChat('thinking.system_message') || 'System Message'}: {details.subtype}
           </div>
 
           {/* Show key system information */}
@@ -1009,7 +1015,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {/* Model information */}
             {details.model && (
               <div className="flex items-center gap-1">
-                <span className="font-medium">{t('thinking.system_model') || 'Model'}:</span>
+                <span className="font-medium">{tChat('thinking.system_model') || 'Model'}:</span>
                 <span>{details.model}</span>
               </div>
             )}
@@ -1017,9 +1023,9 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {/* Tools count */}
             {details.tools && Array.isArray(details.tools) && (
               <div className="flex items-center gap-1">
-                <span className="font-medium">{t('thinking.system_tools') || 'Tools'}:</span>
+                <span className="font-medium">{tChat('thinking.system_tools') || 'Tools'}:</span>
                 <span>
-                  {details.tools.length} {t('thinking.system_tools_available') || 'available'}
+                  {details.tools.length} {tChat('thinking.system_tools_available') || 'available'}
                 </span>
               </div>
             )}
@@ -1030,7 +1036,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               details.mcp_servers.length > 0 && (
                 <div className="flex items-center gap-1">
                   <span className="font-medium">
-                    {t('thinking.system_mcp_servers') || 'MCP Servers'}:
+                    {tChat('thinking.system_mcp_servers') || 'MCP Servers'}:
                   </span>
                   <div className="flex gap-2">
                     {details.mcp_servers.map((server: unknown, idx: number) => {
@@ -1056,7 +1062,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {details.permissionMode && (
               <div className="flex items-center gap-1">
                 <span className="font-medium">
-                  {t('thinking.system_permission') || 'Permission'}:
+                  {tChat('thinking.system_permission') || 'Permission'}:
                 </span>
                 <span className="px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400 text-xs">
                   {details.permissionMode}
@@ -1068,7 +1074,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {details.cwd && details.cwd !== '/app/executor' && (
               <div className="flex items-center gap-1">
                 <span className="font-medium">
-                  {t('thinking.system_directory') || 'Directory'}:
+                  {tChat('thinking.system_directory') || 'Directory'}:
                 </span>
                 <span className="text-xs">{details.cwd}</span>
               </div>
@@ -1086,7 +1092,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {details.error_message && (
               <div className="text-xs">
                 <span className="font-medium text-red-300">
-                  {t('thinking.error_message') || 'Error Message'}:
+                  {tChat('thinking.error_message') || 'Error Message'}:
                 </span>
                 <pre className="mt-1 text-text-tertiary overflow-x-auto bg-surface/50 p-1.5 rounded whitespace-pre-wrap break-words">
                   {details.error_message}
@@ -1096,7 +1102,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {details.execution_type && (
               <div className="text-xs">
                 <span className="font-medium text-red-300">
-                  {t('thinking.execution_type') || 'Execution Type'}:
+                  {tChat('thinking.execution_type') || 'Execution Type'}:
                 </span>
                 <span className="ml-2 text-text-tertiary">{details.execution_type}</span>
               </div>
@@ -1127,8 +1133,8 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             {!isOpen && isThinkingCompleted
               ? formatCollapsedTitle()
               : isThinkingCompleted
-                ? t('thinking.execution_completed')
-                : t('messages.thinking') || 'Thinking'}
+                ? tTasks('thinking.execution_completed')
+                : tChat('messages.thinking') || 'Thinking'}
           </span>
         </div>
         {isOpen ? (
@@ -1163,13 +1169,13 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                     <>
                       {item.action && (
                         <div className="mb-2 text-xs text-text-secondary">
-                          <span className="font-medium">{t('messages.action') || 'Action'}: </span>
+                          <span className="font-medium">{tChat('messages.action') || 'Action'}: </span>
                           {getThinkingText(item.action)}
                         </div>
                       )}
                       {item.result && (
                         <div key="result" className="mb-2 text-xs text-text-tertiary">
-                          <span className="font-medium">{t('messages.result') || 'Result'}: </span>
+                          <span className="font-medium">{tChat('messages.result') || 'Result'}: </span>
                           {(() => {
                             const resultText = getThinkingText(item.result);
                             const isCollapsible = shouldCollapse(resultText);
@@ -1192,14 +1198,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                                         <>
                                           <FiMinimize2 className="h-3 w-3" />
                                           <span className="text-xs">
-                                            {t('thinking.collapse') || 'Collapse'}
+                                            {tChat('thinking.collapse') || 'Collapse'}
                                           </span>
                                         </>
                                       ) : (
                                         <>
                                           <FiMaximize2 className="h-3 w-3" />
                                           <span className="text-xs">
-                                            {t('thinking.expand') || 'Expand'}
+                                            {tChat('thinking.expand') || 'Expand'}
                                           </span>
                                         </>
                                       )}
@@ -1220,7 +1226,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                       {item.reasoning && (
                         <div key="reasoning" className="mb-2 text-xs text-text-tertiary">
                           <span className="font-medium">
-                            {t('messages.reasoning') || 'Reasoning'}:{' '}
+                            {tChat('messages.reasoning') || 'Reasoning'}:{' '}
                           </span>
                           {(() => {
                             const reasoningText = getThinkingText(item.reasoning);
@@ -1244,14 +1250,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                                         <>
                                           <FiMinimize2 className="h-3 w-3" />
                                           <span className="text-xs">
-                                            {t('thinking.collapse') || 'Collapse'}
+                                            {tChat('thinking.collapse') || 'Collapse'}
                                           </span>
                                         </>
                                       ) : (
                                         <>
                                           <FiMaximize2 className="h-3 w-3" />
                                           <span className="text-xs">
-                                            {t('thinking.expand') || 'Expand'}
+                                            {tChat('thinking.expand') || 'Expand'}
                                           </span>
                                         </>
                                       )}
@@ -1280,7 +1286,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                     {confidenceText && (
                       <div className="text-xs text-text-tertiary">
                         <span className="font-medium">
-                          {t('messages.confidence') || 'Confidence'}:{' '}
+                          {tChat('messages.confidence') || 'Confidence'}:{' '}
                         </span>
                         {confidenceText}
                       </div>
@@ -1305,7 +1311,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-xs text-white shadow-md transition-all hover:bg-primary/90"
             >
               <FiChevronsDown className="h-3 w-3" />
-              <span>{t('thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
+              <span>{tChat('thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
             </button>
           )}
         </div>
