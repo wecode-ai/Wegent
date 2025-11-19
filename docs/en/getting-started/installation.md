@@ -250,27 +250,7 @@ npm run dev
 
 ### Step 6: Install Executor Manager
 
-In a new terminal:
-
-```bash
-# Enter executor_manager directory
-cd executor_manager
-
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Configure environment variables
-export TASK_API_DOMAIN=http://localhost:8000
-export CALLBACK_HOST=http://localhost:8001
-export EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
-
-# Run service
-python main.py
-```
+[Local Development](/executor_manager/README.md)
 
 ---
 

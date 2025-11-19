@@ -14,7 +14,8 @@ RUN npm ci && npm cache clean --force
 
 # 复制源码并构建
 COPY frontend .
-RUN npm run build
+# 修改 API URL 为 Docker 内部服务名
+RUN sed -i 's|NEXT_PUBLIC_API_URL=http://127.0.0.1:8000|NEXT_PUBLIC_API_URL=http://backend:8000|g' .env.local && npm run build
 
 # ---- 生产运行阶段 ----
 FROM node:22-slim AS runner

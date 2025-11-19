@@ -250,27 +250,7 @@ npm run dev
 
 ### 步骤 6: 安装 Executor Manager
 
-在新终端中：
-
-```bash
-# 进入 executor_manager 目录
-cd executor_manager
-
-# 创建虚拟环境
-python3 -m venv venv
-source venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
-
-# 配置环境变量
-export TASK_API_DOMAIN=http://localhost:8000
-export CALLBACK_HOST=http://localhost:8001
-export EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:latest
-
-# 运行服务
-python main.py
-```
+[本地开发](/executor_manager/README_zh.md)
 
 ---
 
