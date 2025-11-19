@@ -76,34 +76,30 @@ sequenceDiagram
 
 ### 数据结构
 
+**重要更新**: 从 2025年 起，系统已从 JSON 格式迁移到 Markdown 格式，以提高可读性和容错性。即使解析失败，用户也能看到可读的 Markdown 内容。
+
 #### 澄清问题格式 (Agent → Frontend)
 
-```json
-{
-  "type": "clarification",
-  "questions": [
-    {
-      "question_id": "q1",
-      "question_text": "需要支持哪些登录方式？",
-      "question_type": "multiple_choice",
-      "options": [
-        {
-          "value": "email",
-          "label": "邮箱/密码",
-          "recommended": true
-        },
-        {
-          "value": "oauth",
-          "label": "OAuth (Google, GitHub等)"
-        },
-        {
-          "value": "phone",
-          "label": "手机号+短信验证码"
-        }
-      ]
-    }
-  ]
-}
+Agent 输出 Markdown 格式的澄清问题：
+
+```markdown
+## 🤔 需求澄清问题 (Clarification Questions)
+
+### Q1: 需要支持哪些登录方式？
+**Type**: multiple_choice
+**Options**:
+- [✓] `email` - 邮箱/密码 (recommended)
+- [ ] `oauth` - OAuth (Google, GitHub等)
+- [ ] `phone` - 手机号+短信验证码
+
+### Q2: 是否需要"记住我"功能？
+**Type**: single_choice
+**Options**:
+- [✓] `yes` - 是 (recommended)
+- [ ] `no` - 否
+
+### Q3: 其他特殊需求？
+**Type**: text_input
 ```
 
 **问题类型说明**:
@@ -111,37 +107,57 @@ sequenceDiagram
 - `multiple_choice`: 多选（Checkbox）
 - `text_input`: 文本输入（TextArea）
 
-**选项属性**:
-- `recommended: true`: 该选项会被默认选中
+**选项格式**:
+- `[✓]` 表示推荐/默认选项，会被自动选中
+- `[ ]` 表示普通选项
+- 反引号 `` `value` `` 包裹技术值
+- ` - ` 后面是人类可读的标签文本
 
 #### 用户答案格式 (Frontend → Agent)
 
-```json
-{
-  "type": "clarification_answer",
-  "answers": [
-    {
-      "question_id": "q1",
-      "answer_type": "choice",
-      "value": ["email", "oauth"]
-    },
-    {
-      "question_id": "q2",
-      "answer_type": "custom",
-      "value": "用户自定义输入的文本"
-    }
-  ]
-}
+用户提交 Markdown 格式的答案：
+
+```markdown
+## 📝 我的回答 (My Answers)
+
+### Q1: 需要支持哪些登录方式？
+**Answer**:
+- `email` - 邮箱/密码
+- `oauth` - OAuth (Google, GitHub等)
+
+### Q2: 是否需要"记住我"功能？
+**Answer**: `yes` - 是
+
+### Q3: 其他特殊需求？
+**Answer**: 登录页面需要支持深色模式
 ```
 
 #### 最终 Prompt 格式 (Agent → Frontend)
 
-```json
-{
-  "type": "final_prompt",
-  "prompt": "实现用户登录功能，支持邮箱密码和OAuth两种认证方式..."
-}
+Agent 输出 Markdown 格式的最终需求提示词：
+
+```markdown
+## ✅ 最终需求提示词 (Final Requirement Prompt)
+
+实现用户登录功能，具体要求如下：
+
+**认证方式**:
+- 邮箱/密码认证（主要方式）
+- OAuth 集成（支持 Google 和 GitHub）
+
+**用户体验**:
+- 包含"记住我"复选框，保持用户登录状态
+- 登录页面支持深色模式
+
+**安全要求**:
+- 使用 bcrypt 或类似算法加密密码
+- OAuth token 安全存储
+- 实现速率限制防止暴力破解
 ```
+
+#### 向后兼容性
+
+前端同时支持解析 Markdown 格式和旧的 JSON 格式，确保向后兼容。如果 Agent 仍然输出 JSON，系统会自动识别并正确处理。
 
 ## 自定义 Bot
 
@@ -166,12 +182,14 @@ sequenceDiagram
 
 1. **问题设计**:
    - 每轮 3-5 个问题，避免过多
-   - 使用 `recommended: true` 引导用户
+   - 使用 `[✓]` 标记推荐选项，引导用户
    - 优先使用选择题，减少用户输入成本
 
 2. **输出规范**:
-   - 严格输出 JSON，不要添加额外说明文本
-   - 确保 JSON 格式正确，可被前端解析
+   - 严格输出 Markdown，使用规定的标题格式
+   - 问题使用 `## 🤔 需求澄清问题` 标题
+   - 最终 Prompt 使用 `## ✅ 最终需求提示词` 标题
+   - 不要在 Markdown 结构外添加额外说明文本
    - `question_id` 使用简单的标识符（如 q1, q2）
 
 3. **追问策略**:
@@ -199,12 +217,13 @@ sequenceDiagram
 ### 问题1: 澄清问题没有显示
 
 **可能原因**:
-- Agent 没有输出符合格式的 JSON
-- JSON 中 `type` 字段不是 `"clarification"`
+- Agent 没有输出符合格式的 Markdown
+- Markdown 标题不是 `## 🤔 需求澄清问题` 或 `## 🤔 Clarification Questions`
 
 **解决方案**:
-- 检查 Agent 的 system_prompt
-- 查看浏览器控制台是否有 JSON 解析错误
+- 检查 Agent 的 system_prompt，确保使用了正确的 Markdown 标题
+- 查看浏览器控制台是否有解析错误
+- 即使解析失败，Markdown 内容也应该可读
 
 ### 问题2: 提交答案后没有响应
 
@@ -219,10 +238,11 @@ sequenceDiagram
 ### 问题3: 最终 Prompt 没有特殊样式
 
 **可能原因**:
-- Agent 输出的 JSON 中 `type` 不是 `"final_prompt"`
+- Agent 输出的 Markdown 标题不是 `## ✅ 最终需求提示词` 或 `## ✅ Final Requirement Prompt`
 
 **解决方案**:
 - 确认 Agent system_prompt 中最终输出格式正确
+- 检查 emoji 图标是否正确（🤔 和 ✅）
 
 ## 后续增强方向
 
