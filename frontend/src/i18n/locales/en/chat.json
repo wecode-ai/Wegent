@@ -130,6 +130,8 @@
     "copied": "Copied",
     "copy_prompt": "Copy Prompt",
     "create_task": "Create New Task with This Prompt",
-    "final_prompt_hint": "This is the refined requirement based on your answers. You can copy it or create a new code task directly."
+    "final_prompt_hint": "This is the refined requirement based on your answers. You can copy it or create a new code task directly.",
+    "answers_submitted": "Answers submitted",
+    "waiting_response": "Waiting for response..."
   }
 }

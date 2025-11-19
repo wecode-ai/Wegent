@@ -399,8 +399,28 @@ export default function MessagesArea() {
     );
   };
 
-  const renderPlainMessage = (msg: Message) =>
-    (msg.content?.split('\n') || []).map((line, idx) => {
+  const renderPlainMessage = (msg: Message) => {
+    // Check if this is a clarification answer JSON (user message)
+    if (msg.type === 'user') {
+      try {
+        const parsed = JSON.parse(msg.content.trim());
+        if (parsed && parsed.type === 'clarification_answer') {
+          // Render a friendly message instead of raw JSON
+          return (
+            <div className="text-sm text-text-secondary">
+              <div className="mb-2">✓ {t('clarification.answers_submitted') || 'Answers submitted'}</div>
+              <div className="text-xs text-text-tertiary">
+                {t('clarification.waiting_response') || 'Waiting for response...'}
+              </div>
+            </div>
+          );
+        }
+      } catch {
+        // Not JSON, continue with normal rendering
+      }
+    }
+
+    return (msg.content?.split('\n') || []).map((line, idx) => {
       if (line.startsWith('__PROMPT_TRUNCATED__:')) {
         const match = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/);
         if (match) {
@@ -432,6 +452,7 @@ export default function MessagesArea() {
         </div>
       );
     });
+  };
 
   // Helper function to extract JSON from markdown code blocks or plain text
   const extractJsonFromContent = (content: string): any | null => {
