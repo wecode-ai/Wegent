@@ -32,6 +32,7 @@ aiohttp>=3.8.0
 # Utilities
 python-dotenv==1.0.0
 tenacity==8.2.3
+pyyaml>=6.0
 
 # Logging and monitoring
 structlog>=23.1.0

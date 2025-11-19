@@ -1,0 +1,11 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Default user configuration
+# admin/Wegent2025!
+user_name: admin
+password_hash: $2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW
+email: admin@example.com
+git_info: []
+is_active: true
