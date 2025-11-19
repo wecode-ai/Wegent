@@ -169,6 +169,19 @@ export default function TaskSidebar({
         </div>
       </div>
 
+      {/* New Task Button */}
+      <div className="px-3 mb-3">
+        <Button
+          variant="outline"
+          onClick={handleNewAgentClick}
+          className="w-full justify-start"
+          size="default"
+        >
+          <Plus className="h-4 w-4 mr-2" />
+          {t('tasks.new_task')}
+        </Button>
+      </div>
+
       {/* Search */}
       <div className="p-3">
         <div className="relative">
@@ -189,19 +202,6 @@ export default function TaskSidebar({
             </button>
           )}
         </div>
-      </div>
-
-      {/* New Task Button */}
-      <div className="px-3 mb-3">
-        <Button
-          variant="outline"
-          onClick={handleNewAgentClick}
-          className="w-full justify-start"
-          size="default"
-        >
-          <Plus className="h-4 w-4 mr-2" />
-          {t('tasks.new_task')}
-        </Button>
       </div>
 
       {/* Mark All As Read Button */}
