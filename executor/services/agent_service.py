@@ -172,7 +172,7 @@ class AgentService:
             Tuple of (TaskStatus, error message or None)
         """
         logger.info(f"task_id: [{task_id}] Cancelling task")
-        session = self._agent_sessions[task_id]
+        session = self._agent_sessions.get(task_id)
         if not session:
             return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] No session found"
 
@@ -180,22 +180,16 @@ class AgentService:
             agent = session.agent
             agent_name = agent.get_name()
 
-            if agent_name == "Agno":
-                if hasattr(agent, 'cancel_run'):
-                    success = agent.cancel_run()
-                    if success:
-                        logger.info(f"[{_format_task_log(task_id, -1)}] Successfully cancelled Agno task")
-                        return TaskStatus.SUCCESS, f"[{_format_task_log(task_id, -1)}] Task cancelled"
-                    else:
-                        logger.warning(f"[{_format_task_log(task_id, -1)}] Failed to cancel Agno task")
-                        return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] Cancel failed"
+            if hasattr(agent, 'cancel_run'):
+                success = agent.cancel_run()
+                if success:
+                    logger.info(f"[{_format_task_log(task_id, -1)}] Successfully cancelled {agent_name} task")
+                    return TaskStatus.SUCCESS, f"[{_format_task_log(task_id, -1)}] Task cancelled"
                 else:
-                    return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] Agno agent does not support cancellation"
-            elif agent_name == "ClaudeCodeAgent":
-                # Claude Code agent cancellation can be added here if needed
-                return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] ClaudeCode agent cancellation not yet implemented"
+                    logger.warning(f"[{_format_task_log(task_id, -1)}] Failed to cancel {agent_name} task")
+                    return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] Cancel failed"
             else:
-                return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] Unknown agent type: {agent_name}"
+                return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] {agent_name} agent does not support cancellation"
 
         except Exception as e:
             logger.exception(f"[{task_id}] Error cancelling task: {e}")
