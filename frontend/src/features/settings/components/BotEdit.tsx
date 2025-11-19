@@ -12,6 +12,7 @@ import { isPredefinedModel, getModelFromConfig } from '@/features/settings/servi
 import { agentApis, Agent } from '@/apis/agents';
 import { modelApis, Model } from '@/apis/models';
 import { useTranslation } from 'react-i18next';
+import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
 import type { MessageInstance } from 'antd/es/message/interface';
 
@@ -276,6 +277,14 @@ const BotEdit: React.FC<BotEditProps> = ({
     if (mcpConfig.trim()) {
       try {
         parsedMcpConfig = JSON.parse(mcpConfig);
+        // Adapt MCP config types based on selected agent
+        if (parsedMcpConfig && agentName) {
+          if (isValidAgentType(agentName)) {
+            parsedMcpConfig = adaptMcpConfigForAgent(parsedMcpConfig, agentName);
+          } else {
+            console.warn(`Unknown agent type "${agentName}", skipping MCP config adaptation`);
+          }
+        }
         setMcpConfigError(false);
       } catch {
         setMcpConfigError(true);
@@ -373,6 +382,24 @@ const BotEdit: React.FC<BotEditProps> = ({
                   setAgentConfig('');
                   setAgentConfigError(false);
                   setModels([]);
+
+                  // Adapt MCP config when switching agent type
+                  if (mcpConfig.trim()) {
+                    try {
+                      const currentMcpConfig = JSON.parse(mcpConfig);
+                      if (isValidAgentType(value)) {
+                        const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value);
+                        setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
+                      } else {
+                        console.warn(
+                          `Unknown agent type "${value}", skipping MCP config adaptation`
+                        );
+                      }
+                    } catch (error) {
+                      // If parsing fails, keep the original config
+                      console.warn('Failed to adapt MCP config on agent change:', error);
+                    }
+                  }
                 }
                 setAgentName(value);
               }}
@@ -539,6 +566,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         onClose={() => setImportModalVisible(false)}
         onImport={handleImportConfirm}
         message={message}
+        agentType={agentName as 'ClaudeCode' | 'Agno'}
       />
 
       {/* Mobile responsive styles */}
