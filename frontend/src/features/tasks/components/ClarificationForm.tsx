@@ -116,17 +116,40 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
       }
     );
 
-    const payload = {
-      type: 'clarification_answer' as const,
-      answers: answerPayload,
-    };
+    // Build Markdown formatted answer
+    let markdownAnswer = '## 📝 我的回答 (My Answers)\n\n';
+
+    answerPayload.forEach((answer) => {
+      markdownAnswer += `### ${answer.question_id.toUpperCase()}: ${answer.question_text}\n`;
+      markdownAnswer += '**Answer**: ';
+
+      if (answer.answer_type === 'custom') {
+        // Custom text input
+        markdownAnswer += `${answer.value as string}\n\n`;
+      } else {
+        // Choice answers
+        if (Array.isArray(answer.value) && Array.isArray(answer.selected_labels)) {
+          // Multiple choice
+          markdownAnswer += '\n';
+          answer.value.forEach((val, idx) => {
+            const label = answer.selected_labels?.[idx] || val;
+            markdownAnswer += `- \`${val}\` - ${label}\n`;
+          });
+          markdownAnswer += '\n';
+        } else {
+          // Single choice
+          const label = answer.selected_labels || answer.value;
+          markdownAnswer += `\`${answer.value}\` - ${label}\n\n`;
+        }
+      }
+    });
 
     setIsSubmitting(true);
 
     try {
-      // Send answer as JSON string
+      // Send answer as Markdown string
       const result = await sendMessage({
-        message: JSON.stringify(payload),
+        message: markdownAnswer,
         team: selectedTeam,
         repo: selectedRepo,
         branch: selectedBranch,

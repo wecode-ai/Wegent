@@ -401,7 +401,69 @@ export default function MessagesArea() {
   };
 
   const renderPlainMessage = (msg: Message) => {
-    // Check if this is a clarification answer JSON (user message)
+    // Check if this is a Markdown clarification answer (user message)
+    if (msg.type === 'user' && msg.content.includes('## 📝 我的回答')) {
+      // Parse Markdown answer format
+      const answerPayload: ClarificationAnswer[] = [];
+
+      // Extract all Q blocks
+      const questionRegex = /### (Q\d+): (.*?)\n\*\*Answer\*\*: ([\s\S]*?)(?=\n###|$)/g;
+      let match;
+
+      while ((match = questionRegex.exec(msg.content)) !== null) {
+        const questionId = match[1].toLowerCase();
+        const questionText = match[2].trim();
+        const answerContent = match[3].trim();
+
+        // Check if it's a multi-line answer (multiple choice with bullet points)
+        if (answerContent.startsWith('-')) {
+          // Multiple choice answer
+          const optionRegex = /- `([^`]+)` - (.*?)(?=\n-|$)/g;
+          const values: string[] = [];
+          const labels: string[] = [];
+          let optMatch;
+
+          while ((optMatch = optionRegex.exec(answerContent)) !== null) {
+            values.push(optMatch[1]);
+            labels.push(optMatch[2].trim());
+          }
+
+          answerPayload.push({
+            question_id: questionId,
+            question_text: questionText,
+            answer_type: 'choice',
+            value: values,
+            selected_labels: labels,
+          });
+        } else if (answerContent.startsWith('`')) {
+          // Single choice answer: `value` - Label
+          const singleMatch = answerContent.match(/`([^`]+)` - (.*)/);
+          if (singleMatch) {
+            answerPayload.push({
+              question_id: questionId,
+              question_text: questionText,
+              answer_type: 'choice',
+              value: singleMatch[1],
+              selected_labels: singleMatch[2].trim(),
+            });
+          }
+        } else {
+          // Custom text answer
+          answerPayload.push({
+            question_id: questionId,
+            question_text: questionText,
+            answer_type: 'custom',
+            value: answerContent,
+          });
+        }
+      }
+
+      if (answerPayload.length > 0) {
+        return <ClarificationAnswerSummary data={{ type: 'clarification_answer', answers: answerPayload }} />;
+      }
+    }
+
+    // Fallback: Check if this is a clarification answer JSON (user message) - for backward compatibility
     if (msg.type === 'user') {
       try {
         const parsed = JSON.parse(msg.content.trim());
@@ -449,6 +511,98 @@ export default function MessagesArea() {
     });
   };
 
+  // Helper function to parse Markdown clarification questions
+  const parseMarkdownClarification = (content: string): ClarificationData | null => {
+    // Check for clarification questions heading
+    if (!content.includes('## 🤔 需求澄清问题') && !content.includes('## 🤔 Clarification Questions')) {
+      return null;
+    }
+
+    const questions: ClarificationData['questions'] = [];
+
+    // Match all questions: ### Q{number}: {question_text}
+    const questionRegex = /### Q(\d+): (.*?)(?=\n\*\*Type\*\*:|$)/gs;
+    const matches = [...content.matchAll(questionRegex)];
+
+    for (const match of matches) {
+      const questionNumber = parseInt(match[1]);
+      const questionText = match[2].trim();
+
+      // Find the type and options for this question
+      const questionBlock = content.substring(match.index!, content.indexOf('\n### Q', match.index! + 1) !== -1
+        ? content.indexOf('\n### Q', match.index! + 1)
+        : content.length);
+
+      // Extract type
+      const typeMatch = questionBlock.match(/\*\*Type\*\*:\s*(\w+)/);
+      if (!typeMatch) continue;
+
+      const questionType = typeMatch[1] as 'single_choice' | 'multiple_choice' | 'text_input';
+      const questionId = `q${questionNumber}`;
+
+      if (questionType === 'text_input') {
+        // Text input has no options
+        questions.push({
+          question_id: questionId,
+          question_text: questionText,
+          question_type: 'text_input',
+        });
+      } else {
+        // Extract options for choice questions
+        const options: ClarificationData['questions'][0]['options'] = [];
+        const optionRegex = /- \[([ ✓])\] `([^`]+)` - (.*?)(?=\n-|\n\*\*|\n###|\n##|$)/g;
+        let optionMatch;
+
+        while ((optionMatch = optionRegex.exec(questionBlock)) !== null) {
+          const isRecommended = optionMatch[1] === '✓';
+          const value = optionMatch[2];
+          const label = optionMatch[3].trim().replace(/\(recommended\)$/i, '').trim();
+
+          options.push({
+            value,
+            label,
+            recommended: isRecommended,
+          });
+        }
+
+        if (options.length > 0) {
+          questions.push({
+            question_id: questionId,
+            question_text: questionText,
+            question_type: questionType,
+            options,
+          });
+        }
+      }
+    }
+
+    if (questions.length === 0) return null;
+
+    return {
+      type: 'clarification',
+      questions,
+    };
+  };
+
+  // Helper function to parse Markdown final prompt
+  const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
+    // Check for final prompt heading
+    if (!content.includes('## ✅ 最终需求提示词') && !content.includes('## ✅ Final Requirement Prompt')) {
+      return null;
+    }
+
+    // Extract everything after the heading
+    const headingRegex = /## ✅ (?:最终需求提示词|Final Requirement Prompt)[^\n]*\n+([\s\S]+)/;
+    const match = content.match(headingRegex);
+
+    if (!match) return null;
+
+    return {
+      type: 'final_prompt',
+      prompt: match[1].trim(),
+    };
+  };
+
   // Helper function to extract JSON from markdown code blocks or plain text
   const extractJsonFromContent = (content: string): any | null => {
     // Try to extract JSON from markdown code blocks (```json ... ```)
@@ -485,18 +639,30 @@ export default function MessagesArea() {
 
     // Try to parse as clarification or final_prompt data
     try {
-      let jsonMatch = null;
+      let parsedData = null;
+      let contentToParse = content;
 
       // Handle content with ${$$}$ separator
       if (content.includes('${$$}$')) {
         const [, result] = content.split('${$$}$');
         if (result) {
-          jsonMatch = extractJsonFromContent(result);
+          contentToParse = result;
         }
-      } else {
-        // Try to extract JSON from entire content
-        jsonMatch = extractJsonFromContent(content);
       }
+
+      // Try Markdown parsing first (new format)
+      const markdownClarification = parseMarkdownClarification(contentToParse);
+      if (markdownClarification) {
+        return <ClarificationForm data={markdownClarification} taskId={selectedTaskDetail?.id || 0} />;
+      }
+
+      const markdownFinalPrompt = parseMarkdownFinalPrompt(contentToParse);
+      if (markdownFinalPrompt) {
+        return <FinalPromptMessage data={markdownFinalPrompt} />;
+      }
+
+      // Fallback to JSON parsing (old format for backward compatibility)
+      const jsonMatch = extractJsonFromContent(contentToParse);
 
       // Handle clarification data
       if (jsonMatch?.type === 'clarification') {
