@@ -121,7 +121,7 @@ async def delete_session(task_id: str = Query(..., description="Task ID to delet
 
 
 @app.post("/api/tasks/cancel")
-async def cancel_task(task_id: str = Query(..., description="Task ID to cancel")):
+async def cancel_task(task_id: int = Query(..., description="Task ID to cancel")):
     """
     Cancel the currently running task for a specific task_id
     """
