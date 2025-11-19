@@ -353,7 +353,8 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     while ((match = templateRegex.exec(key)) !== null) {
       const templateKey = match[1];
       if (templateKey.includes('.')) {
-        const translatedText = t(templateKey) || templateKey;
+        // Use tChat for translation (most thinking keys are in chat.json)
+        const translatedText = tChat(templateKey) || templateKey;
         result = result.replace(match[0], translatedText);
       } else {
         result = result.replace(match[0], templateKey);
@@ -361,7 +362,8 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     }
 
     if (result === key && key.includes('.')) {
-      return t(key) || key;
+      // Use tChat for translation (most thinking keys are in chat.json)
+      return tChat(key) || key;
     }
 
     return result;
