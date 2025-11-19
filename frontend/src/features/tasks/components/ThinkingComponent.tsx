@@ -554,12 +554,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             >
               {isExpanded ? (
                 <>
-                  <FiMinimize2 className="h-3 w-3" />
+                  <Minimize2 className="h-3 w-3" />
                   <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
                 </>
               ) : (
                 <>
-                  <FiMaximize2 className="h-3 w-3" />
+                  <Maximize2 className="h-3 w-3" />
                   <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
                 </>
               )}
@@ -689,12 +689,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                       >
                         {isExpanded ? (
                           <>
-                            <FiMinimize2 className="h-3 w-3" />
+                            <Minimize2 className="h-3 w-3" />
                             <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
                           </>
                         ) : (
                           <>
-                            <FiMaximize2 className="h-3 w-3" />
+                            <Maximize2 className="h-3 w-3" />
                             <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
                           </>
                         )}
@@ -1058,14 +1058,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                                     >
                                       {isExpanded ? (
                                         <>
-                                          <FiMinimize2 className="h-3 w-3" />
+                                          <Minimize2 className="h-3 w-3" />
                                           <span className="text-xs">
                                             {t('thinking.collapse') || 'Collapse'}
                                           </span>
                                         </>
                                       ) : (
                                         <>
-                                          <FiMaximize2 className="h-3 w-3" />
+                                          <Maximize2 className="h-3 w-3" />
                                           <span className="text-xs">
                                             {t('thinking.expand') || 'Expand'}
                                           </span>
@@ -1110,14 +1110,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                                     >
                                       {isExpanded ? (
                                         <>
-                                          <FiMinimize2 className="h-3 w-3" />
+                                          <Minimize2 className="h-3 w-3" />
                                           <span className="text-xs">
                                             {t('thinking.collapse') || 'Collapse'}
                                           </span>
                                         </>
                                       ) : (
                                         <>
-                                          <FiMaximize2 className="h-3 w-3" />
+                                          <Maximize2 className="h-3 w-3" />
                                           <span className="text-xs">
                                             {t('thinking.expand') || 'Expand'}
                                           </span>
