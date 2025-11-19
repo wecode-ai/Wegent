@@ -71,7 +71,7 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
   return (
     <div
       ref={indicatorContainerRef}
-      className="relative flex items-center gap-4 sm:gap-6 pb-0"
+      className="relative flex items-center gap-4 sm:gap-6"
       data-tour="mode-toggle"
     >
       <span
@@ -91,7 +91,7 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
             itemRefs.current[item.key] = element
           }}
           onClick={item.onClick}
-          className={`relative px-1 pt-[0.55rem] pb-0 text-base sm:text-lg font-medium leading-none transition-colors duration-200 ${
+          className={`relative px-1 py-1 text-base sm:text-lg font-medium leading-none transition-colors duration-200 ${
             activePage === item.key ? 'text-text-primary' : 'text-text-secondary hover:text-text-primary'
           }`}
           aria-current={activePage === item.key ? 'page' : undefined}

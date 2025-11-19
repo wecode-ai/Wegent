@@ -16,6 +16,7 @@ import { paths } from '@/config/paths';
 import { useTranslation } from 'react-i18next';
 import { getLastRepo } from '@/utils/userPreferences';
 import { githubApis } from '@/apis/github';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null;
@@ -257,6 +258,7 @@ export default function RepositorySelector({
   };
 
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
 
   return (
     <div className="flex items-center space-x-1 min-w-0" data-tour="repo-selector">
@@ -275,7 +277,7 @@ export default function RepositorySelector({
           <span className="text-sx truncate h-2">{t('branches.select_repository')}</span>
         }
         className="repository-selector min-w-0 truncate"
-        style={{ width: 'auto', maxWidth: 200, display: 'inline-block', paddingRight: 8 }}
+        style={{ width: 'auto', maxWidth: isMobile ? 150 : 200, display: 'inline-block', paddingRight: 8 }}
         popupMatchSelectWidth={false}
         styles={{ popup: { root: { maxWidth: 200 } } }}
         classNames={{ popup: { root: 'repository-selector-dropdown custom-scrollbar' } }}

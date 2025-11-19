@@ -174,7 +174,7 @@ export default function TaskSidebar({
         <Button
           variant="outline"
           onClick={handleNewAgentClick}
-          className="w-full justify-start"
+          className="w-full justify-start px-3"
           size="default"
         >
           <Plus className="h-4 w-4 mr-2" />
