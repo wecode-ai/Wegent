@@ -141,7 +141,7 @@ class MCPManager:
         # Set default timeout to 5 minutes, allow user override
         timeout_value = server_config.get("timeout")
         sse_read_timeout_value = server_config.get("sse_read_timeout")
-        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5,
+        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5
 
         server_params = StreamableHTTPClientParams(
             url=server_config.get("url"),
@@ -174,7 +174,7 @@ class MCPManager:
         # Set default timeout to 5 minutes, allow user override
         timeout_value = server_config.get("timeout")
         sse_read_timeout_value = server_config.get("sse_read_timeout")
-        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5,
+        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5
 
         server_params = SSEClientParams(
             url=server_config.get("url"),
@@ -231,7 +231,7 @@ class MCPManager:
             command=server_config.get("command"),
         )
         timeout_value = server_config.get("timeout")
-        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5,
+        timeout_seconds = timeout_value if timeout_value is not None else 60 * 5
         return MCPTools(transport="stdio", server_params=server_params, timeout_seconds=timeout_seconds)
     
     async def cleanup_tools(self) -> None:
