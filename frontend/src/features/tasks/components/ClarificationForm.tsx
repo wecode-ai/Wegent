@@ -30,18 +30,16 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
   // Track validation errors for each question
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
 
-  // Check if this clarification has been answered by checking if it's the last message
-  // If there are any messages after this clarification, it means it has been answered
+  // Check if this clarification has been answered
+  // Simply check if there's a USER message after this clarification
   const isSubmitted = useMemo(() => {
     if (!selectedTaskDetail?.subtasks) return false;
 
     // Find the subtask that contains this clarification form
     const currentSubtaskIndex = selectedTaskDetail.subtasks.findIndex(sub => {
-      if (sub.role === 'USER') return false;
       const result = sub.result;
       if (!result || typeof result !== 'object') return false;
 
-      // Check if this subtask contains clarification data matching our questions
       const resultValue = 'value' in result ? result.value : null;
       if (!resultValue) return false;
 
@@ -65,11 +63,12 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
 
     if (currentSubtaskIndex === -1) return false;
 
-    // If this is not the last subtask, it means there are messages after it
-    // So it has been answered
-    const isLastSubtask = currentSubtaskIndex === selectedTaskDetail.subtasks.length - 1;
+    // Check if there's any USER message after this clarification
+    const hasUserMessageAfter = selectedTaskDetail.subtasks
+      .slice(currentSubtaskIndex + 1)
+      .some(sub => sub.role === 'USER');
 
-    return !isLastSubtask;
+    return hasUserMessageAfter;
   }, [selectedTaskDetail?.subtasks, data.questions]);
 
   // Initialize default answers for questions with recommended options
