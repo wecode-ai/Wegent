@@ -144,7 +144,7 @@ export const taskApis = {
 
   // Cancel a running task
   cancelTask: async (id: number): Promise<SuccessMessage> => {
-    return apiClient.post('/executor-manager/tasks/cancel', { task_id: id });
+    return apiClient.post(`/tasks/${id}/cancel`, {});
   },
 
   // Get branch diff
