@@ -9,6 +9,7 @@ import { PaperAirplaneIcon } from '@heroicons/react/24/outline';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
+import ModelSelector from './ModelSelector';
 import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
@@ -19,7 +20,7 @@ import { useTaskContext } from '../contexts/taskContext';
 import { App, Button } from 'antd';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
+import { saveLastTeam, getLastTeamId, saveLastRepo, saveLastModel, getLastModel } from '@/utils/userPreferences';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -48,6 +49,7 @@ export default function ChatArea({
   }
 
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
+  const [selectedModel, setSelectedModel] = useState<string | null>(null);
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null);
   const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null);
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
@@ -119,6 +121,38 @@ export default function ChatArea({
     setHasRestoredPreferences(true);
   }, [teams, hasRestoredPreferences]);
 
+  // Restore model preference from localStorage on mount (only for new tasks)
+  useEffect(() => {
+    if (!hasMessages) {
+      const lastModel = getLastModel();
+      if (lastModel) {
+        console.log('[ChatArea] Restoring model from localStorage:', lastModel);
+        setSelectedModel(lastModel);
+      }
+    }
+  }, [hasMessages]);
+
+  // Read current model from task detail when appending messages
+  useEffect(() => {
+    if (hasMessages && selectedTaskDetail?.subtasks) {
+      // Find the most recent ASSISTANT subtask
+      const assistantSubtasks = selectedTaskDetail.subtasks.filter(
+        (st: any) => st.role === 'ASSISTANT'
+      );
+      if (assistantSubtasks.length > 0) {
+        const latestAssistant = assistantSubtasks[assistantSubtasks.length - 1];
+        if (latestAssistant.bots && latestAssistant.bots.length > 0) {
+          const bot = latestAssistant.bots[0];
+          const privateModel = bot.agent_config?.private_model;
+          if (privateModel) {
+            console.log('[ChatArea] Setting model from current task:', privateModel);
+            setSelectedModel(privateModel);
+          }
+        }
+      }
+    }
+  }, [hasMessages, selectedTaskDetail]);
+
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
     if (selectedTeamForNewTask && !hasMessages) {
@@ -144,6 +178,17 @@ export default function ChatArea({
     if (team && team.id) {
       console.log('[ChatArea] Saving team to localStorage:', team.id);
       saveLastTeam(team.id);
+    }
+  };
+
+  const handleModelChange = (model: string | null) => {
+    console.log('[ChatArea] handleModelChange called:', model || 'null');
+    setSelectedModel(model);
+
+    // Save model preference to localStorage
+    if (model) {
+      console.log('[ChatArea] Saving model to localStorage:', model);
+      saveLastModel(model);
     }
   };
 
@@ -190,6 +235,7 @@ export default function ChatArea({
       branch: showRepositorySelector ? selectedBranch : null,
       task_id: selectedTaskDetail?.id,
       taskType: taskType,
+      selectedModel: selectedModel,
     });
     if (error) {
       message.error(error);
@@ -404,15 +450,23 @@ export default function ChatArea({
               />
               {/* Team Selector and Send Button */}
               <div className="flex items-end justify-between px-3 py-0">
-                <div>
+                <div className="flex items-center space-x-2">
                   {teams.length > 0 && (
-                    <TeamSelector
-                      selectedTeam={selectedTeam}
-                      setSelectedTeam={handleTeamChange}
-                      teams={teams}
-                      disabled={hasMessages}
-                      isLoading={isTeamsLoading}
-                    />
+                    <>
+                      <TeamSelector
+                        selectedTeam={selectedTeam}
+                        setSelectedTeam={handleTeamChange}
+                        teams={teams}
+                        disabled={hasMessages}
+                        isLoading={isTeamsLoading}
+                      />
+                      <ModelSelector
+                        selectedModel={selectedModel}
+                        setSelectedModel={handleModelChange}
+                        disabled={false}
+                        isLoading={isLoading}
+                      />
+                    </>
                   )}
                 </div>
                 <div className="ml-auto flex items-center">

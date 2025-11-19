@@ -19,6 +19,7 @@ export interface CreateTaskRequest {
   batch: number;
   user_id: number;
   user_name: string;
+  override_model?: string;
 }
 
 export interface UpdateTaskRequest {
