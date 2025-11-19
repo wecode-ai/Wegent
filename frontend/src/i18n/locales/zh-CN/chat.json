@@ -117,9 +117,9 @@
     "custom_answer": "自定义",
     "selected": "已选择",
     "please_answer_all": "请回答所有问题后再提交",
-    "submitted": "答案提交成功",
-    "submit_failed": "提交答案失败",
-    "submit_answers": "提交答案",
+    "submitted": "提交成功",
+    "submit_failed": "提交失败",
+    "submit_answers": "继续",
     "form_submitted": "表单已提交，等待响应中...",
     "final_prompt_title": "最终需求提示词",
     "prompt_copied": "提示词已复制到剪贴板",
@@ -131,9 +131,7 @@
     "copy_prompt": "复制提示词",
     "create_task": "使用此提示词创建新任务",
     "final_prompt_hint": "这是基于您的回答精炼出的需求。您可以复制它或直接创建新的代码任务。",
-    "answers_submitted": "答案已提交",
-    "waiting_response": "等待响应中...",
-    "my_answers": "我的回答",
-    "question": "问题"
+    "answers_submitted": "已提交",
+    "waiting_response": "等待响应中..."
   }
 }
