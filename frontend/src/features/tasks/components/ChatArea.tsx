@@ -179,7 +179,7 @@ export default function ChatArea({
         // Create a minimal Task object with required fields
         setSelectedTask({
           id: newTask.task_id,
-          title: taskInputMessage.substring(0, 50),
+          title: taskInputMessage.substring(0, 100),
           team_id: selectedTeam?.id || 0,
           git_url: selectedRepo?.git_url || '',
           git_repo: selectedRepo?.git_repo || '',
