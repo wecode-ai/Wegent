@@ -87,7 +87,7 @@ export function GithubStarButton({ className = '' }: { className?: string }) {
 
   const mergedClassName = `
     px-3 py-1.5 rounded-full border border-transparent
-    flex items-center gap-2 text-base font-semibold text-text-primary
+    flex items-center gap-2 text-sm font-normal text-text-primary
     hover:border-border transition-colors duration-200 min-w-[5rem]
     ${className}
   `.trim();

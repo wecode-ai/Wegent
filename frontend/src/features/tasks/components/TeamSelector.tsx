@@ -155,8 +155,7 @@ export default function TeamSelector({
         }
         className="repository-selector min-w-0 truncate"
         style={{
-          width: 'auto',
-          maxWidth: isMobile ? 150 : 200,
+          width: isMobile ? 150 : 200,
           display: 'inline-block',
           paddingRight: 20,
         }}

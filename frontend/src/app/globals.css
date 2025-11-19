@@ -13,6 +13,7 @@
   --color-bg-base: 255 255 255;
   --color-bg-surface: 247 247 248;
   --color-bg-muted: 249 250 251;
+  --color-bg-hover: 236 236 241;
   --color-border: 217 217 227;
   --color-border-strong: 192 192 207;
   --color-text-primary: 13 13 13;
@@ -35,6 +36,7 @@
   --color-bg-base: 33 33 33;
   --color-bg-surface: 52 53 65;
   --color-bg-muted: 64 65 79;
+  --color-bg-hover: 64 65 79;
   --color-border: 64 65 79;
   --color-border-strong: 86 88 105;
   --color-text-primary: 236 236 241;
@@ -437,4 +439,19 @@ button:focus-visible {
 
 .animate-pulse-dot {
   animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* Repository and Team Selector - Hide arrow by default, show on hover */
+.repository-selector .ant-select-arrow {
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.repository-selector:hover .ant-select-arrow {
+  opacity: 1;
+}
+
+/* Keep arrow visible when dropdown is open */
+.repository-selector.ant-select-open .ant-select-arrow {
+  opacity: 1;
 }

@@ -7,13 +7,7 @@
 import { useState } from 'react';
 import { Task, TaskType } from '@/types/api';
 import TaskMenu from './TaskMenu';
-import {
-  CheckCircle2,
-  XCircle,
-  StopCircle,
-  PauseCircle,
-  RotateCw,
-} from 'lucide-react';
+import { CheckCircle2, XCircle, StopCircle, PauseCircle, RotateCw } from 'lucide-react';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -227,7 +221,7 @@ export default function TaskListSection({
           return (
             <div
               key={task.id}
-              className={`flex items-center justify-between py-2 px-2 rounded hover:bg-surface/80 cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-surface/80' : ''}`}
+              className={`flex items-center justify-between py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
               onClick={() => handleTaskClick(task)}
               onTouchStart={handleTaskTouchStart(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
