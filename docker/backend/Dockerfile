@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM python:3.12-slim
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
 
 # Set working directory
 WORKDIR /app
