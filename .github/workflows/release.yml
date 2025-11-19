@@ -4,6 +4,11 @@ on:
   push:
     tags:
       - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to create a release for (e.g. v1.2.3)'
+        required: true
 
 permissions:
   contents: write
@@ -23,9 +28,19 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const tag = context.ref.replace('refs/tags/', '');
+            const dispatchTag = core.getInput('tag')?.trim();
+            const refTag = context.ref?.startsWith('refs/tags/')
+              ? context.ref.replace('refs/tags/', '')
+              : '';
+            const tag = dispatchTag || refTag;
+
+            if (!tag) {
+              core.setFailed('No tag provided. Provide one via workflow_dispatch input or trigger via tag push.');
+              return;
+            }
+
             try {
-              const { data } = await github.repos.generateReleaseNotes({
+              const { data } = await github.rest.repos.generateReleaseNotes({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 tag_name: tag,
