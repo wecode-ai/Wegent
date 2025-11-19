@@ -249,12 +249,12 @@ export default function TaskListSection({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <p className="text-xs text-text-muted leading-tight truncate m-0 flex-1">
+                    <p className="text-xs text-text-muted hover:text-text-primary transition-colors leading-tight truncate m-0 flex-1">
                       {task.title}
                     </p>
                     {getTaskTypeTag(task)}
                   </div>
-                  <p className="text-xs text-text-secondary m-0">
+                  <p className="text-xs text-text-secondary hover:text-text-primary transition-colors m-0">
                     {formatTimeAgo(task.created_at)}
                   </p>
                 </div>

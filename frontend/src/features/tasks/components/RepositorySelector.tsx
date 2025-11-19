@@ -277,7 +277,7 @@ export default function RepositorySelector({
           <span className="text-sx truncate h-2">{t('branches.select_repository')}</span>
         }
         className="repository-selector min-w-0 truncate"
-        style={{ width: 'auto', maxWidth: isMobile ? 150 : 200, display: 'inline-block', paddingRight: 8 }}
+        style={{ width: 'auto', maxWidth: isMobile ? 150 : 200, display: 'inline-block', paddingRight: 20 }}
         popupMatchSelectWidth={false}
         styles={{ popup: { root: { maxWidth: 200 } } }}
         classNames={{ popup: { root: 'repository-selector-dropdown custom-scrollbar' } }}

@@ -172,7 +172,7 @@ export default function TaskSidebar({
       {/* New Task Button */}
       <div className="px-3 mb-2">
         <Button
-          variant="outline"
+          variant="ghost"
           onClick={handleNewAgentClick}
           className="w-full justify-start px-3"
           size="default"
@@ -184,14 +184,14 @@ export default function TaskSidebar({
 
       {/* Search */}
       <div className="px-3 mb-3">
-        <div className="relative">
+        <div className="relative group">
           <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
           <input
             type="text"
             value={localSearchTerm}
             onChange={handleSearchChange}
             placeholder={t('tasks.search_placeholder')}
-            className="w-full pl-8 pr-8 py-1.5 bg-surface border border-border rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
+            className="w-full pl-8 pr-8 py-1.5 bg-transparent group-hover:bg-surface border border-transparent group-hover:border-border rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent focus:bg-surface cursor-text"
           />
           {localSearchTerm && (
             <button
