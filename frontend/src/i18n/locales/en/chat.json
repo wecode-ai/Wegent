@@ -134,6 +134,7 @@
     "answers_submitted": "Answers submitted",
     "waiting_response": "Waiting for response...",
     "my_answers": "My Answers",
-    "question": "Q"
+    "question": "Q",
+    "required_field": "This question is required"
   }
 }

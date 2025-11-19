@@ -518,7 +518,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             </div>
             <div className="space-y-2">
               {Object.entries(parsed.args).map(([key, value]) =>
-                renderParamValue(key, value, `${uniqueId}-toolcall`)
+                renderParamValue(key, value, `${uniqueId}-toolcall-${key}`)
               )}
             </div>
           </div>
@@ -541,7 +541,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       isCollapsible && !isExpanded ? getContentPreview(stringValue) : stringValue;
 
     return (
-      <div className="text-xs">
+      <div key={paramKey} className="text-xs">
         <div className="flex items-center justify-between mb-0.5">
           <span className="font-medium text-blue-300">{key}:</span>
           {isCollapsible && (
@@ -649,7 +649,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                     <div className="space-y-2">
                       {typeof content.input === 'object' && !Array.isArray(content.input) ? (
                         Object.entries(content.input).map(([key, value]) =>
-                          renderParamValue(key, value, `item-${itemIndex}-content-${idx}`)
+                          renderParamValue(key, value, `item-${itemIndex}-content-${idx}-${key}`)
                         )
                       ) : (
                         <pre className="text-xs text-text-tertiary overflow-x-auto bg-surface/50 p-1.5 rounded">
@@ -781,7 +781,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
             <div className="space-y-2">
               {typeof details.input === 'object' && !Array.isArray(details.input) ? (
                 Object.entries(details.input).map(([key, value]) =>
-                  renderParamValue(key, value, `item-${itemIndex}-direct`)
+                  renderParamValue(key, value, `item-${itemIndex}-direct-${key}`)
                 )
               ) : (
                 <pre className="text-xs text-text-tertiary overflow-x-auto bg-surface/50 p-1.5 rounded">

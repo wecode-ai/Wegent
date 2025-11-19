@@ -50,7 +50,11 @@ const nextConfig = {
     // Improve chunk loading reliability
     optimizeCss: false,
     // Enable server actions if needed
-    serverActions: true,
+    serverActions: {
+      bodySizeLimit: '2mb',
+    },
+    // Disable barrel optimization for react-icons to fix import issues
+    optimizePackageImports: ['react-icons'],
   },
   async rewrites() {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';

@@ -6,31 +6,38 @@
 
 import { useState } from 'react';
 import { Button, message } from 'antd';
-import { FiCopy, FiCheck, FiPlusCircle } from 'react-icons/fi';
-import { GiMagicWand } from 'react-icons/gi';
-import type { FinalPromptData } from '@/types/api';
+import { FiCopy, FiCheck, FiPlusCircle, FiStar } from 'react-icons/fi';
+import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTranslation } from '@/hooks/useTranslation';
-import { taskApis } from '@/apis/tasks';
-import { useTaskContext } from '../contexts/taskContext';
 import { useRouter } from 'next/navigation';
 
 interface FinalPromptMessageProps {
   data: FinalPromptData;
+  selectedTeam?: Team | null;
+  selectedRepo?: GitRepoInfo | null;
+  selectedBranch?: GitBranch | null;
 }
 
-export default function FinalPromptMessage({ data }: FinalPromptMessageProps) {
+export default function FinalPromptMessage({
+  data,
+  selectedTeam,
+  selectedRepo,
+  selectedBranch,
+}: FinalPromptMessageProps) {
   const { t } = useTranslation('chat');
   const { theme } = useTheme();
-  const { selectedTeam, selectedRepo, selectedBranch, refreshTasks } = useTaskContext();
   const router = useRouter();
   const [copied, setCopied] = useState(false);
-  const [isCreatingTask, setIsCreatingTask] = useState(false);
 
   const handleCopy = async () => {
     try {
-      if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
+      if (
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard &&
+        navigator.clipboard.writeText
+      ) {
         await navigator.clipboard.writeText(data.prompt);
       } else {
         // Fallback
@@ -52,7 +59,7 @@ export default function FinalPromptMessage({ data }: FinalPromptMessageProps) {
     }
   };
 
-  const handleCreateTask = async () => {
+  const handleCreateTask = () => {
     if (!selectedTeam || !selectedRepo || !selectedBranch) {
       message.warning(
         t('clarification.select_context') || 'Please select Team, Repository and Branch first'
@@ -60,50 +67,28 @@ export default function FinalPromptMessage({ data }: FinalPromptMessageProps) {
       return;
     }
 
-    setIsCreatingTask(true);
+    // Store prompt data in sessionStorage for the new task page
+    const promptData = {
+      prompt: data.prompt,
+      teamId: selectedTeam.id,
+      repoId: selectedRepo.git_repo_id,
+      branch: selectedBranch.name,
+      timestamp: Date.now(),
+    };
 
-    try {
-      // Create a new task with the final prompt
-      const newTaskId = await taskApis.createTask();
+    sessionStorage.setItem('pendingTaskPrompt', JSON.stringify(promptData));
 
-      // Send the prompt as the first message
-      await taskApis.sendTaskMessage({
-        task_id: newTaskId,
-        message: data.prompt,
-        title: data.prompt.substring(0, 100),
-        team_id: selectedTeam.id,
-        git_url: selectedRepo.git_url,
-        git_repo: selectedRepo.git_repo,
-        git_repo_id: selectedRepo.git_repo_id,
-        git_domain: selectedRepo.git_domain,
-        branch_name: selectedBranch.name,
-        prompt: data.prompt,
-        task_type: 'code',
-        batch: 0,
-        user_id: 0,
-        user_name: '',
-      });
+    // Navigate to new task page
+    router.push('/code');
 
-      message.success(t('clarification.task_created') || 'New task created successfully');
-
-      // Refresh task list
-      await refreshTasks();
-
-      // Navigate to the new task
-      router.push(`/code?taskId=${newTaskId}`);
-    } catch (error) {
-      console.error('Failed to create task:', error);
-      message.error(t('clarification.task_creation_failed') || 'Failed to create new task');
-    } finally {
-      setIsCreatingTask(false);
-    }
+    message.success(t('clarification.prompt_ready') || 'Navigating to new task page...');
   };
 
   return (
     <div className="space-y-3 p-4 rounded-lg border-2 border-blue-500/50 bg-blue-500/10 shadow-lg">
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
-        <GiMagicWand className="w-5 h-5 text-blue-400" />
+        <FiStar className="w-5 h-5 text-blue-400" />
         <h3 className="text-base font-semibold text-blue-400">
           {t('clarification.final_prompt_title') || 'Final Requirement Prompt'}
         </h3>
@@ -142,7 +127,6 @@ export default function FinalPromptMessage({ data }: FinalPromptMessageProps) {
           type="primary"
           icon={<FiPlusCircle className="w-4 h-4" />}
           onClick={handleCreateTask}
-          loading={isCreatingTask}
         >
           {t('clarification.create_task') || 'Create New Task with This Prompt'}
         </Button>

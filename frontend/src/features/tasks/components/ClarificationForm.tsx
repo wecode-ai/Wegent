@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Button, message } from 'antd';
 import { FiSend } from 'react-icons/fi';
 import type { ClarificationData, ClarificationAnswer } from '@/types/api';
@@ -20,14 +20,67 @@ interface ClarificationFormProps {
 
 export default function ClarificationForm({ data, taskId }: ClarificationFormProps) {
   const { t } = useTranslation('chat');
-  const { selectedTeam, selectedRepo, selectedBranch, refreshSelectedTaskDetail } = useTaskContext();
-  const [answers, setAnswers] = useState<Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>>(new Map());
-  const [isSubmitted, setIsSubmitted] = useState(false);
+  const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
+  const [answers, setAnswers] = useState<
+    Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>
+  >(new Map());
   const [isSubmitting, setIsSubmitting] = useState(false);
+  // Track if user has interacted with the form to prevent re-initialization
+  const [hasUserInteracted, setHasUserInteracted] = useState(false);
+  // Track validation errors for each question
+  const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
+
+  // Check if this clarification has been answered by checking if it's the last message
+  // If there are any messages after this clarification, it means it has been answered
+  const isSubmitted = useMemo(() => {
+    if (!selectedTaskDetail?.subtasks) return false;
+
+    // Find the subtask that contains this clarification form
+    const currentSubtaskIndex = selectedTaskDetail.subtasks.findIndex(sub => {
+      if (sub.role === 'USER') return false;
+      const result = sub.result;
+      if (!result || typeof result !== 'object') return false;
+
+      // Check if this subtask contains clarification data matching our questions
+      const resultValue = 'value' in result ? result.value : null;
+      if (!resultValue) return false;
+
+      const contentToCheck =
+        typeof resultValue === 'string' ? resultValue : JSON.stringify(resultValue);
+
+      // Check for Markdown format clarification
+      if (
+        contentToCheck.includes('## 🤔 需求澄清问题') ||
+        contentToCheck.includes('## 🤔 Clarification Questions')
+      ) {
+        // Verify it matches our question IDs
+        const hasMatchingQuestions = data.questions.every(q =>
+          contentToCheck.includes(q.question_id.toUpperCase())
+        );
+        return hasMatchingQuestions;
+      }
+
+      return false;
+    });
+
+    if (currentSubtaskIndex === -1) return false;
+
+    // If this is not the last subtask, it means there are messages after it
+    // So it has been answered
+    const isLastSubtask = currentSubtaskIndex === selectedTaskDetail.subtasks.length - 1;
+
+    return !isLastSubtask;
+  }, [selectedTaskDetail?.subtasks, data.questions]);
 
   // Initialize default answers for questions with recommended options
   useEffect(() => {
-    const initialAnswers = new Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>();
+    // Only initialize if user hasn't interacted yet
+    if (hasUserInteracted) return;
+
+    const initialAnswers = new Map<
+      string,
+      { answer_type: 'choice' | 'custom'; value: string | string[] }
+    >();
 
     data.questions.forEach(question => {
       if (question.question_type === 'single_choice') {
@@ -50,15 +103,28 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
     });
 
     setAnswers(initialAnswers);
-  }, [data.questions]);
+  }, [data.questions, hasUserInteracted]);
 
-  const handleAnswerChange = (questionId: string, answer: { answer_type: 'choice' | 'custom'; value: string | string[] }) => {
+  const handleAnswerChange = (
+    questionId: string,
+    answer: { answer_type: 'choice' | 'custom'; value: string | string[] }
+  ) => {
     if (isSubmitted) return;
+
+    // Mark that user has interacted with the form
+    setHasUserInteracted(true);
 
     setAnswers(prev => {
       const newAnswers = new Map(prev);
       newAnswers.set(questionId, answer);
       return newAnswers;
+    });
+
+    // Clear validation error for this question when user provides an answer
+    setValidationErrors(prev => {
+      const newErrors = new Set(prev);
+      newErrors.delete(questionId);
+      return newErrors;
     });
   };
 
@@ -68,23 +134,44 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
       const answer = answers.get(q.question_id);
       if (!answer) return true;
 
+      // For custom answers, check if the value is not empty
       if (answer.answer_type === 'custom') {
         return !answer.value || (typeof answer.value === 'string' && answer.value.trim() === '');
       }
 
+      // For choice answers (both single and multiple)
+      // Multiple choice: allow empty array (user chose not to select any)
+      // Single choice: must have a value
       if (Array.isArray(answer.value)) {
-        return answer.value.length === 0;
+        // For multiple choice, empty array is valid (no selection is a valid choice)
+        return false;
       }
 
-      return !answer.value;
+      // For single choice, must have a non-empty value
+      return !answer.value || (typeof answer.value === 'string' && answer.value.trim() === '');
     });
-
     if (unansweredQuestions.length > 0) {
-      message.warning(
-        t('clarification.please_answer_all') || 'Please answer all questions before submitting'
+      // Mark unanswered questions with validation errors
+      const errorQuestionIds = new Set(unansweredQuestions.map(q => q.question_id));
+      setValidationErrors(errorQuestionIds);
+
+      // Show detailed warning message
+      const questionTitles = unansweredQuestions.map(q => `"${q.question_text}"`).join('、');
+
+      message.warning({
+        content: `${t('clarification.please_answer_all') || 'Please answer all questions before submitting'}: ${questionTitles}`,
+        duration: 5,
+      });
+
+      console.log(
+        'Unanswered questions:',
+        unansweredQuestions.map(q => q.question_id)
       );
       return;
     }
+
+    // Clear all validation errors before submitting
+    setValidationErrors(new Set());
 
     // Build answer payload with question text and labels
     const answerPayload: ClarificationAnswer[] = Array.from(answers.entries()).map(
@@ -119,7 +206,7 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
     // Build Markdown formatted answer
     let markdownAnswer = '## 📝 我的回答 (My Answers)\n\n';
 
-    answerPayload.forEach((answer) => {
+    answerPayload.forEach(answer => {
       markdownAnswer += `### ${answer.question_id.toUpperCase()}: ${answer.question_text}\n`;
       markdownAnswer += '**Answer**: ';
 
@@ -147,19 +234,43 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
     setIsSubmitting(true);
 
     try {
+      // Extract team, repo, and branch info from selectedTaskDetail
+      const team = selectedTaskDetail?.team || null;
+      const repo = selectedTaskDetail?.git_repo
+        ? {
+            git_repo_id: selectedTaskDetail.git_repo_id || 0,
+            name: selectedTaskDetail.git_repo,
+            git_repo: selectedTaskDetail.git_repo,
+            git_url: selectedTaskDetail.git_url || '',
+            git_domain: selectedTaskDetail.git_domain || '',
+            private: false, // Default value, actual value unknown from task detail
+            type: (selectedTaskDetail.git_domain?.includes('github')
+              ? 'github'
+              : selectedTaskDetail.git_domain?.includes('gitlab')
+                ? 'gitlab'
+                : 'gitee') as 'github' | 'gitlab' | 'gitee',
+          }
+        : null;
+      const branch = selectedTaskDetail?.branch_name
+        ? {
+            name: selectedTaskDetail.branch_name,
+            protected: false, // Default value, actual value unknown from task detail
+            default: false,
+          }
+        : null;
+
       // Send answer as Markdown string
       const result = await sendMessage({
         message: markdownAnswer,
-        team: selectedTeam,
-        repo: selectedRepo,
-        branch: selectedBranch,
+        team: team,
+        repo: repo,
+        branch: branch,
         task_id: taskId,
       });
 
       if (result.error) {
         message.error(result.error);
       } else {
-        setIsSubmitted(true);
         message.success(t('clarification.submitted') || 'Answers submitted successfully');
         // Refresh task detail to get new messages
         setTimeout(() => {
@@ -184,19 +295,30 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
       </div>
 
       <div className="space-y-4">
-        {data.questions.map(question => (
-          <div
-            key={question.question_id}
-            className="p-3 rounded bg-surface/50 border border-border"
-          >
-            <ClarificationQuestion
-              question={question}
-              answer={answers.get(question.question_id) || null}
-              onChange={answer => handleAnswerChange(question.question_id, answer)}
-              readonly={isSubmitted}
-            />
-          </div>
-        ))}
+        {data.questions.map(question => {
+          const hasError = validationErrors.has(question.question_id);
+          return (
+            <div
+              key={question.question_id}
+              className={`p-3 rounded bg-surface/50 border transition-colors ${
+                hasError ? 'border-red-500 bg-red-500/5 animate-pulse' : 'border-border'
+              }`}
+            >
+              {hasError && (
+                <div className="mb-2 text-xs text-red-400 flex items-center gap-1">
+                  <span>⚠️</span>
+                  <span>{t('clarification.required_field') || '此问题必须回答'}</span>
+                </div>
+              )}
+              <ClarificationQuestion
+                question={question}
+                answer={answers.get(question.question_id) || null}
+                onChange={answer => handleAnswerChange(question.question_id, answer)}
+                readonly={isSubmitted}
+              />
+            </div>
+          );
+        })}
       </div>
 
       {!isSubmitted && (

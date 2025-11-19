@@ -14,7 +14,7 @@ Constants definition file for Docker executor
 CONTAINER_OWNER = "executor_manager"
 
 # Docker host configuration
-DEFAULT_DOCKER_HOST = "host.docker.internal"
+DEFAULT_DOCKER_HOST = "localhost"
 DOCKER_SOCKET_PATH = "/var/run/docker.sock"
 
 # API configuration

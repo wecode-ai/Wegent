@@ -42,4 +42,4 @@ def get_host_ip() -> str:
         logger.warning(
             f"Failed to get host IP: {e}, falling back to host.docker.internal"
         )
-        return "host.docker.internal"
+        return "localhost"
