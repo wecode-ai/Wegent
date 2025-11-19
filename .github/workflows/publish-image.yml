@@ -359,6 +359,41 @@ jobs:
             echo "Created and pushed tag v${VERSION}"
           fi
 
+      - name: Generate Release Notes
+        id: release-notes
+        uses: actions/github-script@v7
+        env:
+          TAG: v${{ needs.prepare-release.outputs.new_version }}
+        with:
+          script: |
+            const tag = process.env.TAG;
+            if (!tag) {
+              core.setFailed('TAG env is missing; cannot generate release notes.');
+              return;
+            }
+
+            try {
+              const { data } = await github.rest.repos.generateReleaseNotes({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag_name: tag,
+              });
+              core.setOutput("tag", tag);
+              core.setOutput("body", data.body || '');
+            } catch (error) {
+              core.setFailed(`Failed to generate release notes: ${error.message}`);
+            }
+
+      - name: Create GitHub Release
+        if: steps.release-notes.outputs.tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release-notes.outputs.tag }}
+          name: Release ${{ steps.release-notes.outputs.tag }}
+          body: ${{ steps.release-notes.outputs.body }}
+          draft: false
+          prerelease: false
+
   update-docker-compose:
     needs:
       - prepare-release
