@@ -63,6 +63,8 @@ services:
       APPEND_CODE_TASK_EXPIRE_HOURS: 2
       CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS: 2
       CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS: 2
+      INIT_DATA_DIR: /app/init_data
+      INIT_DATA_ENABLED: "True"
     depends_on:
       mysql:
         condition: service_healthy

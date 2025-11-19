@@ -2,35 +2,49 @@
 
 ## Overview
 
-This directory contains YAML configuration files for initializing the Wegent system. These files replace the previous SQL-based initialization approach (`init.sql`).
+This directory contains YAML configuration files for initializing the Wegent system. The system automatically scans this directory on startup and applies all YAML resources using the batch service API.
 
-## Files
+## How It Works
 
-- **`default_user.yaml`**: Default admin user configuration
-- **`default_resources.yaml`**: Default resources including Ghost, Model, Shell, Bot, and Team configurations
-- **`public_shells.yaml`**: Public shell configurations (ClaudeCode, Agno)
+1. **Auto-scan**: On startup, the backend scans `INIT_DATA_DIR` (default: `/app/init_data`) for all `.yaml` and `.yml` files
+2. **Auto-apply**: All resources are loaded and applied using the existing batch service (`apply_resources`)
+3. **Idempotent**: Resources are only created if they don't exist; existing resources are updated
+4. **Order**: Files are processed in alphabetical order (use numeric prefixes for ordering)
 
-## Default User
+## Configuration
 
-The default admin user is configured in `default_user.yaml`:
+### Environment Variables
+
+```bash
+# Enable/disable YAML initialization (default: True)
+INIT_DATA_ENABLED=True
+
+# Directory to scan for YAML files (default: /app/init_data)
+INIT_DATA_DIR=/app/init_data
+```
+
+### Default Admin User
+
+The system automatically creates a default admin user if it doesn't exist:
 
 - **Username**: `admin`
 - **Password**: `Wegent2025!`
 - **Email**: `admin@example.com`
 
-**⚠️ Important**: Change the default password after first login for security.
+**⚠️ IMPORTANT**: Change the default password after first login!
 
 ## YAML Format
 
-All resource files follow the Kubernetes-like resource format:
+All resources follow the Kubernetes-like format:
 
 ```yaml
+---
 apiVersion: agent.wecode.io/v1
 kind: <ResourceType>
 metadata:
   name: <resource-name>
   namespace: <namespace>
-  user_id: <user-id>  # Only for user-owned resources
+  user_id: <user-id>  # Optional, defaults to admin user
 spec:
   # Resource-specific configuration
 status:
@@ -39,112 +53,137 @@ status:
 
 ### Supported Resource Types
 
-- **Ghost**: AI agent personality and system prompts
-- **Model**: LLM model configurations
-- **Shell**: Execution environment configurations
-- **Bot**: Combines Ghost, Model, and Shell
-- **Team**: Collections of Bots with collaboration models
+- `Ghost` - AI agent personalities and system prompts
+- `Model` - LLM model configurations
+- `Shell` - Execution environment configurations
+- `Bot` - Combines Ghost + Model + Shell
+- `Team` - Collections of Bots
+- `Workspace` - Git repository configurations
+- `Task` - Task definitions
 
-## How It Works
+## File Organization
 
-1. **Startup**: When the backend starts, it automatically loads YAML files from this directory
-2. **Idempotent**: Resources are only created if they don't already exist (checked by user_id, kind, name, namespace)
-3. **Order**: User is created first, then resources, then public shells
+Files are processed in alphabetical order. Use numeric prefixes to control load order:
 
-## Customization
+```
+init_data/
+├── 01-default-resources.yaml  # Core resources (Ghost, Model, Shell, Bot, Team)
+├── 02-public-shells.yaml      # Public shell configurations
+└── README.md
+```
 
-### Adding Custom Resources
+## Example: Adding Custom Resources
 
-Create a new YAML file or add to existing files using the `---` separator for multiple documents:
+Create a new YAML file (e.g., `03-custom-bots.yaml`):
 
 ```yaml
 ---
 apiVersion: agent.wecode.io/v1
 kind: Ghost
 metadata:
-  name: my-custom-ghost
+  name: code-reviewer-ghost
   namespace: default
-  user_id: 1
 spec:
   systemPrompt: |
-    Your custom system prompt here
+    You are an expert code reviewer...
   mcpServers: {}
 status:
   state: Available
 ---
 apiVersion: agent.wecode.io/v1
-kind: Model
+kind: Bot
 metadata:
-  name: my-custom-model
+  name: code-reviewer-bot
   namespace: default
-  user_id: 1
 spec:
-  modelConfig:
-    env:
-      ANTHROPIC_MODEL: claude-3-sonnet
-      ANTHROPIC_API_KEY: your-api-key
+  ghostRef:
+    name: code-reviewer-ghost
+    namespace: default
+  modelRef:
+    name: claude-model
+    namespace: default
+  shellRef:
+    name: claude-shell
+    namespace: default
 status:
   state: Available
 ```
 
-### Modifying Existing Resources
-
-Edit the YAML files directly. Changes take effect on next container restart (for new installations only - existing resources won't be updated).
-
 ## Docker Integration
 
-The `docker-compose.yml` mounts this directory as read-only:
+The directory is mounted as read-only in `docker-compose.yml`:
 
 ```yaml
 volumes:
   - ./backend/init_data:/app/init_data:ro
 ```
 
-## Migration from SQL
+To add custom resources:
+1. Add YAML files to `backend/init_data/`
+2. Restart the backend container
 
-The previous `init.sql` file has been deprecated. All initialization now happens through YAML files:
+## Advantages Over SQL
 
-| SQL Table | YAML Resource |
-|-----------|---------------|
-| `users` table | `default_user.yaml` |
-| `kinds` table | `default_resources.yaml` |
-| `public_shells` table | `public_shells.yaml` |
-| `public_models` table | Can be added to new YAML file |
-
-## Advantages
-
-✅ **Human-readable**: YAML is easier to read and edit than SQL
-✅ **Version control friendly**: Better diff support
-✅ **Declarative**: Describe what you want, not how to create it
+✅ **Declarative**: Describe what you want, not SQL commands
+✅ **Human-readable**: YAML is easier to read and edit
+✅ **Version control friendly**: Better diffs and merge resolution
 ✅ **Idempotent**: Safe to run multiple times
-✅ **Extensible**: Easy to add custom resources
-✅ **Kubernetes-aligned**: Familiar format for cloud-native developers
+✅ **Reuses existing APIs**: Uses the same `batch_service` as the REST API
+✅ **Extensible**: Easy to add new resources without code changes
+✅ **No database schema coupling**: Works with any resource type
+
+## Migration from init.sql
+
+The old `init.sql` approach has been deprecated. Key differences:
+
+| Old (init.sql) | New (YAML) |
+|----------------|------------|
+| SQL INSERT statements | Declarative YAML resources |
+| Direct database access | Uses batch service API |
+| Hard to maintain | Easy to read and modify |
+| Requires SQL knowledge | Familiar YAML format |
+| One-time execution | Idempotent (create or update) |
 
 ## Troubleshooting
 
-### Resources Not Created
-
-Check backend logs for initialization errors:
+### Check Initialization Logs
 
 ```bash
 docker-compose logs backend | grep -i "yaml\|initialization"
 ```
 
-### Syntax Errors
-
-Validate YAML syntax:
+### Validate YAML Syntax
 
 ```bash
-python -c "import yaml; yaml.safe_load(open('default_resources.yaml'))"
+python -c "import yaml; print(yaml.safe_load_all(open('01-default-resources.yaml')))"
 ```
 
-### Existing Resources
+### Disable Initialization
 
-The initialization is idempotent. If resources already exist with the same `(user_id, kind, name, namespace)`, they won't be recreated or modified.
+Set environment variable:
+
+```bash
+INIT_DATA_ENABLED=False
+```
+
+### Common Issues
+
+**Issue**: Resources not created
+- Check logs for errors
+- Verify YAML syntax is valid
+- Ensure `metadata.name` and `metadata.namespace` are set
+
+**Issue**: Resources duplicated
+- Resources are identified by `(user_id, kind, name, namespace)`
+- Check if any of these fields differ from existing resources
+
+**Issue**: Directory not found
+- Ensure `INIT_DATA_DIR` path exists
+- Check volume mount in `docker-compose.yml`
 
 ## Development
 
-To test YAML initialization locally:
+### Testing Locally
 
 ```python
 from app.db.session import SessionLocal
@@ -152,7 +191,16 @@ from app.core.yaml_init import run_yaml_initialization
 
 db = SessionLocal()
 try:
-    run_yaml_initialization(db)
+    result = run_yaml_initialization(db)
+    print(result)
 finally:
     db.close()
 ```
+
+### Adding New Resource Types
+
+1. Ensure the resource `kind` is supported in `batch_service.supported_kinds`
+2. Add YAML documents to any `.yaml` file in the init directory
+3. Restart the backend
+
+No code changes needed - the system automatically handles any supported resource type!

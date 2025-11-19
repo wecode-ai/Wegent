@@ -4,285 +4,217 @@
 
 """
 YAML initialization module for loading initial data from YAML files.
-This replaces the SQL-based initialization approach.
+This module scans a directory for YAML files and uses the existing batch service
+to apply resources, ensuring consistency with the API layer.
 """
 
 import os
 import logging
-from typing import List, Dict, Any
 from pathlib import Path
+from typing import List, Dict, Any
 import yaml
-from sqlalchemy.orm import Session
 
+from app.core.config import settings
+from app.services.k_batch import batch_service
 from app.models.user import User
-from app.models.kind import Kind
-from app.models.public_shell import PublicShell
-from app.models.public_model import PublicModel
+from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
 
 
-class YAMLInitializer:
-    """Handle initialization from YAML configuration files."""
-
-    def __init__(self, init_data_dir: str = None):
-        """
-        Initialize the YAML initializer.
-
-        Args:
-            init_data_dir: Directory containing YAML initialization files.
-                          Defaults to backend/init_data
-        """
-        if init_data_dir is None:
-            # Default to init_data directory in the same location as this file
-            current_dir = Path(__file__).parent.parent
-            init_data_dir = current_dir / "init_data"
-
-        self.init_data_dir = Path(init_data_dir)
-        logger.info(f"YAML initializer configured with directory: {self.init_data_dir}")
-
-    def load_yaml_file(self, file_path: Path) -> Any:
-        """
-        Load and parse a YAML file.
-
-        Args:
-            file_path: Path to the YAML file
-
-        Returns:
-            Parsed YAML content (dict or list)
-        """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                content = yaml.safe_load(f)
-                logger.info(f"Loaded YAML file: {file_path}")
-                return content
-        except Exception as e:
-            logger.error(f"Failed to load YAML file {file_path}: {e}")
-            raise
-
-    def load_yaml_documents(self, file_path: Path) -> List[Dict[str, Any]]:
-        """
-        Load multiple YAML documents from a single file (separated by ---).
-
-        Args:
-            file_path: Path to the YAML file
-
-        Returns:
-            List of parsed YAML documents
-        """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                documents = list(yaml.safe_load_all(f))
-                # Filter out None values (empty documents)
-                documents = [doc for doc in documents if doc is not None]
-                logger.info(f"Loaded {len(documents)} YAML documents from: {file_path}")
-                return documents
-        except Exception as e:
-            logger.error(f"Failed to load YAML documents from {file_path}: {e}")
-            raise
-
-    def init_default_user(self, db: Session) -> None:
-        """
-        Initialize default user from YAML configuration.
-
-        Args:
-            db: Database session
-        """
-        user_file = self.init_data_dir / "default_user.yaml"
-
-        if not user_file.exists():
-            logger.warning(f"Default user file not found: {user_file}")
-            return
-
-        try:
-            user_config = self.load_yaml_file(user_file)
-
-            # Check if user already exists
-            existing_user = db.query(User).filter(
-                User.user_name == user_config.get('user_name')
-            ).first()
-
-            if existing_user:
-                logger.info(f"User '{user_config.get('user_name')}' already exists, skipping")
-                return
-
-            # Create new user
-            new_user = User(
-                user_name=user_config.get('user_name'),
-                password_hash=user_config.get('password_hash'),
-                email=user_config.get('email'),
-                git_info=user_config.get('git_info', []),
-                is_active=user_config.get('is_active', True)
-            )
-
-            db.add(new_user)
-            db.commit()
-            logger.info(f"Created default user: {user_config.get('user_name')}")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize default user: {e}")
-            db.rollback()
-            raise
-
-    def init_default_resources(self, db: Session) -> None:
-        """
-        Initialize default resources (Ghost, Model, Shell, Bot, Team) from YAML.
-
-        Args:
-            db: Database session
-        """
-        resources_file = self.init_data_dir / "default_resources.yaml"
-
-        if not resources_file.exists():
-            logger.warning(f"Default resources file not found: {resources_file}")
-            return
-
-        try:
-            documents = self.load_yaml_documents(resources_file)
-
-            for doc in documents:
-                if not doc or 'kind' not in doc or 'metadata' not in doc:
-                    logger.warning(f"Skipping invalid document: {doc}")
-                    continue
-
-                kind = doc.get('kind')
-                metadata = doc.get('metadata', {})
-                name = metadata.get('name')
-                namespace = metadata.get('namespace', 'default')
-                user_id = metadata.get('user_id', 1)
-
-                # Check if resource already exists
-                existing = db.query(Kind).filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == kind,
-                    Kind.name == name,
-                    Kind.namespace == namespace
-                ).first()
-
-                if existing:
-                    logger.info(f"{kind} '{name}' already exists in namespace '{namespace}', skipping")
-                    continue
-
-                # Create new kind resource
-                new_kind = Kind(
-                    user_id=user_id,
-                    kind=kind,
-                    name=name,
-                    namespace=namespace,
-                    json=doc,
-                    is_active=True
-                )
-
-                db.add(new_kind)
-                logger.info(f"Created {kind}: {name} in namespace {namespace}")
-
-            db.commit()
-            logger.info("Default resources initialization completed")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize default resources: {e}")
-            db.rollback()
-            raise
-
-    def init_public_shells(self, db: Session) -> None:
-        """
-        Initialize public shells from YAML configuration.
-
-        Args:
-            db: Database session
-        """
-        shells_file = self.init_data_dir / "public_shells.yaml"
-
-        if not shells_file.exists():
-            logger.warning(f"Public shells file not found: {shells_file}")
-            return
-
-        try:
-            documents = self.load_yaml_documents(shells_file)
-
-            for doc in documents:
-                if not doc or 'kind' not in doc or doc.get('kind') != 'Shell':
-                    logger.warning(f"Skipping non-Shell document: {doc}")
-                    continue
-
-                metadata = doc.get('metadata', {})
-                name = metadata.get('name')
-                namespace = metadata.get('namespace', 'default')
-
-                # Check if shell already exists
-                existing = db.query(PublicShell).filter(
-                    PublicShell.name == name,
-                    PublicShell.namespace == namespace
-                ).first()
-
-                if existing:
-                    logger.info(f"Public shell '{name}' already exists in namespace '{namespace}', skipping")
-                    continue
-
-                # Create new public shell
-                new_shell = PublicShell(
-                    name=name,
-                    namespace=namespace,
-                    json=doc,
-                    is_active=True
-                )
-
-                db.add(new_shell)
-                logger.info(f"Created public shell: {name} in namespace {namespace}")
-
-            db.commit()
-            logger.info("Public shells initialization completed")
-
-        except Exception as e:
-            logger.error(f"Failed to initialize public shells: {e}")
-            db.rollback()
-            raise
-
-    def initialize_all(self, db: Session) -> None:
-        """
-        Run all initialization tasks.
-
-        Args:
-            db: Database session
-        """
-        logger.info("Starting YAML-based initialization...")
-
-        if not self.init_data_dir.exists():
-            logger.warning(f"Initialization data directory not found: {self.init_data_dir}")
-            logger.info("Skipping YAML initialization")
-            return
-
-        try:
-            # Initialize in order: user first, then resources
-            self.init_default_user(db)
-            self.init_default_resources(db)
-            self.init_public_shells(db)
-
-            logger.info("YAML-based initialization completed successfully")
-
-        except Exception as e:
-            logger.error(f"YAML initialization failed: {e}")
-            raise
-
-
-# Global initializer instance
-_initializer = None
-
-
-def get_initializer() -> YAMLInitializer:
-    """Get or create the global YAML initializer instance."""
-    global _initializer
-    if _initializer is None:
-        _initializer = YAMLInitializer()
-    return _initializer
-
-
-def run_yaml_initialization(db: Session) -> None:
+def load_yaml_documents(file_path: Path) -> List[Dict[str, Any]]:
     """
-    Convenience function to run YAML initialization.
+    Load YAML documents from a file.
+
+    Args:
+        file_path: Path to the YAML file
+
+    Returns:
+        List of parsed YAML documents
+    """
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            documents = list(yaml.safe_load_all(f))
+            # Filter out None/empty documents
+            documents = [doc for doc in documents if doc]
+            logger.info(f"Loaded {len(documents)} documents from {file_path}")
+            return documents
+    except Exception as e:
+        logger.error(f"Failed to load YAML file {file_path}: {e}")
+        return []
+
+
+def ensure_default_user(db: Session) -> int:
+    """
+    Ensure the default admin user exists.
 
     Args:
         db: Database session
+
+    Returns:
+        User ID of the default admin user
     """
-    initializer = get_initializer()
-    initializer.initialize_all(db)
+    # Check for admin user
+    admin_user = db.query(User).filter(User.user_name == "admin").first()
+
+    if not admin_user:
+        logger.info("Creating default admin user")
+        # Default admin user (admin/Wegent2025!)
+        admin_user = User(
+            user_name="admin",
+            password_hash="$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW",
+            email="admin@example.com",
+            git_info=[],
+            is_active=True
+        )
+        db.add(admin_user)
+        db.commit()
+        db.refresh(admin_user)
+        logger.info(f"Created default admin user with ID: {admin_user.id}")
+    else:
+        logger.info(f"Default admin user already exists with ID: {admin_user.id}")
+
+    return admin_user.id
+
+
+def apply_yaml_resources(user_id: int, resources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Apply YAML resources using the batch service.
+
+    Args:
+        user_id: User ID to apply resources for
+        resources: List of resource documents
+
+    Returns:
+        List of operation results
+    """
+    if not resources:
+        logger.info("No resources to apply")
+        return []
+
+    try:
+        # Use existing batch service to apply resources
+        results = batch_service.apply_resources(user_id, resources)
+
+        # Log results
+        success_count = sum(1 for r in results if r.get('success'))
+        total_count = len(results)
+        logger.info(f"Applied {success_count}/{total_count} resources for user_id={user_id}")
+
+        # Log failures
+        for result in results:
+            if not result.get('success'):
+                logger.warning(
+                    f"Failed to apply {result.get('kind')}/{result.get('name')}: "
+                    f"{result.get('error')}"
+                )
+
+        return results
+    except Exception as e:
+        logger.error(f"Failed to apply resources: {e}", exc_info=True)
+        return []
+
+
+def scan_and_apply_yaml_directory(user_id: int, directory: Path) -> Dict[str, Any]:
+    """
+    Scan a directory for YAML files and apply all resources.
+
+    Args:
+        user_id: User ID to apply resources for
+        directory: Directory to scan
+
+    Returns:
+        Summary of operations
+    """
+    if not directory.exists():
+        logger.warning(f"Initialization directory does not exist: {directory}")
+        return {"status": "skipped", "reason": "directory not found"}
+
+    if not directory.is_dir():
+        logger.error(f"Initialization path is not a directory: {directory}")
+        return {"status": "error", "reason": "not a directory"}
+
+    # Collect all YAML files
+    yaml_files = sorted(directory.glob("*.yaml")) + sorted(directory.glob("*.yml"))
+
+    if not yaml_files:
+        logger.info(f"No YAML files found in {directory}")
+        return {"status": "skipped", "reason": "no yaml files"}
+
+    logger.info(f"Found {len(yaml_files)} YAML files in {directory}")
+
+    all_resources = []
+    files_processed = []
+
+    # Load all resources from all YAML files
+    for yaml_file in yaml_files:
+        logger.info(f"Processing {yaml_file.name}")
+        documents = load_yaml_documents(yaml_file)
+
+        # Filter for valid resource documents (must have 'kind' and 'metadata')
+        resources = [
+            doc for doc in documents
+            if isinstance(doc, dict) and 'kind' in doc and 'metadata' in doc
+        ]
+
+        if resources:
+            all_resources.extend(resources)
+            files_processed.append(yaml_file.name)
+            logger.info(f"Loaded {len(resources)} resources from {yaml_file.name}")
+
+    # Apply all resources at once
+    if not all_resources:
+        logger.info("No valid resources found in YAML files")
+        return {
+            "status": "completed",
+            "files_processed": len(files_processed),
+            "resources_applied": 0
+        }
+
+    logger.info(f"Applying {len(all_resources)} total resources for user_id={user_id}")
+    results = apply_yaml_resources(user_id, all_resources)
+
+    success_count = sum(1 for r in results if r.get('success'))
+
+    return {
+        "status": "completed",
+        "files_processed": len(files_processed),
+        "files": files_processed,
+        "resources_total": len(all_resources),
+        "resources_applied": success_count,
+        "resources_failed": len(results) - success_count
+    }
+
+
+def run_yaml_initialization(db: Session) -> Dict[str, Any]:
+    """
+    Main entry point for YAML initialization.
+    Scans the configured directory and applies all YAML resources.
+
+    Args:
+        db: Database session
+
+    Returns:
+        Summary of initialization
+    """
+    if not settings.INIT_DATA_ENABLED:
+        logger.info("YAML initialization is disabled (INIT_DATA_ENABLED=False)")
+        return {"status": "disabled"}
+
+    logger.info("Starting YAML initialization...")
+
+    # Ensure default admin user exists
+    try:
+        user_id = ensure_default_user(db)
+    except Exception as e:
+        logger.error(f"Failed to create default user: {e}", exc_info=True)
+        return {"status": "error", "reason": "failed to create default user"}
+
+    # Scan and apply YAML resources
+    init_dir = Path(settings.INIT_DATA_DIR)
+    logger.info(f"Scanning initialization directory: {init_dir}")
+
+    summary = scan_and_apply_yaml_directory(user_id, init_dir)
+
+    logger.info(f"YAML initialization completed: {summary}")
+    return summary
