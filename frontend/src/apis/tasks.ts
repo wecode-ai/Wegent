@@ -142,6 +142,11 @@ export const taskApis = {
     return apiClient.delete(`/tasks/${id}`);
   },
 
+  // Cancel a running task
+  cancelTask: async (id: number): Promise<SuccessMessage> => {
+    return apiClient.post('/executor-manager/tasks/cancel', { task_id: id });
+  },
+
   // Get branch diff
   getBranchDiff: async (params: BranchDiffRequest): Promise<BranchDiffResponse> => {
     const query = new URLSearchParams();

@@ -128,6 +128,20 @@ export default function TaskListSection({
     }
   };
 
+  // Cancel task
+  const handleCancelTask = async (taskId: number) => {
+    setLoading(true);
+    try {
+      await taskApis.cancelTask(taskId);
+      // Refresh tasks to update status
+      refreshTasks();
+    } catch (err) {
+      console.error('Cancel failed', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   if (tasks.length === 0) return null;
 
   const getStatusIcon = (status: string) => {
@@ -270,8 +284,10 @@ export default function TaskListSection({
                 {hoveredTaskId === task.id && (
                   <TaskMenu
                     taskId={task.id}
+                    taskStatus={task.status}
                     handleCopyTaskId={handleCopyTaskId}
                     handleDeleteTask={handleDeleteTask}
+                    handleCancelTask={handleCancelTask}
                   />
                 )}
               </div>

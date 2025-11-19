@@ -8,22 +8,31 @@ import { Menu } from '@headlessui/react'
 import {
   ClipboardDocumentIcon,
   TrashIcon,
+  XCircleIcon,
 } from '@heroicons/react/24/outline'
 import { HiOutlineEllipsisVertical } from 'react-icons/hi2'
 import { useTranslation } from '@/hooks/useTranslation'
+import { TaskStatus } from '@/types/api'
 
 interface TaskMenuProps {
   taskId: number
+  taskStatus?: TaskStatus
   handleCopyTaskId: (taskId: number) => void
   handleDeleteTask: (taskId: number) => void
+  handleCancelTask?: (taskId: number) => void
 }
 
 export default function TaskMenu({
   taskId,
+  taskStatus,
   handleCopyTaskId,
-  handleDeleteTask
+  handleDeleteTask,
+  handleCancelTask
 }: TaskMenuProps) {
   const { t } = useTranslation('common')
+
+  // Show cancel option only for running tasks
+  const canCancel = taskStatus === 'pending' || taskStatus === 'running'
 
   return (
     <Menu as="div" className="relative">
@@ -51,6 +60,22 @@ export default function TaskMenu({
             </button>
           )}
         </Menu.Item>
+        {canCancel && handleCancelTask && (
+          <Menu.Item>
+            {({ active }) => (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation()
+                  handleCancelTask(taskId)
+                }}
+                className={`w-full px-3 py-2 text-xs text-left text-text-primary flex items-center ${active ? 'bg-muted' : ''}`}
+              >
+                <XCircleIcon className="h-3.5 w-3.5 mr-2" />
+                {t('tasks.cancel_task')}
+              </button>
+            )}
+          </Menu.Item>
+        )}
         <Menu.Item>
           {({ active }) => (
             <button
