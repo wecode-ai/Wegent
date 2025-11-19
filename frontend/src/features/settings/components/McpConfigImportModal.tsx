@@ -6,16 +6,21 @@ import React, { useState, useCallback } from 'react';
 import { Modal, Input } from 'antd';
 import { useTranslation } from 'react-i18next';
 import type { MessageInstance } from 'antd/es/message/interface';
+import { adaptMcpConfigForAgent, type AgentType } from '../utils/mcpTypeAdapter';
 
 interface McpConfigImportModalProps {
   visible: boolean;
   onClose: () => void;
   onImport: (config: Record<string, unknown>, mode: 'replace' | 'append') => void;
   message: MessageInstance;
+  agentType?: AgentType;
 }
 
 // Utility function to normalize MCP servers configuration
-function normalizeMcpServers(config: Record<string, unknown>): Record<string, unknown> {
+function normalizeMcpServers(
+  config: Record<string, unknown>,
+  agentType?: AgentType
+): Record<string, unknown> {
   const servers: Record<string, unknown> = (config.mcpServers ??
     config.mcp_servers ??
     config) as Record<string, unknown>;
@@ -34,6 +39,11 @@ function normalizeMcpServers(config: Record<string, unknown>): Record<string, un
     }
   });
 
+  // Apply type adaptation if agent type is specified
+  if (agentType) {
+    return adaptMcpConfigForAgent(servers, agentType);
+  }
+
   return servers;
 }
 
@@ -42,6 +52,7 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
   onClose,
   onImport,
   message,
+  agentType,
 }) => {
   const { t } = useTranslation('common');
   const [importConfig, setImportConfig] = useState('');
@@ -60,8 +71,8 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
     try {
       // Parse the imported configuration
       const parsed = JSON.parse(trimmed);
-      // Normalize the MCP servers configuration
-      const normalized = normalizeMcpServers(parsed);
+      // Normalize the MCP servers configuration with agent type adaptation
+      const normalized = normalizeMcpServers(parsed, agentType);
 
       // Call parent component's import handler function
       onImport(normalized, importMode);

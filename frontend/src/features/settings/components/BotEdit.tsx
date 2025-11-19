@@ -539,6 +539,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         onClose={() => setImportModalVisible(false)}
         onImport={handleImportConfirm}
         message={message}
+        agentType={agentName as 'ClaudeCode' | 'Agno'}
       />
 
       {/* Mobile responsive styles */}
