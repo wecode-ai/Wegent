@@ -87,12 +87,7 @@ GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-#### Initialize Database Tables
-
-```bash
-cd backend
-mysql -u task_user -p task_manager < init.sql
-```
+> **Note**: Database tables and initial data will be created automatically on first backend startup, no need to execute SQL scripts manually.
 
 ---
 
@@ -184,7 +179,7 @@ backend/
 │   ├── repository/      # Data access layer
 │   ├── schemas/         # Pydantic schemas
 │   └── services/        # Business logic layer
-├── init.sql             # Database initialization script
+├── init_data/           # YAML initialization data
 └── requirements.txt     # Python dependencies
 ```
 

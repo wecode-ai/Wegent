@@ -87,12 +87,7 @@ GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-#### 初始化数据库表
-
-```bash
-cd backend
-mysql -u task_user -p task_manager < init.sql
-```
+> **注意**: 数据库表和初始数据会在后端服务首次启动时自动创建，无需手动执行SQL脚本。
 
 ---
 
@@ -184,7 +179,7 @@ backend/
 │   ├── repository/      # 数据访问层
 │   ├── schemas/         # Pydantic 模式
 │   └── services/        # 业务逻辑层
-├── init.sql             # 数据库初始化脚本
+├── init_data/           # YAML 初始化数据
 └── requirements.txt     # Python 依赖
 ```
 

@@ -26,19 +26,14 @@ cp .env.example .env
 
 4. Initialize database
 ```bash
-# Create database and tables (schema only)
-# Note: Initial data is loaded automatically from YAML files on first startup
+# Create database (schema will be created automatically by SQLAlchemy on first startup)
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-
-# Or use the init.sql for reference (DEPRECATED - see note below)
-# mysql -u root -p < init.sql
 ```
 
 **Note on Initialization:**
-- The `init.sql` file is **DEPRECATED** and no longer used for data initialization
-- Initial data (admin user, default resources) is now loaded from YAML files in `init_data/`
+- Database tables are created automatically by SQLAlchemy on first startup
+- Initial data (admin user, default resources) is loaded from YAML files in `init_data/`
 - See `init_data/README.md` for details on YAML-based initialization
-- YAML initialization happens automatically on first application startup
 - User modifications are preserved across restarts (create-only mode)
 
 5. Run development server

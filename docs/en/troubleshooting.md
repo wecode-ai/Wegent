@@ -103,9 +103,9 @@ sleep 30
 docker-compose exec mysql mysql -u task_user -p
 ```
 
-### Issue 3: MySQL Initialization Fails
+### Issue 3: Database Initialization Fails
 
-**Symptoms**: Database tables not created or init script fails
+**Symptoms**: Database tables not created or initial data not loaded
 
 **Solutions**:
 
@@ -113,17 +113,18 @@ docker-compose exec mysql mysql -u task_user -p
 # 1. Ensure MySQL container is running
 docker-compose ps mysql
 
-# 2. Manually execute init script
-docker-compose exec -T mysql mysql -u task_user -p task_manager < backend/init.sql
+# 2. Check backend initialization logs
+docker-compose logs backend | grep -i "yaml\|initialization"
 
-# 3. Or use Alembic migration
-docker-compose exec backend python -m alembic upgrade head
+# 3. If initialization fails, restart backend service
+docker-compose restart backend
 
-# 4. If still fails, rebuild database
-docker-compose down -v  # WARNING: Deletes all data
+# 4. If still fails, check YAML configuration
+docker-compose exec backend ls -la /app/init_data/
+
+# 5. Last resort: rebuild database (WARNING: Deletes all data)
+docker-compose down -v
 docker-compose up -d
-sleep 30
-docker-compose exec -T mysql mysql -u task_user -p task_manager < backend/init.sql
 ```
 
 ---

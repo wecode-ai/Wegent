@@ -142,7 +142,7 @@ To add custom resources:
 1. Add YAML files to `backend/init_data/`
 2. Restart the backend container
 
-## Advantages Over SQL
+## Advantages
 
 ✅ **Declarative**: Describe what you want, not SQL commands
 ✅ **Human-readable**: YAML is easier to read and edit
@@ -152,19 +152,6 @@ To add custom resources:
 ✅ **Reuses existing APIs**: Uses the same `kind_service` as the REST API
 ✅ **Extensible**: Easy to add new resources without code changes
 ✅ **No database schema coupling**: Works with any resource type
-
-## Migration from init.sql
-
-The old `init.sql` approach has been deprecated. Key differences:
-
-| Old (init.sql) | New (YAML) |
-|----------------|------------|
-| SQL INSERT statements | Declarative YAML resources |
-| Direct database access | Uses kind_service API |
-| Hard to maintain | Easy to read and modify |
-| Requires SQL knowledge | Familiar YAML format |
-| One-time execution | Create-only on every restart |
-| May overwrite changes | Preserves user modifications |
 
 ## Troubleshooting
 

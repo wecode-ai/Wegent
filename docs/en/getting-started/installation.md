@@ -105,20 +105,9 @@ docker-compose ps
 docker-compose logs -f
 ```
 
-### Step 4: Initialize Database
+### Step 4: Verify Installation
 
-```bash
-# Wait for MySQL to start (about 30 seconds)
-sleep 30
-
-# Initialize database tables
-docker-compose exec backend python -m alembic upgrade head
-
-# Or use SQL script
-docker-compose exec -T mysql mysql -u task_user -p task_manager < backend/init.sql
-```
-
-### Step 5: Verify Installation
+Wait for services to start completely (about 30 seconds). Database tables and initial data will be created automatically.
 
 Visit the following URLs to verify installation:
 
@@ -127,7 +116,7 @@ Visit the following URLs to verify installation:
 - **API Documentation**: http://localhost:8000/api/docs
 - **Executor Manager**: http://localhost:8001
 
-### Step 6: Configure GitHub Integration (Optional)
+### Step 5: Configure GitHub Integration (Optional)
 
 1. Visit http://localhost:3000
 2. Follow on-screen instructions to configure GitHub Personal Access Token
@@ -222,8 +211,8 @@ pip install -r requirements.txt
 cp .env.example .env
 vim .env  # Edit configuration
 
-# Initialize database
-mysql -u task_user -p task_manager < init.sql
+# Create database (tables and initial data will be created automatically on first startup)
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 # Run backend service
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
