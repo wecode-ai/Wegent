@@ -5,13 +5,12 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { MagnifyingGlassIcon, PlusIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { Search, Plus, Settings, X } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import { XMarkIcon } from '@heroicons/react/24/outline';
 import TaskListSection from './TaskListSection';
 import { useTranslation } from '@/hooks/useTranslation';
 import MobileSidebar from '@/features/layout/MobileSidebar';
@@ -173,7 +172,7 @@ export default function TaskSidebar({
       {/* Search */}
       <div className="p-3">
         <div className="relative">
-          <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+          <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
           <input
             type="text"
             value={localSearchTerm}
@@ -186,7 +185,7 @@ export default function TaskSidebar({
               onClick={handleClearSearch}
               className="absolute right-2 top-1/2 transform -translate-y-1/2"
             >
-              <XMarkIcon className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
+              <X className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
             </button>
           )}
         </div>
@@ -196,12 +195,10 @@ export default function TaskSidebar({
       <div className="px-3 mb-3">
         <Button
           onClick={handleNewAgentClick}
-          type="primary"
-          size="small"
-          icon={<PlusIcon className="h-4 w-4 align-middle" />}
-          style={{ width: '100%' }}
-          className="!text-base"
+          className="w-full"
+          size="default"
         >
+          <Plus className="h-4 w-4 mr-2" />
           {t('tasks.new_task')}
         </Button>
       </div>
@@ -266,16 +263,16 @@ export default function TaskSidebar({
       {/* Settings */}
       <div className="p-3 border-t border-border">
         <Button
+          variant="ghost"
+          size="sm"
           onClick={() => {
             router.push(paths.settings.root.getHref());
             setIsMobileSidebarOpen(false);
           }}
-          type="link"
-          size="small"
-          icon={<Cog6ToothIcon className="h-3.5 w-3.5" />}
-          className="!text-text-muted hover:!text-text-primary"
+          className="text-text-muted hover:text-text-primary"
           data-tour="settings-link"
         >
+          <Settings className="h-3.5 w-3.5 mr-2" />
           {t('tasks.settings')}
         </Button>
       </div>

@@ -128,6 +128,7 @@ export default function TeamSelector({
       <Select
         labelInValue
         showSearch
+        variant="borderless"
         value={
           selectedTeam
             ? {

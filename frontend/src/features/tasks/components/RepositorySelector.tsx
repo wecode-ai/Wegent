@@ -264,6 +264,7 @@ export default function RepositorySelector({
       <Select
         labelInValue
         showSearch
+        variant="borderless"
         allowClear
         value={
           selectedRepo
