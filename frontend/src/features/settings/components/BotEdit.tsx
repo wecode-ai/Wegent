@@ -12,7 +12,7 @@ import { isPredefinedModel, getModelFromConfig } from '@/features/settings/servi
 import { agentApis, Agent } from '@/apis/agents';
 import { modelApis, Model } from '@/apis/models';
 import { useTranslation } from 'react-i18next';
-import { adaptMcpConfigForAgent, type AgentType } from '../utils/mcpTypeAdapter';
+import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
 import type { MessageInstance } from 'antd/es/message/interface';
 
@@ -279,10 +279,11 @@ const BotEdit: React.FC<BotEditProps> = ({
         parsedMcpConfig = JSON.parse(mcpConfig);
         // Adapt MCP config types based on selected agent
         if (parsedMcpConfig && agentName) {
-          parsedMcpConfig = adaptMcpConfigForAgent(
-            parsedMcpConfig,
-            agentName as AgentType
-          );
+          if (isValidAgentType(agentName)) {
+            parsedMcpConfig = adaptMcpConfigForAgent(parsedMcpConfig, agentName);
+          } else {
+            console.warn(`Unknown agent type "${agentName}", skipping MCP config adaptation`);
+          }
         }
         setMcpConfigError(false);
       } catch {
@@ -386,11 +387,14 @@ const BotEdit: React.FC<BotEditProps> = ({
                   if (mcpConfig.trim()) {
                     try {
                       const currentMcpConfig = JSON.parse(mcpConfig);
-                      const adaptedConfig = adaptMcpConfigForAgent(
-                        currentMcpConfig,
-                        value as AgentType
-                      );
-                      setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
+                      if (isValidAgentType(value)) {
+                        const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value);
+                        setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
+                      } else {
+                        console.warn(
+                          `Unknown agent type "${value}", skipping MCP config adaptation`
+                        );
+                      }
                     } catch (error) {
                       // If parsing fails, keep the original config
                       console.warn('Failed to adapt MCP config on agent change:', error);

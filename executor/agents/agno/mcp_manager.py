@@ -86,11 +86,11 @@ class MCPManager:
     async def _create_mcp_tools(self, server_config: Dict[str, Any], server_name: str) -> Optional[MCPTools]:
         """
         Create MCP tools for a specific server configuration
-
+        
         Args:
             server_config: Server configuration dictionary
             server_name: Name of the server
-
+            
         Returns:
             MCPTools instance if successful, None otherwise
         """
@@ -99,30 +99,14 @@ class MCPManager:
             if not mcp_type:
                 mcp_type = "stdio"
 
-            # Normalize type: handle both hyphen and underscore variants
-            mcp_type = mcp_type.replace('_', '-').lower()
-
-            # Support multiple type aliases for better compatibility
-            # ClaudeCode uses: sse, http, stdio
-            # Agno uses: sse, streamable-http, stdio
-            type_mappings = {
-                'http': 'streamable-http',  # Map ClaudeCode's 'http' to Agno's 'streamable-http'
-                'streamable-http': 'streamable-http',
-                'sse': 'sse',
-                'stdio': 'stdio'
-            }
-
-            # Apply type mapping
-            normalized_type = type_mappings.get(mcp_type, mcp_type)
-
-            if normalized_type == "streamable-http":
+            if mcp_type == "streamable-http" or mcp_type == "streamable_http":
                 return self._create_streamable_http_tools(server_config)
-            elif normalized_type == "sse":
+            elif mcp_type == "sse":
                 return self._create_sse_tools(server_config)
-            elif normalized_type == "stdio":
+            elif mcp_type == "stdio":
                 return self._create_stdio_tools(server_config)
             else:
-                logger.error(f"Unsupported MCP type: {mcp_type} (normalized: {normalized_type})")
+                logger.error(f"Unsupported MCP type: {mcp_type}")
                 return None
         except Exception as e:
             logger.error(f"Failed to create MCP tools for server {server_name}: {str(e)}")

@@ -15,6 +15,16 @@ export type AgnoMcpType = 'sse' | 'streamable-http' | 'stdio';
 export type AgentType = 'ClaudeCode' | 'Agno';
 
 /**
+ * Validate if a string is a valid AgentType
+ *
+ * @param value - The value to validate
+ * @returns True if the value is a valid AgentType
+ */
+export function isValidAgentType(value: string): value is AgentType {
+  return value === 'ClaudeCode' || value === 'Agno';
+}
+
+/**
  * Type mapping from ClaudeCode to Agno
  */
 const CLAUDE_TO_AGNO_TYPE_MAP: Record<ClaudeCodeMcpType, AgnoMcpType> = {
@@ -33,10 +43,31 @@ const AGNO_TO_CLAUDE_TYPE_MAP: Record<AgnoMcpType, ClaudeCodeMcpType> = {
 };
 
 /**
- * Normalize MCP type string (handle underscore vs hyphen variations)
+ * Normalize MCP type string to handle various format variations
+ *
+ * Supports multiple naming conventions:
+ * - streamableHttp, streamablehttp, streamable_http, streamable-http → streamable-http
+ * - SSE, sse, Sse → sse
+ * - STDIO, stdio, Stdio → stdio
+ * - HTTP, http, Http → http
  */
 function normalizeMcpType(type: string): string {
-  return type.replace(/_/g, '-').toLowerCase();
+  if (!type) return 'sse';
+
+  // Handle camelCase variants first: streamableHttp → streamable-http
+  // Insert hyphen before capital letters that follow lowercase letters
+  let normalized = type.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
+
+  // Replace underscores with hyphens
+  normalized = normalized.replace(/_/g, '-');
+
+  // Handle specific variations for streamable-http
+  // Match patterns like: streamablehttp, streamable-http, streamable_http
+  if (normalized.includes('streamable')) {
+    return 'streamable-http';
+  }
+
+  return normalized;
 }
 
 /**
@@ -47,14 +78,14 @@ function normalizeMcpType(type: string): string {
  * @returns Converted MCP configuration
  */
 export function adaptMcpConfigForAgent(
-  mcpConfig: Record<string, any>,
+  mcpConfig: Record<string, unknown>,
   targetAgentType: AgentType
-): Record<string, any> {
+): Record<string, unknown> {
   if (!mcpConfig || typeof mcpConfig !== 'object') {
     return mcpConfig;
   }
 
-  const adaptedConfig: Record<string, any> = {};
+  const adaptedConfig: Record<string, unknown> = {};
 
   // Process each MCP server configuration
   for (const [serverName, serverConfig] of Object.entries(mcpConfig)) {
@@ -63,8 +94,8 @@ export function adaptMcpConfigForAgent(
       continue;
     }
 
-    const config = { ...serverConfig };
-    const currentType = normalizeMcpType(config.type || 'sse');
+    const config = { ...serverConfig } as Record<string, unknown>;
+    const currentType = normalizeMcpType((config.type as string) || 'sse');
 
     // Convert type based on target agent
     if (targetAgentType === 'Agno') {
