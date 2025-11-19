@@ -7,9 +7,29 @@ This directory contains YAML configuration files for initializing the Wegent sys
 ## How It Works
 
 1. **Auto-scan**: On startup, the backend scans `INIT_DATA_DIR` (default: `/app/init_data`) for all `.yaml` and `.yml` files
-2. **Auto-apply**: All resources are loaded and applied using the existing batch service (`apply_resources`)
-3. **Idempotent**: Resources are only created if they don't exist; existing resources are updated
-4. **Order**: Files are processed in alphabetical order (use numeric prefixes for ordering)
+2. **Auto-apply**: All resources are loaded and checked against the database
+3. **Create-only**: Resources are **only created if they don't exist** - existing resources are **skipped**
+4. **User modifications preserved**: Any changes made through the UI/API are **never overwritten** on restart
+5. **Order**: Files are processed in alphabetical order (use numeric prefixes for ordering)
+
+### ⚠️ Important: Non-Destructive Initialization
+
+**The initialization is create-only, NOT create-or-update.**
+
+- ✅ First startup: Creates all resources from YAML files
+- ✅ User modifies a resource (e.g., edits a Ghost's system prompt)
+- ✅ Service restart: **User's modifications are preserved** - YAML file is ignored for that resource
+- ❌ YAML changes after first startup: **Not applied to existing resources**
+
+This design ensures:
+- User customizations are never lost
+- Safe to restart services without data loss
+- YAML files serve as initial templates only
+
+If you want to update an existing resource to match YAML:
+1. Delete the resource through the UI/API
+2. Restart the service (it will be recreated from YAML)
+3. Or manually update it through the UI/API
 
 ## Configuration
 
@@ -127,8 +147,9 @@ To add custom resources:
 ✅ **Declarative**: Describe what you want, not SQL commands
 ✅ **Human-readable**: YAML is easier to read and edit
 ✅ **Version control friendly**: Better diffs and merge resolution
-✅ **Idempotent**: Safe to run multiple times
-✅ **Reuses existing APIs**: Uses the same `batch_service` as the REST API
+✅ **Create-only**: Never overwrites user modifications on restart
+✅ **Safe restarts**: No risk of losing customizations
+✅ **Reuses existing APIs**: Uses the same `kind_service` as the REST API
 ✅ **Extensible**: Easy to add new resources without code changes
 ✅ **No database schema coupling**: Works with any resource type
 
@@ -139,10 +160,11 @@ The old `init.sql` approach has been deprecated. Key differences:
 | Old (init.sql) | New (YAML) |
 |----------------|------------|
 | SQL INSERT statements | Declarative YAML resources |
-| Direct database access | Uses batch service API |
+| Direct database access | Uses kind_service API |
 | Hard to maintain | Easy to read and modify |
 | Requires SQL knowledge | Familiar YAML format |
-| One-time execution | Idempotent (create or update) |
+| One-time execution | Create-only on every restart |
+| May overwrite changes | Preserves user modifications |
 
 ## Troubleshooting
 

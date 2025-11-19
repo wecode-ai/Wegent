@@ -79,7 +79,8 @@ def ensure_default_user(db: Session) -> int:
 
 def apply_yaml_resources(user_id: int, resources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    Apply YAML resources using the batch service.
+    Apply YAML resources - only create new resources, skip existing ones.
+    This ensures user modifications are preserved after restart.
 
     Args:
         user_id: User ID to apply resources for
@@ -93,23 +94,70 @@ def apply_yaml_resources(user_id: int, resources: List[Dict[str, Any]]) -> List[
         return []
 
     try:
-        # Use existing batch service to apply resources
-        results = batch_service.apply_resources(user_id, resources)
+        from app.services.kind import kind_service
+        from app.core.exceptions import ValidationException
 
-        # Log results
-        success_count = sum(1 for r in results if r.get('success'))
-        total_count = len(results)
-        logger.info(f"Applied {success_count}/{total_count} resources for user_id={user_id}")
+        results = []
+        created_count = 0
+        skipped_count = 0
 
-        # Log failures
-        for result in results:
-            if not result.get('success'):
-                logger.warning(
-                    f"Failed to apply {result.get('kind')}/{result.get('name')}: "
-                    f"{result.get('error')}"
-                )
+        for resource in resources:
+            try:
+                kind = resource.get('kind')
+                if not kind:
+                    raise ValidationException("Resource must have 'kind' field")
 
+                if kind not in batch_service.supported_kinds:
+                    raise ValidationException(f"Unsupported resource kind: {kind}")
+
+                namespace = resource['metadata']['namespace']
+                name = resource['metadata']['name']
+
+                # Check if resource already exists
+                existing = kind_service.get_resource(user_id, kind, namespace, name)
+
+                if existing:
+                    # Skip existing resources to preserve user modifications
+                    logger.info(f"Skipping existing {kind}/{name} in namespace {namespace}")
+                    results.append({
+                        'kind': kind,
+                        'name': name,
+                        'namespace': namespace,
+                        'operation': 'skipped',
+                        'success': True,
+                        'reason': 'already_exists'
+                    })
+                    skipped_count += 1
+                else:
+                    # Create new resource
+                    resource_id = kind_service.create_resource(user_id, kind, resource)
+                    logger.info(f"Created {kind}/{name} in namespace {namespace} (id={resource_id})")
+                    results.append({
+                        'kind': kind,
+                        'name': name,
+                        'namespace': namespace,
+                        'operation': 'created',
+                        'success': True
+                    })
+                    created_count += 1
+
+            except Exception as e:
+                logger.error(f"Failed to process resource: {e}")
+                results.append({
+                    'kind': kind if 'kind' in locals() else 'unknown',
+                    'name': resource.get('metadata', {}).get('name', 'unknown'),
+                    'namespace': resource.get('metadata', {}).get('namespace', 'default'),
+                    'operation': 'failed',
+                    'success': False,
+                    'error': str(e)
+                })
+
+        logger.info(
+            f"YAML initialization complete: {created_count} created, "
+            f"{skipped_count} skipped, {len(resources)} total"
+        )
         return results
+
     except Exception as e:
         logger.error(f"Failed to apply resources: {e}", exc_info=True)
         return []
