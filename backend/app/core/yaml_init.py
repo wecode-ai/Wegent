@@ -4,8 +4,7 @@
 
 """
 YAML initialization module for loading initial data from YAML files.
-This module scans a directory for YAML files and uses the existing batch service
-to apply resources, ensuring consistency with the API layer.
+This module scans a directory for YAML files and creates initial resources.
 """
 
 import os
@@ -17,6 +16,7 @@ import yaml
 from app.core.config import settings
 from app.services.k_batch import batch_service
 from app.models.user import User
+from app.models.public_shell import PublicShell
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
@@ -163,13 +163,109 @@ def apply_yaml_resources(user_id: int, resources: List[Dict[str, Any]]) -> List[
         return []
 
 
-def scan_and_apply_yaml_directory(user_id: int, directory: Path) -> Dict[str, Any]:
+def apply_public_shells(db: Session, resources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Apply public shell resources to the public_shells table.
+    Only creates new shells, skips existing ones (create-only mode).
+
+    Args:
+        db: Database session
+        resources: List of Shell resource documents
+
+    Returns:
+        List of operation results
+    """
+    if not resources:
+        logger.info("No public shells to apply")
+        return []
+
+    results = []
+    created_count = 0
+    skipped_count = 0
+
+    for resource in resources:
+        try:
+            metadata = resource.get('metadata', {})
+            name = metadata.get('name')
+            namespace = metadata.get('namespace', 'default')
+
+            if not name:
+                logger.error("Public shell missing name in metadata")
+                results.append({
+                    'kind': 'Shell',
+                    'name': 'unknown',
+                    'namespace': namespace,
+                    'operation': 'failed',
+                    'success': False,
+                    'error': 'Missing name in metadata'
+                })
+                continue
+
+            # Check if public shell already exists
+            existing = db.query(PublicShell).filter(
+                PublicShell.name == name,
+                PublicShell.namespace == namespace
+            ).first()
+
+            if existing:
+                # Skip existing public shells to preserve modifications
+                logger.info(f"Skipping existing public shell {name} in namespace {namespace}")
+                results.append({
+                    'kind': 'Shell',
+                    'name': name,
+                    'namespace': namespace,
+                    'operation': 'skipped',
+                    'success': True,
+                    'reason': 'already_exists'
+                })
+                skipped_count += 1
+            else:
+                # Create new public shell
+                new_shell = PublicShell(
+                    name=name,
+                    namespace=namespace,
+                    json=resource,
+                    is_active=True
+                )
+                db.add(new_shell)
+                db.commit()
+                db.refresh(new_shell)
+                logger.info(f"Created public shell {name} in namespace {namespace} (id={new_shell.id})")
+                results.append({
+                    'kind': 'Shell',
+                    'name': name,
+                    'namespace': namespace,
+                    'operation': 'created',
+                    'success': True
+                })
+                created_count += 1
+
+        except Exception as e:
+            logger.error(f"Failed to process public shell: {e}")
+            results.append({
+                'kind': 'Shell',
+                'name': resource.get('metadata', {}).get('name', 'unknown'),
+                'namespace': resource.get('metadata', {}).get('namespace', 'default'),
+                'operation': 'failed',
+                'success': False,
+                'error': str(e)
+            })
+
+    logger.info(
+        f"Public shells initialization complete: {created_count} created, "
+        f"{skipped_count} skipped, {len(resources)} total"
+    )
+    return results
+
+
+def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) -> Dict[str, Any]:
     """
     Scan a directory for YAML files and apply all resources.
 
     Args:
         user_id: User ID to apply resources for
         directory: Directory to scan
+        db: Database session for public_shells handling
 
     Returns:
         Summary of operations
@@ -191,7 +287,8 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path) -> Dict[str, An
 
     logger.info(f"Found {len(yaml_files)} YAML files in {directory}")
 
-    all_resources = []
+    user_resources = []  # Resources for kinds table (user-owned)
+    public_shell_resources = []  # Resources for public_shells table
     files_processed = []
 
     # Load all resources from all YAML files
@@ -199,38 +296,51 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path) -> Dict[str, An
         logger.info(f"Processing {yaml_file.name}")
         documents = load_yaml_documents(yaml_file)
 
-        # Filter for valid resource documents (must have 'kind' and 'metadata')
-        resources = [
-            doc for doc in documents
-            if isinstance(doc, dict) and 'kind' in doc and 'metadata' in doc
-        ]
+        # Filter and categorize valid resource documents
+        for doc in documents:
+            if not isinstance(doc, dict) or 'kind' not in doc or 'metadata' not in doc:
+                continue
 
-        if resources:
-            all_resources.extend(resources)
+            kind = doc.get('kind')
+            metadata = doc.get('metadata', {})
+
+            # Check if this is a public shell (no user_id in metadata)
+            if kind == 'Shell' and 'user_id' not in metadata:
+                public_shell_resources.append(doc)
+            else:
+                # User-owned resource
+                user_resources.append(doc)
+
+        if documents:
             files_processed.append(yaml_file.name)
-            logger.info(f"Loaded {len(resources)} resources from {yaml_file.name}")
 
-    # Apply all resources at once
-    if not all_resources:
-        logger.info("No valid resources found in YAML files")
-        return {
-            "status": "completed",
-            "files_processed": len(files_processed),
-            "resources_applied": 0
-        }
+    # Apply user resources (goes to kinds table)
+    user_results = []
+    if user_resources:
+        logger.info(f"Applying {len(user_resources)} user resources for user_id={user_id}")
+        user_results = apply_yaml_resources(user_id, user_resources)
 
-    logger.info(f"Applying {len(all_resources)} total resources for user_id={user_id}")
-    results = apply_yaml_resources(user_id, all_resources)
+    # Apply public shells (goes to public_shells table)
+    public_shell_results = []
+    if public_shell_resources:
+        logger.info(f"Applying {len(public_shell_resources)} public shell resources")
+        public_shell_results = apply_public_shells(db, public_shell_resources)
 
-    success_count = sum(1 for r in results if r.get('success'))
+    # Combine results
+    user_success = sum(1 for r in user_results if r.get('success'))
+    shell_success = sum(1 for r in public_shell_results if r.get('success'))
+    total_resources = len(user_resources) + len(public_shell_resources)
+    total_success = user_success + shell_success
 
     return {
         "status": "completed",
         "files_processed": len(files_processed),
         "files": files_processed,
-        "resources_total": len(all_resources),
-        "resources_applied": success_count,
-        "resources_failed": len(results) - success_count
+        "resources_total": total_resources,
+        "resources_applied": total_success,
+        "resources_failed": total_resources - total_success,
+        "user_resources": len(user_resources),
+        "public_shells": len(public_shell_resources)
     }
 
 
@@ -262,7 +372,7 @@ def run_yaml_initialization(db: Session) -> Dict[str, Any]:
     init_dir = Path(settings.INIT_DATA_DIR)
     logger.info(f"Scanning initialization directory: {init_dir}")
 
-    summary = scan_and_apply_yaml_directory(user_id, init_dir)
+    summary = scan_and_apply_yaml_directory(user_id, init_dir, db)
 
     logger.info(f"YAML initialization completed: {summary}")
     return summary
