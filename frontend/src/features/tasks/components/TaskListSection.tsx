@@ -30,7 +30,12 @@ interface TaskListSectionProps {
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
 
-export default function TaskListSection({ tasks, title, unreadCount = 0, onTaskClick }: TaskListSectionProps) {
+export default function TaskListSection({
+  tasks,
+  title,
+  unreadCount = 0,
+  onTaskClick,
+}: TaskListSectionProps) {
   const router = useRouter();
   const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
   const { t } = useTranslation('common');
@@ -135,7 +140,10 @@ export default function TaskListSection({ tasks, title, unreadCount = 0, onTaskC
         return <FaRegCircleStop className="w-4 h-4 text-gray-400" />;
       case 'RUNNING':
         return (
-          <ArrowPathIcon className="w-4 h-4 text-blue-500 animate-spin" style={{ animationDuration: '2s' }} />
+          <ArrowPathIcon
+            className="w-4 h-4 text-blue-500 animate-spin"
+            style={{ animationDuration: '2s' }}
+          />
         );
       case 'PENDING':
         return <FaRegCirclePause className="w-4 h-4 text-yellow-500" />;
@@ -215,9 +223,7 @@ export default function TaskListSection({ tasks, title, unreadCount = 0, onTaskC
         style={{ fontSize: '10px' }}
       >
         {title}
-        {unreadCount > 0 && (
-          <span className="text-primary ml-1">({unreadCount})</span>
-        )}
+        {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
       </h3>
       <div className="space-y-0">
         {tasks.map(task => {

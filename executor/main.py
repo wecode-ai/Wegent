@@ -171,7 +171,9 @@ def main():
     """
     Main function for running the FastAPI server
     """
-    uvicorn.run(app, host="0.0.0.0", port=9000)
+    # Get port from environment variable, default to 10001
+    port = int(os.getenv("PORT", 10001))
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
 
 if __name__ == "__main__":

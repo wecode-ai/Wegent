@@ -236,36 +236,90 @@ refactor(executor): improve error handling
 
 ## 🧪 Testing Requirements
 
+Wegent uses comprehensive testing frameworks across all modules. All code changes should include appropriate tests.
+
 ### Backend Testing
 
-- Use pytest for unit testing
-- API tests covering all endpoints
-- Database operation tests
-- At least 80% code coverage
+- Use **pytest** with pytest-asyncio, pytest-cov, and pytest-mock
+- Write unit tests for all business logic
+- Add integration tests for API endpoints and database operations
+- Target: Maintain or improve code coverage (minimum 40-60%, target 70-80%)
+- Use test markers: `@pytest.mark.unit`, `@pytest.mark.integration`, `@pytest.mark.slow`
 
 ```bash
 cd backend
-pytest tests/ --cov=app --cov-report=html
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=app --cov-report=html
+
+# Run only unit tests
+pytest -m unit
 ```
 
 ### Frontend Testing
 
-- Use Jest + React Testing Library
-- Component unit tests
-- API integration tests
-- E2E tests (Playwright)
+- Use **Jest** + **React Testing Library**
+- Write component unit tests
+- Mock API calls and external dependencies
+- Add E2E tests for critical user flows (Playwright)
 
 ```bash
 cd frontend
-npm run test
-npm run test:e2e
+npm test
+npm run test:coverage
 ```
 
-### Executor Testing
+### Executor and Shared Module Testing
 
-- Mock AI service responses
-- Container environment tests
-- Error handling tests
+- Mock external services (Anthropic, OpenAI, Docker, etc.)
+- Test error handling and edge cases
+- Use fixtures for common test setup
+
+```bash
+# Executor tests
+cd executor
+pytest tests/ --cov=agents
+
+# Executor Manager tests
+cd executor_manager
+pytest tests/ --cov=executors
+
+# Shared utilities tests
+cd shared
+pytest tests/ --cov=utils
+```
+
+### Test Organization Best Practices
+
+1. **Follow AAA Pattern**: Arrange, Act, Assert
+2. **One assertion per test**: Each test should verify one specific behavior
+3. **Descriptive test names**: Use clear names that explain what is being tested
+4. **Mock external dependencies**: Never call real external services in tests
+5. **Use fixtures**: Share common setup via pytest fixtures
+6. **Test edge cases**: Include tests for error conditions and boundary values
+7. **Keep tests independent**: Each test should run independently
+
+### CI/CD Testing
+
+All tests run automatically via GitHub Actions on:
+- Push to `main`, `master`, or `develop` branches
+- All pull requests
+
+The test suite includes:
+- Backend tests (Python 3.9, 3.10)
+- Executor tests
+- Executor Manager tests
+- Shared utilities tests
+- Frontend tests (Node.js 18.x)
+
+Coverage reports are uploaded to Codecov.
+
+For detailed testing documentation, see:
+- 📖 [Complete Testing Guide (English)](./docs/en/guides/developer/testing.md) - Comprehensive test framework documentation
+- 📖 [完整测试指南（中文）](./docs/zh/guides/developer/testing.md) - 综合测试框架文档
+- 📖 [Developer Setup Guide](./docs/en/guides/developer/setup.md) - Testing section
 
 ## 📚 Documentation Requirements
 

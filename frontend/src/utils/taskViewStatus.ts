@@ -44,8 +44,8 @@ function pruneOldViewStatus(statusMap: TaskViewStatusMap): TaskViewStatusMap {
   if (entries.length <= MAX_RECORDS) return statusMap;
 
   // Sort by viewed time (newest first) and keep only MAX_RECORDS
-  const sorted = entries.sort((a, b) =>
-    new Date(b[1].viewedAt).getTime() - new Date(a[1].viewedAt).getTime()
+  const sorted = entries.sort(
+    (a, b) => new Date(b[1].viewedAt).getTime() - new Date(a[1].viewedAt).getTime()
   );
 
   return Object.fromEntries(sorted.slice(0, MAX_RECORDS));

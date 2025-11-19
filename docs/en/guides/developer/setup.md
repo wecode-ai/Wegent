@@ -303,19 +303,27 @@ wegent/
 
 ## 🔬 Testing
 
+Wegent provides comprehensive testing framework coverage across all core modules.
+
 ### Backend Testing
 
 ```bash
 cd backend
 
 # Run all tests
-python -m pytest
+pytest
 
-# Run specific test file
-python -m pytest tests/test_auth.py
+# Run specific test module
+pytest tests/core/
 
 # Run with coverage report
-python -m pytest --cov=app --cov-report=html
+pytest --cov=app --cov-report=html
+
+# Run only unit tests
+pytest -m unit
+
+# Run only integration tests
+pytest -m integration
 ```
 
 ### Frontend Testing
@@ -327,13 +335,32 @@ cd frontend
 npm test
 
 # Run and watch for changes
-npm test -- --watch
+npm run test:watch
 
 # Generate coverage report
-npm test -- --coverage
+npm run test:coverage
 ```
 
-For more details, see [Testing Guide](./testing.md).
+### Executor and Shared Module Testing
+
+```bash
+# Executor tests
+cd executor
+pytest tests/ --cov=agents
+
+# Executor Manager tests
+cd executor_manager
+pytest tests/ --cov=executors
+
+# Shared utilities tests
+cd shared
+pytest tests/ --cov=utils
+```
+
+### Complete Testing Guide
+
+For detailed testing framework documentation, best practices, and CI/CD configuration, see:
+- 📖 [Complete Testing Guide](./testing.md) - Test framework documentation, Fixtures, Mocking strategies, and more
 
 ---
 

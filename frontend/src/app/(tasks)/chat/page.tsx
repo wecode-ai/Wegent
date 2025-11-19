@@ -5,12 +5,13 @@
 'use client';
 
 import { Suspense, useState, useEffect } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
-import BeginnerGuideModal from '@/features/tasks/components/BeginnerGuideModal';
+import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
 import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
@@ -20,16 +21,27 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { Team } from '@/types/api';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import { saveLastTab } from '@/utils/userPreferences';
+import { useUser } from '@/features/common/UserContext';
 
 export default function ChatPage() {
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
+
+  // User state for git token check
+  const { user } = useUser();
+
+  // Check for share_id in URL
+  const searchParams = useSearchParams();
+  const hasShareId = !!searchParams.get('share_id');
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
   // Selected team state for sharing
   const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null);
+
+  // Check if user has git token
+  const hasGitToken = user?.git_info && user.git_info.length > 0;
 
   // Save last active tab to localStorage
   useEffect(() => {
@@ -54,8 +66,14 @@ export default function ChatPage() {
           onRefreshTeams={handleRefreshTeams}
         />
       </Suspense>
-      {/* Beginner guide modal */}
-      <BeginnerGuideModal teams={teams} teamLoading={isTeamsLoading} />
+      {/* Onboarding tour */}
+      <OnboardingTour
+        hasTeams={teams.length > 0}
+        hasGitToken={hasGitToken}
+        currentPage="chat"
+        isLoading={isTeamsLoading}
+        hasShareId={hasShareId}
+      />
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Responsive resizable sidebar */}
         <ResizableSidebar>

@@ -136,8 +136,10 @@ jobs:
         env:
           PYTHONPATH: ${{ github.workspace }}
           COVERAGE_CORE: sysmon
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
         run: |
-          pytest tests/ --cov=executors --cov-report=xml --cov-report=term-missing -v
+          pytest tests/ --cov=executors --cov-report=xml --cov-report=term-missing -v -s
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3

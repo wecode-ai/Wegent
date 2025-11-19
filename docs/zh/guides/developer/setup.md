@@ -303,19 +303,27 @@ wegent/
 
 ## 🔬 测试
 
+Wegent 提供了全面的测试框架,覆盖所有核心模块。
+
 ### 后端测试
 
 ```bash
 cd backend
 
 # 运行所有测试
-python -m pytest
+pytest
 
-# 运行特定测试文件
-python -m pytest tests/test_auth.py
+# 运行特定测试模块
+pytest tests/core/
 
 # 运行并生成覆盖率报告
-python -m pytest --cov=app --cov-report=html
+pytest --cov=app --cov-report=html
+
+# 只运行单元测试
+pytest -m unit
+
+# 只运行集成测试
+pytest -m integration
 ```
 
 ### 前端测试
@@ -327,13 +335,32 @@ cd frontend
 npm test
 
 # 运行并监视更改
-npm test -- --watch
+npm run test:watch
 
 # 生成覆盖率报告
-npm test -- --coverage
+npm run test:coverage
 ```
 
-详细信息请参阅 [测试指南](./testing.md)。
+### Executor 和 Shared 模块测试
+
+```bash
+# Executor 测试
+cd executor
+pytest tests/ --cov=agents
+
+# Executor Manager 测试
+cd executor_manager
+pytest tests/ --cov=executors
+
+# Shared 工具测试
+cd shared
+pytest tests/ --cov=utils
+```
+
+### 完整测试指南
+
+详细的测试框架说明、最佳实践和 CI/CD 配置，请参阅：
+- 📖 [完整测试指南](./testing.md) - 测试框架文档、Fixtures、Mocking 策略等
 
 ---
 

@@ -11,7 +11,7 @@ import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
-import BeginnerGuideModal from '@/features/tasks/components/BeginnerGuideModal';
+import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
 import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
@@ -27,18 +27,23 @@ import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { saveLastTab } from '@/utils/userPreferences';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { calculateOpenLinks } from '@/utils/openLinks';
+import { useUser } from '@/features/common/UserContext';
 
 export default function CodePage() {
   // Get search params to check for taskId
   const searchParams = useSearchParams();
   const taskId = searchParams.get('taskId');
   const hasTaskId = !!taskId;
+  const hasShareId = !!searchParams.get('share_id');
 
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for workbench data
   const { selectedTaskDetail } = useTaskContext();
+
+  // User state for git token check
+  const { user } = useUser();
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -51,6 +56,9 @@ export default function CodePage() {
 
   // Mobile detection
   const isMobile = useIsMobile();
+
+  // Check if user has git token
+  const hasGitToken = user?.git_info && user.git_info.length > 0;
 
   // Auto-open workbench when taskId is present
   useEffect(() => {
@@ -95,8 +103,14 @@ export default function CodePage() {
           onRefreshTeams={handleRefreshTeams}
         />
       </Suspense>
-      {/* Beginner guide modal */}
-      <BeginnerGuideModal teams={teams} teamLoading={isTeamsLoading} />
+      {/* Onboarding tour */}
+      <OnboardingTour
+        hasTeams={teams.length > 0}
+        hasGitToken={hasGitToken}
+        currentPage="code"
+        isLoading={isTeamsLoading}
+        hasShareId={hasShareId}
+      />
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Responsive resizable sidebar - fixed, not affected by right panel */}
         <ResizableSidebar>
