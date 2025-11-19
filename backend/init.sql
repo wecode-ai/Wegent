@@ -2,6 +2,30 @@
 --
 -- SPDX-License-Identifier: Apache-2.0
 
+-- ============================================================================
+-- DEPRECATED: This file is no longer used for initialization
+-- ============================================================================
+--
+-- This init.sql file has been replaced by YAML-based initialization.
+-- See: backend/init_data/README.md
+--
+-- Why YAML instead of SQL?
+-- - Human-readable and easier to maintain
+-- - Version control friendly (better diffs)
+-- - Declarative resource definitions
+-- - Create-only mode (preserves user modifications)
+-- - No risk of overwriting changes on restart
+--
+-- This file is kept for reference only and documents the database schema.
+-- It is NOT loaded by docker-compose.yml or used during initialization.
+--
+-- For initialization, see:
+-- - backend/init_data/01-default-resources.yaml
+-- - backend/init_data/02-public-shells.yaml
+-- - backend/app/core/yaml_init.py
+--
+-- ============================================================================
+
 -- Create database
 CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -109,8 +133,36 @@ CREATE TABLE IF NOT EXISTS shared_teams (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 
+-- ============================================================================
+-- DEPRECATED: Initial data insertion (replaced by YAML initialization)
+-- ============================================================================
+--
+-- The following INSERT statements are NO LONGER EXECUTED.
+-- Initial data is now loaded from YAML files in backend/init_data/
+--
+-- Default admin user (admin/Wegent2025!) is created by:
+--   backend/app/core/yaml_init.py::ensure_default_user()
+--
+-- Default resources (Ghost, Model, Shell, Bot, Team) are created from:
+--   backend/init_data/01-default-resources.yaml
+--
+-- Public shells (ClaudeCode, Agno) are created from:
+--   backend/init_data/02-public-shells.yaml
+--
+-- NOTE: The YAML-based initialization uses CREATE-ONLY mode:
+-- - First startup: Creates all resources from YAML
+-- - User modifies: Changes are saved to database
+-- - Service restart: YAML is skipped, user modifications preserved
+--
+-- This prevents user data loss on restart.
+-- ============================================================================
+
 -- Initialize user data (admin/Wegent2025!)
+-- DEPRECATED: Now created by yaml_init.py::ensure_default_user()
 INSERT INTO `users` (`user_name`, `password_hash`, `email`, `git_info`) VALUES ('admin', '$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW', 'admin@example.com', '[]');
+
+-- Initialize kinds data
+-- DEPRECATED: Now loaded from backend/init_data/01-default-resources.yaml
 INSERT INTO `kinds` (`id`, `user_id`, `kind`, `name`, `namespace`, `json`, `is_active`, `created_at`, `updated_at`)
 VALUES
 	('1', '1', 'Ghost', 'developer-ghost', 'default', '{\"kind\": \"Ghost\", \"spec\": {\"mcpServers\": {\"github\": {\"env\": {\"GITHUB_PERSONAL_ACCESS_TOKEN\": \"ghp_xxxxx\"}, \"args\": [\"run\", \"-i\", \"--rm\", \"-e\", \"GITHUB_PERSONAL_ACCESS_TOKEN\", \"-e\", \"GITHUB_TOOLSETS\", \"-e\", \"GITHUB_READ_ONLY\", \"ghcr.io/github/github-mcp-server\"], \"command\": \"docker\"}}, \"systemPrompt\": \"You are a senior software engineer, proficient in Git, GitHub MCP, branch management, and code submission workflows. You will use the specified programming language to generate executable code and complete the branch submission and MR (Merge Request) process. Please follow the steps strictly:\\n\\nInput Parameters\\n- `language`: The programming language (e.g., Python, Java, Go, JavaScript, etc.)\\n- `code_requirements`: Description or requirements of the code functionality to be implemented\\n\\nSteps\\n\\n1. Create a New Branch\\n- The branch name must start with wegent/\\n- Ensure the branch exists both locally and remotely\\n\\n2. Generate Code\\n- Write executable code using the specified language.\\n- The code must follow syntax rules and meet the code_requirements.\\n- Do not explain the code logic, only provide executable code.\\n\\n3. Commit Code to Remote Repository\\n- Use Git Bash commands to commit the new branch code.\\n- The commit message should be concise, descriptive, and follow conventional commit standards.\\n\\n4. Create MR (Merge Request)\\n- Use GitHub MCP to create an MR.\\n- The MR title should be automatically generated from the branch name.\\n- The MR description should automatically include the commit summary.\\n\\n5. Output MR Information\\n- Must return in JSON format:\\n```\\n{\\n  \\\"mr_id\\\": \\\"<MR ID>\\\",\\n  \\\"mr_url\\\": \\\"<MR Link>\\\",\\n  \\\"status\\\": \\\"<Operation status, e.g., success/failure>\\\"\\n}\\n```\\n\\nRequirements\\n- The branch name must be generated automatically, without user input.\\n- Follow each step in sequence without skipping.\\n- Output must contain only JSON, with no additional text or explanation.\\n- The generated code must use the specified `language`, comply with syntax rules, and meet the implementation requirements.\\n\"}, \"status\": {\"state\": \"Available\"}, \"metadata\": {\"name\": \"developer-ghost\", \"namespace\": \"default\"}, \"apiVersion\": \"agent.wecode.io/v1\"}', '1', '2025-09-04 04:58:21', '2025-09-04 04:58:21'),
@@ -122,6 +174,8 @@ VALUES
 	('7', '1', 'Bot', 'pm-battle-bot', 'default', '{\"kind\": \"Bot\", \"spec\": {\"ghostRef\": {\"name\": \"pm-battle-ghost\", \"namespace\": \"default\"}, \"modelRef\": {\"name\": \"claude-model\", \"namespace\": \"default\"}, \"shellRef\": {\"name\": \"claude-shell\", \"namespace\": \"default\"}}, \"status\": {\"state\": \"Available\"}, \"metadata\": {\"name\": \"pm-battle-bot\", \"namespace\": \"default\"}, \"apiVersion\": \"agent.wecode.io/v1\"}', '1', '2025-09-04 04:58:22', '2025-09-04 04:58:22'),
 	('8', '1', 'Team', 'pm-battle-team', 'default', '{\"kind\": \"Team\", \"spec\": {\"members\": [{\"role\": \"leader\", \"botRef\": {\"name\": \"pm-battle-bot\", \"namespace\": \"default\"}, \"prompt\": \"\"}], \"collaborationModel\": \"pipeline\"}, \"status\": {\"state\": \"Available\"}, \"metadata\": {\"name\": \"pm-battle-team\", \"namespace\": \"default\"}, \"apiVersion\": \"agent.wecode.io/v1\"}', '1', '2025-09-04 04:58:22', '2025-09-04 04:58:22');
 
+-- Initialize public shells
+-- DEPRECATED: Now loaded from backend/init_data/02-public-shells.yaml
 INSERT INTO `public_shells` (`id`, `name`, `namespace`, `json`, `is_active`, `created_at`, `updated_at`)
 VALUES
 	('1', 'ClaudeCode', 'default', '{\"kind\": \"Shell\", \"spec\": {\"runtime\": \"ClaudeCode\", \"supportModel\": []}, \"status\": {\"state\": \"Available\"}, \"metadata\": {\"name\": \"ClaudeCode\", \"namespace\": \"default\"}, \"apiVersion\": \"agent.wecode.io/v1\"}', '1', '2025-10-12 11:16:31', '2025-10-12 11:16:31'),
