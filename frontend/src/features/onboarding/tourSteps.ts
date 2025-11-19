@@ -1,0 +1,84 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+import { DriveStep } from 'driver.js';
+
+export interface TourStepConfig {
+  element: string;
+  popover: {
+    title: string;
+    description: string;
+  };
+}
+
+export const getTourSteps = (
+  t: (key: string) => string,
+  hasTeams: boolean,
+  hasGitToken: boolean,
+  currentPage: 'chat' | 'code'
+): DriveStep[] => {
+  const steps: DriveStep[] = [];
+
+  // Step 1: Mode toggle (Chat/Code)
+  steps.push({
+    element: '[data-tour="mode-toggle"]',
+    popover: {
+      title: t('onboarding.step1_title'),
+      description: t('onboarding.step1_description'),
+    },
+  });
+
+  // Step 2: Task input
+  steps.push({
+    element: '[data-tour="task-input"]',
+    popover: {
+      title: t('onboarding.step2_title'),
+      description: t('onboarding.step2_description'),
+    },
+  });
+
+  // Step 3: Team selector
+  steps.push({
+    element: '[data-tour="team-selector"]',
+    popover: {
+      title: t('onboarding.step3_title'),
+      description: hasTeams
+        ? t('onboarding.step3_description')
+        : t('onboarding.step3_description_no_team'),
+    },
+  });
+
+  // Step 4: Repository selector (only on code page)
+  if (currentPage === 'code') {
+    steps.push({
+      element: '[data-tour="repo-selector"]',
+      popover: {
+        title: t('onboarding.step4_title'),
+        description: hasGitToken
+          ? t('onboarding.step4_description')
+          : t('onboarding.step4_description_no_token'),
+      },
+    });
+  }
+
+  // Step 5: Task sidebar
+  steps.push({
+    element: '[data-tour="task-sidebar"]',
+    popover: {
+      title: t('onboarding.step5_title'),
+      description: t('onboarding.step5_description'),
+    },
+  });
+
+  // Step 6: Settings link
+  steps.push({
+    element: '[data-tour="settings-link"]',
+    popover: {
+      title: t('onboarding.step6_title'),
+      description: t('onboarding.step6_description'),
+    },
+  });
+
+  return steps;
+};

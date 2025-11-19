@@ -5,6 +5,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import { useTranslation } from '@/hooks/useTranslation';
 import {
   isNotificationSupported,
@@ -16,6 +17,7 @@ import { message } from 'antd';
 
 export default function NotificationSettings() {
   const { t } = useTranslation('common');
+  const router = useRouter();
   const [enabled, setEnabled] = useState(false);
   const [supported, setSupported] = useState(true);
 
@@ -43,6 +45,13 @@ export default function NotificationSettings() {
       setEnabled(false);
       message.success(t('notifications.disable_success'));
     }
+  };
+
+  const handleRestartOnboarding = () => {
+    localStorage.removeItem('user_onboarding_completed');
+    localStorage.removeItem('onboarding_in_progress');
+    localStorage.removeItem('onboarding_current_step');
+    router.push('/code');
   };
 
   return (
@@ -85,6 +94,24 @@ export default function NotificationSettings() {
           </p>
         </div>
       )}
+
+      {/* Restart Onboarding Button */}
+      <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+        <div className="flex-1">
+          <h3 className="text-sm font-medium text-text-primary">
+            {t('onboarding.restart_tour')}
+          </h3>
+          <p className="text-xs text-text-muted mt-1">
+            {t('onboarding.step1_description')}
+          </p>
+        </div>
+        <button
+          onClick={handleRestartOnboarding}
+          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
+        >
+          {t('onboarding.restart_tour')}
+        </button>
+      </div>
     </div>
   );
 }

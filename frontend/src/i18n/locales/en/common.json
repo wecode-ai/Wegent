@@ -269,6 +269,27 @@
     "description": "Before you can start using the app, please complete the setup below first!",
     "create_team": "Create Team"
   },
+  "onboarding": {
+    "step1_title": "Choose Your Mode",
+    "step1_description": "Chat mode for exploration and discovery. Code mode lets the AI dev team build features, fix bugs, and explore codebases.",
+    "step2_title": "Enter Your Task",
+    "step2_description": "Type your task or question here for the AI team to work on.",
+    "step3_title": "Select AI Team",
+    "step3_description": "Choose an AI team to execute your task. Each team has different bots and collaboration modes.",
+    "step3_description_no_team": "You haven't created any teams yet. Please create your first AI team in Settings.",
+    "step4_title": "Select Repository",
+    "step4_description": "In Code mode, select the repository and branch to work with.",
+    "step4_description_no_token": "To use repository features, configure your Git token first. Click here to set it up.",
+    "step5_title": "View Task History",
+    "step5_description": "View all your previous tasks here. Click any task to see details and conversation history.",
+    "step6_title": "Configure Your Setup",
+    "step6_description": "Create and manage AI teams, configure bots, and set up Git integrations in Settings.",
+    "next": "Next",
+    "previous": "Previous",
+    "skip": "Skip",
+    "done": "Done",
+    "restart_tour": "Restart Onboarding Tour"
+  },
   "common": {
     "back": "Back",
     "cancel": "Cancel",

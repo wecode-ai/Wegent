@@ -20,6 +20,7 @@
     "@uiw/react-markdown-editor": "^6.1.4",
     "@uiw/react-md-editor": "^4.0.8",
     "antd": "^5.27.3",
+    "driver.js": "^1.3.6",
     "i18next": "^25.5.2",
     "next": "^15.1.3",
     "react": "19.0.0",

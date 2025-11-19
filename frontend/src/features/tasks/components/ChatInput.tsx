@@ -52,7 +52,7 @@ export default function ChatInput({
   };
 
   return (
-    <div className="w-full">
+    <div className="w-full" data-tour="task-input">
       <TextareaAutosize
         value={message}
         onChange={e => {
