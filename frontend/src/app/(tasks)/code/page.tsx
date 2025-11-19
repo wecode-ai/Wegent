@@ -58,7 +58,7 @@ export default function CodePage() {
   const isMobile = useIsMobile();
 
   // Check if user has git token
-  const hasGitToken = user?.git_info && user.git_info.length > 0;
+  const hasGitToken = !!(user?.git_info && user.git_info.length > 0);
 
   // Auto-open workbench when taskId is present
   useEffect(() => {
