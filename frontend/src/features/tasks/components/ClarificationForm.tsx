@@ -4,6 +4,23 @@
 
 'use client';
 
+/**
+ * ClarificationForm Component
+ *
+ * Interactive form for requirement clarification (PM Battle feature).
+ *
+ * Usage:
+ * - Works in both chat mode and code mode
+ * - In chat mode: repo/branch info is optional (extracted from taskDetail)
+ * - In code mode: repo/branch info is available from taskDetail
+ *
+ * The form handles:
+ * - Single choice, multiple choice, and text input questions
+ * - Answer validation before submission
+ * - Markdown-formatted answer submission
+ * - Read-only mode for already submitted answers
+ */
+
 import { useState, useEffect, useMemo } from 'react';
 import { Button, message } from 'antd';
 import { FiSend } from 'react-icons/fi';

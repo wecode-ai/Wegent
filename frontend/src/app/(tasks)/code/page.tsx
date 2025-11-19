@@ -4,6 +4,18 @@
 
 'use client';
 
+/**
+ * Code Mode Page
+ *
+ * Code-focused task interface with repository selector and workbench.
+ *
+ * Features:
+ * - Repository and branch selection
+ * - Workbench panel for code preview and editing
+ * - Supports clarification forms (PM Battle feature)
+ * - File tree and diff visualization
+ */
+
 import { Suspense, useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';

@@ -4,6 +4,19 @@
 
 'use client';
 
+/**
+ * MessagesArea Component
+ *
+ * Renders task messages in both chat and code modes.
+ *
+ * Features:
+ * - Supports ClarificationForm rendering in both chat and code modes
+ * - Parses both Markdown and JSON formats for clarification questions
+ * - Handles user clarification answer submissions
+ * - Auto-refreshes task details when status changes
+ * - Supports thinking process visualization
+ */
+
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
 import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch } from '@/types/api';

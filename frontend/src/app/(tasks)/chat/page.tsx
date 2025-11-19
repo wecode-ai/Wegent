@@ -4,6 +4,18 @@
 
 'use client';
 
+/**
+ * Chat Mode Page
+ *
+ * Chat-focused task interface without repository selector.
+ *
+ * Features:
+ * - General chat interactions with AI teams
+ * - Supports clarification forms (PM Battle feature)
+ * - No repository/branch selection required
+ * - Team-based conversations
+ */
+
 import { Suspense, useState, useEffect } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
