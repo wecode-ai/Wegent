@@ -170,7 +170,7 @@ export default function TaskSidebar({
       </div>
 
       {/* New Task Button */}
-      <div className="px-3 mb-3">
+      <div className="px-3 mb-2">
         <Button
           variant="outline"
           onClick={handleNewAgentClick}
@@ -183,7 +183,7 @@ export default function TaskSidebar({
       </div>
 
       {/* Search */}
-      <div className="p-3">
+      <div className="px-3 mb-3">
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
           <input

@@ -38,7 +38,7 @@ export default function TopNavigation({
   const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile);
 
   return (
-    <div className="relative flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 min-h-[48px] border-b border-border bg-base">
+    <div className="relative flex items-center justify-between px-4 sm:px-6 py-2 sm:py-3 min-h-[44px] border-b border-border bg-base">
       {/* Left side - Mobile sidebar toggle or Logo */}
       <div className="flex items-center">
         {showHamburgerMenu && (
