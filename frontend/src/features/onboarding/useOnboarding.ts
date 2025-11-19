@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { driver, DriveStep, Driver } from 'driver.js';
+import { driver, DriveStep, Driver, AllowedButtons } from 'driver.js';
 import { useTranslation } from 'react-i18next';
 import 'driver.js/dist/driver.css';
 import { getTourSteps } from './tourSteps';
@@ -80,7 +80,7 @@ export const useOnboarding = ({
       nextBtnText: t('onboarding.next'),
       prevBtnText: t('onboarding.previous'),
       doneBtnText: t('onboarding.done'),
-      showButtons: ['next', 'previous', 'close'],
+      showButtons: ['next', 'previous', 'close'] as AllowedButtons[],
       onCloseClick: () => {
         markOnboardingCompleted();
         driverInstance.current?.destroy();
