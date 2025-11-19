@@ -5,14 +5,14 @@
 'use client';
 
 import { useEffect, useRef, useState, useLayoutEffect } from 'react';
-import { RiBrainLine } from 'react-icons/ri';
 import {
-  FiChevronDown,
-  FiChevronUp,
-  FiChevronsDown,
-  FiMaximize2,
-  FiMinimize2,
-} from 'react-icons/fi';
+  Brain,
+  ChevronDown,
+  ChevronUp,
+  ChevronsDown,
+  Maximize2,
+  Minimize2,
+} from 'lucide-react';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface ThinkingStep {
@@ -423,12 +423,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               >
                 {isExpanded ? (
                   <>
-                    <FiMinimize2 className="h-3 w-3" />
+                    <Minimize2 className="h-3 w-3" />
                     <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
                   </>
                 ) : (
                   <>
-                    <FiMaximize2 className="h-3 w-3" />
+                    <Maximize2 className="h-3 w-3" />
                     <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
                   </>
                 )}
@@ -823,12 +823,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               >
                 {isExpanded ? (
                   <>
-                    <FiMinimize2 className="h-3 w-3" />
+                    <Minimize2 className="h-3 w-3" />
                     <span className="text-xs">{t('thinking.collapse') || 'Collapse'}</span>
                   </>
                 ) : (
                   <>
-                    <FiMaximize2 className="h-3 w-3" />
+                    <Maximize2 className="h-3 w-3" />
                     <span className="text-xs">{t('thinking.expand') || 'Expand'}</span>
                   </>
                 )}
@@ -990,7 +990,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-surface/60"
       >
         <div className="flex items-center gap-2">
-          <RiBrainLine className="h-4 w-4 text-blue-400" />
+          <Brain className="h-4 w-4 text-blue-400" />
           <span
             className={`text-sm font-medium ${isThinkingCompleted ? 'text-blue-300' : 'text-blue-400'}`}
           >
@@ -1000,9 +1000,9 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
           </span>
         </div>
         {isOpen ? (
-          <FiChevronUp className="h-4 w-4 text-text-tertiary" />
+          <ChevronUp className="h-4 w-4 text-text-tertiary" />
         ) : (
-          <FiChevronDown className="h-4 w-4 text-text-tertiary" />
+          <ChevronDown className="h-4 w-4 text-text-tertiary" />
         )}
       </button>
 
@@ -1172,7 +1172,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               onClick={handleScrollToBottom}
               className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-xs text-white shadow-md transition-all hover:bg-primary/90"
             >
-              <FiChevronsDown className="h-3 w-3" />
+              <ChevronsDown className="h-3 w-3" />
               <span>{t('thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
             </button>
           )}

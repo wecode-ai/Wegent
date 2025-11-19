@@ -5,8 +5,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, message } from 'antd';
-import { FiCopy, FiCheck, FiPlusCircle, FiStar } from 'react-icons/fi';
+import { message } from 'antd';
+import { Copy, Check, Plus, Star } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
@@ -88,7 +89,7 @@ export default function FinalPromptMessage({
     <div className="space-y-3 p-4 rounded-lg border-2 border-blue-500/50 bg-blue-500/10 shadow-lg">
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
-        <FiStar className="w-5 h-5 text-blue-400" />
+        <Star className="w-5 h-5 text-blue-400" />
         <h3 className="text-base font-semibold text-blue-400">
           {t('clarification.final_prompt_title') || 'Final Requirement Prompt'}
         </h3>
@@ -113,21 +114,21 @@ export default function FinalPromptMessage({
       {/* Action Buttons */}
       <div className="flex items-center gap-3 pt-2">
         <Button
-          type="default"
-          icon={copied ? <FiCheck className="w-4 h-4" /> : <FiCopy className="w-4 h-4" />}
+          variant="ghost"
           onClick={handleCopy}
-          className={copied ? 'border-green-500 text-green-500' : ''}
+          className={copied ? 'text-green-500' : ''}
         >
+          {copied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
           {copied
             ? t('clarification.copied') || 'Copied'
             : t('clarification.copy_prompt') || 'Copy Prompt'}
         </Button>
 
         <Button
-          type="primary"
-          icon={<FiPlusCircle className="w-4 h-4" />}
+          variant="secondary"
           onClick={handleCreateTask}
         >
+          <Plus className="w-4 h-4 mr-2" />
           {t('clarification.create_task') || 'Create New Task with This Prompt'}
         </Button>
       </div>

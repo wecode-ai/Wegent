@@ -194,8 +194,9 @@ export default function TaskSidebar({
       {/* New Task Button */}
       <div className="px-3 mb-3">
         <Button
+          variant="outline"
           onClick={handleNewAgentClick}
-          className="w-full"
+          className="w-full justify-start"
           size="default"
         >
           <Plus className="h-4 w-4 mr-2" />
