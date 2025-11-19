@@ -16,9 +16,14 @@ import { useTaskContext } from '../contexts/taskContext';
 interface ClarificationFormProps {
   data: ClarificationData;
   taskId: number;
+  currentMessageIndex: number;
 }
 
-export default function ClarificationForm({ data, taskId }: ClarificationFormProps) {
+export default function ClarificationForm({
+  data,
+  taskId,
+  currentMessageIndex,
+}: ClarificationFormProps) {
   const { t } = useTranslation('chat');
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
   const [answers, setAnswers] = useState<
@@ -31,45 +36,28 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
 
   // Check if this clarification has been answered
-  // Simply check if there's a USER message after this clarification
+  // Check if there's a USER message after this clarification's message index
   const isSubmitted = useMemo(() => {
-    if (!selectedTaskDetail?.subtasks) return false;
+    if (!selectedTaskDetail?.subtasks || selectedTaskDetail.subtasks.length === 0) return false;
 
-    // Find the subtask that contains this clarification form
-    const currentSubtaskIndex = selectedTaskDetail.subtasks.findIndex(sub => {
-      const result = sub.result;
-      if (!result || typeof result !== 'object') return false;
-
-      const resultValue = 'value' in result ? result.value : null;
-      if (!resultValue) return false;
-
-      const contentToCheck =
-        typeof resultValue === 'string' ? resultValue : JSON.stringify(resultValue);
-
-      // Check for Markdown format clarification
-      if (
-        contentToCheck.includes('## 🤔 需求澄清问题') ||
-        contentToCheck.includes('## 🤔 Clarification Questions')
-      ) {
-        // Verify it matches our question IDs
-        const hasMatchingQuestions = data.questions.every(q =>
-          contentToCheck.includes(q.question_id.toUpperCase())
-        );
-        return hasMatchingQuestions;
-      }
-
-      return false;
+    console.log('[ClarificationForm] Checking submission status:', {
+      currentMessageIndex,
+      totalMessages: selectedTaskDetail.subtasks.length,
+      questionIds: data.questions.map(q => q.question_id),
     });
 
-    if (currentSubtaskIndex === -1) return false;
+    // Check if there's any USER message after the current message index
+    const subtasksAfter = selectedTaskDetail.subtasks.slice(currentMessageIndex + 1);
+    console.log(
+      '[ClarificationForm] Subtasks after current message:',
+      subtasksAfter.map(s => ({ id: s.id, role: s.role }))
+    );
 
-    // Check if there's any USER message after this clarification
-    const hasUserMessageAfter = selectedTaskDetail.subtasks
-      .slice(currentSubtaskIndex + 1)
-      .some(sub => sub.role === 'USER');
+    const hasUserMessageAfter = subtasksAfter.some(sub => sub.role === 'USER');
+    console.log('[ClarificationForm] Has USER message after:', hasUserMessageAfter);
 
     return hasUserMessageAfter;
-  }, [selectedTaskDetail?.subtasks, data.questions]);
+  }, [selectedTaskDetail?.subtasks, currentMessageIndex, data.questions]);
 
   // Initialize default answers for questions with recommended options
   useEffect(() => {
