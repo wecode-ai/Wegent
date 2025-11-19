@@ -16,7 +16,8 @@ import { useTheme } from '@/features/theme/ThemeProvider';
 import ThinkingComponent from './ThinkingComponent';
 import ClarificationForm from './ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
-import type { ClarificationData, FinalPromptData } from '@/types/api';
+import ClarificationAnswerSummary from './ClarificationAnswerSummary';
+import type { ClarificationData, FinalPromptData, ClarificationAnswerPayload } from '@/types/api';
 
 interface Message {
   type: 'user' | 'ai';
@@ -405,15 +406,9 @@ export default function MessagesArea() {
       try {
         const parsed = JSON.parse(msg.content.trim());
         if (parsed && parsed.type === 'clarification_answer') {
-          // Render a friendly message instead of raw JSON
-          return (
-            <div className="text-sm text-text-secondary">
-              <div className="mb-2">✓ {t('clarification.answers_submitted') || 'Answers submitted'}</div>
-              <div className="text-xs text-text-tertiary">
-                {t('clarification.waiting_response') || 'Waiting for response...'}
-              </div>
-            </div>
-          );
+          // Render user's answers with the new component
+          const answerData = parsed as ClarificationAnswerPayload;
+          return <ClarificationAnswerSummary data={answerData} />;
         }
       } catch {
         // Not JSON, continue with normal rendering
