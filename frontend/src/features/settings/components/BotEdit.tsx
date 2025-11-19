@@ -12,6 +12,7 @@ import { isPredefinedModel, getModelFromConfig } from '@/features/settings/servi
 import { agentApis, Agent } from '@/apis/agents';
 import { modelApis, Model } from '@/apis/models';
 import { useTranslation } from 'react-i18next';
+import { adaptMcpConfigForAgent, type AgentType } from '../utils/mcpTypeAdapter';
 
 import type { MessageInstance } from 'antd/es/message/interface';
 
@@ -276,6 +277,13 @@ const BotEdit: React.FC<BotEditProps> = ({
     if (mcpConfig.trim()) {
       try {
         parsedMcpConfig = JSON.parse(mcpConfig);
+        // Adapt MCP config types based on selected agent
+        if (parsedMcpConfig && agentName) {
+          parsedMcpConfig = adaptMcpConfigForAgent(
+            parsedMcpConfig,
+            agentName as AgentType
+          );
+        }
         setMcpConfigError(false);
       } catch {
         setMcpConfigError(true);
@@ -373,6 +381,21 @@ const BotEdit: React.FC<BotEditProps> = ({
                   setAgentConfig('');
                   setAgentConfigError(false);
                   setModels([]);
+
+                  // Adapt MCP config when switching agent type
+                  if (mcpConfig.trim()) {
+                    try {
+                      const currentMcpConfig = JSON.parse(mcpConfig);
+                      const adaptedConfig = adaptMcpConfigForAgent(
+                        currentMcpConfig,
+                        value as AgentType
+                      );
+                      setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
+                    } catch (error) {
+                      // If parsing fails, keep the original config
+                      console.warn('Failed to adapt MCP config on agent change:', error);
+                    }
+                  }
                 }
                 setAgentName(value);
               }}
