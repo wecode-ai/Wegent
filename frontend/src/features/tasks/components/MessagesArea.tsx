@@ -14,6 +14,9 @@ import { useTranslation } from '@/hooks/useTranslation';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import ThinkingComponent from './ThinkingComponent';
+import ClarificationForm from './ClarificationForm';
+import FinalPromptMessage from './FinalPromptMessage';
+import type { ClarificationData, FinalPromptData } from '@/types/api';
 
 interface Message {
   type: 'user' | 'ai';
@@ -432,6 +435,53 @@ export default function MessagesArea() {
 
   const renderAiMessage = (msg: Message) => {
     const content = msg.content ?? '';
+
+    // Try to parse as clarification or final_prompt data
+    try {
+      // Check if content contains clarification or final_prompt JSON
+      let jsonMatch = null;
+
+      // Try to extract JSON from content
+      if (content.includes('${$$}$')) {
+        const [, result] = content.split('${$$}$');
+        if (result) {
+          try {
+            const parsed = JSON.parse(result.trim());
+            if (parsed && typeof parsed === 'object' && parsed.type) {
+              jsonMatch = parsed;
+            }
+          } catch {
+            // Not JSON, continue with normal rendering
+          }
+        }
+      } else {
+        // Try to parse entire content as JSON
+        try {
+          const parsed = JSON.parse(content.trim());
+          if (parsed && typeof parsed === 'object' && parsed.type) {
+            jsonMatch = parsed;
+          }
+        } catch {
+          // Not JSON, continue with normal rendering
+        }
+      }
+
+      // Handle clarification data
+      if (jsonMatch?.type === 'clarification') {
+        const clarificationData = jsonMatch as ClarificationData;
+        return <ClarificationForm data={clarificationData} taskId={selectedTaskDetail?.id || 0} />;
+      }
+
+      // Handle final_prompt data
+      if (jsonMatch?.type === 'final_prompt') {
+        const finalPromptData = jsonMatch as FinalPromptData;
+        return <FinalPromptMessage data={finalPromptData} />;
+      }
+    } catch (error) {
+      console.error('Failed to parse message content:', error);
+    }
+
+    // Default rendering for normal messages
     if (!content.includes('${$$}$')) {
       return renderPlainMessage(msg);
     }
