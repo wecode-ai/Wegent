@@ -219,8 +219,7 @@ export default function TaskListSection({
   return (
     <div className="mb-2">
       <h3
-        className="text-xs font-medium text-text-muted tracking-wide mb-1"
-        style={{ fontSize: '10px' }}
+        className="text-sm font-medium text-text-primary tracking-wide mb-1 px-2"
       >
         {title}
         {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}

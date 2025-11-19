@@ -360,7 +360,7 @@ export default function ChatArea({
         aria-hidden={!hasMessages}
         style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
       >
-        <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6">
           <MessagesArea
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
@@ -381,7 +381,7 @@ export default function ChatArea({
           className={
             hasMessages
               ? 'fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0'
-              : 'w-full max-w-3xl px-4 sm:px-6'
+              : 'w-full max-w-4xl px-4 sm:px-6'
           }
           style={
             hasMessages
@@ -393,7 +393,7 @@ export default function ChatArea({
               : {}
           }
         >
-          <div className={hasMessages ? 'w-full max-w-3xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
+          <div className={hasMessages ? 'w-full max-w-4xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
             {/* Chat Input Card */}
             <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
               <ChatInput
