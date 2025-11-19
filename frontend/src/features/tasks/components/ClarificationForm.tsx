@@ -86,13 +86,34 @@ export default function ClarificationForm({ data, taskId }: ClarificationFormPro
       return;
     }
 
-    // Build answer payload
+    // Build answer payload with question text and labels
     const answerPayload: ClarificationAnswer[] = Array.from(answers.entries()).map(
-      ([question_id, answer]) => ({
-        question_id,
-        answer_type: answer.answer_type,
-        value: answer.value,
-      })
+      ([question_id, answer]) => {
+        const question = data.questions.find(q => q.question_id === question_id);
+
+        const payload: ClarificationAnswer = {
+          question_id,
+          question_text: question?.question_text || '',
+          answer_type: answer.answer_type,
+          value: answer.value,
+        };
+
+        // For choice answers, include the selected labels
+        if (answer.answer_type === 'choice' && question?.options) {
+          if (Array.isArray(answer.value)) {
+            // Multiple choice: find labels for all selected values
+            payload.selected_labels = answer.value
+              .map(val => question.options?.find(opt => opt.value === val)?.label)
+              .filter(Boolean) as string[];
+          } else {
+            // Single choice: find label for the selected value
+            const selectedOption = question.options.find(opt => opt.value === answer.value);
+            payload.selected_labels = selectedOption?.label || answer.value;
+          }
+        }
+
+        return payload;
+      }
     );
 
     const payload = {
