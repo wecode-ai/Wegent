@@ -28,7 +28,7 @@ def get_host_ip() -> str:
     Get the host IP address that is accessible from Docker containers.
 
     Returns:
-        str: Host IP address or fallback to host.docker.internal
+        str: Host IP address or fallback to localhost
     """
     try:
         # Create a socket to determine the outgoing IP
@@ -40,6 +40,6 @@ def get_host_ip() -> str:
         return ip
     except Exception as e:
         logger.warning(
-            f"Failed to get host IP: {e}, falling back to host.docker.internal"
+            f"Failed to get host IP: {e}, falling back to localhost"
         )
-        return "host.docker.internal"
+        return "localhost"
