@@ -255,3 +255,40 @@ export interface TaskViewStatus {
 export interface TaskViewStatusMap {
   [taskId: string]: TaskViewStatus;
 }
+
+// Clarification Types
+export interface ClarificationOption {
+  value: string;
+  label: string;
+  recommended?: boolean;
+}
+
+export interface ClarificationQuestion {
+  question_id: string;
+  question_text: string;
+  question_type: 'single_choice' | 'multiple_choice' | 'text_input';
+  options?: ClarificationOption[];
+}
+
+export interface ClarificationData {
+  type: 'clarification';
+  questions: ClarificationQuestion[];
+}
+
+export interface ClarificationAnswer {
+  question_id: string;
+  question_text: string;
+  answer_type: 'choice' | 'custom';
+  value: string | string[];
+  selected_labels?: string | string[];
+}
+
+export interface ClarificationAnswerPayload {
+  type: 'clarification_answer';
+  answers: ClarificationAnswer[];
+}
+
+export interface FinalPromptData {
+  type: 'final_prompt';
+  prompt: string;
+}

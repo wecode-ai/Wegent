@@ -6,7 +6,7 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
-import type { TaskDetail, TaskDetailSubtask } from '@/types/api';
+import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { RiRobot2Line, RiUser3Line } from 'react-icons/ri';
 import { FiCopy, FiCheck, FiDownload } from 'react-icons/fi';
 import { Button } from 'antd';
@@ -14,6 +14,15 @@ import { useTranslation } from '@/hooks/useTranslation';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import ThinkingComponent from './ThinkingComponent';
+import ClarificationForm from './ClarificationForm';
+import FinalPromptMessage from './FinalPromptMessage';
+import ClarificationAnswerSummary from './ClarificationAnswerSummary';
+import type {
+  ClarificationData,
+  FinalPromptData,
+  ClarificationAnswerPayload,
+  ClarificationAnswer,
+} from '@/types/api';
 
 interface Message {
   type: 'user' | 'ai';
@@ -131,7 +140,17 @@ const BubbleTools = ({
   );
 };
 
-export default function MessagesArea() {
+interface MessagesAreaProps {
+  selectedTeam?: Team | null;
+  selectedRepo?: GitRepoInfo | null;
+  selectedBranch?: GitBranch | null;
+}
+
+export default function MessagesArea({
+  selectedTeam,
+  selectedRepo,
+  selectedBranch,
+}: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
   const { theme } = useTheme();
@@ -295,7 +314,7 @@ export default function MessagesArea() {
     return () => {
       container.removeEventListener('scroll', handleScroll);
     };
-  }, [selectedTaskDetail?.id, displayMessages.length > 0, AUTO_SCROLL_THRESHOLD]);
+  }, [selectedTaskDetail?.id, displayMessages.length, AUTO_SCROLL_THRESHOLD]);
 
   useLayoutEffect(() => {
     const container = messagesContainerRef.current;
@@ -396,8 +415,88 @@ export default function MessagesArea() {
     );
   };
 
-  const renderPlainMessage = (msg: Message) =>
-    (msg.content?.split('\n') || []).map((line, idx) => {
+  const renderPlainMessage = (msg: Message) => {
+    // Check if this is a Markdown clarification answer (user message)
+    if (msg.type === 'user' && msg.content.includes('## 📝 我的回答')) {
+      // Parse Markdown answer format
+      const answerPayload: ClarificationAnswer[] = [];
+
+      // Extract all Q blocks
+      const questionRegex = /### (Q\d+): (.*?)\n\*\*Answer\*\*: ([\s\S]*?)(?=\n###|$)/g;
+      let match;
+
+      while ((match = questionRegex.exec(msg.content)) !== null) {
+        const questionId = match[1].toLowerCase();
+        const questionText = match[2].trim();
+        const answerContent = match[3].trim();
+
+        // Check if it's a multi-line answer (multiple choice with bullet points)
+        if (answerContent.startsWith('-')) {
+          // Multiple choice answer
+          const optionRegex = /- `([^`]+)` - (.*?)(?=\n-|$)/g;
+          const values: string[] = [];
+          const labels: string[] = [];
+          let optMatch;
+
+          while ((optMatch = optionRegex.exec(answerContent)) !== null) {
+            values.push(optMatch[1]);
+            labels.push(optMatch[2].trim());
+          }
+
+          answerPayload.push({
+            question_id: questionId,
+            question_text: questionText,
+            answer_type: 'choice',
+            value: values,
+            selected_labels: labels,
+          });
+        } else if (answerContent.startsWith('`')) {
+          // Single choice answer: `value` - Label
+          const singleMatch = answerContent.match(/`([^`]+)` - (.*)/);
+          if (singleMatch) {
+            answerPayload.push({
+              question_id: questionId,
+              question_text: questionText,
+              answer_type: 'choice',
+              value: singleMatch[1],
+              selected_labels: singleMatch[2].trim(),
+            });
+          }
+        } else {
+          // Custom text answer
+          answerPayload.push({
+            question_id: questionId,
+            question_text: questionText,
+            answer_type: 'custom',
+            value: answerContent,
+          });
+        }
+      }
+
+      if (answerPayload.length > 0) {
+        return (
+          <ClarificationAnswerSummary
+            data={{ type: 'clarification_answer', answers: answerPayload }}
+          />
+        );
+      }
+    }
+
+    // Fallback: Check if this is a clarification answer JSON (user message) - for backward compatibility
+    if (msg.type === 'user') {
+      try {
+        const parsed = JSON.parse(msg.content.trim());
+        if (parsed && parsed.type === 'clarification_answer') {
+          // Render user's answers with the new component
+          const answerData = parsed as ClarificationAnswerPayload;
+          return <ClarificationAnswerSummary data={answerData} />;
+        }
+      } catch {
+        // Not JSON, continue with normal rendering
+      }
+    }
+
+    return (msg.content?.split('\n') || []).map((line, idx) => {
       if (line.startsWith('__PROMPT_TRUNCATED__:')) {
         const match = line.match(/^__PROMPT_TRUNCATED__:(.*)::(.*)$/);
         if (match) {
@@ -429,9 +528,204 @@ export default function MessagesArea() {
         </div>
       );
     });
+  };
+
+  // Helper function to parse Markdown clarification questions
+  const parseMarkdownClarification = (content: string): ClarificationData | null => {
+    // Check for clarification questions heading
+    if (
+      !content.includes('## 🤔 需求澄清问题') &&
+      !content.includes('## 🤔 Clarification Questions')
+    ) {
+      return null;
+    }
+
+    const questions: ClarificationData['questions'] = [];
+
+    // Match all questions: ### Q{number}: {question_text}
+    const questionRegex = /### Q(\d+): (.*?)(?=\n\*\*Type\*\*:|$)/g;
+    const matches = Array.from(content.matchAll(questionRegex));
+
+    for (const match of matches) {
+      const questionNumber = parseInt(match[1]);
+      const questionText = match[2].trim();
+
+      // Find the type and options for this question
+      const questionBlock = content.substring(
+        match.index!,
+        content.indexOf('\n### Q', match.index! + 1) !== -1
+          ? content.indexOf('\n### Q', match.index! + 1)
+          : content.length
+      );
+
+      // Extract type
+      const typeMatch = questionBlock.match(/\*\*Type\*\*:\s*(\w+)/);
+      if (!typeMatch) continue;
+
+      const questionType = typeMatch[1] as 'single_choice' | 'multiple_choice' | 'text_input';
+      const questionId = `q${questionNumber}`;
+
+      if (questionType === 'text_input') {
+        // Text input has no options
+        questions.push({
+          question_id: questionId,
+          question_text: questionText,
+          question_type: 'text_input',
+        });
+      } else {
+        // Extract options for choice questions
+        const options: ClarificationData['questions'][0]['options'] = [];
+        const optionRegex = /- \[([ ✓])\] `([^`]+)` - (.*?)(?=\n-|\n\*\*|\n###|\n##|$)/g;
+        let optionMatch;
+
+        while ((optionMatch = optionRegex.exec(questionBlock)) !== null) {
+          const isRecommended = optionMatch[1] === '✓';
+          const value = optionMatch[2];
+          const label = optionMatch[3]
+            .trim()
+            .replace(/\(recommended\)$/i, '')
+            .trim();
+
+          options.push({
+            value,
+            label,
+            recommended: isRecommended,
+          });
+        }
+
+        if (options.length > 0) {
+          questions.push({
+            question_id: questionId,
+            question_text: questionText,
+            question_type: questionType,
+            options,
+          });
+        }
+      }
+    }
+
+    if (questions.length === 0) return null;
+
+    return {
+      type: 'clarification',
+      questions,
+    };
+  };
+
+  // Helper function to parse Markdown final prompt
+  const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
+    // Check for final prompt heading
+    if (
+      !content.includes('## ✅ 最终需求提示词') &&
+      !content.includes('## ✅ Final Requirement Prompt')
+    ) {
+      return null;
+    }
+
+    // Extract everything after the heading
+    const headingRegex = /## ✅ (?:最终需求提示词|Final Requirement Prompt)[^\n]*\n+([\s\S]+)/;
+    const match = content.match(headingRegex);
+
+    if (!match) return null;
+
+    return {
+      type: 'final_prompt',
+      prompt: match[1].trim(),
+    };
+  };
+
+  // Helper function to extract JSON from markdown code blocks or plain text
+  const extractJsonFromContent = (content: string): ClarificationData | FinalPromptData | null => {
+    // Try to extract JSON from markdown code blocks (```json ... ```)
+    const codeBlockRegex = /```(?:json)?\s*\n?([\s\S]*?)\n?```/;
+    const codeBlockMatch = content.match(codeBlockRegex);
+
+    if (codeBlockMatch) {
+      try {
+        const jsonStr = codeBlockMatch[1].trim();
+        const parsed = JSON.parse(jsonStr);
+        if (parsed && typeof parsed === 'object' && parsed.type) {
+          return parsed;
+        }
+      } catch {
+        // Not valid JSON in code block
+      }
+    }
+
+    // Try to parse entire content as JSON (fallback for direct JSON)
+    try {
+      const parsed = JSON.parse(content.trim());
+      if (parsed && typeof parsed === 'object' && parsed.type) {
+        return parsed;
+      }
+    } catch {
+      // Not valid JSON
+    }
+
+    return null;
+  };
 
   const renderAiMessage = (msg: Message) => {
     const content = msg.content ?? '';
+
+    // Try to parse as clarification or final_prompt data
+    try {
+      let contentToParse = content;
+
+      // Handle content with ${$$}$ separator
+      if (content.includes('${$$}$')) {
+        const [, result] = content.split('${$$}$');
+        if (result) {
+          contentToParse = result;
+        }
+      }
+
+      // Try Markdown parsing first (new format)
+      const markdownClarification = parseMarkdownClarification(contentToParse);
+      if (markdownClarification) {
+        return (
+          <ClarificationForm data={markdownClarification} taskId={selectedTaskDetail?.id || 0} />
+        );
+      }
+
+      const markdownFinalPrompt = parseMarkdownFinalPrompt(contentToParse);
+      if (markdownFinalPrompt) {
+        return (
+          <FinalPromptMessage
+            data={markdownFinalPrompt}
+            selectedTeam={selectedTeam}
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+          />
+        );
+      }
+
+      // Fallback to JSON parsing (old format for backward compatibility)
+      const jsonMatch = extractJsonFromContent(contentToParse);
+
+      // Handle clarification data
+      if (jsonMatch?.type === 'clarification') {
+        const clarificationData = jsonMatch as ClarificationData;
+        return <ClarificationForm data={clarificationData} taskId={selectedTaskDetail?.id || 0} />;
+      }
+
+      // Handle final_prompt data
+      if (jsonMatch?.type === 'final_prompt') {
+        const finalPromptData = jsonMatch as FinalPromptData;
+        return (
+          <FinalPromptMessage
+            data={finalPromptData}
+            selectedTeam={selectedTeam}
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+          />
+        );
+      }
+    } catch (error) {
+      console.error('Failed to parse message content:', error);
+    }
+
+    // Default rendering for normal messages
     if (!content.includes('${$$}$')) {
       return renderPlainMessage(msg);
     }

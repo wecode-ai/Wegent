@@ -154,6 +154,32 @@ export default function ChatArea({
     }
   }, [selectedRepo]);
 
+  // Load prompt from sessionStorage (from FinalPromptMessage)
+  useEffect(() => {
+    if (hasMessages) return; // Only load for new tasks
+
+    const pendingPromptData = sessionStorage.getItem('pendingTaskPrompt');
+    if (pendingPromptData) {
+      try {
+        const data = JSON.parse(pendingPromptData);
+
+        // Check if data is recent (within 5 minutes)
+        const isRecent = Date.now() - data.timestamp < 5 * 60 * 1000;
+
+        if (isRecent && data.prompt) {
+          // Set the prompt in the input
+          setTaskInputMessage(data.prompt);
+
+          // Clear the sessionStorage after loading
+          sessionStorage.removeItem('pendingTaskPrompt');
+        }
+      } catch (error) {
+        console.error('Failed to parse pending prompt data:', error);
+        sessionStorage.removeItem('pendingTaskPrompt');
+      }
+    }
+  }, [hasMessages]);
+
   const handleSendMessage = async () => {
     setIsLoading(true);
     setError('');
@@ -334,7 +360,11 @@ export default function ChatArea({
         style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
       >
         <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
-          <MessagesArea />
+          <MessagesArea
+            selectedTeam={selectedTeam}
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+          />
         </div>
       </div>
 
