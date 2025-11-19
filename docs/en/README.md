@@ -33,6 +33,7 @@ Guides for Wegent platform users:
 - [Creating Bots](./guides/user/creating-bots.md) - Assemble complete agent instances
 - [Creating Teams](./guides/user/creating-teams.md) - Build collaborative agent teams
 - [Managing Tasks](./guides/user/managing-tasks.md) - Create and manage work tasks
+- [PM Battle Mode](./guides/user/pm-battle-guide.md) - Interactive requirement clarification guide
 
 #### 💻 Developer Guides
 
