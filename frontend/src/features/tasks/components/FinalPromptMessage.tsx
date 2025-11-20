@@ -5,13 +5,14 @@
 'use client';
 
 import { useState } from 'react';
-import { Button, message } from 'antd';
-import { FiCopy, FiCheck, FiPlusCircle, FiStar } from 'react-icons/fi';
+import { Copy, Check, Plus, Star } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useRouter } from 'next/navigation';
+import { useToast } from '@/hooks/use-toast';
 
 interface FinalPromptMessageProps {
   data: FinalPromptData;
@@ -27,6 +28,7 @@ export default function FinalPromptMessage({
   selectedBranch,
 }: FinalPromptMessageProps) {
   const { t } = useTranslation('chat');
+  const { toast } = useToast();
   const { theme } = useTheme();
   const router = useRouter();
   const [copied, setCopied] = useState(false);
@@ -49,21 +51,26 @@ export default function FinalPromptMessage({
         document.execCommand('copy');
         document.body.removeChild(textarea);
       }
-
       setCopied(true);
-      message.success(t('clarification.prompt_copied') || 'Prompt copied to clipboard');
+      toast({
+        title: t('clarification.prompt_copied') || 'Prompt copied to clipboard',
+      });
       setTimeout(() => setCopied(false), 2000);
     } catch (err) {
       console.error('Failed to copy prompt:', err);
-      message.error(t('clarification.copy_failed') || 'Failed to copy prompt');
+      toast({
+        variant: 'destructive',
+        title: t('clarification.copy_failed') || 'Failed to copy prompt',
+      });
     }
   };
 
   const handleCreateTask = () => {
     if (!selectedTeam || !selectedRepo || !selectedBranch) {
-      message.warning(
-        t('clarification.select_context') || 'Please select Team, Repository and Branch first'
-      );
+      toast({
+        title:
+          t('clarification.select_context') || 'Please select Team, Repository and Branch first',
+      });
       return;
     }
 
@@ -81,14 +88,16 @@ export default function FinalPromptMessage({
     // Navigate to new task page
     router.push('/code');
 
-    message.success(t('clarification.prompt_ready') || 'Navigating to new task page...');
+    toast({
+      title: t('clarification.prompt_ready') || 'Navigating to new task page...',
+    });
   };
 
   return (
     <div className="space-y-3 p-4 rounded-lg border-2 border-blue-500/50 bg-blue-500/10 shadow-lg">
       {/* Header */}
       <div className="flex items-center gap-2 mb-2">
-        <FiStar className="w-5 h-5 text-blue-400" />
+        <Star className="w-5 h-5 text-blue-400" />
         <h3 className="text-base font-semibold text-blue-400">
           {t('clarification.final_prompt_title') || 'Final Requirement Prompt'}
         </h3>
@@ -112,22 +121,15 @@ export default function FinalPromptMessage({
 
       {/* Action Buttons */}
       <div className="flex items-center gap-3 pt-2">
-        <Button
-          type="default"
-          icon={copied ? <FiCheck className="w-4 h-4" /> : <FiCopy className="w-4 h-4" />}
-          onClick={handleCopy}
-          className={copied ? 'border-green-500 text-green-500' : ''}
-        >
+        <Button variant="ghost" onClick={handleCopy} className={copied ? 'text-green-500' : ''}>
+          {copied ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
           {copied
             ? t('clarification.copied') || 'Copied'
             : t('clarification.copy_prompt') || 'Copy Prompt'}
         </Button>
 
-        <Button
-          type="primary"
-          icon={<FiPlusCircle className="w-4 h-4" />}
-          onClick={handleCreateTask}
-        >
+        <Button variant="secondary" onClick={handleCreateTask}>
+          <Plus className="w-4 h-4 mr-2" />
           {t('clarification.create_task') || 'Create New Task with This Prompt'}
         </Button>
       </div>

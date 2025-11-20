@@ -1,6 +1,6 @@
 # YAML Configuration Formats
 
-English | [简体中文](../zh/资源定义格式.md)
+English | [简体中文](../zh/reference/yaml-specification.md)
 
 This document provides detailed explanations of the YAML configuration formats for each core concept in the Wegent platform. Each definition follows Kubernetes-style declarative API design patterns.
 
@@ -399,7 +399,7 @@ spec:
 
 ## Related Documentation
 
-- [Quick Start Guide](../../README.md#-quick-start)
-- [Architecture Design](../../README.md#-architecture)
-- [Development Guide](../../README.md#-development)
-- [Contribution Guide](../../CONTRIBUTING.md)
+- [Quick Start Guide](../getting-started/quick-start.md)
+- [Architecture Design](../concepts/architecture.md)
+- [Development Guide](../guides/developer/setup.md)
+- [Contribution Guide](../../../CONTRIBUTING.md)

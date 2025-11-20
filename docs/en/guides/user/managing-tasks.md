@@ -916,11 +916,6 @@ spec:
 ### Reference Documentation
 - [Core Concepts - Task](../../concepts/core-concepts.md#-task) - Understand Task's role
 - [YAML Specification - Task](../../reference/yaml-specification.md#-task) - Complete configuration format
-- [Workspace Configuration](../../reference/workspace-configuration.md) - Workspace configuration
-
-### Advanced Content
-- [Task Orchestration](../../advanced/task-orchestration.md) - Complex task orchestration
-- [Best Practices](../../best-practices/task-management.md) - Task management best practices
 
 ---
 

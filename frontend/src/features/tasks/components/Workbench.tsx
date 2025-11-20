@@ -353,13 +353,13 @@ export default function Workbench({
       }
 
       // Extract timestamp
-      const detailsAny = step.details as any;
-      if (detailsAny?.timestamp) {
-        timestamp = new Date(detailsAny.timestamp).toLocaleTimeString('en-US', {
+      const details = step.details as { timestamp?: string; created_at?: string } | undefined;
+      if (details?.timestamp) {
+        timestamp = new Date(details.timestamp).toLocaleTimeString('en-US', {
           hour12: false,
         });
-      } else if (detailsAny?.created_at) {
-        timestamp = new Date(detailsAny.created_at).toLocaleTimeString('en-US', {
+      } else if (details?.created_at) {
+        timestamp = new Date(details.created_at).toLocaleTimeString('en-US', {
           hour12: false,
         });
       }
@@ -424,7 +424,7 @@ export default function Workbench({
       <div
         className="transition-all duration-300 ease-in-out bg-surface overflow-hidden"
         style={{
-          width: isOpen ? '50%' : '0',
+          width: isOpen ? '40%' : '0',
         }}
       >
         {isOpen && (
@@ -647,9 +647,7 @@ export default function Workbench({
                                 const toolActionKey = `thinking.tool_actions.${step.toolName}`;
                                 const toolActionName = t(toolActionKey);
                                 const displayName =
-                                  toolActionName !== toolActionKey
-                                    ? toolActionName
-                                    : step.toolName;
+                                  toolActionName !== toolActionKey ? toolActionName : step.toolName;
                                 const icon = TOOL_ICONS[step.toolName] || '⚡';
 
                                 return (

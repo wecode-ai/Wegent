@@ -208,8 +208,6 @@ docker exec -it <executor-container-id> /bin/bash
 4. Register Agent in `agent_factory.py`
 5. Create corresponding Shell configuration
 
-See [Executor Development Guide](./guides/developer/executor-dev.md)
-
 ### Q13: Which programming languages are supported?
 
 **A:**

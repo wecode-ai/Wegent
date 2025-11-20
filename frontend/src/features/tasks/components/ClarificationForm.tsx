@@ -5,13 +5,14 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Button, message } from 'antd';
-import { FiSend } from 'react-icons/fi';
+import { Send } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { ClarificationData, ClarificationAnswer } from '@/types/api';
 import ClarificationQuestion from './ClarificationQuestion';
 import { useTranslation } from '@/hooks/useTranslation';
 import { sendMessage } from '../service/messageService';
 import { useTaskContext } from '../contexts/taskContext';
+import { useToast } from '@/hooks/use-toast';
 
 interface ClarificationFormProps {
   data: ClarificationData;
@@ -25,6 +26,7 @@ export default function ClarificationForm({
   currentMessageIndex,
 }: ClarificationFormProps) {
   const { t } = useTranslation('chat');
+  const { toast } = useToast();
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
   const [answers, setAnswers] = useState<
     Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>
@@ -145,9 +147,10 @@ export default function ClarificationForm({
       // Show detailed warning message
       const questionTitles = unansweredQuestions.map(q => `"${q.question_text}"`).join('、');
 
-      message.warning({
-        content: `${t('clarification.please_answer_all') || 'Please answer all questions before submitting'}: ${questionTitles}`,
-        duration: 5,
+      toast({
+        title:
+          t('clarification.please_answer_all') || 'Please answer all questions before submitting',
+        description: questionTitles,
       });
 
       console.log(
@@ -256,16 +259,24 @@ export default function ClarificationForm({
       });
 
       if (result.error) {
-        message.error(result.error);
+        toast({
+          variant: 'destructive',
+          title: result.error,
+        });
       } else {
-        message.success(t('clarification.submitted') || 'Answers submitted successfully');
+        toast({
+          title: t('clarification.submitted') || 'Answers submitted successfully',
+        });
         // Refresh task detail to get new messages
         setTimeout(() => {
           refreshSelectedTaskDetail();
         }, 1000);
       }
     } catch (error) {
-      message.error(t('clarification.submit_failed') || 'Failed to submit answers');
+      toast({
+        variant: 'destructive',
+        title: t('clarification.submit_failed') || 'Failed to submit answers',
+      });
       console.error('Submit clarification answers error:', error);
     } finally {
       setIsSubmitting(false);
@@ -310,13 +321,8 @@ export default function ClarificationForm({
 
       {!isSubmitted && (
         <div className="flex justify-end pt-2">
-          <Button
-            type="primary"
-            icon={<FiSend className="w-4 h-4" />}
-            onClick={handleSubmit}
-            loading={isSubmitting}
-            size="large"
-          >
+          <Button variant="secondary" onClick={handleSubmit} disabled={isSubmitting} size="lg">
+            <Send className="w-4 h-4 mr-2" />
             {t('clarification.submit_answers') || 'Submit Answers'}
           </Button>
         </div>

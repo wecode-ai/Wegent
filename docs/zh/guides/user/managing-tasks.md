@@ -1320,11 +1320,6 @@ spec:
 ### 参考文档
 - [核心概念 - Task](../../concepts/core-concepts.md#-task) - 理解 Task 的角色
 - [YAML 规范 - Task](../../reference/yaml-specification.md#-task) - 完整配置格式
-- [Workspace 配置](../../reference/workspace-configuration.md) - 工作空间配置
-
-### 进阶内容
-- [任务编排](../../advanced/task-orchestration.md) - 复杂任务编排
-- [最佳实践](../../best-practices/task-management.md) - 任务管理最佳实践
 
 ---
 

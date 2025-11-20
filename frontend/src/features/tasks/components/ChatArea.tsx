@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { PaperAirplaneIcon } from '@heroicons/react/24/outline';
+import { Send } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -16,10 +16,11 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { sendMessage } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
-import { App, Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
+import { useToast } from '@/hooks/use-toast';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -38,7 +39,7 @@ export default function ChatArea({
   showRepositorySelector = true,
   taskType = 'chat',
 }: ChatAreaProps) {
-  const { message } = App.useApp();
+  const { toast } = useToast();
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -117,7 +118,7 @@ export default function ChatArea({
       setSelectedTeam(teams[0]);
     }
     setHasRestoredPreferences(true);
-  }, [teams, hasRestoredPreferences]);
+  }, [teams, hasRestoredPreferences, selectedTeam]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
@@ -192,7 +193,10 @@ export default function ChatArea({
       taskType: taskType,
     });
     if (error) {
-      message.error(error);
+      toast({
+        variant: 'destructive',
+        title: error,
+      });
     } else {
       setTaskInputMessage('');
       // Redirect to task URL after successfully creating a task
@@ -275,7 +279,7 @@ export default function ChatArea({
       // Force scroll to bottom when opening a historical task
       setTimeout(() => scrollToBottom(true), 100);
     }
-  }, [selectedTaskDetail?.id]);
+  }, [selectedTaskDetail?.id, hasMessages]);
 
   useEffect(() => {
     if (!hasMessages || !lastSubtaskId) return;
@@ -359,7 +363,7 @@ export default function ChatArea({
         aria-hidden={!hasMessages}
         style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
       >
-        <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6">
           <MessagesArea
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
@@ -380,7 +384,7 @@ export default function ChatArea({
           className={
             hasMessages
               ? 'fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0'
-              : 'w-full max-w-3xl px-4 sm:px-6'
+              : 'w-full max-w-4xl px-4 sm:px-6'
           }
           style={
             hasMessages
@@ -392,9 +396,9 @@ export default function ChatArea({
               : {}
           }
         >
-          <div className={hasMessages ? 'w-full max-w-3xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
+          <div className={hasMessages ? 'w-full max-w-4xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
             {/* Chat Input Card */}
-            <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface shadow-lg">
+            <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
               <ChatInput
                 message={taskInputMessage}
                 setMessage={setTaskInputMessage}
@@ -418,28 +422,24 @@ export default function ChatArea({
                 <div className="ml-auto flex items-center">
                   {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
                   <Button
-                    type="text"
+                    variant="ghost"
+                    size="icon"
                     onClick={handleSendMessage}
                     disabled={
                       isLoading ||
                       selectedTaskDetail?.status === 'PENDING' ||
                       selectedTaskDetail?.status === 'RUNNING'
                     }
-                    icon={
-                      isLoading ||
-                      selectedTaskDetail?.status === 'PENDING' ||
-                      selectedTaskDetail?.status === 'RUNNING' ? (
-                        <LoadingDots />
-                      ) : (
-                        <PaperAirplaneIcon className="w-4 h-4" />
-                      )
-                    }
-                    style={{
-                      color: 'rgb(var(--color-text-muted))',
-                      padding: '0',
-                      height: 'auto',
-                    }}
-                  />
+                    className="h-10 w-10 rounded-full hover:bg-primary/10"
+                  >
+                    {isLoading ||
+                    selectedTaskDetail?.status === 'PENDING' ||
+                    selectedTaskDetail?.status === 'RUNNING' ? (
+                      <LoadingDots />
+                    ) : (
+                      <Send className="h-5 w-5 text-text-muted" />
+                    )}
+                  </Button>
                 </div>
               </div>
             </div>

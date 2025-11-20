@@ -8,9 +8,25 @@ import { UserProvider } from '@/features/common/UserContext';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
-import { Form, Input, Button } from 'antd';
+import { useForm } from 'react-hook-form';
+import { Form, FormControl, FormField, FormItem, FormLabel } from '@/components/ui/form';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
 
 export default function DemoPage() {
+  const form = useForm({
+    defaultValues: {
+      leaderBot: '',
+      bot1: '',
+      bot2: '',
+      bot3: '',
+    },
+  });
+
+  const onSubmit = (data: Record<string, string>) => {
+    console.log(data);
+  };
+
   return (
     <UserProvider>
       {/* Handle OIDC token from URL parameters */}
@@ -22,22 +38,58 @@ export default function DemoPage() {
           <div className="p-4">
             <h1 className="text-2xl font-bold">Demo Page</h1>
             <p>This is a demo page for experimenting with new components and layouts.</p>
-            <Form layout="vertical" className="mt-4">
-              <Form.Item label="Leader Bot Name">
-                <Input.TextArea rows={4} placeholder="Enter details here" />
-              </Form.Item>
-              <Form.Item label="Bot Name1">
-                <Input.TextArea rows={4} placeholder="Enter details here" />
-              </Form.Item>
-              <Form.Item label="Bot Name2">
-                <Input.TextArea rows={4} placeholder="Enter details here" />
-              </Form.Item>
-              <Form.Item label="Bot Name3">
-                <Input.TextArea rows={4} placeholder="Enter details here" />
-              </Form.Item>
-              <Form.Item>
-                <Button type="primary">Submit</Button>
-              </Form.Item>
+            <Form {...form}>
+              <form onSubmit={form.handleSubmit(onSubmit)} className="mt-4 space-y-4">
+                <FormField
+                  control={form.control}
+                  name="leaderBot"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Leader Bot Name</FormLabel>
+                      <FormControl>
+                        <Textarea rows={4} placeholder="Enter details here" {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="bot1"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Bot Name1</FormLabel>
+                      <FormControl>
+                        <Textarea rows={4} placeholder="Enter details here" {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="bot2"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Bot Name2</FormLabel>
+                      <FormControl>
+                        <Textarea rows={4} placeholder="Enter details here" {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <FormField
+                  control={form.control}
+                  name="bot3"
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>Bot Name3</FormLabel>
+                      <FormControl>
+                        <Textarea rows={4} placeholder="Enter details here" {...field} />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+                <Button type="submit">Submit</Button>
+              </form>
             </Form>
           </div>
         </div>

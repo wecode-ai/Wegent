@@ -5,7 +5,7 @@
 'use client';
 
 import { Menu } from '@headlessui/react';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 
 import { useUser } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -24,7 +24,7 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
   return (
     <div className={className}>
       <Menu as="div" className="relative">
-        <Menu.Button className="px-4 py-1.5 bg-muted border border-border rounded-full flex items-center justify-center text-base font-semibold text-text-primary hover:bg-border/40 transition-colors duration-200">
+        <Menu.Button className="px-4 py-1.5 bg-muted border border-border rounded-full flex items-center justify-center text-sm font-normal text-text-primary hover:bg-border/40 transition-colors duration-200">
           {userDisplayName}
         </Menu.Button>
         <Menu.Items
@@ -43,7 +43,7 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
           <Menu.Item>
             {({ active }) => (
               <Button
-                type="text"
+                variant="ghost"
                 onClick={logout}
                 className={`!w-full !text-left !px-2 !py-1.5 !text-xs !text-text-primary ${
                   active ? '!bg-muted' : '!bg-transparent'
