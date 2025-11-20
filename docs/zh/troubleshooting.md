@@ -103,9 +103,9 @@ sleep 30
 docker-compose exec mysql mysql -u task_user -p
 ```
 
-### 问题 3: MySQL 初始化失败
+### 问题 3: 数据库初始化失败
 
-**症状**: 数据库表未创建或初始化脚本失败
+**症状**: 数据库表未创建或初始数据未加载
 
 **解决方案**:
 
@@ -113,17 +113,18 @@ docker-compose exec mysql mysql -u task_user -p
 # 1. 确保 MySQL 容器运行正常
 docker-compose ps mysql
 
-# 2. 手动执行初始化脚本
-docker-compose exec -T mysql mysql -u task_user -p task_manager < backend/init.sql
+# 2. 检查后端初始化日志
+docker-compose logs backend | grep -i "yaml\|initialization"
 
-# 3. 或使用 Alembic 迁移
-docker-compose exec backend python -m alembic upgrade head
+# 3. 如果初始化失败，重启后端服务
+docker-compose restart backend
 
-# 4. 如果仍然失败，重建数据库
-docker-compose down -v  # 警告：会删除所有数据
+# 4. 如果仍然失败，检查 YAML 配置
+docker-compose exec backend ls -la /app/init_data/
+
+# 5. 最后手段：重建数据库（警告：会删除所有数据）
+docker-compose down -v
 docker-compose up -d
-sleep 30
-docker-compose exec -T mysql mysql -u task_user -p task_manager < backend/init.sql
 ```
 
 ---

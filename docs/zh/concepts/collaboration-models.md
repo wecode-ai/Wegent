@@ -1126,7 +1126,6 @@ spec:
 - [系统架构](./architecture.md) - 了解 Wegent 的架构设计
 - [YAML 配置规范](../reference/yaml-specification.md) - 完整的配置格式说明
 - [创建 Team 指南](../guides/user/creating-teams.md) - 逐步创建团队的指南
-- [最佳实践](../guides/best-practices.md) - 更多使用技巧
 
 ---
 

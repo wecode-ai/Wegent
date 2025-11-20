@@ -156,7 +156,14 @@ graph LR
    }
    ```
 
-   注：部分运行时可能使用 `ANTHROPIC_API_KEY` 而非 `ANTHROPIC_AUTH_TOKEN`，具体以文档说明为准。
+   **重要提示 - 环境变量命名:**
+
+   不同的 Shell 运行时使用不同的环境变量名称进行 API 认证:
+
+   - **Claude Code Shell**: 使用 `ANTHROPIC_AUTH_TOKEN`
+   - **Agno Shell**: 使用 `ANTHROPIC_API_KEY`
+
+   请根据您的 Shell 配置设置正确的环境变量。具体要求请查看 Shell 文档或 `executor/agents/` 代码。
 
 6. **运行任务**
 

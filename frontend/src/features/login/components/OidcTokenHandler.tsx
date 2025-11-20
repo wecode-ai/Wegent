@@ -6,8 +6,8 @@
 
 import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { message } from 'antd';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useToast } from '@/hooks/use-toast';
 
 /**
  * OIDC Token Handler Component
@@ -18,6 +18,7 @@ import { useTranslation } from '@/hooks/useTranslation';
  */
 export default function OidcTokenHandler() {
   const { t } = useTranslation('common');
+  const { toast } = useToast();
   const router = useRouter();
   const searchParams = useSearchParams();
 
@@ -30,7 +31,11 @@ export default function OidcTokenHandler() {
 
     if (error) {
       console.error('OIDC login failed:', error, errorMessage);
-      message.error(`${t('auth.oidc_login_failed')} ${errorMessage || error}`);
+      toast({
+        variant: 'destructive',
+        title: t('auth.oidc_login_failed'),
+        description: errorMessage || error,
+      });
 
       const url = new URL(window.location.href);
       url.searchParams.delete('error');
@@ -43,7 +48,9 @@ export default function OidcTokenHandler() {
       localStorage.setItem('auth_token', accessToken);
       localStorage.setItem('token_type', tokenType || 'bearer');
 
-      message.success(t('auth.login_success'));
+      toast({
+        title: t('auth.login_success'),
+      });
 
       const url = new URL(window.location.href);
       url.searchParams.delete('access_token');
@@ -57,7 +64,7 @@ export default function OidcTokenHandler() {
         window.dispatchEvent(new Event('oidc-login-success'));
       }, 100);
     }
-  }, [router, searchParams, t]);
+  }, [router, searchParams, t, toast]);
 
   return null;
 }

@@ -119,8 +119,6 @@ Wegent 内置了一个开发 Bot。对于 Claude Code 运行时,请设置以下�
 ### 💻 开发和扩展
 
 - [开发环境搭建](../guides/developer/setup.md) - 搭建本地开发环境
-- [后端开发](../guides/developer/backend-dev.md) - 后端服务开发
-- [前端开发](../guides/developer/frontend-dev.md) - 前端应用开发
 
 ---
 

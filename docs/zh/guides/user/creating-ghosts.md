@@ -838,16 +838,11 @@ spec:
 ### 核心文档
 - [核心概念](../../concepts/core-concepts.md) - 理解 Ghost 在 Wegent 中的角色
 - [YAML 配置规范](../../reference/yaml-specification.md) - 完整的 YAML 配置格式
-- [MCP 服务器配置](../../reference/mcp-servers.md) - MCP 工具配置详解
 
 ### 下一步
 - [创建 Bot](./creating-bots.md) - 将 Ghost 组装成完整的 Bot
 - [创建 Team](./creating-teams.md) - 构建多 Bot 协作团队
 - [管理 Task](./managing-tasks.md) - 分配任务给 Team
-
-### 示例和模板
-- [Ghost 模板库](../../examples/ghost-templates.md) - 常用 Ghost 配置模板
-- [最佳实践集](../../best-practices/ghost-design.md) - Ghost 设计最佳实践
 
 ---
 

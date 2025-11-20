@@ -4,12 +4,13 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Select, App } from 'antd';
+import { useState, useEffect, useMemo } from 'react';
+import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGitBranch } from 'react-icons/fi';
 import { GitRepoInfo, GitBranch } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
 import { githubApis } from '@/apis/github';
+import { useToast } from '@/hooks/use-toast';
 
 /**
  * BranchSelector component
@@ -31,7 +32,7 @@ export default function BranchSelector({
   disabled,
 }: BranchSelectorProps) {
   const { t } = useTranslation('common');
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const [branches, setBranches] = useState<GitBranch[]>([]);
   const [loading, setLoading] = useState<boolean>(false);
   // Used antd message.error for unified error prompt, no need for local error state
@@ -65,7 +66,10 @@ export default function BranchSelector({
       .catch(() => {
         if (!ignore) {
           setError(t('branches.load_failed'));
-          message.error(t('branches.load_failed'));
+          toast({
+            variant: 'destructive',
+            title: t('branches.load_failed'),
+          });
         }
       })
       .finally(() => {
@@ -113,30 +117,29 @@ export default function BranchSelector({
   const showError = !!error;
   const showNoBranch = !showLoading && !showError && branches.length === 0;
 
+  // Convert branches to SearchableSelectItem format
+  const selectItems: SearchableSelectItem[] = useMemo(() => {
+    return branches.map(branch => ({
+      value: branch.name,
+      label: branch.name,
+      searchText: branch.name,
+      content: (
+        <span>
+          {branch.name}
+          {branch.default && (
+            <span className="ml-2 text-green-400 text-[10px]">{t('branches.default')}</span>
+          )}
+        </span>
+      ),
+    }));
+  }, [branches, t]);
+
   // Do not render (no branches, no selection, and no loading/error)
   if (!selectedBranch && branches.length === 0 && !showLoading && !showError) return null;
 
   // Construct branch options
-  const branchOptions = branches.map(branch => ({
-    label: (
-      <span>
-        {branch.name}
-        {branch.default && (
-          <span className="ml-2 text-green-400 text-[10px]">{t('branches.default')}</span>
-        )}
-      </span>
-    ),
-    value: branch.name,
-  }));
-
-  // antd Select onChange
-  const handleChange = (value: { value: string; label: React.ReactNode } | undefined) => {
-    if (!value) {
-      setUserCleared(true);
-      handleBranchChange(null);
-      return;
-    }
-    const branch = branches.find(b => b.name === value.value);
+  const handleChange = (value: string) => {
+    const branch = branches.find(b => b.name === value);
     if (branch) {
       setUserCleared(false);
       handleBranchChange(branch);
@@ -148,54 +151,32 @@ export default function BranchSelector({
       <FiGitBranch
         className={`w-3 h-3 text-text-muted flex-shrink-0 ${showLoading ? 'animate-pulse' : ''}`}
       />
-      <Select
-        labelInValue
-        showSearch
-        variant="borderless"
-        value={
-          selectedBranch
-            ? {
-                value: selectedBranch.name,
-                label: selectedBranch.name + (selectedBranch.default ? ' (default)' : ''),
-              }
-            : undefined
-        }
-        placeholder={<span className="text-sx truncate h-2">{t('branches.select_branch')}</span>}
-        className="repository-selector min-w-0 truncate"
-        style={{ width: 'auto', maxWidth: 200, display: 'inline-block', paddingRight: 8 }}
-        popupMatchSelectWidth={false}
-        styles={{ popup: { root: { maxWidth: 200 } } }}
-        classNames={{ popup: { root: 'repository-selector-dropdown custom-scrollbar' } }}
-        disabled={disabled || showError || showNoBranch}
-        loading={showLoading}
-        optionFilterProp="value"
-        filterOption={(input, option) => {
-          const normalizedInput = input.trim().toLowerCase();
-          if (!normalizedInput) return true;
-          const optionValue = typeof option?.value === 'string' ? option.value : '';
-          const optionLabel = typeof option?.label === 'string' ? option.label : '';
-          const haystack = `${optionValue} ${optionLabel}`.toLowerCase();
-          return haystack.includes(normalizedInput);
-        }}
-        onChange={handleChange}
-        notFoundContent={
-          showLoading ? (
-            <div className="px-3 py-2 text-sm text-text-muted flex items-center">
-              <FiGitBranch className="w-4 h-4 animate-pulse mr-2" />
-              {t('branches.loading')}
-            </div>
-          ) : showError ? (
-            <div className="px-3 py-2 text-sm" style={{ color: 'rgb(var(--color-error))' }}>
-              <FiGitBranch className="w-4 h-4 mr-2" />
-              {error}
-              {/* antd message.error is globally prompted */}
-            </div>
-          ) : showNoBranch ? (
-            <div className="px-3 py-2 text-sm text-text-muted">{t('branches.no_branch')}</div>
-          ) : null
-        }
-        options={branchOptions}
-      />
+      <div className="relative" style={{ width: 'auto', maxWidth: 200 }}>
+        <SearchableSelect
+          value={selectedBranch?.name}
+          onValueChange={handleChange}
+          disabled={disabled || showError || showNoBranch || showLoading}
+          placeholder={t('branches.select_branch')}
+          searchPlaceholder={t('branches.search_branch')}
+          items={selectItems}
+          loading={showLoading}
+          error={showError ? error : null}
+          emptyText={showNoBranch ? t('branches.no_branch') : t('branches.select_branch')}
+          noMatchText={t('branches.no_match')}
+          triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
+          contentClassName="max-w-[200px]"
+          renderTriggerValue={item => {
+            if (!item) return null;
+            const branch = branches.find(b => b.name === item.value);
+            return (
+              <span className="truncate">
+                {item.label}
+                {branch?.default && ' (default)'}
+              </span>
+            );
+          }}
+        />
+      </div>
     </div>
   );
 }

@@ -68,7 +68,10 @@ export default function TopNavigation({
       </div>
 
       {/* Center - Navigation links */}
-      <nav className="flex-1 flex justify-center items-center" aria-label={t('common.main_navigation')}>
+      <nav
+        className="flex-1 flex justify-center items-center"
+        aria-label={t('common.main_navigation')}
+      >
         {isMobile ? (
           <MobileNavTabs activePage={activePage} />
         ) : (

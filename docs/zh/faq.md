@@ -208,8 +208,6 @@ docker exec -it <executor-container-id> /bin/bash
 4. 在 `agent_factory.py` 中注册 Agent
 5. 创建对应的 Shell 配置
 
-详见 [Executor 开发指南](./guides/developer/executor-dev.md)
-
 ### Q13: 支持哪些编程语言开发？
 
 **A:**
@@ -226,7 +224,7 @@ docker exec -it <executor-container-id> /bin/bash
 
 ### Q14: 如何贡献代码？
 
-**A:** 参考 [贡献指南](./contributing/how-to-contribute.md)：
+**A:** 参考项目根目录的 CONTRIBUTING.md 文件：
 
 1. Fork 仓库
 2. 创建功能分支：`git checkout -b feature/your-feature`

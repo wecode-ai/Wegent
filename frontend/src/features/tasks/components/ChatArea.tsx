@@ -16,12 +16,12 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { sendMessage } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
-import { App } from 'antd';
 import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import WeCodeGettingStarted from './WeCodeGettingStarted';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
+import { useToast } from '@/hooks/use-toast';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -40,7 +40,7 @@ export default function ChatArea({
   showRepositorySelector = true,
   taskType = 'chat',
 }: ChatAreaProps) {
-  const { message } = App.useApp();
+  const { toast } = useToast();
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -194,7 +194,10 @@ export default function ChatArea({
       taskType: taskType,
     });
     if (error) {
-      message.error(error);
+      toast({
+        variant: 'destructive',
+        title: error,
+      });
     } else {
       setTaskInputMessage('');
       // Redirect to task URL after successfully creating a task

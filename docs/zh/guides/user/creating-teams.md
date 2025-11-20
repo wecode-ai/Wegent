@@ -1179,7 +1179,6 @@ spec:
 ### 参考文档
 - [核心概念 - 协作模式](../../concepts/core-concepts.md#-collaboration) - 深入理解协作模式
 - [YAML 规范 - Team](../../reference/yaml-specification.md#-team) - 完整配置格式
-- [最佳实践](../../best-practices/team-design.md) - Team 设计最佳实践
 
 ---
 

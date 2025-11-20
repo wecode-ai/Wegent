@@ -30,6 +30,11 @@ module.exports = {
         'text-inverted': withOpacity('--color-text-inverted'),
         primary: withOpacity('--color-primary'),
         'primary-contrast': withOpacity('--color-primary-contrast'),
+        success: withOpacity('--color-success'),
+        error: withOpacity('--color-error'),
+        warning: 'rgb(245 158 11)', // Tailwind orange-500
+        link: withOpacity('--color-link'),
+        'code-bg': withOpacity('--color-code-bg'),
       },
       borderRadius: {
         lg: 'var(--radius)',

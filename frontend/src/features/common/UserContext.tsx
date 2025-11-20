@@ -6,10 +6,10 @@
 import React, { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 import { userApis } from '@/apis/user';
 import { User } from '@/types/api';
-import { App } from 'antd';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants';
+import { useToast } from '@/hooks/use-toast';
 
 interface UserContextType {
   user: User | null;
@@ -26,7 +26,7 @@ const UserContext = createContext<UserContextType>({
   login: async () => {},
 });
 export const UserProvider = ({ children }: { children: ReactNode }) => {
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -75,7 +75,10 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       setUser(userData);
     } catch (error) {
       console.error('UserContext: Failed to fetch user information:', error as Error);
-      message.error('Failed to load user');
+      toast({
+        variant: 'destructive',
+        title: 'Failed to load user',
+      });
       setUser(null);
       redirectToLogin();
     } finally {
@@ -124,7 +127,10 @@ export const UserProvider = ({ children }: { children: ReactNode }) => {
       const userData = await userApis.login(data);
       setUser(userData);
     } catch (error) {
-      message.error((error as Error)?.message || 'Login failed');
+      toast({
+        variant: 'destructive',
+        title: (error as Error)?.message || 'Login failed',
+      });
       setUser(null);
       throw error;
     } finally {

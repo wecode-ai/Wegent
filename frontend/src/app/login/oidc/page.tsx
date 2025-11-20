@@ -6,8 +6,8 @@
 
 import { useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Spin } from 'antd';
 import { paths } from '@/config/paths';
+import { Spinner } from '@/components/ui/spinner';
 import { loginWithOidcToken } from '@/apis/user';
 import { POST_LOGIN_REDIRECT_KEY, sanitizeRedirectPath } from '@/features/login/constants';
 
@@ -75,7 +75,7 @@ export default function OidcCallbackPage() {
   return (
     <div className="flex items-center justify-center smart-h-screen bg-base box-border">
       <div className="bg-surface rounded-xl px-8 py-8 flex flex-col items-center shadow-lg">
-        <Spin size="large" />
+        <Spinner size="lg" center />
         <div className="mt-4 text-text-secondary text-base font-medium tracking-wide">
           Processing OpenID Connect login...
         </div>

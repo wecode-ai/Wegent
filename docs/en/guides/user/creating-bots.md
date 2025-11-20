@@ -661,8 +661,6 @@ spec:
 
 ### Prerequisites
 - [Creating Ghosts](./creating-ghosts.md) - Define Bot's "soul"
-- [Model Configuration](../../reference/model-configuration.md) - Configure AI models
-- [Shell Configuration](../../reference/shell-configuration.md) - Configure runtime environment
 
 ### Next Steps
 - [Creating Teams](./creating-teams.md) - Build multi-Bot collaboration teams
@@ -671,7 +669,6 @@ spec:
 ### Reference Documentation
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Bot's role
 - [YAML Specification](../../reference/yaml-specification.md) - Complete configuration format
-- [Best Practices](../../best-practices/bot-design.md) - Bot design best practices
 
 ---
 

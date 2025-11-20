@@ -62,12 +62,39 @@ export async function requestNotificationPermission(): Promise<boolean> {
 /**
  * Send a browser notification
  */
-export function sendNotification(title: string, options?: NotificationOptions, targetUrl?: string): void {
+export async function sendNotification(
+  title: string,
+  options?: NotificationOptions,
+  targetUrl?: string
+): Promise<void> {
   if (!isNotificationSupported()) return;
   if (Notification.permission !== 'granted') return;
   if (!isNotificationEnabled()) return;
 
   try {
+    // Try to use Service Worker for better tab matching
+    if ('serviceWorker' in navigator && targetUrl) {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        await registration.showNotification(title, {
+          icon: '/favicon.ico',
+          badge: '/favicon.ico',
+          ...options,
+          data: {
+            ...options?.data,
+            targetUrl,
+          },
+        });
+        return;
+      } catch (swError) {
+        console.warn(
+          'Failed to use Service Worker notification, falling back to basic notification:',
+          swError
+        );
+      }
+    }
+
+    // Fallback to basic notification
     const notification = new Notification(title, {
       icon: '/favicon.ico',
       badge: '/favicon.ico',
@@ -76,7 +103,7 @@ export function sendNotification(title: string, options?: NotificationOptions, t
 
     // Add click handler for navigation
     if (targetUrl) {
-      notification.onclick = (event) => {
+      notification.onclick = event => {
         event.preventDefault();
         window.open(targetUrl, '_blank')?.focus();
         notification.close();
@@ -103,13 +130,18 @@ export function notifyTaskCompletion(
   const body = taskTitle.length > 100 ? `${taskTitle.substring(0, 100)}...` : taskTitle;
 
   // Build target URL based on task type
-  const targetUrl = taskType === 'code'
-    ? `${window.location.origin}/code?taskId=${taskId}`
-    : `${window.location.origin}/chat?taskId=${taskId}`;
+  const targetUrl =
+    taskType === 'code'
+      ? `${window.location.origin}/code?taskId=${taskId}`
+      : `${window.location.origin}/chat?taskId=${taskId}`;
 
-  sendNotification(title, {
-    body,
-    tag: 'task-completion',
-    requireInteraction: false,
-  }, targetUrl);
+  sendNotification(
+    title,
+    {
+      body,
+      tag: 'task-completion',
+      requireInteraction: false,
+    },
+    targetUrl
+  );
 }

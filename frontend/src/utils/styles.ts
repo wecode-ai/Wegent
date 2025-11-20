@@ -1,78 +1,74 @@
-import type { CSSProperties } from 'react'
-import type { GlobalToken } from 'antd/es/theme/interface'
+import type { CSSProperties } from 'react';
 
 /**
  * Get shared tag style
  * Used for status tags, share badges and other common tag styles
  */
-export const getSharedTagStyle = (token: GlobalToken): CSSProperties => ({
+export const getSharedTagStyle = (): CSSProperties => ({
   fontSize: 11,
   padding: '0 4px',
   lineHeight: '16px',
-  backgroundColor: token.colorPrimaryBg,
-  color: token.colorPrimaryText,
-  borderColor: token.colorPrimaryBorder ?? token.colorBorder,
-})
+  backgroundColor: 'hsl(var(--primary) / 0.1)',
+  color: 'hsl(var(--primary))',
+  borderColor: 'hsl(var(--primary) / 0.2)',
+});
 
 /**
  * Get workflow tag style
  */
-export const getWorkflowTagStyle = (token: GlobalToken): CSSProperties => ({
-  backgroundColor: token.colorFillSecondary,
-  color: token.colorTextSecondary,
-  border: `1px solid ${token.colorBorderSecondary ?? token.colorBorder}`,
+export const getWorkflowTagStyle = (): CSSProperties => ({
+  backgroundColor: 'hsl(var(--muted))',
+  color: 'hsl(var(--muted-foreground))',
+  border: '1px solid hsl(var(--border))',
   lineHeight: '16px',
-})
+});
 
 /**
  * Get subtle badge style
  */
-export const getSubtleBadgeStyle = (token: GlobalToken): CSSProperties => ({
-  backgroundColor: token.colorFillTertiary,
-  color: token.colorTextSecondary,
-  border: `1px solid ${token.colorBorderSecondary ?? token.colorBorder}`,
+export const getSubtleBadgeStyle = (): CSSProperties => ({
+  backgroundColor: 'hsl(var(--muted))',
+  color: 'hsl(var(--muted-foreground))',
+  border: '1px solid hsl(var(--border))',
   lineHeight: '16px',
-})
+});
 
 /**
  * Prompt badge variant type
  */
-export type PromptBadgeVariant = 'configured' | 'pending' | 'none'
+export type PromptBadgeVariant = 'configured' | 'pending' | 'none';
 
 /**
  * Get prompt badge style
  */
-export const getPromptBadgeStyle = (
-  token: GlobalToken,
-  variant: PromptBadgeVariant,
-): CSSProperties => {
+export const getPromptBadgeStyle = (variant: PromptBadgeVariant): CSSProperties => {
   const base: CSSProperties = {
     fontSize: 11,
     lineHeight: '16px',
-  }
+  };
 
   if (variant === 'configured') {
     return {
       ...base,
-      backgroundColor: token.colorPrimaryBg,
-      color: token.colorPrimaryText,
-      border: `1px solid ${token.colorPrimaryBorder ?? token.colorBorder}`,
-    }
+      backgroundColor: 'hsl(var(--primary) / 0.1)',
+      color: 'hsl(var(--primary))',
+      border: '1px solid hsl(var(--primary) / 0.2)',
+    };
   }
 
   if (variant === 'pending') {
     return {
       ...base,
-      backgroundColor: token.colorWarningBg,
-      color: token.colorWarningText,
-      border: `1px solid ${token.colorWarningBorder ?? token.colorBorder}`,
-    }
+      backgroundColor: 'hsl(var(--warning) / 0.1)',
+      color: 'hsl(var(--warning))',
+      border: '1px solid hsl(var(--warning) / 0.2)',
+    };
   }
 
   return {
     ...base,
-    backgroundColor: token.colorFillTertiary,
-    color: token.colorTextSecondary,
-    border: `1px solid ${token.colorBorderSecondary ?? token.colorBorder}`,
-  }
-}
+    backgroundColor: 'hsl(var(--muted))',
+    color: 'hsl(var(--muted-foreground))',
+    border: '1px solid hsl(var(--border))',
+  };
+};

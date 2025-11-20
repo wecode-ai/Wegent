@@ -1,6 +1,6 @@
 # YAML 定义格式
 
-[English](../en/resource-definition-formats.md) | 简体中文
+[English](../en/reference/yaml-specification.md) | 简体中文
 
 本文档详细说明了 Wegent 平台中各个核心概念的 YAML 配置格式。每个定义都遵循 Kubernetes 风格的声明式 API 设计。
 
@@ -399,7 +399,7 @@ spec:
 
 ## 相关文档
 
-- [快速开始指南](../../README_zh.md#-快速开始)
-- [架构设计](../../README_zh.md#-架构)
-- [开发指南](../../README_zh.md#-开发)
-- [贡献指南](../../CONTRIBUTING.md)
+- [快速开始指南](../getting-started/quick-start.md)
+- [架构设计](../concepts/architecture.md)
+- [开发指南](../guides/developer/setup.md)
+- [贡献指南](../../../CONTRIBUTING.md)

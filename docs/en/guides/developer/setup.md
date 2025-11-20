@@ -87,12 +87,7 @@ GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-#### Initialize Database Tables
-
-```bash
-cd backend
-mysql -u task_user -p task_manager < init.sql
-```
+> **Note**: Database tables and initial data will be created automatically on first backend startup, no need to execute SQL scripts manually.
 
 ---
 
@@ -184,11 +179,9 @@ backend/
 │   ├── repository/      # Data access layer
 │   ├── schemas/         # Pydantic schemas
 │   └── services/        # Business logic layer
-├── init.sql             # Database initialization script
+├── init_data/           # YAML initialization data
 └── requirements.txt     # Python dependencies
 ```
-
-For more details, see [Backend Development Guide](./backend-dev.md).
 
 ---
 
@@ -244,8 +237,6 @@ npm run build
 npm run start
 ```
 
-For more details, see [Frontend Development Guide](./frontend-dev.md).
-
 ---
 
 ### 5️⃣ Executor Manager Development
@@ -278,8 +269,6 @@ export EXECUTOR_WORKSPCE=${HOME}/wecode-bot
 # Run service
 python main.py
 ```
-
-For more details, see [Executor Development Guide](./executor-dev.md).
 
 ---
 
@@ -408,11 +397,7 @@ If you encounter issues:
 
 ## 🔗 Related Resources
 
-- [Backend Development](./backend-dev.md) - Detailed backend development guide
-- [Frontend Development](./frontend-dev.md) - Detailed frontend development guide
-- [Executor Development](./executor-dev.md) - Detailed executor development guide
 - [Testing](./testing.md) - Testing guide
-- [Contributing](../../contributing/how-to-contribute.md) - How to contribute to Wegent
 
 ---
 

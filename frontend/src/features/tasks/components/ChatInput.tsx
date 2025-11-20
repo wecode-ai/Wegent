@@ -4,8 +4,9 @@
 
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
+import { Tooltip } from 'antd';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 
@@ -25,10 +26,23 @@ export default function ChatInput({
   disabled = false,
   taskType = 'code',
 }: ChatInputProps) {
-  const { t } = useTranslation('common');
-  const placeholderKey = taskType === 'chat' ? 'chat.placeholder_chat' : 'chat.placeholder_code';
+  const { t } = useTranslation('chat');
+  const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
   const [isComposing, setIsComposing] = useState(false);
   const isMobile = useIsMobile();
+
+  // Detect macOS platform
+  const isMac = useMemo(() => {
+    if (typeof navigator !== 'undefined') {
+      return navigator.platform.toLowerCase().includes('mac');
+    }
+    return false;
+  }, []);
+
+  // Get tooltip text based on platform
+  const tooltipText = useMemo(() => {
+    return isMac ? t('send_shortcut_cmd') : t('send_shortcut_ctrl');
+  }, [isMac, t]);
 
   const handleCompositionStart = () => {
     setIsComposing(true);
@@ -39,35 +53,33 @@ export default function ChatInput({
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    // Mobile: Allow Enter to create new lines, users send via button
-    if (isMobile) {
-      return;
-    }
-
-    // Desktop: Enter sends message, Shift+Enter creates new line
-    if (e.key === 'Enter' && !e.shiftKey && !disabled && !isComposing) {
+    // Ctrl+Enter (Windows/Linux) or Cmd+Enter (macOS) sends message
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !disabled && !isComposing) {
       e.preventDefault();
       handleSendMessage();
     }
+    // Enter key alone creates new line (default behavior, no preventDefault)
   };
 
   return (
-    <div className="w-full" data-tour="task-input">
-      <TextareaAutosize
-        value={message}
-        onChange={e => {
-          if (!disabled) setMessage(e.target.value);
-        }}
-        onKeyDown={handleKeyPress}
-        onCompositionStart={handleCompositionStart}
-        onCompositionEnd={handleCompositionEnd}
-        placeholder={t(placeholderKey)}
-        className={`w-full px-3 py-2 bg-transparent custom-scrollbar text-text-primary text-base placeholder:text-text-muted placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-        disabled={disabled}
-        minRows={1}
-        maxRows={isMobile ? 6 : 8}
-        style={{ resize: 'none', overflow: 'auto' }}
-      />
-    </div>
+    <Tooltip title={tooltipText} placement="topLeft">
+      <div className="w-full" data-tour="task-input">
+        <TextareaAutosize
+          value={message}
+          onChange={e => {
+            if (!disabled) setMessage(e.target.value);
+          }}
+          onKeyDown={handleKeyPress}
+          onCompositionStart={handleCompositionStart}
+          onCompositionEnd={handleCompositionEnd}
+          placeholder={t(placeholderKey)}
+          className={`w-full px-3 py-2 bg-transparent custom-scrollbar text-text-primary text-base placeholder:text-text-muted placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+          disabled={disabled}
+          minRows={1}
+          maxRows={isMobile ? 6 : 8}
+          style={{ resize: 'none', overflow: 'auto' }}
+        />
+      </div>
+    </Tooltip>
   );
 }
