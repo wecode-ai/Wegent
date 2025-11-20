@@ -93,10 +93,10 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
             itemRefs.current[item.key] = element;
           }}
           onClick={item.onClick}
-          className={`relative px-1 py-1 text-sm font-normal leading-none transition-colors duration-200 ${
+          className={`relative px-1 py-1 text-base font-bold leading-none transition-colors duration-200 ${
             activePage === item.key
               ? 'text-text-primary'
-              : 'text-text-secondary hover:text-text-primary'
+              : 'text-text-muted hover:text-text-primary'
           }`}
           aria-current={activePage === item.key ? 'page' : undefined}
         >

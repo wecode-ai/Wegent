@@ -7,9 +7,10 @@
 import { useEffect, useState } from 'react';
 import '@/features/common/scrollbar.css';
 import { Button } from 'antd';
-import { PencilIcon, PlusIcon, TrashIcon } from '@heroicons/react/24/outline';
+import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { FiGithub, FiGitlab } from 'react-icons/fi';
 import GitHubEdit from './GitHubEdit';
+import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import LoadingState from '@/features/common/LoadingState';
 import { GitInfo } from '@/types/api';
 import { useUser } from '@/features/common/UserContext';
@@ -158,16 +159,7 @@ export default function GitHubIntegration() {
             )}
             <div className="border-t border-border"></div>
             <div className="flex justify-center">
-              <Button
-                onClick={handleAdd}
-                type="primary"
-                size="small"
-                icon={<PlusIcon className="h-4 w-4 align-middle" />}
-                style={{ margin: '8px 0' }}
-                className="!text-base"
-              >
-                {t('integrations.new_token')}
-              </Button>
+              <UnifiedAddButton onClick={handleAdd}>{t('integrations.new_token')}</UnifiedAddButton>
             </div>
           </>
         )}

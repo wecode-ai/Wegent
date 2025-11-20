@@ -7,17 +7,13 @@ import '@/features/common/scrollbar.css';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { App, Button, Modal, Tag, theme } from 'antd';
-import {
-  PencilIcon,
-  TrashIcon,
-  PlusIcon,
-  DocumentDuplicateIcon,
-} from '@heroicons/react/24/outline';
+import { PencilIcon, TrashIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { RiRobot2Line } from 'react-icons/ri';
 import LoadingState from '@/features/common/LoadingState';
 import { Bot } from '@/types/api';
 import { fetchBotsList, deleteBot, isPredefinedModel, getModelFromConfig } from '../services/bots';
 import BotEdit from './BotEdit';
+import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import { useTranslation } from '@/hooks/useTranslation';
 import { sortBotsByUpdatedAt } from '@/utils/bot';
 import { getSubtleBadgeStyle } from '@/utils/styles';
@@ -223,16 +219,9 @@ export default function BotList() {
                   </div>
                   <div className="border-t border-border pt-2 bg-surface">
                     <div className="flex justify-center">
-                      <Button
-                        onClick={handleCreateBot}
-                        type="primary"
-                        size="small"
-                        style={{ margin: '8px 0' }}
-                        className="flex items-center justify-center gap-1 text-base"
-                      >
-                        <PlusIcon className="h-4 w-4" aria-hidden="true" />
-                        <span>{t('bots.new_bot')}</span>
-                      </Button>
+                      <UnifiedAddButton onClick={handleCreateBot}>
+                        {t('bots.new_bot')}
+                      </UnifiedAddButton>
                     </div>
                   </div>
                 </>
