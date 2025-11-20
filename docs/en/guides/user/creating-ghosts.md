@@ -838,16 +838,11 @@ spec:
 ### Core Documentation
 - [Core Concepts](../../concepts/core-concepts.md) - Understand Ghost's role in Wegent
 - [YAML Specification](../../reference/yaml-specification.md) - Complete YAML configuration format
-- [MCP Server Configuration](../../reference/mcp-servers.md) - MCP tool configuration details
 
 ### Next Steps
 - [Creating Bots](./creating-bots.md) - Assemble Ghost into complete Bot
 - [Creating Teams](./creating-teams.md) - Build multi-Bot collaboration teams
 - [Managing Tasks](./managing-tasks.md) - Assign tasks to Teams
-
-### Examples and Templates
-- [Ghost Template Library](../../examples/ghost-templates.md) - Common Ghost configuration templates
-- [Best Practices Collection](../../best-practices/ghost-design.md) - Ghost design best practices
 
 ---
 

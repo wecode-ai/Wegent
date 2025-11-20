@@ -119,8 +119,6 @@ Congratulations on running your first task! Here's what to explore next:
 ### 💻 Development & Extension
 
 - [Development Setup](../guides/developer/setup.md) - Set up local development environment
-- [Backend Development](../guides/developer/backend-dev.md) - Backend service development
-- [Frontend Development](../guides/developer/frontend-dev.md) - Frontend application development
 
 ---
 

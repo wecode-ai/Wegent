@@ -575,7 +575,6 @@ logger.info("task.created",
 - [协作模式详解](./collaboration-models.md) - 深入了解协作模式
 - [YAML 配置规范](../reference/yaml-specification.md) - 完整的配置说明
 - [开发者指南](../guides/developer/setup.md) - 开始开发 Wegent
-- [部署指南](../guides/deployment/production.md) - 生产环境部署
 
 ---
 

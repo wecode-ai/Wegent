@@ -154,7 +154,14 @@ graph LR
    }
    ```
 
-   Note: Some runtimes may use `ANTHROPIC_API_KEY` instead of `ANTHROPIC_AUTH_TOKEN`. See docs for details.
+   **Important - Environment Variable Names:**
+
+   Different Shell runtimes use different environment variable names for API authentication:
+
+   - **Claude Code Shell**: Uses `ANTHROPIC_AUTH_TOKEN`
+   - **Agno Shell**: Uses `ANTHROPIC_API_KEY`
+
+   Please set the correct variable based on your Shell configuration. Check the Shell's documentation or the `executor/agents/` code for specific requirements.
 
 6. **Run task**
 

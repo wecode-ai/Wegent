@@ -40,35 +40,21 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 面向 Wegent 开发者的技术文档：
 
 - [开发环境搭建](./guides/developer/setup.md) - 本地开发环境配置
-- [后端开发](./guides/developer/backend-dev.md) - 后端服务开发指南
-- [前端开发](./guides/developer/frontend-dev.md) - 前端开发指南
-- [Executor 开发](./guides/developer/executor-dev.md) - 执行引擎开发
 - [测试](./guides/developer/testing.md) - 单元测试和集成测试
-
-### 🚀 部署运维
-
-生产环境部署和运维指南：
-
-- [配置参考](./deployment/configuration.md) - 环境变量和配置详解
-- [Docker Compose 部署](./deployment/docker-compose.md) - 使用 Docker Compose 快速部署
-- [生产环境部署](./deployment/production.md) - 生产环境最佳实践
-- [迁移指南](./deployment/migrations/) - 版本升级和数据迁移
 
 ### 📋 参考文档
 
 详细的技术参考资料：
 
 - [YAML 规范](./reference/yaml-specification.md) - 完整的 YAML 配置格式说明
-- [环境变量](./reference/environment-variables.md) - 所有环境变量清单
-- [API 参考](./reference/api-reference.md) - REST API 接口文档
+
+### 📝 配置示例
+
+- [Team 配置示例](../examples/team-example.yaml) - 完整的 Team YAML 配置示例
 
 ### 🤝 贡献指南
 
-参与 Wegent 项目贡献：
-
-- [如何贡献](./contributing/how-to-contribute.md) - 贡献流程和规范
-- [代码规范](./contributing/code-standards.md) - 代码风格和质量要求
-- [PR 流程](./contributing/pull-request-process.md) - Pull Request 提交流程
+- [贡献指南](../../../CONTRIBUTING.md) - 如何参与 Wegent 项目贡献
 
 ### 🔧 帮助与支持
 

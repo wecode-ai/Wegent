@@ -1126,7 +1126,6 @@ spec:
 - [System Architecture](./architecture.md) - Learn about Wegent's architecture design
 - [YAML Specification](../reference/yaml-specification.md) - Complete configuration format guide
 - [Creating Teams Guide](../guides/user/creating-teams.md) - Step-by-step team creation guide
-- [Best Practices](../guides/best-practices.md) - More usage tips
 
 ---
 

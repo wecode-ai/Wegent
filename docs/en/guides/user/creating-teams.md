@@ -862,7 +862,6 @@ Optimization suggestions:
 ### Reference Documentation
 - [Core Concepts - Collaboration](../../concepts/core-concepts.md#-collaboration) - Deep understanding of collaboration modes
 - [YAML Specification - Team](../../reference/yaml-specification.md#-team) - Complete configuration format
-- [Best Practices](../../best-practices/team-design.md) - Team design best practices
 
 ---
 
