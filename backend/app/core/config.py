@@ -79,6 +79,9 @@ class Settings(BaseSettings):
     INIT_DATA_DIR: str = "/app/init_data"
     INIT_DATA_ENABLED: bool = True
 
+    # Database auto-create tables configuration
+    DB_AUTO_CREATE_TABLES: bool = True
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

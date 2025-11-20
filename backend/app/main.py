@@ -96,7 +96,12 @@ def create_app():
     # Create database tables and start background worker
     @app.on_event("startup")
     def startup():
-        Base.metadata.create_all(bind=engine)
+        # Auto-create database tables if enabled
+        if settings.DB_AUTO_CREATE_TABLES:
+            logger.info("Auto-creating database tables...")
+            Base.metadata.create_all(bind=engine)
+        else:
+            logger.info("Database auto-create tables is disabled")
 
         # Initialize database with YAML configuration
         db = SessionLocal()
