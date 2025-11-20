@@ -7,13 +7,7 @@
 import { useState } from 'react';
 import { Task, TaskType } from '@/types/api';
 import TaskMenu from './TaskMenu';
-import {
-  FaRegCircleCheck,
-  FaRegCircleStop,
-  FaRegCircleXmark,
-  FaRegCirclePause,
-} from 'react-icons/fa6';
-import { ArrowPathIcon } from '@heroicons/react/24/outline';
+import { CheckCircle2, XCircle, StopCircle, PauseCircle, RotateCw } from 'lucide-react';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -133,22 +127,22 @@ export default function TaskListSection({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'COMPLETED':
-        return <FaRegCircleCheck className="w-4 h-4 text-green-500" />;
+        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
       case 'FAILED':
-        return <FaRegCircleXmark className="w-4 h-4 text-red-500" />;
+        return <XCircle className="w-4 h-4 text-red-500" />;
       case 'CANCELLED':
-        return <FaRegCircleStop className="w-4 h-4 text-gray-400" />;
+        return <StopCircle className="w-4 h-4 text-gray-400" />;
       case 'RUNNING':
         return (
-          <ArrowPathIcon
+          <RotateCw
             className="w-4 h-4 text-blue-500 animate-spin"
             style={{ animationDuration: '2s' }}
           />
         );
       case 'PENDING':
-        return <FaRegCirclePause className="w-4 h-4 text-yellow-500" />;
+        return <PauseCircle className="w-4 h-4 text-yellow-500" />;
       default:
-        return <FaRegCirclePause className="w-4 h-4 text-gray-400" />;
+        return <PauseCircle className="w-4 h-4 text-gray-400" />;
     }
   };
 
@@ -218,10 +212,7 @@ export default function TaskListSection({
 
   return (
     <div className="mb-2">
-      <h3
-        className="text-xs font-medium text-text-muted tracking-wide mb-1"
-        style={{ fontSize: '10px' }}
-      >
+      <h3 className="text-sm text-text-primary tracking-wide mb-1 px-2">
         {title}
         {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
       </h3>
@@ -230,7 +221,7 @@ export default function TaskListSection({
           return (
             <div
               key={task.id}
-              className={`flex items-center justify-between py-1 rounded hover:bg-muted cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-muted' : ''}`}
+              className={`flex items-center justify-between py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
               onClick={() => handleTaskClick(task)}
               onTouchStart={handleTaskTouchStart(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
@@ -239,7 +230,6 @@ export default function TaskListSection({
                 touchAction: 'manipulation',
                 WebkitTapHighlightColor: 'transparent',
                 minHeight: '44px',
-                padding: '8px 12px',
                 userSelect: 'none',
               }}
             >
@@ -249,7 +239,7 @@ export default function TaskListSection({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <p className="text-xs text-text-muted leading-tight truncate m-0 flex-1">
+                    <p className="text-sm text-text-primary leading-tight truncate m-0 flex-1">
                       {task.title}
                     </p>
                     {getTaskTypeTag(task)}

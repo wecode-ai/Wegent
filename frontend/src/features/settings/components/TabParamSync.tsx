@@ -15,14 +15,15 @@ interface TabParamSyncProps {
 export default function TabParamSync({ tabIndex: _tabIndex, setTabIndex }: TabParamSyncProps) {
   const searchParams = useSearchParams();
 
-  // Tab name to index mapping parameterization
-  const tabNameToIndex: Record<string, number> = {
-    integrations: 0,
-    bots: 1,
-    bot: 1,
-    team: 2,
-  };
   useEffect(() => {
+    // Tab name to index mapping parameterization
+    const tabNameToIndex: Record<string, number> = {
+      integrations: 0,
+      bots: 1,
+      bot: 1,
+      team: 2,
+    };
+
     const tab = searchParams?.get('tab');
     if (tab && tabNameToIndex.hasOwnProperty(tab)) {
       const newIndex = tabNameToIndex[tab];

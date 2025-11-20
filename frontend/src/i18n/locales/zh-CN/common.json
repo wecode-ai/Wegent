@@ -229,7 +229,7 @@
     "set_token": "设置token"
   },
   "tasks": {
-    "search_placeholder": "搜索任务...",
+    "search_placeholder": "搜索任务",
     "new_task": "新建任务",
     "no_tasks": "没有任务",
     "today": "今天",

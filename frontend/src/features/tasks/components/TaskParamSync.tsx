@@ -51,7 +51,7 @@ export default function TaskParamSync() {
     };
 
     verifyAndSetTask();
-  }, [searchParams, selectedTaskDetail, router, setSelectedTask]);
+  }, [searchParams, selectedTaskDetail, router, setSelectedTask, message]);
 
   return null; // Only responsible for synchronization, does not render any content
 }

@@ -57,7 +57,7 @@ export default function OidcTokenHandler() {
         window.dispatchEvent(new Event('oidc-login-success'));
       }, 100);
     }
-  }, [router, searchParams]);
+  }, [router, searchParams, t]);
 
   return null;
 }
