@@ -407,8 +407,8 @@ export default function ChatArea({
                 taskType={taskType}
               />
               {/* Team Selector and Send Button */}
-              <div className="flex items-end justify-between px-3 py-0">
-                <div>
+              <div className="flex items-end justify-between px-3 py-0 gap-2">
+                <div className="flex-1 min-w-0 overflow-hidden">
                   {teams.length > 0 && (
                     <TeamSelector
                       selectedTeam={selectedTeam}
@@ -419,8 +419,8 @@ export default function ChatArea({
                     />
                   )}
                 </div>
-                <div className="ml-auto flex items-center">
-                  {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
+                <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                  {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
                   <Button
                     variant="ghost"
                     size="icon"
@@ -430,7 +430,7 @@ export default function ChatArea({
                       selectedTaskDetail?.status === 'PENDING' ||
                       selectedTaskDetail?.status === 'RUNNING'
                     }
-                    className="h-10 w-10 rounded-full hover:bg-primary/10"
+                    className="h-10 w-10 rounded-full hover:bg-primary/10 flex-shrink-0"
                   >
                     {isLoading ||
                     selectedTaskDetail?.status === 'PENDING' ||
