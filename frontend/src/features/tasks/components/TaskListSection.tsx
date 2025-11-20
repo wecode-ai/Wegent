@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Task, TaskType } from '@/types/api';
 import TaskMenu from './TaskMenu';
 import { CheckCircle2, XCircle, StopCircle, PauseCircle, RotateCw } from 'lucide-react';
@@ -35,14 +35,27 @@ export default function TaskListSection({
   const { t } = useTranslation('common');
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null);
   const [_loading, setLoading] = useState(false);
+  const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null);
+
+  // Touch interaction state
+  const [touchState, setTouchState] = useState<{
+    startX: number;
+    startY: number;
+    startTime: number;
+    taskId: number | null;
+    isScrolling: boolean;
+    longPressTimer: NodeJS.Timeout | null;
+  }>({
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+    taskId: null,
+    isScrolling: false,
+    longPressTimer: null,
+  });
 
   // Select task
-  const handleTaskClick = (task: Task, event?: React.MouseEvent | React.TouchEvent) => {
-    // Prevent default behavior for touch events
-    if (event) {
-      event.preventDefault();
-    }
-
+  const handleTaskClick = (task: Task) => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams();
       params.set('taskId', String(task.id));
@@ -73,11 +86,92 @@ export default function TaskListSection({
       }
     }
   };
-  // Handle touch start for immediate response on mobile
-  const handleTaskTouchStart = (task: Task) => (event: React.TouchEvent) => {
-    event.preventDefault();
-    handleTaskClick(task, event);
+
+  // Touch interaction handlers
+  const handleTouchStart = (task: Task) => (event: React.TouchEvent) => {
+    const touch = event.touches[0];
+    const longPressTimer = setTimeout(() => {
+      // Long press detected - show menu on mobile
+      setLongPressTaskId(task.id);
+      setTouchState(prev => ({ ...prev, isScrolling: true })); // Prevent click after long press
+    }, 500);
+
+    setTouchState({
+      startX: touch.clientX,
+      startY: touch.clientY,
+      startTime: Date.now(),
+      taskId: task.id,
+      isScrolling: false,
+      longPressTimer,
+    });
   };
+
+  const handleTouchMove = (event: React.TouchEvent) => {
+    if (!touchState.taskId) return;
+
+    const touch = event.touches[0];
+    const deltaX = Math.abs(touch.clientX - touchState.startX);
+    const deltaY = Math.abs(touch.clientY - touchState.startY);
+    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+    // If moved more than 10px, consider it as scrolling
+    if (distance > 10) {
+      if (touchState.longPressTimer) {
+        clearTimeout(touchState.longPressTimer);
+      }
+      setTouchState(prev => ({ ...prev, isScrolling: true, longPressTimer: null }));
+    }
+  };
+
+  const handleTouchEnd = (task: Task) => (event: React.TouchEvent) => {
+    if (touchState.longPressTimer) {
+      clearTimeout(touchState.longPressTimer);
+    }
+
+    const touchDuration = Date.now() - touchState.startTime;
+
+    // Only trigger click if:
+    // 1. Not scrolling
+    // 2. Touch duration < 500ms (not a long press)
+    // 3. Touch is on the same task
+    if (!touchState.isScrolling && touchDuration < 500 && touchState.taskId === task.id) {
+      handleTaskClick(task);
+    }
+
+    setTouchState({
+      startX: 0,
+      startY: 0,
+      startTime: 0,
+      taskId: null,
+      isScrolling: false,
+      longPressTimer: null,
+    });
+  };
+
+  // Cleanup effect for touch state
+  useEffect(() => {
+    return () => {
+      if (touchState.longPressTimer) {
+        clearTimeout(touchState.longPressTimer);
+      }
+    };
+  }, [touchState.longPressTimer]);
+
+  // Handle clicks outside to close long press menu
+  useEffect(() => {
+    const handleClickOutside = () => {
+      if (longPressTaskId !== null) {
+        setLongPressTaskId(null);
+      }
+    };
+
+    if (longPressTaskId !== null) {
+      document.addEventListener('click', handleClickOutside);
+      return () => {
+        document.removeEventListener('click', handleClickOutside);
+      };
+    }
+  }, [longPressTaskId]);
 
   // Copy task ID
   const handleCopyTaskId = async (taskId: number) => {
@@ -218,16 +312,20 @@ export default function TaskListSection({
       </h3>
       <div className="space-y-0">
         {tasks.map(task => {
+          const showMenu = hoveredTaskId === task.id || longPressTaskId === task.id;
+
           return (
             <div
               key={task.id}
               className={`flex items-center justify-between py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
               onClick={() => handleTaskClick(task)}
-              onTouchStart={handleTaskTouchStart(task)}
+              onTouchStart={handleTouchStart(task)}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
               onMouseLeave={() => setHoveredTaskId(null)}
               style={{
-                touchAction: 'manipulation',
+                touchAction: 'pan-y',
                 WebkitTapHighlightColor: 'transparent',
                 minHeight: '44px',
                 userSelect: 'none',
@@ -257,7 +355,7 @@ export default function TaskListSection({
                     style={{ flexShrink: 0 }}
                   />
                 )}
-                {hoveredTaskId === task.id && (
+                {showMenu && (
                   <TaskMenu
                     taskId={task.id}
                     handleCopyTaskId={handleCopyTaskId}
