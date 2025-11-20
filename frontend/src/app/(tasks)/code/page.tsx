@@ -80,6 +80,28 @@ export default function CodePage() {
     return calculateOpenLinks(selectedTaskDetail);
   }, [selectedTaskDetail]);
 
+  // Calculate thinking data from subtasks for timeline
+  const thinkingData = useMemo(() => {
+    if (!selectedTaskDetail?.subtasks || selectedTaskDetail.subtasks.length === 0) {
+      return null;
+    }
+
+    // Extract thinking from the latest subtask result
+    const latestSubtask = selectedTaskDetail.subtasks[selectedTaskDetail.subtasks.length - 1];
+    if (latestSubtask?.result && typeof latestSubtask.result === 'object') {
+      const result = latestSubtask.result as { thinking?: unknown[] };
+      if (result.thinking && Array.isArray(result.thinking)) {
+        return result.thinking as Array<{
+          title: string;
+          next_action: string;
+          details?: Record<string, unknown>;
+        }>;
+      }
+    }
+
+    return null;
+  }, [selectedTaskDetail]);
+
   // Save last active tab to localStorage
   useEffect(() => {
     saveLastTab('code');
@@ -167,6 +189,7 @@ export default function CodePage() {
                 isLoading={isWorkbenchLoading}
                 taskTitle={selectedTaskDetail?.title}
                 taskNumber={selectedTaskDetail ? `#${selectedTaskDetail.id}` : undefined}
+                thinking={thinkingData}
               />
             )}
           </div>

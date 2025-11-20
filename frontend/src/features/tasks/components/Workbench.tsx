@@ -27,6 +27,19 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { taskApis, BranchDiffResponse } from '@/apis/tasks';
 import DiffViewer from './DiffViewer';
 
+// Tool icon mapping
+const TOOL_ICONS: Record<string, string> = {
+  Read: '📖',
+  Edit: '✏️',
+  Write: '📝',
+  Bash: '⚙️',
+  Grep: '🔍',
+  Glob: '📁',
+  Task: '🤖',
+  WebFetch: '🌐',
+  WebSearch: '🔎',
+};
+
 // Git commit statistics
 interface CommitStats {
   files_changed: number;
@@ -94,6 +107,11 @@ interface WorkbenchProps {
   isLoading?: boolean;
   taskTitle?: string;
   taskNumber?: string;
+  thinking?: Array<{
+    title: string;
+    next_action: string;
+    details?: Record<string, unknown>;
+  }> | null;
 }
 
 function classNames(...classes: string[]) {
@@ -126,6 +144,7 @@ export default function Workbench({
   isLoading: _isLoading = false,
   taskTitle,
   taskNumber,
+  thinking,
 }: WorkbenchProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'files'>('overview');
   const [showCommits, setShowCommits] = useState(false);
@@ -136,6 +155,7 @@ export default function Workbench({
   const [showErrorDialog, setShowErrorDialog] = useState(false);
   const [loadingStateIndex, setLoadingStateIndex] = useState(0);
   const [tipIndex, setTipIndex] = useState(0);
+  const [isTimelineExpanded, setIsTimelineExpanded] = useState(false); // Timeline collapse state
   const { theme } = useTheme();
   const { t } = useTranslation('tasks');
 
@@ -283,6 +303,119 @@ export default function Workbench({
       default:
         return t('workbench.status.running');
     }
+  };
+
+  // Build execution timeline from thinking data
+  interface TimelineStep {
+    toolName: string;
+    count: number;
+    timestamp: string;
+  }
+
+  const buildTimeline = (
+    thinkingSteps: Array<{
+      title: string;
+      next_action: string;
+      details?: Record<string, unknown>;
+    }>
+  ): TimelineStep[] => {
+    if (!thinkingSteps || thinkingSteps.length === 0) return [];
+
+    const timeline: TimelineStep[] = [];
+    let currentTool: string | null = null;
+    let currentCount = 0;
+    let currentTimestamp = '';
+
+    thinkingSteps.forEach(step => {
+      let toolName: string | null = null;
+      let timestamp = '';
+
+      // Extract tool name from details
+      if (step.details?.type === 'tool_use' && typeof step.details?.name === 'string') {
+        toolName = step.details.name;
+      } else if (
+        step.details &&
+        'message' in step.details &&
+        typeof step.details.message === 'object' &&
+        step.details.message !== null
+      ) {
+        const message = step.details.message as {
+          content?: Array<{ type: string; name?: string }>;
+        };
+        if (message.content && Array.isArray(message.content)) {
+          for (const content of message.content) {
+            if (content.type === 'tool_use' && content.name) {
+              toolName = content.name;
+              break;
+            }
+          }
+        }
+      }
+
+      // Extract timestamp
+      const detailsAny = step.details as any;
+      if (detailsAny?.timestamp) {
+        timestamp = new Date(detailsAny.timestamp).toLocaleTimeString('en-US', {
+          hour12: false,
+        });
+      } else if (detailsAny?.created_at) {
+        timestamp = new Date(detailsAny.created_at).toLocaleTimeString('en-US', {
+          hour12: false,
+        });
+      }
+
+      if (toolName) {
+        if (toolName === currentTool) {
+          // Same tool, increment count
+          currentCount++;
+        } else {
+          // Different tool, save previous and start new
+          if (currentTool) {
+            timeline.push({
+              toolName: currentTool,
+              count: currentCount,
+              timestamp: currentTimestamp,
+            });
+          }
+          currentTool = toolName;
+          currentCount = 1;
+          currentTimestamp = timestamp || currentTimestamp;
+        }
+      }
+    });
+
+    // Add last group
+    if (currentTool) {
+      timeline.push({
+        toolName: currentTool,
+        count: currentCount,
+        timestamp: currentTimestamp,
+      });
+    }
+
+    return timeline;
+  };
+
+  const timelineSteps = thinking ? buildTimeline(thinking) : [];
+
+  // Auto-collapse timeline when task is completed
+  useEffect(() => {
+    if (displayData?.status === 'completed' && timelineSteps.length > 0) {
+      setIsTimelineExpanded(false);
+    }
+  }, [displayData?.status, timelineSteps.length]);
+
+  // Generate collapsed timeline summary
+  const getTimelineSummary = (): string => {
+    if (timelineSteps.length === 0) return '';
+
+    const summary: string[] = [];
+    timelineSteps.forEach(step => {
+      const icon = TOOL_ICONS[step.toolName] || '⚡';
+      summary.push(`${icon}×${step.count}`);
+    });
+
+    return summary.join(' ');
   };
 
   return (
@@ -481,6 +614,83 @@ export default function Workbench({
                         ) : null}
                       </div>
                     </div>
+
+                    {/* Execution Timeline */}
+                    {timelineSteps.length > 0 && (
+                      <div className="rounded-lg border border-border bg-surface overflow-hidden">
+                        <button
+                          onClick={() => setIsTimelineExpanded(!isTimelineExpanded)}
+                          className="w-full border-b border-border bg-muted px-4 py-3 text-left hover:bg-muted/80 transition-colors"
+                        >
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-base font-semibold text-text-primary">
+                              {t('workbench.execution_timeline')}
+                            </h3>
+                            <ChevronRightIcon
+                              className={classNames(
+                                isTimelineExpanded ? 'rotate-90 transform' : '',
+                                'h-5 w-5 text-text-muted transition-transform'
+                              )}
+                            />
+                          </div>
+                          {!isTimelineExpanded && (
+                            <div className="mt-2 text-sm text-text-muted">
+                              {getTimelineSummary()}
+                            </div>
+                          )}
+                        </button>
+                        {isTimelineExpanded && (
+                          <div className="px-4 py-4">
+                            <div className="relative space-y-4">
+                              {timelineSteps.map((step, index) => {
+                                const isLast = index === timelineSteps.length - 1;
+                                const toolActionKey = `thinking.tool_actions.${step.toolName}`;
+                                const toolActionName = t(toolActionKey);
+                                const displayName =
+                                  toolActionName !== toolActionKey
+                                    ? toolActionName
+                                    : step.toolName;
+                                const icon = TOOL_ICONS[step.toolName] || '⚡';
+
+                                return (
+                                  <div key={index} className="relative flex items-start gap-3">
+                                    {/* Timeline connector line */}
+                                    {!isLast && (
+                                      <div
+                                        className="absolute left-[9px] top-6 w-[2px] h-full bg-border"
+                                        style={{ height: 'calc(100% + 1rem)' }}
+                                      />
+                                    )}
+
+                                    {/* Timeline dot */}
+                                    <div className="relative z-10 flex-shrink-0 w-5 h-5 mt-0.5">
+                                      <div className="w-5 h-5 rounded-full bg-primary border-2 border-surface" />
+                                    </div>
+
+                                    {/* Timeline content */}
+                                    <div className="flex-1 min-w-0 pb-1">
+                                      <div className="flex items-center gap-2 mb-1">
+                                        <span className="text-sm font-medium text-text-primary">
+                                          {displayName}
+                                        </span>
+                                        <span className="text-sm text-text-muted">
+                                          {icon}×{step.count}
+                                        </span>
+                                      </div>
+                                      {step.timestamp && (
+                                        <div className="text-xs text-text-tertiary">
+                                          {step.timestamp}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Summary */}
                     <div className="rounded-lg border border-border bg-surface overflow-hidden">

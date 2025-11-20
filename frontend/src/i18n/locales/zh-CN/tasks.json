@@ -46,6 +46,23 @@
     "collapse_all": "全部收起",
     "changes": "变更",
     "loading_diff_message": "加载中...",
-    "no_changes_between_branches": "分支之间未发现变更"
+    "no_changes_between_branches": "分支之间未发现变更",
+    "execution_timeline": "执行时间线"
+  },
+  "thinking": {
+    "execution_completed": "执行完成",
+    "execution_failed": "执行失败",
+    "execution_cancelled": "执行已取消",
+    "tool_actions": {
+      "Read": "读取文件",
+      "Edit": "编辑文件",
+      "Write": "写入文件",
+      "Bash": "执行命令",
+      "Grep": "搜索代码",
+      "Glob": "查找文件",
+      "Task": "执行任务",
+      "WebFetch": "获取网页",
+      "WebSearch": "搜索网络"
+    }
   }
 }
