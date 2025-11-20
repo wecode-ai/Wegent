@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { PaperAirplaneIcon } from '@heroicons/react/24/outline';
+import { PaperAirplaneIcon, StopCircleIcon } from '@heroicons/react/24/outline';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -20,6 +20,7 @@ import { App, Button } from 'antd';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
+import { taskApis } from '@/apis/tasks';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -237,6 +238,21 @@ export default function ChatArea({
     setIsLoading(false);
   };
 
+  const handleCancelTask = async () => {
+    if (!selectedTaskDetail?.id) return;
+
+    try {
+      await taskApis.cancelTask(selectedTaskDetail.id);
+      message.success('Task cancellation requested');
+      // Refresh to update status
+      refreshTasks();
+      refreshSelectedTaskDetail(false);
+    } catch (err) {
+      message.error('Failed to cancel task');
+      console.error('Cancel task failed:', err);
+    }
+  };
+
   const scrollToBottom = (force = false) => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -417,29 +433,38 @@ export default function ChatArea({
                 </div>
                 <div className="ml-auto flex items-center">
                   {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
-                  <Button
-                    type="text"
-                    onClick={handleSendMessage}
-                    disabled={
-                      isLoading ||
-                      selectedTaskDetail?.status === 'PENDING' ||
-                      selectedTaskDetail?.status === 'RUNNING'
-                    }
-                    icon={
-                      isLoading ||
-                      selectedTaskDetail?.status === 'PENDING' ||
-                      selectedTaskDetail?.status === 'RUNNING' ? (
-                        <LoadingDots />
-                      ) : (
-                        <PaperAirplaneIcon className="w-4 h-4" />
-                      )
-                    }
-                    style={{
-                      color: 'rgb(var(--color-text-muted))',
-                      padding: '0',
-                      height: 'auto',
-                    }}
-                  />
+                  {/* Show Stop button when task is running, otherwise show Send button */}
+                  {selectedTaskDetail?.status === 'PENDING' ||
+                  selectedTaskDetail?.status === 'RUNNING' ? (
+                    <Button
+                      type="text"
+                      onClick={handleCancelTask}
+                      icon={<StopCircleIcon className="w-4 h-4" />}
+                      style={{
+                        color: 'rgb(var(--color-text-muted))',
+                        padding: '0',
+                        height: 'auto',
+                      }}
+                    />
+                  ) : (
+                    <Button
+                      type="text"
+                      onClick={handleSendMessage}
+                      disabled={isLoading}
+                      icon={
+                        isLoading ? (
+                          <LoadingDots />
+                        ) : (
+                          <PaperAirplaneIcon className="w-4 h-4" />
+                        )
+                      }
+                      style={{
+                        color: 'rgb(var(--color-text-muted))',
+                        padding: '0',
+                        height: 'auto',
+                      }}
+                    />
+                  )}
                 </div>
               </div>
             </div>

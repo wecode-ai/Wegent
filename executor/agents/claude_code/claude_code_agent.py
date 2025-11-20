@@ -828,3 +828,58 @@ class ClaudeCodeAgent(Agent):
                     f"Error closing client for session_id {session_id}: {str(e)}"
                 )
         cls._clients.clear()
+
+    def cancel_run(self) -> bool:
+        """
+        Cancel the current running task for this agent instance by calling interrupt()
+
+        Returns:
+            bool: True if cancellation was successful, False otherwise
+        """
+        cancelled = False
+        try:
+            if self.client is None:
+                logger.warning(f"No client available for session_id: {self.session_id}, cannot cancel")
+                return False
+
+            # Check if client has an interrupt method
+            if not hasattr(self.client, 'interrupt'):
+                logger.warning(f"Client does not support interrupt for session_id: {self.session_id}")
+                return False
+
+            # Create a task to call the async interrupt method
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're in an async context, create a task
+                asyncio.create_task(self._async_cancel_run())
+                logger.info(f"Initiated interrupt for session_id: {self.session_id}")
+                cancelled = True
+            else:
+                # If not in async context, run the interrupt synchronously
+                loop.run_until_complete(self._async_cancel_run())
+                logger.info(f"Successfully interrupted session_id: {self.session_id}")
+                cancelled = True
+
+            if cancelled:
+                self.report_progress(
+                    100,
+                    TaskStatus.COMPLETED.value,
+                    f"${{tasks.cancel_task}}",
+                    result=ExecutionResult(value="", thinking=self.thinking_manager.get_thinking_steps()).dict(),
+                )
+
+        except Exception as e:
+            logger.exception(f"Error cancelling run for session_id {self.session_id}: {str(e)}")
+
+        return cancelled
+
+    async def _async_cancel_run(self) -> None:
+        """
+        Asynchronous helper method to cancel the current run
+        """
+        try:
+            if self.client is not None:
+                await self.client.interrupt()
+                logger.info(f"Successfully sent interrupt to client for session_id: {self.session_id}")
+        except Exception as e:
+            logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")

@@ -3,16 +3,20 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional
-from fastapi import APIRouter, Depends, status, Query
+from fastapi import APIRouter, Depends, status, Query, HTTPException
 from sqlalchemy.orm import Session
+import httpx
+import logging
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.models.user import User
 from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskListResponse
 from app.services.adapters.task_kinds import task_kinds_service
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("", response_model=dict)
@@ -112,3 +116,34 @@ def delete_task(
     """Delete task"""
     task_kinds_service.delete_task(db=db, task_id=task_id, user_id=current_user.id)
     return {"message": "Task deleted successfully"}
+
+@router.post("/{task_id}/cancel")
+async def cancel_task(
+    task_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Cancel a running task by calling executor_manager"""
+    # Verify user owns this task
+    task = task_kinds_service.get_task_detail(db=db, task_id=task_id, user_id=current_user.id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Call executor_manager to cancel the task
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                settings.EXECUTOR_CANCEL_TASK_URL,
+                json={"task_id": task_id},
+                timeout=10.0
+            )
+            response.raise_for_status()
+            result = response.json()
+            logger.info(f"Task {task_id} cancellation requested by user {current_user.id}")
+            return result
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Failed to cancel task {task_id}: {e.response.text}")
+        raise HTTPException(status_code=e.response.status_code, detail=f"Failed to cancel task: {e.response.text}")
+    except Exception as e:
+        logger.error(f"Error cancelling task {task_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error cancelling task: {str(e)}")
