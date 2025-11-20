@@ -42,6 +42,12 @@ export default function TeamShareHandler({
   const isTeamAlreadyJoined = shareInfo ? teams.some(team => team.id === shareInfo.team_id) : false;
   const isSelfShare = shareInfo && user && shareInfo.user_id === user.id;
 
+  const cleanupUrlParams = React.useCallback(() => {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('teamShare');
+    router.replace(url.pathname + url.search);
+  }, [router]);
+
   useEffect(() => {
     const teamShareToken = searchParams.get('teamShare');
 
@@ -65,13 +71,7 @@ export default function TeamShareHandler({
     };
 
     fetchShareInfo();
-  }, [searchParams, message, t]);
-
-  const cleanupUrlParams = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('teamShare');
-    router.replace(url.pathname + url.search);
-  };
+  }, [searchParams, message, t, cleanupUrlParams, error]);
 
   const handleConfirmJoin = async () => {
     if (!shareInfo) return;

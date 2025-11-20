@@ -23,6 +23,7 @@ interface Message {
   content: string;
   timestamp: number;
   botName?: string;
+  subtaskStatus?: string; // Add subtask-specific status
   thinking?: Array<{
     title: string;
     next_action: string;
@@ -262,6 +263,7 @@ export default function MessagesArea({
               ? detail.team.name
               : sub?.bots?.[0]?.name?.trim() || 'Bot',
           thinking: thinkingData,
+          subtaskStatus: sub.status, // Add subtask status
         });
       });
     }
@@ -703,10 +705,7 @@ export default function MessagesArea({
                   className={`flex ${isUserMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${isUserMessage ? 'items-end' : 'items-start'}`}
                 >
                   {msg.type === 'ai' && msg.thinking && (
-                    <ThinkingComponent
-                      thinking={msg.thinking}
-                      taskStatus={selectedTaskDetail?.status}
-                    />
+                    <ThinkingComponent thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
                   )}
                   <div className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}>
                     <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
