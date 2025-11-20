@@ -5,8 +5,8 @@
 'use client';
 import '@/features/common/scrollbar.css';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { App, Button, Modal, Tag, theme } from 'antd';
+import { useCallback, useEffect, useState } from 'react';
+import { App } from 'antd';
 import { PencilIcon, TrashIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { RiRobot2Line } from 'react-icons/ri';
 import LoadingState from '@/features/common/LoadingState';
@@ -16,21 +16,21 @@ import BotEdit from './BotEdit';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import { useTranslation } from '@/hooks/useTranslation';
 import { sortBotsByUpdatedAt } from '@/utils/bot';
-import { getSubtleBadgeStyle } from '@/utils/styles';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Tag } from '@/components/ui/tag';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 export default function BotList() {
   const { t } = useTranslation('common');
   const { message } = App.useApp();
-  const { token } = theme.useToken();
   const [bots, setBots] = useState<Bot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  // Unified error prompt using antd message.error, no local error state needed
   const [editingBotId, setEditingBotId] = useState<number | null>(null);
   const [cloningBot, setCloningBot] = useState<Bot | null>(null);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
   const [botToDelete, setBotToDelete] = useState<number | null>(null);
   const isEditing = editingBotId !== null;
-  const subtleBadgeStyle = useMemo(() => getSubtleBadgeStyle(token), [token]);
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
     updater => {
@@ -132,19 +132,19 @@ export default function BotList() {
                 />
               ) : (
                 <>
-                  <div className="flex-1 overflow-y-auto custom-scrollbar pr-1">
+                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
                     {bots.length > 0 ? (
                       bots.map(bot => (
-                        <div key={bot.id}>
-                          <div className="flex items-center justify-between py-0.5 min-w-0">
-                            <div className="flex items-center space-x-2 min-w-0 flex-1">
-                              <RiRobot2Line className="w-4 h-4 text-text-primary flex-shrink-0" />
+                        <Card key={bot.id} className="p-4 hover:shadow-md transition-shadow">
+                          <div className="flex items-center justify-between min-w-0">
+                            <div className="flex items-center space-x-3 min-w-0 flex-1">
+                              <RiRobot2Line className="w-5 h-5 text-primary flex-shrink-0" />
                               <div className="flex flex-col justify-center min-w-0 flex-1">
-                                <div className="flex items-center space-x-1 min-w-0">
+                                <div className="flex items-center space-x-2 min-w-0">
                                   <h3 className="text-base font-medium text-text-primary mb-0 truncate">
                                     {bot.name}
                                   </h3>
-                                  <div className="flex items-center h-4 space-x-0.5 flex-shrink-0">
+                                  <div className="flex items-center space-x-1 flex-shrink-0">
                                     <div
                                       className="w-2 h-2 rounded-full"
                                       style={{
@@ -153,22 +153,16 @@ export default function BotList() {
                                           : 'rgb(var(--color-border))',
                                       }}
                                     ></div>
-                                    <span className="text-xs text-text-muted flex items-center justify-center">
+                                    <span className="text-xs text-text-muted">
                                       {bot.is_active ? t('bots.active') : t('bots.inactive')}
                                     </span>
                                   </div>
                                 </div>
-                                <div className="flex flex-wrap items-center gap-1 mt-1 min-w-0">
-                                  <Tag
-                                    className="!m-0 !px-1.5 !py-0 text-xs leading-4 capitalize self-start"
-                                    style={subtleBadgeStyle}
-                                  >
+                                <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                                  <Tag variant="default" className="capitalize">
                                     {bot.agent_name}
                                   </Tag>
-                                  <Tag
-                                    className="hidden sm:inline-block !m-0 !px-1.5 !py-0 text-xs leading-4 capitalize self-start"
-                                    style={subtleBadgeStyle}
-                                  >
+                                  <Tag variant="info" className="hidden sm:inline-flex capitalize">
                                     {isPredefinedModel(bot.agent_config)
                                       ? getModelFromConfig(bot.agent_config)
                                       : 'CustomModel'}
@@ -176,48 +170,45 @@ export default function BotList() {
                                 </div>
                               </div>
                             </div>
-                            <div className="flex items-center space-x-1 flex-shrink-0 ml-2">
+                            <div className="flex items-center gap-1 flex-shrink-0 ml-3">
                               <Button
-                                type="text"
-                                size="small"
-                                icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
+                                variant="ghost"
+                                size="icon"
                                 onClick={() => handleEditBot(bot)}
                                 title={t('bots.edit')}
-                                style={{ padding: '2px' }}
-                                className="!text-text-muted hover:!text-text-primary"
-                              />
+                                className="h-8 w-8"
+                              >
+                                <PencilIcon className="w-4 h-4" />
+                              </Button>
                               <Button
-                                type="text"
-                                size="small"
-                                icon={<DocumentDuplicateIcon className="w-4 h-4 text-text-muted" />}
+                                variant="ghost"
+                                size="icon"
                                 onClick={() => handleCloneBot(bot)}
                                 title={t('bots.copy')}
-                                style={{ padding: '2px' }}
-                                className="!text-text-muted hover:!text-text-primary"
-                              />
+                                className="h-8 w-8"
+                              >
+                                <DocumentDuplicateIcon className="w-4 h-4" />
+                              </Button>
                               <Button
-                                type="text"
-                                size="small"
-                                icon={<TrashIcon className="w-4 h-4 text-text-muted" />}
+                                variant="ghost"
+                                size="icon"
                                 onClick={() => handleDeleteBot(bot?.id)}
                                 title={t('bots.delete')}
-                                style={{ padding: '2px' }}
-                                className="!text-text-muted hover:!text-text-primary"
-                              />
+                                className="h-8 w-8 hover:text-error"
+                              >
+                                <TrashIcon className="w-4 h-4" />
+                              </Button>
                             </div>
                           </div>
-                          {bots.length > 1 && bot.id !== bots[bots.length - 1].id && (
-                            <div className="border-t border-border mt-1 pt-1"></div>
-                          )}
-                        </div>
+                        </Card>
                       ))
                     ) : (
-                      <div className="text-center text-text-muted py-4">
+                      <div className="text-center text-text-muted py-8">
                         <p className="text-sm">{t('bots.no_bots')}</p>
                       </div>
                     )}
                   </div>
-                  <div className="border-t border-border pt-2 bg-surface">
+                  <div className="border-t border-border pt-3 mt-3 bg-surface">
                     <div className="flex justify-center">
                       <UnifiedAddButton onClick={handleCreateBot}>
                         {t('bots.new_bot')}
@@ -232,18 +223,24 @@ export default function BotList() {
       </div>
 
       {/* Delete confirmation dialog */}
-      <Modal
-        title={t('bots.delete_confirm_title')}
-        open={deleteConfirmVisible}
-        onOk={handleConfirmDelete}
-        onCancel={handleCancelDelete}
-        okText={t('common.confirm')}
-        cancelText={t('common.cancel')}
-        okButtonProps={{ danger: true }}
-        centered
-      >
-        <p>{t('bots.delete_confirm_message')}</p>
-      </Modal>
+      <Dialog open={deleteConfirmVisible} onOpenChange={setDeleteConfirmVisible}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('bots.delete_confirm_title')}</DialogTitle>
+            <DialogDescription>
+              {t('bots.delete_confirm_message')}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={handleCancelDelete}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="default" onClick={handleConfirmDelete} className="bg-error hover:bg-error/90">
+              {t('common.confirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

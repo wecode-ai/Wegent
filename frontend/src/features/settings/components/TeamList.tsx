@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import '@/features/common/scrollbar.css';
 import { RiRobot2Line } from 'react-icons/ri';
@@ -24,21 +24,23 @@ import { fetchBotsList } from '../services/bots';
 import TeamEdit from './TeamEdit';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import TeamShareModal from './TeamShareModal';
-import { App, Button, Dropdown, Modal, Tag, theme } from 'antd';
+import { App } from 'antd';
 import { useTranslation } from '@/hooks/useTranslation';
 import { sortTeamsByUpdatedAt } from '@/utils/team';
 import { sortBotsByUpdatedAt } from '@/utils/bot';
 import { useRouter } from 'next/navigation';
-import { getSharedTagStyle as getStatusTagStyle, getWorkflowTagStyle } from '@/utils/styles';
+import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
+import { Tag } from '@/components/ui/tag';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown';
 
 export default function TeamList() {
   const { t } = useTranslation('common');
   const { message } = App.useApp();
-  const { token } = theme.useToken();
   const [teams, setTeams] = useState<Team[]>([]);
   const [bots, setBots] = useState<Bot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  // Unified error prompt using antd message.error, no local error state needed
   const [editingTeamId, setEditingTeamId] = useState<number | null>(null);
   const [prefillTeam, setPrefillTeam] = useState<Team | null>(null);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
@@ -50,8 +52,6 @@ export default function TeamList() {
   const router = useRouter();
   const isEditing = editingTeamId !== null;
   const isMobile = useMediaQuery('(max-width: 639px)');
-  const statusTagStyle = useMemo<React.CSSProperties>(() => getStatusTagStyle(token), [token]);
-  const workflowTagStyle = useMemo<React.CSSProperties>(() => getWorkflowTagStyle(token), [token]);
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
     updater => {
@@ -175,13 +175,13 @@ export default function TeamList() {
   const getTeamStatusLabel = (team: Team) => {
     if (team.share_status === 1) {
       return (
-        <Tag className="!m-0" style={statusTagStyle}>
+        <Tag variant="info">
           {t('teams.sharing')}
         </Tag>
       );
     } else if (team.share_status === 2 && team.user?.user_name) {
       return (
-        <Tag className="!m-0" style={statusTagStyle}>
+        <Tag variant="success">
           {t('teams.shared_by', { author: team.user.user_name })}
         </Tag>
       );
