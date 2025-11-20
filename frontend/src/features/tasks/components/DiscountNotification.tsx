@@ -76,7 +76,8 @@ export default function DiscountNotification({ className = '' }: DiscountNotific
         className={`
           relative overflow-hidden p-3
           bg-gradient-to-r from-orange-50 to-red-50
-          border border-orange-200
+          dark:from-orange-950/30 dark:to-red-950/30
+          border border-orange-200 dark:border-orange-800
           shadow-sm
           transition-all duration-300
           hover:shadow-md
