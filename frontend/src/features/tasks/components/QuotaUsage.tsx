@@ -114,7 +114,7 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
       <TooltipTrigger asChild>
         <Button
           variant="ghost"
-          className="!text-text-muted hover:!text-text-primary"
+          className="!text-text-muted hover:!text-text-primary text-xs"
           size="sm"
           style={{
             padding: 0,
