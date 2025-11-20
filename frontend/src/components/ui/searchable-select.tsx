@@ -60,6 +60,8 @@ export function SearchableSelect({
   const inputRef = React.useRef<HTMLInputElement>(null);
   const triggerRef = React.useRef<HTMLDivElement>(null);
 
+  const listboxId = React.useId();
+
   // Filter items based on search text
   const filteredItems = React.useMemo(() => {
     if (!searchText.trim()) {
@@ -126,6 +128,7 @@ export function SearchableSelect({
                   type="button"
                   role="combobox"
                   aria-expanded={isOpen}
+                  aria-controls={listboxId}
                   disabled={disabled}
                   title={selectedItem ? selectedItem.label : undefined}
                   className={cn(
@@ -165,7 +168,7 @@ export function SearchableSelect({
             )}
           >
             <div className="max-h-[300px] overflow-y-auto">
-              <div className="p-1">
+              <div className="p-1" id={listboxId} role="listbox">
                 {error ? (
                   <div
                     className="px-2 py-1.5 text-sm text-left font-light"
