@@ -542,7 +542,7 @@ export default function ChatArea({
 
         {/* WeCode Getting Started Area - only show when no messages and it's code task type */}
         {!hasMessages && taskType === 'code' && (
-          <div className="w-full max-w-3xl px-4 sm:px-6 mt-8 sm:mt-12 mb-8">
+          <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 mt-8 sm:mt-12 mb-8">
             <WeCodeGettingStarted />
           </div>
         )}
