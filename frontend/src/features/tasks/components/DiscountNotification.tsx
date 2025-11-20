@@ -5,7 +5,8 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Card, Button } from 'antd';
+import { Card } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 
 interface DiscountNotificationProps {
@@ -57,8 +58,8 @@ export default function DiscountNotification({ className = '' }: DiscountNotific
       <div className={`w-full ${className}`}>
         <div className="flex justify-end">
           <Button
-            type="text"
-            size="small"
+            variant="ghost"
+            size="sm"
             className="text-gray-400 hover:text-orange-600 text-xs"
             onClick={handleReopen}
           >
@@ -73,29 +74,23 @@ export default function DiscountNotification({ className = '' }: DiscountNotific
     <div className={`w-full ${className}`}>
       <Card
         className={`
-          relative overflow-hidden
+          relative overflow-hidden p-3
           bg-gradient-to-r from-orange-50 to-red-50
           border border-orange-200
           shadow-sm
           transition-all duration-300
           hover:shadow-md
         `}
-        bodyStyle={{ padding: '12px' }}
       >
         {/* 关闭按钮 */}
         <Button
-          type="text"
-          size="small"
-          className="absolute top-2 right-2 text-gray-400 hover:text-gray-600 z-50"
-          style={{
-            position: 'absolute',
-            top: '8px !important',
-            right: '8px !important',
-            left: 'auto !important',
-          }}
-          icon={<XMarkIcon className="w-4 h-4" />}
+          variant="ghost"
+          size="icon"
+          className="absolute top-2 right-2 h-6 w-6 text-gray-400 hover:text-gray-600 z-50"
           onClick={handleClose}
-        />
+        >
+          <XMarkIcon className="w-4 h-4" />
+        </Button>
 
         <div className="flex items-center gap-3">
           {/* 内容区域 */}

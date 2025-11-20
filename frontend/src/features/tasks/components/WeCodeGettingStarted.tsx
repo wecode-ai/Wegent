@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import { Card } from 'antd';
+import { Card } from '@/components/ui/card';
 import {
   CodeBracketIcon,
   CloudIcon,
@@ -93,30 +93,24 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
               <Card
                 key={index}
                 className={`
-                  cursor-pointer transition-all duration-200
-                  hover:shadow-lg hover:-translate-y-1
-                  border border-border bg-surface
-                  ${item.cardClass}
-                  flex-shrink-0 w-[calc(40vw-12px)] h-48 min-w-[140px] max-w-[180px]
-                  snap-start
-                `}
+                cursor-pointer transition-all duration-200
+                hover:shadow-lg hover:-translate-y-1
+                border border-border bg-surface
+                ${item.cardClass}
+                flex-shrink-0 w-[calc(40vw-12px)] h-48 min-w-[140px] max-w-[180px]
+                snap-start
+                p-4
+              `}
                 onClick={() => handleCardClick(item.link)}
-                bodyStyle={{
-                  padding: '16px 12px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  justifyContent: 'center',
-                  height: '100%',
-                }}
               >
-                <div className="text-center">
+                <div className="text-center flex flex-col justify-center h-full">
                   {/* 图标 */}
                   <div
                     className="
-                    inline-flex items-center justify-center
-                    w-10 h-10 rounded-full mb-3
-                    bg-muted border border-border
-                  "
+                  inline-flex items-center justify-center
+                  w-10 h-10 rounded-full mb-3
+                  bg-muted border border-border
+                "
                   >
                     <div className="text-primary">{item.icon}</div>
                   </div>
@@ -146,12 +140,11 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
                 hover:shadow-lg hover:-translate-y-1
                 border border-border bg-surface
                 ${item.cardClass}
+                p-5
               `}
               onClick={() => handleCardClick(item.link)}
-              bodyStyle={{ padding: '20px' }}
             >
               <div className="text-center">
-                {/* 图标 */}
                 <div
                   className="
                   inline-flex items-center justify-center
