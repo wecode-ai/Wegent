@@ -110,11 +110,7 @@ interface WorkbenchProps {
   thinking?: Array<{
     title: string;
     next_action: string;
-    details?: {
-      timestamp?: string;
-      created_at?: string;
-      [key: string]: unknown;
-    };
+    details?: Record<string, unknown>;
   }> | null;
 }
 
@@ -320,11 +316,7 @@ export default function Workbench({
     thinkingSteps: Array<{
       title: string;
       next_action: string;
-      details?: {
-        timestamp?: string;
-        created_at?: string;
-        [key: string]: unknown;
-      };
+      details?: Record<string, unknown>;
     }>
   ): TimelineStep[] => {
     if (!thinkingSteps || thinkingSteps.length === 0) return [];
@@ -361,12 +353,12 @@ export default function Workbench({
       }
 
       // Extract timestamp
-      const details = step.details;
-      if (details?.timestamp && typeof details.timestamp === 'string') {
+      const details = step.details as { timestamp?: string; created_at?: string } | undefined;
+      if (details?.timestamp) {
         timestamp = new Date(details.timestamp).toLocaleTimeString('en-US', {
           hour12: false,
         });
-      } else if (details?.created_at && typeof details.created_at === 'string') {
+      } else if (details?.created_at) {
         timestamp = new Date(details.created_at).toLocaleTimeString('en-US', {
           hour12: false,
         });

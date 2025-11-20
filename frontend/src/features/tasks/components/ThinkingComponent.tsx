@@ -105,8 +105,8 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
   // Initialize isOpen based on taskStatus
   const shouldBeCollapsed =
     taskStatus === 'COMPLETED' || taskStatus === 'FAILED' || taskStatus === 'CANCELLED';
-  const [isOpen, setIsOpen] = useState(!shouldBeCollapsed);
 
+  const [isOpen, setIsOpen] = useState(!shouldBeCollapsed);
   const previousSignatureRef = useRef<string | null>(null);
   const userCollapsedRef = useRef(false);
   const previousStatusRef = useRef<string | undefined>(taskStatus);
@@ -248,7 +248,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       if (step.details?.message?.id) {
         // Assuming message id might contain timestamp info, or we need to find timestamp field
         // For now, we'll try to use created_at or timestamp if available
-        const timestamp = step.details.timestamp || step.details.created_at;
+        const timestamp = step.details?.timestamp || step.details?.created_at;
         if (timestamp) {
           startTime = new Date(timestamp).getTime();
           break;
@@ -260,7 +260,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     for (let i = thinkingSteps.length - 1; i >= 0; i--) {
       const step = thinkingSteps[i];
       if (step.details?.message?.id) {
-        const timestamp = step.details.timestamp || step.details.created_at;
+        const timestamp = step.details?.timestamp || step.details?.created_at;
         if (timestamp) {
           endTime = new Date(timestamp).getTime();
           break;
