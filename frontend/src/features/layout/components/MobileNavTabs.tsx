@@ -54,13 +54,13 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
             onClick={() => router.push(tab.path)}
             className={`
               flex items-center justify-center gap-1.5
-              px-3 py-1.5 rounded-full text-sm font-normal
+              px-3 py-1.5 rounded-full text-base font-bold
               transition-all duration-200
               min-w-0 flex-shrink-0
               ${
                 isActive
                   ? 'bg-primary text-white shadow-sm'
-                  : 'text-text-secondary hover:text-text-primary hover:bg-surface/80'
+                  : 'text-text-muted hover:text-text-primary hover:bg-surface/80'
               }
             `}
             aria-label={tab.label}

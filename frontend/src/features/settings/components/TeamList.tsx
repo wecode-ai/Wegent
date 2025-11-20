@@ -22,6 +22,7 @@ import { Bot, Team } from '@/types/api';
 import { fetchTeamsList, deleteTeam, shareTeam } from '../services/teams';
 import { fetchBotsList } from '../services/bots';
 import TeamEdit from './TeamEdit';
+import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import TeamShareModal from './TeamShareModal';
 import { App, Button, Dropdown, Modal, Tag, theme } from 'antd';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -506,26 +507,9 @@ export default function TeamList() {
                   </div>
                   <div className="border-t border-border pt-2 bg-surface">
                     <div className="flex justify-center">
-                      <Button
-                        onClick={handleCreateTeam}
-                        type="primary"
-                        size="small"
-                        icon={
-                          <svg
-                            className="h-4 w-4 align-middle"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            viewBox="0 0 24 24"
-                          >
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                          </svg>
-                        }
-                        style={{ margin: '8px 0' }}
-                        className="!text-base"
-                      >
+                      <UnifiedAddButton onClick={handleCreateTeam}>
                         {t('teams.new_team')}
-                      </Button>
+                      </UnifiedAddButton>
                     </div>
                   </div>
                 </>
