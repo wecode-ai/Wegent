@@ -110,7 +110,7 @@ export default function TeamSelector({
         value: team.id,
       };
     });
-  }, [teams, sharedBadgeStyle]);
+  }, [teams, sharedBadgeStyle, t]);
 
   const filterOption = (input: string, option?: { label: React.ReactNode; value: number }) => {
     if (!option) return false;

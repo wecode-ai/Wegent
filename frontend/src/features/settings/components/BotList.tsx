@@ -60,7 +60,7 @@ export default function BotList() {
       }
     }
     loadBots();
-  }, []);
+  }, [message, setBotsSorted, t]);
 
   const handleCreateBot = () => {
     setCloningBot(null);
