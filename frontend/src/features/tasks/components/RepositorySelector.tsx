@@ -4,19 +4,20 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Select, App } from 'antd';
+import { useState, useEffect, useMemo } from 'react';
+import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGithub } from 'react-icons/fi';
 import { GitRepoInfo, TaskDetail } from '@/types/api';
 import { useUser } from '@/features/common/UserContext';
 import { useRouter } from 'next/navigation';
 import Modal from '@/features/common/Modal';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from 'react-i18next';
 import { getLastRepo } from '@/utils/userPreferences';
 import { githubApis } from '@/apis/github';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+import { useToast } from '@/hooks/use-toast';
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null;
@@ -31,7 +32,7 @@ export default function RepositorySelector({
   disabled,
   selectedTaskDetail,
 }: RepositorySelectorProps) {
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const { user } = useUser();
   const router = useRouter();
   const [repos, setRepos] = useState<GitRepoInfo[]>([]);
@@ -62,42 +63,22 @@ export default function RepositorySelector({
       return data;
     } catch {
       setError('Failed to load repositories');
-      message.error('Failed to load repositories');
+      toast({
+        variant: 'destructive',
+        title: 'Failed to load repositories',
+      });
       return [];
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSearch = (query: string) => {
-    githubApis
-      .searchRepositories(query)
-      .then(data => {
-        setRepos(data);
-        setError(null);
-      })
-      .catch(() => {
-        setError('Failed to search repositories');
-        message.error('Failed to search repositories');
-      })
-      .finally(() => setLoading(false));
-  };
-
-  const handleChange = (value: { value: number; label: React.ReactNode } | undefined) => {
-    if (!value) {
-      handleRepoChange(null);
-      return;
-    }
-    const repo = repos.find(r => r.git_repo_id === value.value);
+  const handleChange = (value: string) => {
+    const repo = repos.find(r => r.git_repo_id === Number(value));
     if (repo) {
       handleRepoChange(repo);
     }
   };
-
-  const repoOptions = repos.map(repo => ({
-    label: repo.git_repo,
-    value: repo.git_repo_id,
-  }));
 
   /**
    * Centralized repository selection logic
@@ -161,11 +142,17 @@ export default function RepositorySelector({
             handleRepoChange(matched);
             setError(null);
           } else {
-            message.error('No repositories found');
+            toast({
+              variant: 'destructive',
+              title: 'No repositories found',
+            });
           }
         } catch {
           setError('Failed to search repositories');
-          message.error('Failed to search repositories');
+          toast({
+            variant: 'destructive',
+            title: 'Failed to search repositories',
+          });
         } finally {
           if (!canceled) {
             setLoading(false);
@@ -226,83 +213,44 @@ export default function RepositorySelector({
   }, [selectedTaskDetail?.git_repo, disabled, user, repos.length]);
 
   /**
-   * Handle dropdown open/close
-   * Load repos on first open if not already loaded
-   */
-  const handleOpenChange = (visible: boolean) => {
-    if (!hasGitInfo() && visible) {
-      setIsModalOpen(true);
-      return;
-    }
-
-    // Load repositories on first open if not already loaded
-    if (visible && repos.length === 0 && hasGitInfo() && !loading) {
-      loadRepositories();
-    }
-  };
-
-  /**
-   * Handle clear button click
-   * Reload repositories to refresh the list
-   */
-  const handleClear = () => {
-    loadRepositories();
-  };
-
-  /**
    * Navigate to settings page to configure git integration
    */
   const handleModalClick = () => {
     setIsModalOpen(false);
     router.push(paths.settings.integrations.getHref());
   };
-
   const { t } = useTranslation();
   const isMobile = useIsMobile();
+
+  // Convert repos to SearchableSelectItem format
+  const selectItems: SearchableSelectItem[] = useMemo(() => {
+    return repos.map(repo => ({
+      value: repo.git_repo_id.toString(),
+      label: repo.git_repo,
+      searchText: repo.git_repo,
+    }));
+  }, [repos]);
 
   return (
     <div className="flex items-center space-x-1 min-w-0" data-tour="repo-selector">
       <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0" />
-      <Select
-        labelInValue
-        showSearch
-        variant="borderless"
-        allowClear
-        value={
-          selectedRepo
-            ? { value: selectedRepo.git_repo_id, label: selectedRepo.git_repo }
-            : undefined
-        }
-        placeholder={
-          <span className="text-sx truncate h-2">{t('branches.select_repository')}</span>
-        }
-        className="repository-selector min-w-0 truncate"
-        style={{ width: isMobile ? 150 : 200, display: 'inline-block', paddingRight: 20 }}
-        popupMatchSelectWidth={false}
-        styles={{ popup: { root: { maxWidth: 200 } } }}
-        classNames={{ popup: { root: 'repository-selector-dropdown custom-scrollbar' } }}
-        disabled={disabled}
-        loading={loading}
-        filterOption={false}
-        onSearch={handleSearch}
-        onChange={handleChange}
-        notFoundContent={
-          error ? (
-            <div className="px-3 py-2 text-sm" style={{ color: 'rgb(var(--color-error))' }}>
-              {error}
-              {/* antd message.error is globally prompted */}
-            </div>
-          ) : !loading ? (
-            <div className="px-3 py-2 text-sm text-text-muted">
-              {repos.length === 0 ? 'Select Repository' : 'No repositories found'}
-            </div>
-          ) : null
-        }
-        options={repoOptions}
-        open={hasGitInfo() ? undefined : false}
-        onOpenChange={handleOpenChange}
-        onClear={handleClear}
-      />
+      <div className="relative" style={{ width: isMobile ? 150 : 200 }}>
+        <SearchableSelect
+          value={selectedRepo?.git_repo_id.toString()}
+          onValueChange={handleChange}
+          disabled={disabled || loading}
+          placeholder={t('branches.select_repository')}
+          searchPlaceholder={t('branches.search_repository')}
+          items={selectItems}
+          loading={loading}
+          error={error}
+          emptyText={t('branches.select_repository')}
+          noMatchText={t('branches.no_match')}
+          triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
+          contentClassName="max-w-[200px]"
+          renderTriggerValue={item => <span className="truncate">{item?.label}</span>}
+        />
+      </div>
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -314,8 +262,8 @@ export default function RepositorySelector({
             {t('guide.description')}
           </p>
           <Button
-            type="primary"
-            size="small"
+            variant="default"
+            size="sm"
             onClick={handleModalClick}
             style={{ minWidth: '100px' }}
           >

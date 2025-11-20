@@ -1,31 +1,23 @@
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import { PlusIcon } from '@heroicons/react/24/outline';
-import { ReactNode, CSSProperties } from 'react';
+import { ReactNode } from 'react';
 
 interface UnifiedAddButtonProps {
   onClick: () => void;
   children: ReactNode;
   className?: string;
-  style?: CSSProperties;
   icon?: ReactNode;
 }
 
 export default function UnifiedAddButton({
   onClick,
   children,
-  className = '',
-  style,
+  className,
   icon,
 }: UnifiedAddButtonProps) {
   return (
-    <Button
-      onClick={onClick}
-      type="primary"
-      size="small"
-      icon={icon || <PlusIcon className="h-4 w-4 align-middle" />}
-      style={{ margin: '8px 0', ...style }}
-      className={`!text-base flex items-center justify-center gap-1 ${className}`}
-    >
+    <Button onClick={onClick} variant="default" size="sm" className={className}>
+      {icon || <PlusIcon className="h-4 w-4" />}
       {children}
     </Button>
   );

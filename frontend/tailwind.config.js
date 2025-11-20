@@ -33,6 +33,8 @@ module.exports = {
         success: withOpacity('--color-success'),
         error: withOpacity('--color-error'),
         warning: 'rgb(245 158 11)', // Tailwind orange-500
+        link: withOpacity('--color-link'),
+        'code-bg': withOpacity('--color-code-bg'),
       },
       borderRadius: {
         lg: 'var(--radius)',

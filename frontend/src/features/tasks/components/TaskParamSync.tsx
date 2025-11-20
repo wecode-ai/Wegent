@@ -8,13 +8,13 @@ import { useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { Task } from '@/types/api';
-import { App } from 'antd';
+import { useToast } from '@/hooks/use-toast';
 
 /**
  * Listen to the taskId parameter in the URL and automatically set selectedTask
  */
 export default function TaskParamSync() {
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const searchParams = useSearchParams();
   const { selectedTaskDetail, setSelectedTask } = useTaskContext();
 
@@ -43,7 +43,10 @@ export default function TaskParamSync() {
         // If it exists, set it. The context will handle fetching the full detail.
         setSelectedTask({ id: Number(taskId) } as Task);
       } catch {
-        message.error('Task not found');
+        toast({
+          variant: 'destructive',
+          title: 'Task not found',
+        });
         const url = new URL(window.location.href);
         url.searchParams.delete('taskId');
         router.replace(url.pathname + url.search);
@@ -51,7 +54,7 @@ export default function TaskParamSync() {
     };
 
     verifyAndSetTask();
-  }, [searchParams, selectedTaskDetail, router, setSelectedTask, message]);
+  }, [searchParams, selectedTaskDetail, router, setSelectedTask, toast]);
 
   return null; // Only responsible for synchronization, does not render any content
 }

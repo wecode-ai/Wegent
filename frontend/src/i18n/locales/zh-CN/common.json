@@ -115,6 +115,7 @@
     "active": "活跃",
     "inactive": "非活跃",
     "select_team": "选择一个团队",
+    "search_team": "搜索团队...",
     "no_bots": "没有机器人",
     "edit": "编辑团队",
     "chat": "发送任务",
@@ -222,9 +223,11 @@
   "branches": {
     "load_failed": "加载分支失败",
     "select_repository": "选择仓库",
+    "search_repository": "搜索仓库...",
     "select_branch": "选择分支",
     "loading": "加载分支中...",
     "no_branch": "未找到分支",
+    "no_match": "没有匹配的结果",
     "default": "(默认)",
     "set_token": "设置token"
   },

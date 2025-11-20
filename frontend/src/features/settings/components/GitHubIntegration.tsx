@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import '@/features/common/scrollbar.css';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { FiGithub, FiGitlab } from 'react-icons/fi';
 import GitHubEdit from './GitHubEdit';
@@ -15,12 +15,12 @@ import LoadingState from '@/features/common/LoadingState';
 import { GitInfo } from '@/types/api';
 import { useUser } from '@/features/common/UserContext';
 import { fetchGitInfo, deleteGitToken } from '../services/github';
-import { App } from 'antd';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useToast } from '@/hooks/use-toast';
 
 export default function GitHubIntegration() {
   const { t } = useTranslation('common');
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const { user, refresh } = useUser();
   const [gitInfo, setGitInfo] = useState<GitInfo[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -40,14 +40,17 @@ export default function GitHubIntegration() {
           setGitInfo([]);
         }
       } catch {
-        message.error(t('integrations.loading'));
+        toast({
+          variant: 'destructive',
+          title: t('integrations.loading'),
+        });
         setGitInfo([]);
       } finally {
         setIsLoading(false);
       }
     }
     loadGitInfo();
-  }, [user, message, t]);
+  }, [user, toast, t]);
 
   const platforms = gitInfo || [];
 
@@ -84,10 +87,18 @@ export default function GitHubIntegration() {
     // Unified error prompt using antd message.error, no local error state needed
     try {
       const success = await deleteGitToken(user, domain);
-      if (!success) message.error(t('integrations.delete'));
+      if (!success) {
+        toast({
+          variant: 'destructive',
+          title: t('integrations.delete'),
+        });
+      }
       await refresh();
     } catch {
-      message.error(t('integrations.delete'));
+      toast({
+        variant: 'destructive',
+        title: t('integrations.delete'),
+      });
     }
   };
 
@@ -97,7 +108,7 @@ export default function GitHubIntegration() {
         <h2 className="text-xl font-semibold text-text-primary mb-1">{t('integrations.title')}</h2>
         <p className="text-sm text-text-muted mb-1">{t('integrations.description')}</p>
       </div>
-      <div className="bg-surface border border-border rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar w-full">
+      <div className="bg-base border border-border rounded-md p-2 space-y-1 max-h-[70vh] overflow-y-auto custom-scrollbar w-full">
         {isLoading ? (
           <LoadingState fullScreen={false} message={t('integrations.loading')} />
         ) : (
@@ -127,23 +138,25 @@ export default function GitHubIntegration() {
                     </div>
                     <div className="flex items-center space-x-2">
                       <Button
-                        type="text"
-                        size="small"
-                        icon={<PencilIcon className="w-4 h-4 text-text-muted" />}
+                        variant="ghost"
+                        size="sm"
                         onClick={() => handleEdit(info)}
                         title={t('integrations.edit_token')}
                         style={{ padding: '4px' }}
                         className="!text-text-muted hover:!text-text-primary"
-                      />
+                      >
+                        <PencilIcon className="w-4 h-4 text-text-muted" />
+                      </Button>
                       <Button
-                        type="text"
-                        size="small"
-                        icon={<TrashIcon className="w-4 h-4 text-text-muted" />}
+                        variant="ghost"
+                        size="sm"
                         onClick={() => handleDelete(info.git_domain)}
                         title={t('integrations.delete')}
                         style={{ padding: '4px' }}
                         className="!text-text-muted hover:!text-text-primary"
-                      />
+                      >
+                        <TrashIcon className="w-4 h-4 text-text-muted" />
+                      </Button>
                     </div>
                   </div>
                   {platforms.length > 1 &&

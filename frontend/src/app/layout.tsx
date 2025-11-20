@@ -4,15 +4,15 @@
 
 import type { Metadata } from 'next';
 import './globals.css';
-import 'antd/dist/reset.css';
 import '@/features/common/scrollbar.css';
 import MockInit from '@/features/mock/MockInit';
-import AntdProvider from './AntdProvider';
 import AuthGuard from '@/features/common/AuthGuard';
 import I18nProvider from '@/components/I18nProvider';
 import { ThemeProvider } from '@/features/theme/ThemeProvider';
 import { ThemeScript } from '@/features/theme/ThemeScript';
 import ErrorBoundary from '@/features/common/ErrorBoundary';
+import { Toaster } from '@/components/ui/toaster';
+import { TooltipProvider } from '@/components/ui/tooltip';
 
 export const metadata: Metadata = {
   title: 'WeCode AI Assistant',
@@ -40,15 +40,16 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="font-sans antialiased bg-base text-text-primary" suppressHydrationWarning>
         <ErrorBoundary>
           <ThemeProvider>
-            <MockInit>
-              <I18nProvider>
-                <AntdProvider>
+            <TooltipProvider>
+              <MockInit>
+                <I18nProvider>
                   <AuthGuard>{children}</AuthGuard>
-                </AntdProvider>
-              </I18nProvider>
-            </MockInit>
+                </I18nProvider>
+              </MockInit>
+            </TooltipProvider>
           </ThemeProvider>
         </ErrorBoundary>
+        <Toaster />
       </body>
     </html>
   );

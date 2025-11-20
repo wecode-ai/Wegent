@@ -6,7 +6,6 @@
 import '@/features/common/scrollbar.css';
 
 import { useCallback, useEffect, useState } from 'react';
-import { App } from 'antd';
 import { PencilIcon, TrashIcon, DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { RiRobot2Line } from 'react-icons/ri';
 import LoadingState from '@/features/common/LoadingState';
@@ -19,11 +18,19 @@ import { sortBotsByUpdatedAt } from '@/utils/bot';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tag } from '@/components/ui/tag';
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { useToast } from '@/hooks/use-toast';
 
 export default function BotList() {
   const { t } = useTranslation('common');
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const [bots, setBots] = useState<Bot[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [editingBotId, setEditingBotId] = useState<number | null>(null);
@@ -50,13 +57,16 @@ export default function BotList() {
         const botsData = await fetchBotsList();
         setBotsSorted(botsData);
       } catch {
-        message.error(t('bots.loading'));
+        toast({
+          variant: 'destructive',
+          title: t('bots.loading'),
+        });
       } finally {
         setIsLoading(false);
       }
     }
     loadBots();
-  }, [message, setBotsSorted, t]);
+  }, [toast, setBotsSorted, t]);
 
   const handleCreateBot = () => {
     setCloningBot(null);
@@ -93,7 +103,10 @@ export default function BotList() {
       setBotToDelete(null);
     } catch (e) {
       const errorMessage = e instanceof Error && e.message ? e.message : t('bots.delete');
-      message.error(errorMessage);
+      toast({
+        variant: 'destructive',
+        title: errorMessage,
+      });
     }
   };
 
@@ -110,7 +123,7 @@ export default function BotList() {
           <p className="text-sm text-text-muted mb-1">{t('bots.description')}</p>
         </div>
         <div
-          className={`bg-surface border border-border rounded-md p-2 w-full ${
+          className={`bg-base border border-border rounded-md p-2 w-full ${
             isEditing
               ? 'md:min-h-[70vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
               : 'max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'
@@ -128,14 +141,14 @@ export default function BotList() {
                   editingBotId={editingBotId}
                   cloningBot={cloningBot}
                   onClose={handleCloseEditor}
-                  message={message}
+                  toast={toast}
                 />
               ) : (
                 <>
                   <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
                     {bots.length > 0 ? (
                       bots.map(bot => (
-                        <Card key={bot.id} className="p-4 hover:shadow-md transition-shadow">
+                        <Card key={bot.id} className="p-4 bg-base hover:bg-hover transition-colors">
                           <div className="flex items-center justify-between min-w-0">
                             <div className="flex items-center space-x-3 min-w-0 flex-1">
                               <RiRobot2Line className="w-5 h-5 text-primary flex-shrink-0" />
@@ -208,7 +221,7 @@ export default function BotList() {
                       </div>
                     )}
                   </div>
-                  <div className="border-t border-border pt-3 mt-3 bg-surface">
+                  <div className="border-t border-border pt-3 mt-3 bg-base">
                     <div className="flex justify-center">
                       <UnifiedAddButton onClick={handleCreateBot}>
                         {t('bots.new_bot')}
@@ -227,15 +240,13 @@ export default function BotList() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('bots.delete_confirm_title')}</DialogTitle>
-            <DialogDescription>
-              {t('bots.delete_confirm_message')}
-            </DialogDescription>
+            <DialogDescription>{t('bots.delete_confirm_message')}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="secondary" onClick={handleCancelDelete}>
               {t('common.cancel')}
             </Button>
-            <Button variant="default" onClick={handleConfirmDelete} className="bg-error hover:bg-error/90">
+            <Button variant="destructive" onClick={handleConfirmDelete}>
               {t('common.confirm')}
             </Button>
           </DialogFooter>

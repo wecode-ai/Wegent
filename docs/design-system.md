@@ -1,18 +1,19 @@
 # Wegent 设计系统文档
 
-本文档定义了 Wegent 前端项目的统一设计系统，包括颜色、间距、字体、组件等规范。
+本文档定义了 Wegent 前端项目的统一设计系统,包括颜色、间距、字体、组件等规范。
 
 ---
 
 ## 目录
 
 1. [设计原则](#设计原则)
-2. [颜色系统](#颜色系统)
-3. [间距系统](#间距系统)
-4. [圆角规范](#圆角规范)
-5. [字体排版](#字体排版)
-6. [组件库](#组件库)
-7. [布局模式](#布局模式)
+2. [技术栈](#技术栈)
+3. [颜色系统](#颜色系统)
+4. [间距系统](#间距系统)
+5. [圆角规范](#圆角规范)
+6. [字体排版](#字体排版)
+7. [组件库](#组件库)
+8. [布局模式](#布局模式)
 
 ---
 
@@ -20,16 +21,44 @@
 
 ### 核心理念
 - **一致性**：所有页面保持统一的视觉风格和交互模式
-- **简洁性**：减少视觉噪音，突出核心内容
+- **简洁性**：减少视觉噪音,突出核心内容
 - **响应式**：适配桌面端、平板和移动端
 - **可访问性**：支持暗黑模式和无障碍访问
 
 ### 设计参考
-以 `/code` 页面（代码任务页面）的 ChatArea 组件为设计标准，统一全站风格。
+以 `/code` 页面（代码任务页面）的 ChatArea 组件为设计标准,统一全站风格。
+
+---
+
+## 技术栈
+
+### UI 框架
+- **shadcn/ui**: 基于 Radix UI 的组件库
+- **Radix UI**: 无障碍的 headless UI 组件
+- **Tailwind CSS**: 实用优先的 CSS 框架
+- **lucide-react**: 图标库
+
+### 表单管理
+- **react-hook-form**: 高性能表单管理
+- **zod**: TypeScript 优先的模式验证
+
+### 其他依赖
+- **vaul**: Drawer 组件基础库
+- **class-variance-authority**: 组件变体管理
+- **clsx** & **tailwind-merge**: 类名合并工具
 
 ---
 
 ## 颜色系统
+
+### 设计理念
+
+采用 **Calm UI（安静界面）** 设计：
+- **低饱和度 + 低对比度**：减少视觉疲劳
+- **无阴影或极轻阴影**：保持界面简洁
+- **大量留白**：提升可读性
+- **组件颜色差异小**：背景层级差异 <10%
+- **克制使用高亮色**：仅在操作按钮使用薄荷蓝主题色
 
 ### CSS 变量定义
 
@@ -39,70 +68,76 @@
 
 ```css
 --color-bg-base: 主背景色
-  • Light: rgb(255 255 255)
-  • Dark: rgb(33 33 33)
+  • Light: rgb(255 255 255) - 纯白
+  • Dark: rgb(14 15 15) - 接近全黑但略带灰 (#0E0F0F)
 
 --color-bg-surface: 卡片/表面背景色
-  • Light: rgb(247 247 248)
-  • Dark: rgb(52 53 65)
+  • Light: rgb(247 247 248) - 浅灰 (#F7F7F8)
+  • Dark: rgb(26 28 28) - 比主背景略亮 (#1A1C1C)
 
 --color-bg-muted: 弱化背景色
-  • Light: rgb(249 250 251)
-  • Dark: rgb(64 65 79)
+  • Light: rgb(242 242 242) - 中性灰 (#F2F2F2)
+  • Dark: rgb(33 36 36) - 微亮低对比度 (#212424)
 
 --color-bg-hover: 悬停背景色
-  • Light: rgb(236 236 241)
-  • Dark: rgb(64 65 79)
+  • Light: rgb(224 224 224) - 悬停灰 (#E0E0E0)
+  • Dark: rgb(42 45 45) - 轻微对比 (#2A2D2D)
 ```
 
 #### 边框色
 
 ```css
 --color-border: 默认边框色
-  • Light: rgb(217 217 227)
-  • Dark: rgb(64 65 79)
+  • Light: rgb(224 224 224) - 轻微对比 (#E0E0E0)
+  • Dark: rgb(42 45 45) - 轻微对比 (#2A2D2D)
 
 --color-border-strong: 强调边框色
-  • Light: rgb(192 192 207)
-  • Dark: rgb(86 88 105)
+  • Light: rgb(192 192 192) - 中等对比 (#C0C0C0)
+  • Dark: rgb(52 53 53) - 稍强对比 (#343535)
 ```
 
 #### 文字色
 
 ```css
 --color-text-primary: 主要文字色
-  • Light: rgb(13 13 13)
-  • Dark: rgb(236 236 241)
+  • Light: rgb(26 26 26) - 深灰不刺眼 (#1A1A1A)
+  • Dark: rgb(236 236 236) - 高亮白但不刺眼 (#ECECEC)
 
 --color-text-secondary: 次要文字色
-  • Light: rgb(64 64 64)
-  • Dark: rgb(217 217 227)
+  • Light: rgb(102 102 102) - 中等灰度 (#666666)
+  • Dark: rgb(212 212 212) - 低亮度灰白 (#D4D4D4)
 
 --color-text-muted: 弱化文字色
-  • Light: rgb(115 115 115)
-  • Dark: rgb(172 172 190)
+  • Light: rgb(160 160 160) - 用于提示、时间戳 (#A0A0A0)
+  • Dark: rgb(160 160 160) - 用于提示、时间戳 (#A0A0A0)
 
 --color-text-inverted: 反转文字色
-  • Light: rgb(255 255 255)
-  • Dark: rgb(33 33 33)
+  • Light: rgb(255 255 255) - 白色
+  • Dark: rgb(14 15 15) - 深色
 ```
 
 #### 主题色
 
 ```css
---color-primary: 主题色
-  • rgb(16 163 127) - 青绿色
+--color-primary: 主题色（薄荷蓝）
+  • rgb(20 184 166) - 薄荷蓝 (#14B8A6)
 
 --color-primary-contrast: 主题色对比色
-  • rgb(255 255 255)
+  • rgb(255 255 255) - 白色
 
 --color-success: 成功色
-  • Light: rgb(34 197 94)
-  • Dark: rgb(86 211 100)
+  • rgb(20 184 166) - 与主题色一致 (#14B8A6)
 
 --color-error: 错误色
-  • Light: rgb(239 68 68)
-  • Dark: rgb(248 81 73)
+  • Light: rgb(239 68 68) - 红色
+  • Dark: rgb(248 81 73) - 红色
+
+--color-link: 链接色
+  • rgb(85 185 247) - 接近 GPT UI 的链接蓝 (#55B9F7)
+
+--color-code-bg: 代码块背景色
+  • Light: rgb(246 248 250) - 浅灰 (#F6F8FA)
+  • Dark: rgb(13 17 23) - GitHub 风格深色 (#0D1117)
 ```
 
 ### Tailwind 使用方式
@@ -128,6 +163,42 @@ className="bg-primary text-primary-contrast"  // 主题按钮
 className="text-primary"                       // 主题色文字
 className="bg-success"                         // 成功状态
 className="bg-error"                           // 错误状态
+className="text-link"                          // 链接文字
+className="bg-code-bg"                         // 代码块背景
+```
+
+### ChatGPT 风格配色参考
+
+#### 暗黑主题（最常用）
+
+| 角色 | 色值 | 说明 |
+|------|------|------|
+| 主背景 | `#0E0F0F` | 接近全黑但略带灰 |
+| 侧边栏背景 | `#1A1C1C` | 比主背景略亮 |
+| 消息框（AI） | `#212424` | 微亮、低对比度 |
+| 消息框（用户） | `#171919` | 深一些，区分用户 |
+| 标题文字 | `#ECECEC` | 高亮白但不刺眼 |
+| 正文文字 | `#D4D4D4` | 低亮度灰白 |
+| 次要文字 | `#A0A0A0` | 用于提示、时间戳 |
+| 边框色 | `#2A2D2D` | 轻微对比 |
+| 按钮主色 | `#14B8A6` | 薄荷蓝主题色 |
+| 按钮 hover | `#0D9488` | 更深一点 |
+| 链接 | `#55B9F7` | 接近 GPT UI 的链接蓝 |
+| 代码块背景 | `#0D1117` | GitHub 风格深色 |
+
+#### 浅色主题
+
+| 角色 | 色值 | 说明 |
+|------|------|------|
+| 主背景 | `#FFFFFF` | 纯白 |
+| 侧边栏背景 | `#F7F7F8` | 浅灰 |
+| 消息框（AI） | `#F2F2F2` | 浅灰 |
+| 消息框（用户） | `#FFFFFF` | 白色 |
+| 正文文字 | `#1A1A1A` | 深灰 |
+| 次要文字 | `#666666` | 中等灰度 |
+| 边框色 | `#E0E0E0` | 轻微对比 |
+| 按钮主色 | `#14B8A6` | 与暗黑主题一致 |
+| 代码块背景 | `#F6F8FA` | 浅灰 |
 ```
 
 ---
@@ -250,9 +321,13 @@ className="bg-error"                           // 错误状态
 
 ## 组件库
 
-### Button 按钮
+本项目使用 shadcn/ui 组件系统,所有组件位于 `frontend/src/components/ui/` 目录。
 
-**文件位置**：`/components/ui/button.tsx`
+### 基础组件
+
+#### Button 按钮
+
+**文件位置**: [`frontend/src/components/ui/button.tsx`](../frontend/src/components/ui/button.tsx)
 
 #### 变体 (variants)
 
@@ -293,11 +368,9 @@ import { Button } from '@/components/ui/button';
 </Button>
 ```
 
----
+#### Card 卡片
 
-### Card 卡片
-
-**文件位置**：`/components/ui/card.tsx`
+**文件位置**: [`frontend/src/components/ui/card.tsx`](../frontend/src/components/ui/card.tsx)
 
 #### 变体 (variants)
 
@@ -338,11 +411,24 @@ import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 </Card>
 ```
 
+#### Input 输入框
+
+**文件位置**: [`frontend/src/components/ui/input.tsx`](../frontend/src/components/ui/input.tsx)
+
+基础文本输入组件,支持各种 HTML input 类型。
+
+```jsx
+import { Input } from '@/components/ui/input';
+
+<Input type="text" placeholder="Enter text..." />
+<Input type="email" placeholder="Email address" />
+```
+
 ---
 
-### Tag 标签
+#### Tag 标签
 
-**文件位置**：`/components/ui/tag.tsx`
+**文件位置**: [`frontend/src/components/ui/tag.tsx`](../frontend/src/components/ui/tag.tsx)
 
 #### 变体 (variants)
 
@@ -366,11 +452,9 @@ import { Tag } from '@/components/ui/tag';
 </Tag>
 ```
 
----
+#### Badge 徽章
 
-### Badge 徽章
-
-**文件位置**：`/components/ui/badge.tsx`
+**文件位置**: [`frontend/src/components/ui/badge.tsx`](../frontend/src/components/ui/badge.tsx)
 
 用于小型状态指示器、通知数量等。
 
@@ -383,11 +467,48 @@ import { Badge } from '@/components/ui/badge';
 <Badge variant="error" size="sm">3</Badge>
 ```
 
+#### Alert 警告提示
+
+**文件位置**: [`frontend/src/components/ui/alert.tsx`](../frontend/src/components/ui/alert.tsx)
+
+用于页面级别的提示信息。
+
+```jsx
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertCircle } from 'lucide-react';
+
+<Alert variant="destructive">
+  <AlertCircle className="h-4 w-4" />
+  <AlertTitle>Error</AlertTitle>
+  <AlertDescription>
+    Your session has expired. Please log in again.
+  </AlertDescription>
+</Alert>
+```
+
 ---
 
-### Switch 开关
+#### Spinner 加载指示器
 
-**文件位置**：`/components/ui/switch.tsx`
+**文件位置**: [`frontend/src/components/ui/spinner.tsx`](../frontend/src/components/ui/spinner.tsx)
+
+用于显示加载状态。
+
+```jsx
+import { Spinner } from '@/components/ui/spinner';
+
+<Spinner size="sm" />
+<Spinner size="default" />
+<Spinner size="lg" />
+```
+
+---
+
+### 交互组件
+
+#### Switch 开关
+
+**文件位置**: [`frontend/src/components/ui/switch.tsx`](../frontend/src/components/ui/switch.tsx)
 
 基于 Radix UI 的开关组件。
 
@@ -402,13 +523,68 @@ import { Switch } from '@/components/ui/switch';
 </div>
 ```
 
+#### Checkbox 复选框
+
+**文件位置**: [`frontend/src/components/ui/checkbox.tsx`](../frontend/src/components/ui/checkbox.tsx)
+
+```jsx
+import { Checkbox } from '@/components/ui/checkbox';
+
+<div className="flex items-center space-x-2">
+  <Checkbox id="terms" checked={accepted} onCheckedChange={setAccepted} />
+  <label htmlFor="terms">Accept terms and conditions</label>
+</div>
+```
+
 ---
 
-### Dialog 对话框
+#### Radio Group 单选框组
 
-**文件位置**：`/components/ui/dialog.tsx`
+**文件位置**: [`frontend/src/components/ui/radio-group.tsx`](../frontend/src/components/ui/radio-group.tsx)
 
-替代 Ant Design Modal 的对话框组件。
+```jsx
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
+
+<RadioGroup value={value} onValueChange={setValue}>
+  <div className="flex items-center space-x-2">
+    <RadioGroupItem value="option1" id="option1" />
+    <Label htmlFor="option1">Option 1</Label>
+  </div>
+  <div className="flex items-center space-x-2">
+    <RadioGroupItem value="option2" id="option2" />
+    <Label htmlFor="option2">Option 2</Label>
+  </div>
+</RadioGroup>
+```
+
+---
+
+#### Select 选择器
+
+**文件位置**: [`frontend/src/components/ui/select.tsx`](../frontend/src/components/ui/select.tsx)
+
+```jsx
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+
+<Select value={value} onValueChange={setValue}>
+  <SelectTrigger>
+    <SelectValue placeholder="Select an option" />
+  </SelectTrigger>
+  <SelectContent>
+    <SelectItem value="option1">Option 1</SelectItem>
+    <SelectItem value="option2">Option 2</SelectItem>
+  </SelectContent>
+</Select>
+```
+
+---
+
+### 反馈组件
+
+#### Dialog 对话框
+
+**文件位置**: [`frontend/src/components/ui/dialog.tsx`](../frontend/src/components/ui/dialog.tsx)
 
 #### 使用示例
 
@@ -436,11 +612,96 @@ import { Button } from '@/components/ui/button';
 </Dialog>
 ```
 
+#### Drawer 抽屉
+
+**文件位置**: [`frontend/src/components/ui/drawer.tsx`](../frontend/src/components/ui/drawer.tsx)
+
+基于 vaul 的抽屉组件,用于从屏幕边缘滑出的面板。
+
+```jsx
+import { Drawer, DrawerContent, DrawerHeader, DrawerTitle, DrawerDescription, DrawerFooter } from '@/components/ui/drawer';
+import { Button } from '@/components/ui/button';
+
+<Drawer open={open} onOpenChange={setOpen}>
+  <DrawerContent>
+    <DrawerHeader>
+      <DrawerTitle>Edit Profile</DrawerTitle>
+      <DrawerDescription>Make changes to your profile here.</DrawerDescription>
+    </DrawerHeader>
+    <div className="p-4">
+      {/* Content */}
+    </div>
+    <DrawerFooter>
+      <Button onClick={handleSave}>Save</Button>
+      <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+    </DrawerFooter>
+  </DrawerContent>
+</Drawer>
+```
+
 ---
 
-### Dropdown 下拉菜单
+#### Toast 通知
 
-**文件位置**：`/components/ui/dropdown.tsx`
+**文件位置**:
+- [`frontend/src/components/ui/toast.tsx`](../frontend/src/components/ui/toast.tsx)
+- [`frontend/src/components/ui/toaster.tsx`](../frontend/src/components/ui/toaster.tsx)
+- [`frontend/src/hooks/use-toast.ts`](../frontend/src/hooks/use-toast.ts)
+
+用于显示临时通知消息。
+
+```jsx
+import { useToast } from '@/hooks/use-toast';
+
+const { toast } = useToast();
+
+// 成功提示
+toast({
+  title: "Success",
+  description: "Your changes have been saved.",
+});
+
+// 错误提示
+toast({
+  variant: "destructive",
+  title: "Error",
+  description: "Something went wrong.",
+});
+```
+
+**注意**: 需要在根布局中添加 `<Toaster />` 组件。
+
+---
+
+#### Tooltip 工具提示
+
+**文件位置**: [`frontend/src/components/ui/tooltip.tsx`](../frontend/src/components/ui/tooltip.tsx)
+
+```jsx
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { Button } from '@/components/ui/button';
+
+<TooltipProvider>
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <Button variant="ghost" size="icon">
+        <InfoIcon className="h-4 w-4" />
+      </Button>
+    </TooltipTrigger>
+    <TooltipContent>
+      <p>Additional information</p>
+    </TooltipContent>
+  </Tooltip>
+</TooltipProvider>
+```
+
+---
+
+### 导航组件
+
+#### Dropdown Menu 下拉菜单
+
+**文件位置**: [`frontend/src/components/ui/dropdown-menu.tsx`](../frontend/src/components/ui/dropdown-menu.tsx)
 
 基于 Radix UI 的下拉菜单组件。
 
@@ -470,6 +731,122 @@ import { Button } from '@/components/ui/button';
 ```
 
 ---
+
+### 表单组件
+
+#### Form 表单
+
+**文件位置**: [`frontend/src/components/ui/form.tsx`](../frontend/src/components/ui/form.tsx)
+
+基于 react-hook-form 的表单组件系统。
+
+```jsx
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import * as z from 'zod';
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form';
+import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
+
+const formSchema = z.object({
+  username: z.string().min(2).max(50),
+  email: z.string().email(),
+});
+
+function MyForm() {
+  const form = useForm({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      username: "",
+      email: "",
+    },
+  });
+
+  function onSubmit(values) {
+    console.log(values);
+  }
+
+  return (
+    <Form {...form}>
+      <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-4">
+        <FormField
+          control={form.control}
+          name="username"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>Username</FormLabel>
+              <FormControl>
+                <Input placeholder="Enter username" {...field} />
+              </FormControl>
+              <FormDescription>This is your public display name.</FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+        <Button type="submit">Submit</Button>
+      </form>
+    </Form>
+  );
+}
+```
+
+---
+
+#### Label 标签
+
+**文件位置**: [`frontend/src/components/ui/label.tsx`](../frontend/src/components/ui/label.tsx)
+
+表单标签组件。
+
+```jsx
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+
+<div className="space-y-2">
+  <Label htmlFor="email">Email</Label>
+  <Input id="email" type="email" />
+</div>
+```
+
+---
+
+### 数据展示组件
+
+#### Transfer 穿梭框
+
+**文件位置**: [`frontend/src/components/ui/transfer.tsx`](../frontend/src/components/ui/transfer.tsx)
+
+用于在两个列表之间移动项目。
+
+```jsx
+import { Transfer } from '@/components/ui/transfer';
+
+<Transfer
+  dataSource={allItems}
+  targetKeys={selectedKeys}
+  onChange={setSelectedKeys}
+  render={item => item.title}
+/>
+```
+
+---
+
+#### Scroll Area 滚动区域
+
+**文件位置**: [`frontend/src/components/ui/scroll-area.tsx`](../frontend/src/components/ui/scroll-area.tsx)
+
+自定义滚动条的滚动容器。
+
+```jsx
+import { ScrollArea } from '@/components/ui/scroll-area';
+
+<ScrollArea className="h-[200px] w-full rounded-md border p-4">
+  {/* Long content */}
+</ScrollArea>
+```
+
+---
+
 
 ## 布局模式
 
@@ -603,39 +980,6 @@ import { Button } from '@/components/ui/button';
 2. 避免硬编码颜色值
 3. 测试两种主题下的可读性
 
----
-
-## 迁移指南
-
-### 从 Ant Design 迁移
-
-| Ant Design | 自定义组件 | 说明 |
-|-----------|----------|------|
-| `<Button type="primary">` | `<Button variant="default">` | 主要按钮 |
-| `<Button type="default">` | `<Button variant="secondary">` | 次要按钮 |
-| `<Button type="text">` | `<Button variant="ghost">` | 文字按钮 |
-| `<Modal>` | `<Dialog>` | 对话框 |
-| `<Tag>` | `<Tag variant="default">` | 标签 |
-| `<Dropdown>` | `<DropdownMenu>` | 下拉菜单 |
-| `<Switch>` | `<Switch>` | 开关 |
-
-### 迁移示例
-
-**Before (Ant Design):**
-```jsx
-<Button type="text" size="small" onClick={handleEdit}>
-  <PencilIcon />
-</Button>
-```
-
-**After (Custom Components):**
-```jsx
-<Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleEdit}>
-  <PencilIcon className="w-4 h-4" />
-</Button>
-```
-
----
 
 ## 最佳实践
 
@@ -703,31 +1047,24 @@ import { Button } from '@/components/ui/button';
 // 使用 Tailwind 的调试类
 <div className="debug-screens">  {/* 显示当前断点 */}
 ```
-
----
-
-## 更新日志
-
-### v1.0.0 (2025-01-XX)
-
-- ✅ 创建设计系统文档
-- ✅ 定义颜色、间距、圆角、字体规范
-- ✅ 创建基础组件：Button, Card, Tag, Badge, Switch, Dialog, Dropdown
-- ✅ 改造 BotList 为卡片式布局
-- ⏳ 计划改造 TeamList、其他设置页面组件
-- ⏳ 计划统一任务页面组件样式
-
 ---
 
 ## 相关资源
 
-- [Tailwind CSS 官方文档](https://tailwindcss.com/docs)
-- [Radix UI 组件库](https://www.radix-ui.com/)
-- [shadcn/ui 设计参考](https://ui.shadcn.com/)
-- [Wegent ChatArea 组件](../frontend/src/features/tasks/components/ChatArea.tsx) - 设计标准参考
+### 官方文档
+- [Tailwind CSS](https://tailwindcss.com/docs) - CSS 框架
+- [Radix UI](https://www.radix-ui.com/) - Headless UI 组件
+- [shadcn/ui](https://ui.shadcn.com/) - 组件库参考
+- [React Hook Form](https://react-hook-form.com/) - 表单管理
+- [Zod](https://zod.dev/) - 模式验证
+- [lucide-react](https://lucide.dev/) - 图标库
+
+### 项目参考
+- [ChatArea 组件](../frontend/src/features/tasks/components/ChatArea.tsx) - 设计标准参考
+- [组件目录](../frontend/src/components/ui/) - 所有 UI 组件
 
 ---
 
 **维护者**: Wegent Team
-**最后更新**: 2025-01
-**版本**: 1.0.0
+**最后更新**: 2025-01-20
+**版本**: 2.2.0 - 采用薄荷蓝主题色配色方案

@@ -424,7 +424,7 @@ export default function Workbench({
       <div
         className="transition-all duration-300 ease-in-out bg-surface overflow-hidden"
         style={{
-          width: isOpen ? '50%' : '0',
+          width: isOpen ? '40%' : '0',
         }}
       >
         {isOpen && (
