@@ -62,12 +62,32 @@ export async function requestNotificationPermission(): Promise<boolean> {
 /**
  * Send a browser notification
  */
-export function sendNotification(title: string, options?: NotificationOptions, targetUrl?: string): void {
+export async function sendNotification(title: string, options?: NotificationOptions, targetUrl?: string): Promise<void> {
   if (!isNotificationSupported()) return;
   if (Notification.permission !== 'granted') return;
   if (!isNotificationEnabled()) return;
 
   try {
+    // Try to use Service Worker for better tab matching
+    if ('serviceWorker' in navigator && targetUrl) {
+      try {
+        const registration = await navigator.serviceWorker.ready;
+        await registration.showNotification(title, {
+          icon: '/favicon.ico',
+          badge: '/favicon.ico',
+          ...options,
+          data: {
+            ...options?.data,
+            targetUrl,
+          },
+        });
+        return;
+      } catch (swError) {
+        console.warn('Failed to use Service Worker notification, falling back to basic notification:', swError);
+      }
+    }
+
+    // Fallback to basic notification
     const notification = new Notification(title, {
       icon: '/favicon.ico',
       badge: '/favicon.ico',
