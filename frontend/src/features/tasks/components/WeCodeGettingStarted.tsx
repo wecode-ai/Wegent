@@ -26,21 +26,18 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
       title: '在IDE中使用WeCode',
       description: '在您熟悉的开发环境中直接使用WeCode，提升开发效率',
       link: 'https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/wiki',
-      cardClass: 'hover:bg-blue-50/50',
     },
     {
       icon: <CloudIcon className="w-6 h-6" />,
       title: '使用WeCode云IDE',
       description: '基于云端的集成开发环境，随时随地开始编码',
       link: 'https://space.intra.weibo.com/develop/code-server',
-      cardClass: 'hover:bg-green-50/50',
     },
     {
       icon: <ClipboardDocumentCheckIcon className="w-6 h-6" />,
       title: '启用代码审查',
       description: '自动化代码审查，确保代码质量和团队协作',
       link: 'https://wiki.api.weibo.com/zh/weibo_rd/dev/wecode/agent/wecoder_agent',
-      cardClass: 'hover:bg-purple-50/50',
     },
   ];
 
@@ -68,17 +65,14 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
       </div>
 
       {/* 标题区域 - 移动端紧凑布局 */}
-      <div className="text-center mb-2 sm:mb-6">
-        <h2 className="text-sm sm:text-xl font-semibold text-text-primary mb-0.5">
-          开始使用WeCode
-        </h2>
+      <div className="text-center mb-4 sm:mb-6">
         <p className="text-text-secondary text-xs sm:text-sm px-2 sm:px-4">
-          选择最适合您的方式开始编码之旅
+          选择最适合您的方式继续编码之旅
         </p>
       </div>
 
       {/* 卡片容器 - 移动端横向滚动，桌面端网格布局 */}
-      <div className="max-w-5xl mx-auto">
+      <div className="w-full">
         {/* 移动端横向滚动 - 轮播预览效果 */}
         <div className="sm:hidden">
           <div
@@ -92,31 +86,24 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
             {gettingStartedItems.map((item, index) => (
               <Card
                 key={index}
-                className={`
-                cursor-pointer transition-all duration-200
-                hover:shadow-lg hover:-translate-y-1
-                border border-border bg-surface
-                ${item.cardClass}
-                flex-shrink-0 w-[calc(40vw-12px)] h-48 min-w-[140px] max-w-[180px]
-                snap-start
-                p-4
-              `}
+                className="
+                  cursor-pointer transition-all duration-200
+                  hover:bg-hover
+                  border border-border bg-base
+                  flex-shrink-0 w-[calc(40vw-12px)] h-48 min-w-[140px] max-w-[180px]
+                  snap-start
+                  p-4
+                "
                 onClick={() => handleCardClick(item.link)}
               >
                 <div className="text-center flex flex-col justify-center h-full">
                   {/* 图标 */}
-                  <div
-                    className="
-                  inline-flex items-center justify-center
-                  w-10 h-10 rounded-full mb-3
-                  bg-muted border border-border
-                "
-                  >
+                  <div className="inline-flex items-center justify-center w-10 h-10 rounded-lg mb-3 bg-muted">
                     <div className="text-primary">{item.icon}</div>
                   </div>
 
                   {/* 标题 */}
-                  <h3 className="text-xs font-semibold text-text-primary mb-2 leading-tight">
+                  <h3 className="text-xs font-medium text-text-primary mb-2 leading-tight">
                     {item.title}
                   </h3>
 
@@ -135,28 +122,21 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
           {gettingStartedItems.map((item, index) => (
             <Card
               key={index}
-              className={`
+              className="
                 cursor-pointer transition-all duration-200
-                hover:shadow-lg hover:-translate-y-1
-                border border-border bg-surface
-                ${item.cardClass}
-                p-5
-              `}
+                hover:bg-hover
+                border border-border bg-base
+                p-4
+              "
               onClick={() => handleCardClick(item.link)}
             >
               <div className="text-center">
-                <div
-                  className="
-                  inline-flex items-center justify-center
-                  w-12 h-12 rounded-full mb-4
-                  bg-muted border border-border
-                "
-                >
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg mb-4 bg-muted">
                   <div className="text-primary">{item.icon}</div>
                 </div>
 
                 {/* 标题 */}
-                <h3 className="text-lg font-semibold text-text-primary mb-3">{item.title}</h3>
+                <h3 className="text-base font-medium text-text-primary mb-2">{item.title}</h3>
 
                 {/* 描述 */}
                 <p className="text-text-secondary text-sm leading-relaxed">{item.description}</p>
