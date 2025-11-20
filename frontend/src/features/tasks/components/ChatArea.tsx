@@ -416,7 +416,7 @@ export default function ChatArea({
                     />
                   )}
                 </div>
-                <div className="ml-auto flex items-center">
+                <div className="ml-auto flex items-center sm:mr-0 mr-1">
                   {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
                   <Button
                     variant="ghost"
