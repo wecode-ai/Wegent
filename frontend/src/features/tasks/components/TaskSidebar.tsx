@@ -170,12 +170,12 @@ export default function TaskSidebar({
       </div>
 
       {/* New Task Button */}
-      <div className="px-3 mb-1">
+      <div className="px-3 mb-0">
         <Button
           variant="ghost"
           onClick={handleNewAgentClick}
-          className="w-full justify-start px-2 text-sm text-text-primary hover:bg-hover"
-          size="default"
+          className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover"
+          size="sm"
         >
           <Plus className="h-4 w-4 mr-0.5" />
           {t('tasks.new_task')}
@@ -183,7 +183,7 @@ export default function TaskSidebar({
       </div>
 
       {/* Search */}
-      <div className="px-3 mb-1">
+      <div className="px-3 mb-0">
         <div className="relative group">
           <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
           <input
