@@ -168,7 +168,7 @@ export default function CodePage() {
             <div
               className="transition-all duration-300 ease-in-out flex flex-col min-h-0"
               style={{
-                width: hasTaskId && isWorkbenchOpen && !isMobile ? '50%' : '100%',
+                width: hasTaskId && isWorkbenchOpen && !isMobile ? '60%' : '100%',
               }}
             >
               <ChatArea

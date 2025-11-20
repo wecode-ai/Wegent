@@ -123,7 +123,7 @@ export default function TaskListSection({
     }
   };
 
-  const handleTouchEnd = (task: Task) => (event: React.TouchEvent) => {
+  const handleTouchEnd = (task: Task) => (_event: React.TouchEvent) => {
     if (touchState.longPressTimer) {
       clearTimeout(touchState.longPressTimer);
     }

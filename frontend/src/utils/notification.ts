@@ -62,7 +62,11 @@ export async function requestNotificationPermission(): Promise<boolean> {
 /**
  * Send a browser notification
  */
-export async function sendNotification(title: string, options?: NotificationOptions, targetUrl?: string): Promise<void> {
+export async function sendNotification(
+  title: string,
+  options?: NotificationOptions,
+  targetUrl?: string
+): Promise<void> {
   if (!isNotificationSupported()) return;
   if (Notification.permission !== 'granted') return;
   if (!isNotificationEnabled()) return;
@@ -83,7 +87,10 @@ export async function sendNotification(title: string, options?: NotificationOpti
         });
         return;
       } catch (swError) {
-        console.warn('Failed to use Service Worker notification, falling back to basic notification:', swError);
+        console.warn(
+          'Failed to use Service Worker notification, falling back to basic notification:',
+          swError
+        );
       }
     }
 
@@ -96,7 +103,7 @@ export async function sendNotification(title: string, options?: NotificationOpti
 
     // Add click handler for navigation
     if (targetUrl) {
-      notification.onclick = (event) => {
+      notification.onclick = event => {
         event.preventDefault();
         window.open(targetUrl, '_blank')?.focus();
         notification.close();
@@ -123,13 +130,18 @@ export function notifyTaskCompletion(
   const body = taskTitle.length > 100 ? `${taskTitle.substring(0, 100)}...` : taskTitle;
 
   // Build target URL based on task type
-  const targetUrl = taskType === 'code'
-    ? `${window.location.origin}/code?taskId=${taskId}`
-    : `${window.location.origin}/chat?taskId=${taskId}`;
+  const targetUrl =
+    taskType === 'code'
+      ? `${window.location.origin}/code?taskId=${taskId}`
+      : `${window.location.origin}/chat?taskId=${taskId}`;
 
-  sendNotification(title, {
-    body,
-    tag: 'task-completion',
-    requireInteraction: false,
-  }, targetUrl);
+  sendNotification(
+    title,
+    {
+      body,
+      tag: 'task-completion',
+      requireInteraction: false,
+    },
+    targetUrl
+  );
 }

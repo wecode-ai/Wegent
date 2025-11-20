@@ -2,27 +2,33 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { FileTextOutlined } from '@ant-design/icons'
-import { paths } from '@/config/paths'
-import { useTranslation } from '@/hooks/useTranslation'
+import { FileText } from 'lucide-react';
+import { paths } from '@/config/paths';
+import { useTranslation } from '@/hooks/useTranslation';
 
-export function DocsButton({ className = '', onClick }: { className?: string; onClick?: () => void }) {
-  const { t } = useTranslation('common')
+export function DocsButton({
+  className = '',
+  onClick,
+}: {
+  className?: string;
+  onClick?: () => void;
+}) {
+  const { t } = useTranslation('common');
 
   const navigateToDocs = () => {
     // Use window.open to open documentation in new tab
-    window.open(paths.docs.getHref(), '_blank')
-    onClick?.()
-  }
+    window.open(paths.docs.getHref(), '_blank');
+    onClick?.();
+  };
 
   const mergedClassName = `
     px-3 py-1 bg-muted border border-border rounded-full
     flex items-center gap-1 text-sm font-medium text-text-primary
     hover:bg-border/40 transition-colors duration-200
     ${className}
-  `.trim()
+  `.trim();
 
   return (
     <button
@@ -31,7 +37,7 @@ export function DocsButton({ className = '', onClick }: { className?: string; on
       className={mergedClassName}
       aria-label={t('navigation.docs')}
     >
-      <FileTextOutlined className="text-base leading-none" style={{ color: 'var(--text-primary)' }} />
+      <FileText className="h-4 w-4" style={{ color: 'var(--text-primary)' }} />
     </button>
-  )
+  );
 }

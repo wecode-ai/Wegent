@@ -8,7 +8,7 @@
  */
 
 // Handle notification click events
-self.addEventListener('notificationclick', (event) => {
+self.addEventListener('notificationclick', event => {
   event.notification.close();
 
   const targetUrl = event.notification.data?.targetUrl;
@@ -46,6 +46,6 @@ self.addEventListener('install', () => {
   self.skipWaiting();
 });
 
-self.addEventListener('activate', (event) => {
+self.addEventListener('activate', event => {
   event.waitUntil(self.clients.claim());
 });

@@ -13,10 +13,13 @@ import {
   requestNotificationPermission,
   setNotificationEnabled,
 } from '@/utils/notification';
-import { message } from 'antd';
+import { useToast } from '@/hooks/use-toast';
+import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
 
 export default function NotificationSettings() {
   const { t } = useTranslation('common');
+  const { toast } = useToast();
   const router = useRouter();
   const [enabled, setEnabled] = useState(false);
   const [supported, setSupported] = useState(true);
@@ -28,7 +31,9 @@ export default function NotificationSettings() {
 
   const handleToggle = async () => {
     if (!supported) {
-      message.warning(t('notifications.not_supported'));
+      toast({
+        title: t('notifications.not_supported'),
+      });
       return;
     }
 
@@ -36,14 +41,21 @@ export default function NotificationSettings() {
       const granted = await requestNotificationPermission();
       if (granted) {
         setEnabled(true);
-        message.success(t('notifications.enable_success'));
+        toast({
+          title: t('notifications.enable_success'),
+        });
       } else {
-        message.error(t('notifications.permission_denied'));
+        toast({
+          variant: 'destructive',
+          title: t('notifications.permission_denied'),
+        });
       }
     } else {
       setNotificationEnabled(false);
       setEnabled(false);
-      message.success(t('notifications.disable_success'));
+      toast({
+        title: t('notifications.disable_success'),
+      });
     }
   };
 
@@ -63,28 +75,12 @@ export default function NotificationSettings() {
         <p className="text-sm text-text-muted">{t('notifications.enable_description')}</p>
       </div>
 
-      <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+      <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
         <div className="flex-1">
-          <h3 className="text-sm font-medium text-text-primary">
-            {t('notifications.enable')}
-          </h3>
+          <h3 className="text-sm font-medium text-text-primary">{t('notifications.enable')}</h3>
           <p className="text-xs text-text-muted mt-1">{t('notifications.enable_description')}</p>
         </div>
-        <button
-          onClick={handleToggle}
-          disabled={!supported}
-          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 ${
-            enabled
-              ? 'bg-blue-600 focus:ring-blue-500'
-              : 'bg-gray-300 dark:bg-gray-600 focus:ring-gray-400'
-          } ${!supported ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
-        >
-          <span
-            className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-              enabled ? 'translate-x-6' : 'translate-x-1'
-            }`}
-          />
-        </button>
+        <Switch checked={enabled} onCheckedChange={handleToggle} disabled={!supported} />
       </div>
 
       {!supported && (
@@ -96,21 +92,14 @@ export default function NotificationSettings() {
       )}
 
       {/* Restart Onboarding Button */}
-      <div className="flex items-center justify-between p-4 bg-muted rounded-lg">
+      <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">
         <div className="flex-1">
-          <h3 className="text-sm font-medium text-text-primary">
-            {t('onboarding.restart_tour')}
-          </h3>
-          <p className="text-xs text-text-muted mt-1">
-            {t('onboarding.step1_description')}
-          </p>
+          <h3 className="text-sm font-medium text-text-primary">{t('onboarding.restart_tour')}</h3>
+          <p className="text-xs text-text-muted mt-1">{t('onboarding.step1_description')}</p>
         </div>
-        <button
-          onClick={handleRestartOnboarding}
-          className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
-        >
+        <Button onClick={handleRestartOnboarding} variant="default" size="default">
           {t('onboarding.restart_tour')}
-        </button>
+        </Button>
       </div>
     </div>
   );

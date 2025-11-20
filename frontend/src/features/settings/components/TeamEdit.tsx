@@ -5,12 +5,21 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { Radio, Transfer, Select, Button, Tooltip, Tag, theme } from 'antd';
-import type { TransferDirection } from 'antd/es/transfer';
-import type { MessageInstance } from 'antd/es/message/interface';
+import { Transfer } from '@/components/ui/transfer';
+import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import Image from 'next/image';
+import { Tag } from '@/components/ui/tag';
 import { RiRobot2Line, RiMagicLine } from 'react-icons/ri';
-import { EditOutlined, DownOutlined, PlusOutlined, CopyOutlined } from '@ant-design/icons';
+import { Edit, Plus, Copy, Loader2 } from 'lucide-react';
 
 import { Bot, Team } from '@/types/api';
 import { createTeam, updateTeam } from '../services/teams';
@@ -26,7 +35,7 @@ interface TeamEditProps {
   initialTeam?: Team | null;
   bots: Bot[];
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>; // Add setBots property
-  message: MessageInstance;
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
 }
 
 export default function TeamEdit(props: TeamEditProps) {
@@ -38,11 +47,10 @@ export default function TeamEdit(props: TeamEditProps) {
     initialTeam = null,
     bots,
     setBots,
-    message,
+    toast,
   } = props;
 
   const { t } = useTranslation('common');
-  const { token } = theme.useToken();
   // Current editing object (0 means create new)
   const editingTeam: Team | null =
     editingTeamId === 0 ? null : teams.find(t => t.id === editingTeamId) || null;
@@ -118,13 +126,10 @@ export default function TeamEdit(props: TeamEditProps) {
     };
   }, [teamPromptMap, unsavedPrompts, t]);
 
-  const configuredPromptBadgeStyle = useMemo(
-    () => getPromptBadgeStyle(token, 'configured'),
-    [token]
-  );
+  const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), []);
   const promptSummaryStyle = useMemo(
-    () => getPromptBadgeStyle(token, promptSummary.variant),
-    [token, promptSummary.variant]
+    () => getPromptBadgeStyle(promptSummary.variant),
+    [promptSummary.variant]
   );
 
   const handleBack = useCallback(() => {
@@ -283,9 +288,9 @@ export default function TeamEdit(props: TeamEditProps) {
 
   // Transfer change
   const onTransferChange = (
-    targetKeys: React.Key[],
-    direction: TransferDirection,
-    moveKeys: React.Key[]
+    targetKeys: string[],
+    direction: 'left' | 'right',
+    moveKeys: string[]
   ) => {
     if (direction === 'right') {
       setSelectedBotKeys([...new Set(selectedBotKeys.concat(moveKeys))]);
@@ -352,13 +357,20 @@ export default function TeamEdit(props: TeamEditProps) {
   };
 
   // Save
+  // Save
   const handleSave = async () => {
     if (!name.trim()) {
-      message.error('Team name is required');
+      toast({
+        variant: 'destructive',
+        title: 'Team name is required',
+      });
       return;
     }
     if (leaderBotId == null) {
-      message.error('Leader bot is required');
+      toast({
+        variant: 'destructive',
+        title: 'Leader bot is required',
+      });
       return;
     }
     const selectedIds = selectedBotKeys.map(k => Number(k));
@@ -366,11 +378,13 @@ export default function TeamEdit(props: TeamEditProps) {
     // Non-pipeline mode requires agent_name consistency
     if (mode !== 'pipeline') {
       if (!validateAgentNameConsistency(selectedIds)) {
-        message.error('Only bots with the same agent_name can be selected in non-Pipeline mode');
+        toast({
+          variant: 'destructive',
+          title: 'Only bots with the same agent_name can be selected in non-Pipeline mode',
+        });
         return;
       }
     }
-
     // Assemble bots data (per-step prompt not supported, all prompts empty)
     // Ensure leader bot is first, others follow transfer order
     const allBotIds: number[] = [];
@@ -424,9 +438,12 @@ export default function TeamEdit(props: TeamEditProps) {
       setUnsavedPrompts({});
       setEditingTeamId(null);
     } catch (error) {
-      message.error(
-        (error as Error)?.message || (editingTeam ? 'Failed to edit team' : 'Failed to create team')
-      );
+      toast({
+        variant: 'destructive',
+        title:
+          (error as Error)?.message ||
+          (editingTeam ? 'Failed to edit team' : 'Failed to create team'),
+      });
     } finally {
       setSaving(false);
     }
@@ -477,7 +494,8 @@ export default function TeamEdit(props: TeamEditProps) {
           {t('common.back')}
         </button>
 
-        <Button onClick={handleSave} disabled={saving} loading={saving} type="primary">
+        <Button onClick={handleSave} disabled={saving}>
+          {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {saving ? (editingTeam ? t('actions.saving') : t('actions.creating')) : t('actions.save')}
         </Button>
       </div>
@@ -512,21 +530,39 @@ export default function TeamEdit(props: TeamEditProps) {
 
             {/* Integrate Mode selection and description into one container */}
             <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
-              {/* Mode selection - keep Radio.Group */}
+              {/* Mode selection */}
               <div className="mb-3">
-                <Radio.Group
+                <RadioGroup
                   value={mode}
-                  onChange={e => handleModeChange(e.target.value)}
-                  optionType="button"
-                  buttonStyle="solid"
-                  options={['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => ({
-                    label: t(`team_model.${opt}`),
-                    value: opt as string,
-                    disabled: hasClaudeCodeBot && opt !== 'pipeline',
-                    style: { minWidth: 20, padding: '0 12px', textAlign: 'center' },
-                  }))}
-                  className="w-full"
-                />
+                  onValueChange={value =>
+                    handleModeChange(value as 'pipeline' | 'route' | 'coordinate' | 'collaborate')
+                  }
+                  className="w-full grid grid-cols-4 gap-2"
+                >
+                  {['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => (
+                    <div key={opt} className="flex items-center">
+                      <RadioGroupItem
+                        value={opt}
+                        id={`mode-${opt}`}
+                        disabled={hasClaudeCodeBot && opt !== 'pipeline'}
+                        className="peer sr-only"
+                      />
+                      <label
+                        htmlFor={`mode-${opt}`}
+                        className={`
+                          flex items-center justify-center w-full px-3 py-1.5 text-sm font-medium
+                          rounded-md cursor-pointer transition-colors
+                          border border-border
+                          ${hasClaudeCodeBot && opt !== 'pipeline' ? 'opacity-50 cursor-not-allowed' : ''}
+                          peer-data-[state=checked]:bg-primary peer-data-[state=checked]:text-primary-foreground peer-data-[state=checked]:border-primary
+                          hover:bg-accent hover:text-accent-foreground
+                        `}
+                      >
+                        {t(`team_model.${opt}`)}
+                      </label>
+                    </div>
+                  ))}
+                </RadioGroup>
               </div>
 
               {/* Divider */}
@@ -569,90 +605,116 @@ export default function TeamEdit(props: TeamEditProps) {
                 </label>
               </div>
               <Select
-                showSearch
-                value={leaderBotId ?? undefined}
-                onChange={onLeaderChange}
-                placeholder={t('team.select_leader')}
-                suffixIcon={<DownOutlined className="text-text-secondary" />}
-                optionFilterProp="title"
-                filterOption={(input, option) => {
-                  const searchText = typeof option?.title === 'string' ? option.title : '';
-                  return searchText.toLowerCase().includes(input.toLowerCase());
-                }}
-                notFoundContent={
-                  <Button
-                    type="primary"
-                    size="small"
-                    icon={<PlusOutlined />}
-                    onMouseDown={e => e.preventDefault()}
-                    onClick={e => {
-                      e.stopPropagation();
-                      handleCreateBot();
-                    }}
-                  >
-                    {t('bots.new_bot')}
-                  </Button>
-                }
-                className="w-full !min-h-[36px]"
-                options={leaderOptions.map((b: Bot) => ({
-                  value: b.id,
-                  title: `${b.name} ${b.agent_name}`,
-                  label: (
-                    <div className="flex items-center w-full">
-                      <div className="flex min-w-0 flex-1 items-center space-x-2">
-                        <RiRobot2Line className="w-4 h-4 text-text-muted" />
-                        <Tooltip title={`${b.name} (${b.agent_name})`}>
-                          <span className="block truncate">
-                            {b.name}{' '}
-                            <span className="text-text-muted text-xs">({b.agent_name})</span>
+                value={leaderBotId?.toString() ?? undefined}
+                onValueChange={value => onLeaderChange(Number(value))}
+              >
+                <SelectTrigger className="w-full min-h-[36px]">
+                  {leaderBotId !== null ? (
+                    <div className="flex items-center justify-between w-full">
+                      <div className="flex items-center gap-2 flex-1 min-w-0">
+                        <RiRobot2Line className="w-4 h-4 text-text-muted flex-shrink-0" />
+                        <span className="truncate">
+                          {bots.find(b => b.id === leaderBotId)?.name || ''}
+                          <span className="text-text-muted text-xs ml-1">
+                            ({bots.find(b => b.id === leaderBotId)?.agent_name || ''})
                           </span>
-                        </Tooltip>
-                        {teamPromptMap.get(b.id) && (
-                          <Tooltip title={t('team.prompts_badge_tooltip')}>
-                            <Tag
-                              className="!m-0 !ml-1 !px-1.5 !py-0 text-[11px] leading-4"
-                              style={configuredPromptBadgeStyle}
-                            >
-                              {t('team.prompts_badge')}
-                            </Tag>
-                          </Tooltip>
-                        )}
+                        </span>
                       </div>
-                      <div
-                        className="flex items-center gap-3 ml-3"
-                        onMouseDown={e => e.preventDefault()}
-                      >
-                        <EditOutlined
-                          className="text-text-secondary hover:text-text-primary cursor-pointer"
-                          onMouseDown={e => {
+                      <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+                        <Edit
+                          className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
+                          onPointerDown={e => {
                             e.preventDefault();
                             e.stopPropagation();
-                          }}
-                          onClick={e => {
-                            e.stopPropagation(); // Stop event propagation to avoid triggering selection
-                            handleEditBot(b.id);
+                            handleEditBot(leaderBotId);
                           }}
                         />
-                        <CopyOutlined
-                          className="text-text-secondary hover:text-text-primary cursor-pointer"
-                          onMouseDown={e => {
+                        <Copy
+                          className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
+                          onPointerDown={e => {
                             e.preventDefault();
                             e.stopPropagation();
-                          }}
-                          onClick={e => {
-                            e.stopPropagation();
-                            handleCloneBot(b.id);
+                            handleCloneBot(leaderBotId);
                           }}
                         />
                       </div>
                     </div>
-                  ),
-                }))}
-                popupMatchSelectWidth={true}
-                listHeight={250}
-                menuItemSelectedIcon={null}
-                dropdownStyle={{ minWidth: '200px' }}
-              />
+                  ) : (
+                    <SelectValue placeholder={t('team.select_leader')} />
+                  )}
+                </SelectTrigger>
+                <SelectContent>
+                  {leaderOptions.length === 0 ? (
+                    <div className="p-2 text-center">
+                      <Button
+                        size="sm"
+                        onClick={e => {
+                          e.stopPropagation();
+                          handleCreateBot();
+                        }}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        {t('bots.new_bot')}
+                      </Button>
+                    </div>
+                  ) : (
+                    leaderOptions.map((b: Bot) => (
+                      <SelectItem key={b.id} value={b.id.toString()}>
+                        <div className="flex items-center w-full">
+                          <div className="flex min-w-0 flex-1 items-center space-x-2">
+                            <RiRobot2Line className="w-4 h-4 text-text-muted" />
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="block truncate">
+                                  {b.name}{' '}
+                                  <span className="text-text-muted text-xs">({b.agent_name})</span>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{`${b.name} (${b.agent_name})`}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            {teamPromptMap.get(b.id) && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Tag
+                                    className="!m-0 !ml-1 !px-1.5 !py-0 text-[11px] leading-4"
+                                    variant="default"
+                                    style={configuredPromptBadgeStyle}
+                                  >
+                                    {t('team.prompts_badge')}
+                                  </Tag>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>{t('team.prompts_badge_tooltip')}</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-3 ml-3">
+                            <Edit
+                              className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
+                              onPointerDown={e => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleEditBot(b.id);
+                              }}
+                            />
+                            <Copy
+                              className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
+                              onPointerDown={e => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                handleCloneBot(b.id);
+                              }}
+                            />
+                          </div>
+                        </div>
+                      </SelectItem>
+                    ))
+                  )}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Bots Transfer - consolidated container */}
@@ -663,21 +725,30 @@ export default function TeamEdit(props: TeamEditProps) {
                 </label>
               </div>
               <div className="flex items-center gap-2">
-                <Tooltip title={t('team.prompts_tooltip')}>
-                  <Button
-                    type="link"
-                    size="small"
-                    icon={<RiMagicLine className="text-sm" />}
-                    className="!px-1.5 !text-primary hover:!text-primary"
-                    onClick={() => {
-                      setDrawerMode('prompt');
-                      setEditingBotDrawerVisible(true);
-                    }}
-                  >
-                    {t('team.prompts_link')}
-                  </Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="link"
+                      size="sm"
+                      className="h-auto p-0 text-primary hover:text-primary/80"
+                      onClick={() => {
+                        setDrawerMode('prompt');
+                        setEditingBotDrawerVisible(true);
+                      }}
+                    >
+                      <RiMagicLine className="mr-1 h-4 w-4" />
+                      {t('team.prompts_link')}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{t('team.prompts_tooltip')}</p>
+                  </TooltipContent>
                 </Tooltip>
-                <Tag className="!m-0 !px-2 !py-0 text-xs leading-5" style={promptSummaryStyle}>
+                <Tag
+                  className="!m-0 !px-2 !py-0 text-xs leading-5"
+                  variant="default"
+                  style={promptSummaryStyle}
+                >
                   {promptSummary.label}
                 </Tag>
               </div>
@@ -685,40 +756,50 @@ export default function TeamEdit(props: TeamEditProps) {
               {/* Transfer component with flex-1 to fill remaining space */}
               <div className="relative flex-1 min-h-0">
                 <Transfer
-                  oneWay
                   dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
-                  targetKeys={selectedBotKeys}
+                  targetKeys={selectedBotKeys.map(String)}
                   onChange={onTransferChange}
                   render={item => (
                     <div className="flex items-center justify-between w-full">
-                      <Tooltip title={`${item.title} (${item.description})`}>
-                        <span className="truncate">
-                          {item.title}
-                          <span className="text-xs text-text-muted">({item.description})</span>
-                        </span>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="truncate">
+                            {item.title}
+                            <span className="text-xs text-text-muted">({item.description})</span>
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{`${item.title} (${item.description})`}</p>
+                        </TooltipContent>
                       </Tooltip>
 
                       <div className="flex items-center">
                         {teamPromptMap.get(Number(item.key)) && (
-                          <Tooltip title={t('team.prompts_badge_tooltip')}>
-                            <Tag
-                              className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
-                              style={configuredPromptBadgeStyle}
-                            >
-                              {t('team.prompts_badge')}
-                            </Tag>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Tag
+                                className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
+                                variant="default"
+                                style={configuredPromptBadgeStyle}
+                              >
+                                {t('team.prompts_badge')}
+                              </Tag>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>{t('team.prompts_badge_tooltip')}</p>
+                            </TooltipContent>
                           </Tooltip>
                         )}
 
-                        <EditOutlined
-                          className="ml-2 text-text-secondary hover:text-text-primary cursor-pointer"
+                        <Edit
+                          className="ml-2 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
                           onClick={e => {
                             e.stopPropagation(); // Stop event propagation to avoid triggering selection
                             handleEditBot(Number(item.key));
                           }}
                         />
-                        <CopyOutlined
-                          className="ml-3 text-text-secondary hover:text-text-primary cursor-pointer"
+                        <Copy
+                          className="ml-3 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
                           onClick={e => {
                             e.stopPropagation();
                             handleCloneBot(Number(item.key));
@@ -728,37 +809,22 @@ export default function TeamEdit(props: TeamEditProps) {
                     </div>
                   )}
                   titles={[t('team.candidates'), t('team.in_team')]}
-                  style={{}}
                   className="h-full transfer-fill"
                   listStyle={{
-                    backgroundColor: 'rgb(var(--color-bg-base))',
-                    borderColor: 'rgb(var(--color-border))',
+                    backgroundColor: 'hsl(var(--background))',
+                    borderColor: 'hsl(var(--border))',
                   }}
-                  locale={{
-                    itemUnit: 'item',
-                    itemsUnit: 'items',
-                    notFoundContent: t('team.no_data'),
-                  }}
-                  footer={(_, info) => {
-                    if (info?.direction === 'left') {
-                      return (
-                        <div className="p-2 text-center">
-                          <Button
-                            type="primary"
-                            size="small"
-                            className="w-70"
-                            icon={<PlusOutlined />}
-                            onClick={() => {
-                              handleCreateBot();
-                            }}
-                          >
-                            {t('bots.new_bot')}
-                          </Button>
-                        </div>
-                      );
-                    }
-                    return null;
-                  }}
+                  leftFooter={
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="w-full"
+                      onClick={handleCreateBot}
+                    >
+                      <Plus className="mr-2 h-4 w-4" />
+                      {t('bots.new_bot')}
+                    </Button>
+                  }
                 />
               </div>
             </div>
@@ -1168,7 +1234,7 @@ export default function TeamEdit(props: TeamEditProps) {
         setEditingBotId={setEditingBotId}
         visible={editingBotDrawerVisible}
         setVisible={setEditingBotDrawerVisible}
-        message={message}
+        toast={toast}
         mode={drawerMode}
         editingTeam={editingTeam}
         onTeamUpdate={handleTeamUpdate}

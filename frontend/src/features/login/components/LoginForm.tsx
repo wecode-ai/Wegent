@@ -6,7 +6,7 @@
 
 import { useEffect, useState } from 'react';
 import { EyeIcon, EyeSlashIcon } from '@heroicons/react/24/outline';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useUser } from '@/features/common/UserContext';
 import { paths } from '@/config/paths';
@@ -169,13 +169,7 @@ export default function LoginForm() {
           {/* Error prompts are unified with antd message, no longer rendered locally */}
 
           <div>
-            <Button
-              type="primary"
-              htmlType="submit"
-              disabled={isLoading}
-              loading={isLoading}
-              style={{ width: '100%' }}
-            >
+            <Button variant="default" type="submit" disabled={isLoading} style={{ width: '100%' }}>
               {isLoading ? (
                 <div className="flex items-center">
                   <svg
@@ -230,7 +224,7 @@ export default function LoginForm() {
         <div className={showPasswordLogin ? 'mt-6' : ''}>
           <div className="grid grid-cols-1 gap-3">
             <Button
-              type="default"
+              variant="outline"
               onClick={() => (window.location.href = '/api/auth/oidc/login')}
               style={{
                 width: '100%',
@@ -238,10 +232,8 @@ export default function LoginForm() {
                 display: 'flex',
                 alignItems: 'center',
               }}
-              icon={
-                <Image src="/ocid.png" alt="OIDC Login" width={20} height={20} className="mr-2" />
-              }
             >
+              <Image src="/ocid.png" alt="OIDC Login" width={20} height={20} className="mr-2" />
               {oidcLoginText}
             </Button>
           </div>

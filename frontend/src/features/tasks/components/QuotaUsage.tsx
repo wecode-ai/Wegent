@@ -1,8 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Tooltip, Spin, Button, App } from 'antd';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 import { quotaApis, QuotaData } from '@/apis/quota';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useToast } from '@/hooks/use-toast';
 
 type QuotaUsageProps = {
   className?: string;
@@ -10,7 +13,7 @@ type QuotaUsageProps = {
 
 export default function QuotaUsage({ className }: QuotaUsageProps) {
   const { t } = useTranslation('common');
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const [quota, setQuota] = useState<QuotaData | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -25,12 +28,15 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
       })
       .catch(() => {
         setError(t('quota.load_failed'));
-        message.error(t('quota.load_failed'));
+        toast({
+          variant: 'destructive',
+          title: t('quota.load_failed'),
+        });
       })
       .finally(() => {
         setLoading(false);
       });
-  }, [t, message]);
+  }, [t, toast]);
 
   useEffect(() => {
     handleLoadQuota();
@@ -57,7 +63,7 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
   if (loading && !quota) {
     return (
       <div className={`flex items-center justify-center mt-1 mb-2 ${className ?? ''}`}>
-        <Spin size="small" />
+        <Spinner size="sm" />
       </div>
     );
   }
@@ -104,26 +110,29 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
   );
 
   return (
-    <Tooltip title={detail} placement="bottom">
-      <Button
-        type="text"
-        className="!text-text-muted hover:!text-text-primary"
-        size="small"
-        style={{
-          padding: 0,
-          height: 'auto',
-          lineHeight: 'normal',
-          color: 'rgb(var(--color-text-muted))',
-        }}
-        onMouseEnter={e => {
-          e.currentTarget.style.color = 'rgb(var(--color-text-primary))';
-        }}
-        onMouseLeave={e => {
-          e.currentTarget.style.color = 'rgb(var(--color-text-muted))';
-        }}
-      >
-        {brief}
-      </Button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant="ghost"
+          className="!text-text-muted hover:!text-text-primary"
+          size="sm"
+          style={{
+            padding: 0,
+            height: 'auto',
+            lineHeight: 'normal',
+            color: 'rgb(var(--color-text-muted))',
+          }}
+          onMouseEnter={e => {
+            e.currentTarget.style.color = 'rgb(var(--color-text-primary))';
+          }}
+          onMouseLeave={e => {
+            e.currentTarget.style.color = 'rgb(var(--color-text-muted))';
+          }}
+        >
+          {brief}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom">{detail}</TooltipContent>
     </Tooltip>
   );
 }

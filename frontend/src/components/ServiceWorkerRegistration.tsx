@@ -21,10 +21,10 @@ export default function ServiceWorkerRegistration() {
       .register('/sw.js', {
         scope: '/',
       })
-      .then((registration) => {
+      .then(registration => {
         console.log('Service Worker registered successfully:', registration);
       })
-      .catch((error) => {
+      .catch(error => {
         console.error('Service Worker registration failed:', error);
       });
   }, []);

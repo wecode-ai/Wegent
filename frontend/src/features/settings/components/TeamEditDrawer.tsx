@@ -5,10 +5,15 @@
 'use client';
 
 import React from 'react';
-import { Drawer, Form, Input, Button, Alert, Tooltip } from 'antd';
-import type { MessageInstance } from 'antd/es/message/interface';
+import { useForm } from 'react-hook-form';
+import { Drawer, DrawerContent, DrawerTitle } from '@/components/ui/drawer';
+import { Textarea } from '@/components/ui/textarea';
+import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { teamApis } from '@/apis/team';
 import { useTranslation } from 'react-i18next';
+import { Info, Loader2 } from 'lucide-react';
 
 import { Bot, Team, TeamBot } from '@/types/api';
 import BotEdit from './BotEdit';
@@ -20,7 +25,7 @@ interface TeamEditDrawerProps {
   setEditingBotId: React.Dispatch<React.SetStateAction<number | null>>;
   visible: boolean;
   setVisible: React.Dispatch<React.SetStateAction<boolean>>;
-  message: MessageInstance;
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
   mode: 'edit' | 'prompt';
   editingTeam: Team | null;
   onTeamUpdate: (updatedTeam: Team) => void;
@@ -37,7 +42,7 @@ function PromptEdit({
   team,
   allBots,
   onClose,
-  message,
+  toast,
   onTeamUpdate,
   isNewTeam = false,
   selectedBotKeys = [],
@@ -48,7 +53,7 @@ function PromptEdit({
   team?: Team;
   allBots: Bot[];
   onClose: () => void;
-  message: MessageInstance;
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
   onTeamUpdate: (updatedTeam: Team) => void;
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
   isNewTeam?: boolean;
@@ -58,8 +63,8 @@ function PromptEdit({
   setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }) {
   const { t } = useTranslation('common');
-  const [form] = Form.useForm();
   const [loading, setLoading] = React.useState(false);
+
   const drawerTitle = React.useMemo(() => {
     if (isNewTeam) return t('team.prompts_drawer_title_new');
     if (team) return t('team.prompts_drawer_title_existing', { name: team.name });
@@ -130,14 +135,26 @@ function PromptEdit({
     }
   }, [team, allBots, isNewTeam, selectedBotKeys, leaderBotId, unsavedPrompts]);
 
+  // Initialize form with default values
+  const defaultValues = React.useMemo(() => {
+    const values: Record<string, string> = {};
+    teamBotsWithDetails.forEach(bot => {
+      values[`prompt-${bot.bot_id}`] = bot.bot_prompt;
+    });
+    return values;
+  }, [teamBotsWithDetails]);
+
+  const form = useForm({
+    defaultValues,
+  });
+
+  // Update form when teamBotsWithDetails changes
   React.useEffect(() => {
-    const initialValues: Record<string, string> = {};
-    if (teamBotsWithDetails) {
-      teamBotsWithDetails.forEach(bot => {
-        initialValues[`prompt-${bot.bot_id}`] = bot.bot_prompt;
-      });
-      form.setFieldsValue(initialValues);
-    }
+    const values: Record<string, string> = {};
+    teamBotsWithDetails.forEach(bot => {
+      values[`prompt-${bot.bot_id}`] = bot.bot_prompt;
+    });
+    form.reset(values);
   }, [teamBotsWithDetails, form]);
 
   React.useEffect(() => {
@@ -163,7 +180,7 @@ function PromptEdit({
   const handleSave = async () => {
     try {
       setLoading(true);
-      const values = await form.validateFields();
+      const values = form.getValues();
       const existingBotIds = team ? team.bots.map(bot => bot.bot_id) : [];
       const currentBotIds = teamBotsWithDetails.map(bot => bot.bot_id);
       const structureChanged =
@@ -188,7 +205,9 @@ function PromptEdit({
         if (setUnsavedPrompts) {
           setUnsavedPrompts(collectPrompts());
         }
-        message.success(t('team.prompts_save_success'));
+        toast({
+          title: t('team.prompts_save_success'),
+        });
         onClose();
         return;
       }
@@ -209,15 +228,16 @@ function PromptEdit({
         // Update team state
         onTeamUpdate({ ...team, bots: updatedBots });
 
-        // Update global bots state
-        // Note: No need to update global bots here, as bot_prompt is team-specific
-        // If other bot properties need to be synced in the future, add here
-
-        message.success(t('team.prompts_update_success'));
+        toast({
+          title: t('team.prompts_update_success'),
+        });
         onClose();
       }
     } catch {
-      message.error(t('team.prompts_update_error'));
+      toast({
+        variant: 'destructive',
+        title: t('team.prompts_update_error'),
+      });
     } finally {
       setLoading(false);
     }
@@ -228,7 +248,7 @@ function PromptEdit({
       <div className="flex items-center justify-between mb-4">
         <button
           onClick={handleBack}
-          className="flex items-center text-text-muted hover:text-text-primary text-base"
+          className="flex items-center text-muted-foreground hover:text-foreground text-base"
           title={t('common.back')}
         >
           <svg
@@ -243,57 +263,53 @@ function PromptEdit({
           </svg>
           {t('common.back')}
         </button>
-        <Button type="primary" onClick={handleSave} loading={loading}>
+        <Button onClick={handleSave} disabled={loading}>
+          {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {t('actions.save')}
         </Button>
       </div>
 
       <h2 className="text-lg font-semibold mb-3">{drawerTitle}</h2>
-      <Alert
-        type="info"
-        showIcon
-        message={t('team.prompts_scope_hint')}
-        description={t('team.prompts_scope_sub')}
-        className="mb-4"
-      />
-      <Form
-        form={form}
-        layout="vertical"
-        className="flex-grow overflow-y-auto custom-scrollbar pr-4"
-      >
+      <Alert className="mb-4">
+        <Info className="h-4 w-4" />
+        <AlertDescription>
+          <div className="font-medium">{t('team.prompts_scope_hint')}</div>
+          <div className="text-sm text-muted-foreground mt-1">{t('team.prompts_scope_sub')}</div>
+        </AlertDescription>
+      </Alert>
+
+      <div className="flex-grow overflow-y-auto custom-scrollbar pr-4 space-y-4">
         {teamBotsWithDetails.map(bot => (
-          <Form.Item
-            key={bot.bot_id}
-            label={
-              <div className="flex items-center justify-between gap-3">
-                <span className="font-medium">
-                  {bot.name}
-                  {bot.isLeader && (
-                    <span className="text-gray-400 ml-2 font-semibold">(Leader)</span>
-                  )}
-                </span>
-                {bot.basePrompt && (
-                  <Tooltip
-                    title={
-                      <div className="max-w-xs whitespace-pre-wrap text-xs leading-5">
-                        {bot.basePrompt}
-                      </div>
-                    }
-                    overlayStyle={{ maxWidth: 360 }}
-                  >
-                    <Button type="link" size="small" className="!px-0">
+          <div key={bot.bot_id} className="space-y-2">
+            <div className="flex items-center justify-between gap-3">
+              <label className="font-medium text-sm">
+                {bot.name}
+                {bot.isLeader && (
+                  <span className="text-muted-foreground ml-2 font-semibold">(Leader)</span>
+                )}
+              </label>
+              {bot.basePrompt && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button variant="link" size="sm" className="h-auto p-0 text-xs">
                       {t('team.prompts_base_button')}
                     </Button>
-                  </Tooltip>
-                )}
-              </div>
-            }
-            name={`prompt-${bot.bot_id}`}
-          >
-            <Input.TextArea rows={4} placeholder={t('team.prompts_placeholder')} />
-          </Form.Item>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs">
+                    <div className="whitespace-pre-wrap text-xs leading-5">{bot.basePrompt}</div>
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+            <Textarea
+              rows={4}
+              placeholder={t('team.prompts_placeholder')}
+              className="bg-base border-border"
+              {...form.register(`prompt-${bot.bot_id}`)}
+            />
+          </div>
         ))}
-      </Form>
+      </div>
     </div>
   );
 }
@@ -306,7 +322,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
     setEditingBotId,
     visible,
     setVisible,
-    message,
+    toast,
     mode,
     editingTeam,
     onTeamUpdate,
@@ -321,50 +337,43 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
   };
 
   return (
-    <Drawer
-      placement="right"
-      width={860}
-      onClose={handleClose}
-      open={visible}
-      destroyOnClose={true}
-      styles={{
-        header: {
-          display: 'none',
-        },
-        body: { backgroundColor: 'rgb(var(--color-bg-base))', padding: 0 },
-      }}
-    >
-      <div style={{ height: '100%', overflowY: 'auto' }}>
-        {mode === 'edit' && editingBotId !== null && (
-          <BotEdit
-            bots={bots}
-            setBots={setBots}
-            editingBotId={editingBotId}
-            cloningBot={cloningBot}
-            onClose={() => {
-              setEditingBotId(null);
-              setCloningBot(null);
-              setVisible(false);
-            }}
-            message={message}
-          />
-        )}
-        {mode === 'prompt' && (
-          <PromptEdit
-            team={editingTeam || undefined}
-            allBots={bots}
-            onClose={handleClose}
-            message={message}
-            onTeamUpdate={onTeamUpdate}
-            setBots={setBots}
-            isNewTeam={!editingTeam}
-            selectedBotKeys={props.selectedBotKeys}
-            leaderBotId={props.leaderBotId}
-            unsavedPrompts={props.unsavedPrompts}
-            setUnsavedPrompts={props.setUnsavedPrompts}
-          />
-        )}
-      </div>
+    <Drawer open={visible} onOpenChange={open => !open && handleClose()}>
+      <DrawerContent className="h-[100vh] max-w-[860px] ml-auto">
+        <DrawerTitle className="sr-only">
+          {mode === 'edit' ? 'Edit Bot' : 'Edit Prompts'}
+        </DrawerTitle>
+        <div className="h-full overflow-y-auto">
+          {mode === 'edit' && editingBotId !== null && (
+            <BotEdit
+              bots={bots}
+              setBots={setBots}
+              editingBotId={editingBotId}
+              cloningBot={cloningBot}
+              onClose={() => {
+                setEditingBotId(null);
+                setCloningBot(null);
+                setVisible(false);
+              }}
+              toast={toast}
+            />
+          )}
+          {mode === 'prompt' && (
+            <PromptEdit
+              team={editingTeam || undefined}
+              allBots={bots}
+              onClose={handleClose}
+              toast={toast}
+              onTeamUpdate={onTeamUpdate}
+              setBots={setBots}
+              isNewTeam={!editingTeam}
+              selectedBotKeys={props.selectedBotKeys}
+              leaderBotId={props.leaderBotId}
+              unsavedPrompts={props.unsavedPrompts}
+              setUnsavedPrompts={props.setUnsavedPrompts}
+            />
+          )}
+        </div>
+      </DrawerContent>
     </Drawer>
   );
 }

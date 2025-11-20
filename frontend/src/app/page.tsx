@@ -5,7 +5,7 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
@@ -49,7 +49,7 @@ export default function Home() {
           <span className="font-bold">A</span>gent.
         </h1>
         <p className="text-xl text-text-secondary mb-12 font-light">{t('extension.description')}</p>
-        <Button onClick={handleGetStarted} type="primary" size="middle">
+        <Button onClick={handleGetStarted} variant="default">
           {t('actions.start')}
         </Button>
       </div>

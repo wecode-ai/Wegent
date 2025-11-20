@@ -5,12 +5,13 @@
 'use client';
 
 import { useState } from 'react';
-import { Radio, Checkbox, Input, Button } from 'antd';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
 import type { ClarificationQuestion as ClarificationQuestionType } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
 import { FiEdit3 } from 'react-icons/fi';
-
-const { TextArea } = Input;
 
 interface ClarificationQuestionProps {
   question: ClarificationQuestionType;
@@ -45,7 +46,10 @@ export default function ClarificationQuestion({
       if (defaultOption) {
         onChange({
           answer_type: 'choice',
-          value: question.question_type === 'multiple_choice' ? [defaultOption.value] : defaultOption.value,
+          value:
+            question.question_type === 'multiple_choice'
+              ? [defaultOption.value]
+              : defaultOption.value,
         });
       } else {
         onChange({
@@ -59,47 +63,71 @@ export default function ClarificationQuestion({
   const renderChoices = () => {
     if (question.question_type === 'single_choice') {
       return (
-        <Radio.Group
-          value={answer?.answer_type === 'choice' ? answer.value : ''}
-          onChange={e => onChange({ answer_type: 'choice', value: e.target.value })}
+        <RadioGroup
+          value={answer?.answer_type === 'choice' ? (answer.value as string) : ''}
+          onValueChange={value => onChange({ answer_type: 'choice', value })}
           disabled={readonly}
           className="flex flex-col gap-2"
         >
-          {question.options?.map(option => (
-            <Radio key={option.value} value={option.value}>
-              {option.label}
-              {option.recommended && (
-                <span className="ml-2 text-xs text-blue-400">
-                  ({t('clarification.recommended') || 'Recommended'})
-                </span>
-              )}
-            </Radio>
+          {question.options?.map((option, index) => (
+            <div key={option.value} className="flex items-center space-x-2">
+              <RadioGroupItem
+                value={option.value}
+                id={`question-${question.question_text}-option-${index}`}
+                disabled={readonly}
+              />
+              <label
+                htmlFor={`question-${question.question_text}-option-${index}`}
+                className="text-sm font-normal cursor-pointer"
+              >
+                {option.label}
+                {option.recommended && (
+                  <span className="ml-2 text-xs text-blue-400">
+                    ({t('clarification.recommended') || 'Recommended'})
+                  </span>
+                )}
+              </label>
+            </div>
           ))}
-        </Radio.Group>
+        </RadioGroup>
       );
     }
 
     if (question.question_type === 'multiple_choice') {
+      const selectedValues =
+        answer?.answer_type === 'choice' && Array.isArray(answer.value) ? answer.value : [];
+
+      const handleCheckboxChange = (optionValue: string, checked: boolean) => {
+        const newValues = checked
+          ? [...selectedValues, optionValue]
+          : selectedValues.filter(v => v !== optionValue);
+        onChange({ answer_type: 'choice', value: newValues });
+      };
+
       return (
-        <Checkbox.Group
-          value={
-            answer?.answer_type === 'choice' && Array.isArray(answer.value) ? answer.value : []
-          }
-          onChange={values => onChange({ answer_type: 'choice', value: values as string[] })}
-          disabled={readonly}
-          className="flex flex-col gap-2"
-        >
-          {question.options?.map(option => (
-            <Checkbox key={option.value} value={option.value}>
-              {option.label}
-              {option.recommended && (
-                <span className="ml-2 text-xs text-blue-400">
-                  ({t('clarification.recommended') || 'Recommended'})
-                </span>
-              )}
-            </Checkbox>
+        <div className="flex flex-col gap-2">
+          {question.options?.map((option, index) => (
+            <div key={option.value} className="flex items-center space-x-2">
+              <Checkbox
+                id={`question-${question.question_text}-option-${index}`}
+                checked={selectedValues.includes(option.value)}
+                onCheckedChange={checked => handleCheckboxChange(option.value, checked as boolean)}
+                disabled={readonly}
+              />
+              <label
+                htmlFor={`question-${question.question_text}-option-${index}`}
+                className="text-sm font-normal cursor-pointer"
+              >
+                {option.label}
+                {option.recommended && (
+                  <span className="ml-2 text-xs text-blue-400">
+                    ({t('clarification.recommended') || 'Recommended'})
+                  </span>
+                )}
+              </label>
+            </div>
           ))}
-        </Checkbox.Group>
+        </div>
       );
     }
 
@@ -108,7 +136,7 @@ export default function ClarificationQuestion({
 
   const renderCustomInput = () => {
     return (
-      <TextArea
+      <Textarea
         value={answer?.answer_type === 'custom' ? (answer.value as string) : ''}
         onChange={e => onChange({ answer_type: 'custom', value: e.target.value })}
         placeholder={t('clarification.custom_input_placeholder') || 'Enter your custom input...'}
@@ -125,12 +153,12 @@ export default function ClarificationQuestion({
         <div className="text-sm font-medium text-text-primary">{question.question_text}</div>
         {question.question_type !== 'text_input' && !readonly && (
           <Button
-            type="link"
-            size="small"
+            variant="ghost"
+            size="sm"
             onClick={handleToggleCustomMode}
-            icon={<FiEdit3 className="w-3 h-3" />}
-            className="text-xs"
+            className="text-xs text-text-muted hover:text-text-primary"
           >
+            <FiEdit3 className="w-3 h-3" />
             {isCustomMode
               ? t('clarification.back_to_choices') || 'Back to Choices'
               : t('clarification.custom_input') || 'Custom Input'}
@@ -138,13 +166,11 @@ export default function ClarificationQuestion({
         )}
       </div>
 
-      {question.question_type === 'text_input' ? (
-        renderCustomInput()
-      ) : isCustomMode ? (
-        renderCustomInput()
-      ) : (
-        renderChoices()
-      )}
+      {question.question_type === 'text_input'
+        ? renderCustomInput()
+        : isCustomMode
+          ? renderCustomInput()
+          : renderChoices()}
 
       {readonly && answer && (
         <div className="text-xs text-text-tertiary italic">
@@ -153,12 +179,9 @@ export default function ClarificationQuestion({
             : `${t('clarification.selected') || 'Selected'}: ${
                 Array.isArray(answer.value)
                   ? answer.value
-                      .map(
-                        v => question.options?.find(opt => opt.value === v)?.label || v
-                      )
+                      .map(v => question.options?.find(opt => opt.value === v)?.label || v)
                       .join(', ')
-                  : question.options?.find(opt => opt.value === answer.value)?.label ||
-                    answer.value
+                  : question.options?.find(opt => opt.value === answer.value)?.label || answer.value
               }`}
         </div>
       )}
