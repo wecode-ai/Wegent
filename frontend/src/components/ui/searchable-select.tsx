@@ -5,10 +5,17 @@
 'use client';
 
 import * as React from 'react';
-import { Input } from '@/components/ui/input';
-import * as PopoverPrimitive from '@radix-ui/react-popover';
-import { ChevronDown, Check } from 'lucide-react';
+import { Check, ChevronsUpDown } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/components/ui/command';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 export interface SearchableSelectItem {
   value: string;
@@ -41,7 +48,7 @@ export function SearchableSelect({
   value,
   onValueChange,
   disabled,
-  placeholder,
+  placeholder = 'Select...',
   searchPlaceholder = 'Search...',
   items,
   loading,
@@ -53,160 +60,119 @@ export function SearchableSelect({
   triggerClassName,
   renderTriggerValue,
   footer,
-  showChevron = false, // 默认隐藏下箭头
+  showChevron = false,
 }: SearchableSelectProps) {
-  const [searchText, setSearchText] = React.useState('');
   const [isOpen, setIsOpen] = React.useState(false);
-  const inputRef = React.useRef<HTMLInputElement>(null);
-  const triggerRef = React.useRef<HTMLDivElement>(null);
-
-  // Filter items based on search text
-  const filteredItems = React.useMemo(() => {
-    if (!searchText.trim()) {
-      return items;
-    }
-    const lowerSearch = searchText.toLowerCase();
-    return items.filter(item => {
-      const textToSearch = item.searchText || item.label;
-      return textToSearch.toLowerCase().includes(lowerSearch);
-    });
-  }, [items, searchText]);
 
   // Find selected item
   const selectedItem = React.useMemo(() => {
     return items.find(item => item.value === value);
   }, [items, value]);
 
-  // Reset search when dropdown closes
-  const handleOpenChange = (open: boolean) => {
-    setIsOpen(open);
-    if (!open) {
-      setSearchText('');
-    } else {
-      // Focus input when opening
-      setTimeout(() => {
-        inputRef.current?.focus();
-      }, 10);
-    }
-  };
-
-  const handleSelect = (newValue: string) => {
-    onValueChange?.(newValue);
+  const handleSelect = (currentValue: string) => {
+    onValueChange?.(currentValue);
     setIsOpen(false);
-    setSearchText('');
   };
 
   return (
     <div className={className}>
-      <PopoverPrimitive.Root open={isOpen} onOpenChange={handleOpenChange}>
-        <PopoverPrimitive.Anchor asChild>
-          <div
-            ref={triggerRef}
-            className={cn('flex items-center justify-between w-full', 'text-sm', triggerClassName)}
-          >
-            {isOpen ? (
-              <Input
-                ref={inputRef}
-                placeholder={searchPlaceholder}
-                value={searchText}
-                onChange={e => setSearchText(e.target.value)}
-                className="h-auto py-0 px-0 border-0 shadow-none focus-visible:ring-0 flex-1"
-                disabled={disabled}
-                autoFocus
-                onKeyDown={e => {
-                  if (e.key === 'Escape') {
-                    e.preventDefault();
-                    setIsOpen(false);
-                  }
-                }}
-              />
-            ) : (
-              <PopoverPrimitive.Trigger asChild>
-                <button
-                  type="button"
-                  role="combobox"
-                  aria-expanded={isOpen}
-                  disabled={disabled}
-                  title={selectedItem ? selectedItem.label : undefined}
-                  className={cn(
-                    'flex-1 truncate text-left pl-2 text-text-secondary font-light',
-                    'disabled:cursor-not-allowed disabled:opacity-50'
-                  )}
-                >
-                  {selectedItem && renderTriggerValue ? (
-                    renderTriggerValue(selectedItem)
-                  ) : selectedItem ? (
-                    selectedItem.label
-                  ) : (
-                    <span className="text-text-muted ml-4">{placeholder}</span>
-                  )}
-                </button>
-              </PopoverPrimitive.Trigger>
-            )}
-            {showChevron && (
-              <ChevronDown className="h-4 w-4 opacity-50 ml-1 flex-shrink-0 pointer-events-none" />
-            )}
-          </div>
-        </PopoverPrimitive.Anchor>
-        <PopoverPrimitive.Portal>
-          <PopoverPrimitive.Content
-            align="start"
-            sideOffset={4}
-            onOpenAutoFocus={e => {
-              e.preventDefault();
-              inputRef.current?.focus();
-            }}
+      <Popover open={isOpen} onOpenChange={setIsOpen}>
+        <PopoverTrigger asChild>
+          <button
+            type="button"
+            role="combobox"
+            aria-expanded={isOpen}
+            disabled={disabled}
             className={cn(
-              'z-50 w-full min-w-[200px] overflow-hidden rounded-md border border-border bg-base shadow-md',
-              'data-[state=open]:animate-in data-[state=closed]:animate-out',
-              'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
-              'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
-              contentClassName
+              'flex h-9 w-full items-center justify-between rounded-lg border',
+              'border-border bg-base px-3 text-sm text-text-primary font-light',
+              'shadow-sm hover:bg-hover transition-colors',
+              'focus:outline-none focus:ring-2 focus:ring-primary/20',
+              'disabled:cursor-not-allowed disabled:opacity-50',
+              triggerClassName
             )}
           >
-            <div className="max-h-[300px] overflow-y-auto">
-              <div className="p-1">
-                {error ? (
-                  <div
-                    className="px-2 py-1.5 text-sm text-left font-light"
-                    style={{ color: 'rgb(var(--color-error))' }}
-                  >
-                    {error}
-                  </div>
-                ) : items.length === 0 ? (
-                  <div className="px-2 py-1.5 text-sm text-text-muted text-left font-light">
-                    {loading ? 'Loading...' : emptyText}
-                  </div>
-                ) : filteredItems.length === 0 ? (
-                  <div className="px-2 py-1.5 text-sm text-text-muted text-left font-light">
+            <span className="truncate">
+              {selectedItem && renderTriggerValue
+                ? renderTriggerValue(selectedItem)
+                : selectedItem
+                  ? selectedItem.label
+                  : placeholder}
+            </span>
+            {showChevron && <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />}
+          </button>
+        </PopoverTrigger>
+
+        <PopoverContent
+          className={cn(
+            'p-0 w-auto min-w-[var(--radix-popover-trigger-width)] max-w-[90vw] border border-border bg-base',
+            'shadow-xl rounded-xl overflow-hidden',
+            contentClassName
+          )}
+          align="start"
+          sideOffset={4}
+        >
+          <Command className="border-0">
+            <CommandInput
+              placeholder={searchPlaceholder}
+              className={cn(
+                'h-9 rounded-none border-b border-border',
+                'placeholder:text-text-muted text-sm'
+              )}
+            />
+            <CommandList className="max-h-[300px] overflow-y-auto">
+              {error ? (
+                <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
+              ) : items.length === 0 ? (
+                <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                  {loading ? 'Loading...' : emptyText}
+                </CommandEmpty>
+              ) : (
+                <>
+                  <CommandEmpty className="py-4 text-center text-sm text-text-muted">
                     {noMatchText}
-                  </div>
-                ) : (
-                  filteredItems.map(item => (
-                    <button
-                      key={item.value}
-                      type="button"
-                      disabled={item.disabled}
-                      onClick={() => handleSelect(item.value)}
-                      title={item.label}
-                      className={cn(
-                        'relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none font-light',
-                        'hover:bg-muted focus:bg-muted',
-                        'disabled:pointer-events-none disabled:opacity-50',
-                        value === item.value && 'bg-muted'
-                      )}
-                    >
-                      {value === item.value && <Check className="mr-2 h-4 w-4 flex-shrink-0" />}
-                      <div className="flex-1 truncate text-left">{item.content || item.label}</div>
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
-            {footer}
-          </PopoverPrimitive.Content>
-        </PopoverPrimitive.Portal>
-      </PopoverPrimitive.Root>
+                  </CommandEmpty>
+                  <CommandGroup>
+                    {items.map(item => (
+                      <CommandItem
+                        key={item.value}
+                        value={item.searchText || item.label}
+                        disabled={item.disabled}
+                        onSelect={() => handleSelect(item.value)}
+                        className={cn(
+                          'group cursor-pointer select-none',
+                          'px-3 py-1.5 text-sm text-text-primary',
+                          'rounded-md mx-1 my-[2px]',
+                          'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                          'aria-selected:bg-hover',
+                          'data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50',
+                          '!flex !flex-row !items-start !gap-3'
+                        )}
+                      >
+                        <Check
+                          className={cn(
+                            'h-3 w-3 shrink-0 mt-0.5 ml-1',
+                            value === item.value
+                              ? 'opacity-100 text-primary'
+                              : 'opacity-0 text-text-muted'
+                          )}
+                        />
+                        <span
+                          className="flex-1 break-all whitespace-pre-wrap"
+                          style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+                        >
+                          {item.content || item.label}
+                        </span>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </>
+              )}
+            </CommandList>
+          </Command>
+          {footer}
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }
