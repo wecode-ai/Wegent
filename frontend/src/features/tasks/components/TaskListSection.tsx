@@ -4,16 +4,10 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Task, TaskType } from '@/types/api';
 import TaskMenu from './TaskMenu';
-import {
-  FaRegCircleCheck,
-  FaRegCircleStop,
-  FaRegCircleXmark,
-  FaRegCirclePause,
-} from 'react-icons/fa6';
-import { ArrowPathIcon } from '@heroicons/react/24/outline';
+import { CheckCircle2, XCircle, StopCircle, PauseCircle, RotateCw } from 'lucide-react';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -41,14 +35,27 @@ export default function TaskListSection({
   const { t } = useTranslation('common');
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null);
   const [_loading, setLoading] = useState(false);
+  const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null);
+
+  // Touch interaction state
+  const [touchState, setTouchState] = useState<{
+    startX: number;
+    startY: number;
+    startTime: number;
+    taskId: number | null;
+    isScrolling: boolean;
+    longPressTimer: NodeJS.Timeout | null;
+  }>({
+    startX: 0,
+    startY: 0,
+    startTime: 0,
+    taskId: null,
+    isScrolling: false,
+    longPressTimer: null,
+  });
 
   // Select task
-  const handleTaskClick = (task: Task, event?: React.MouseEvent | React.TouchEvent) => {
-    // Prevent default behavior for touch events
-    if (event) {
-      event.preventDefault();
-    }
-
+  const handleTaskClick = (task: Task) => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams();
       params.set('taskId', String(task.id));
@@ -79,11 +86,92 @@ export default function TaskListSection({
       }
     }
   };
-  // Handle touch start for immediate response on mobile
-  const handleTaskTouchStart = (task: Task) => (event: React.TouchEvent) => {
-    event.preventDefault();
-    handleTaskClick(task, event);
+
+  // Touch interaction handlers
+  const handleTouchStart = (task: Task) => (event: React.TouchEvent) => {
+    const touch = event.touches[0];
+    const longPressTimer = setTimeout(() => {
+      // Long press detected - show menu on mobile
+      setLongPressTaskId(task.id);
+      setTouchState(prev => ({ ...prev, isScrolling: true })); // Prevent click after long press
+    }, 500);
+
+    setTouchState({
+      startX: touch.clientX,
+      startY: touch.clientY,
+      startTime: Date.now(),
+      taskId: task.id,
+      isScrolling: false,
+      longPressTimer,
+    });
   };
+
+  const handleTouchMove = (event: React.TouchEvent) => {
+    if (!touchState.taskId) return;
+
+    const touch = event.touches[0];
+    const deltaX = Math.abs(touch.clientX - touchState.startX);
+    const deltaY = Math.abs(touch.clientY - touchState.startY);
+    const distance = Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+
+    // If moved more than 10px, consider it as scrolling
+    if (distance > 10) {
+      if (touchState.longPressTimer) {
+        clearTimeout(touchState.longPressTimer);
+      }
+      setTouchState(prev => ({ ...prev, isScrolling: true, longPressTimer: null }));
+    }
+  };
+
+  const handleTouchEnd = (task: Task) => (_event: React.TouchEvent) => {
+    if (touchState.longPressTimer) {
+      clearTimeout(touchState.longPressTimer);
+    }
+
+    const touchDuration = Date.now() - touchState.startTime;
+
+    // Only trigger click if:
+    // 1. Not scrolling
+    // 2. Touch duration < 500ms (not a long press)
+    // 3. Touch is on the same task
+    if (!touchState.isScrolling && touchDuration < 500 && touchState.taskId === task.id) {
+      handleTaskClick(task);
+    }
+
+    setTouchState({
+      startX: 0,
+      startY: 0,
+      startTime: 0,
+      taskId: null,
+      isScrolling: false,
+      longPressTimer: null,
+    });
+  };
+
+  // Cleanup effect for touch state
+  useEffect(() => {
+    return () => {
+      if (touchState.longPressTimer) {
+        clearTimeout(touchState.longPressTimer);
+      }
+    };
+  }, [touchState.longPressTimer]);
+
+  // Handle clicks outside to close long press menu
+  useEffect(() => {
+    const handleClickOutside = () => {
+      if (longPressTaskId !== null) {
+        setLongPressTaskId(null);
+      }
+    };
+
+    if (longPressTaskId !== null) {
+      document.addEventListener('click', handleClickOutside);
+      return () => {
+        document.removeEventListener('click', handleClickOutside);
+      };
+    }
+  }, [longPressTaskId]);
 
   // Copy task ID
   const handleCopyTaskId = async (taskId: number) => {
@@ -133,22 +221,22 @@ export default function TaskListSection({
   const getStatusIcon = (status: string) => {
     switch (status) {
       case 'COMPLETED':
-        return <FaRegCircleCheck className="w-4 h-4 text-green-500" />;
+        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
       case 'FAILED':
-        return <FaRegCircleXmark className="w-4 h-4 text-red-500" />;
+        return <XCircle className="w-4 h-4 text-red-500" />;
       case 'CANCELLED':
-        return <FaRegCircleStop className="w-4 h-4 text-gray-400" />;
+        return <StopCircle className="w-4 h-4 text-gray-400" />;
       case 'RUNNING':
         return (
-          <ArrowPathIcon
+          <RotateCw
             className="w-4 h-4 text-blue-500 animate-spin"
             style={{ animationDuration: '2s' }}
           />
         );
       case 'PENDING':
-        return <FaRegCirclePause className="w-4 h-4 text-yellow-500" />;
+        return <PauseCircle className="w-4 h-4 text-yellow-500" />;
       default:
-        return <FaRegCirclePause className="w-4 h-4 text-gray-400" />;
+        return <PauseCircle className="w-4 h-4 text-gray-400" />;
     }
   };
 
@@ -218,28 +306,28 @@ export default function TaskListSection({
 
   return (
     <div className="mb-2">
-      <h3
-        className="text-xs font-medium text-text-muted tracking-wide mb-1"
-        style={{ fontSize: '10px' }}
-      >
+      <h3 className="text-sm text-text-primary tracking-wide mb-1 px-2">
         {title}
         {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
       </h3>
       <div className="space-y-0">
         {tasks.map(task => {
+          const showMenu = hoveredTaskId === task.id || longPressTaskId === task.id;
+
           return (
             <div
               key={task.id}
-              className={`flex items-center justify-between py-1 rounded hover:bg-muted cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-muted' : ''}`}
+              className={`flex items-center justify-between py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
               onClick={() => handleTaskClick(task)}
-              onTouchStart={handleTaskTouchStart(task)}
+              onTouchStart={handleTouchStart(task)}
+              onTouchMove={handleTouchMove}
+              onTouchEnd={handleTouchEnd(task)}
               onMouseEnter={() => setHoveredTaskId(task.id)}
               onMouseLeave={() => setHoveredTaskId(null)}
               style={{
-                touchAction: 'manipulation',
+                touchAction: 'pan-y',
                 WebkitTapHighlightColor: 'transparent',
                 minHeight: '44px',
-                padding: '8px 12px',
                 userSelect: 'none',
               }}
             >
@@ -249,7 +337,7 @@ export default function TaskListSection({
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 mb-1">
-                    <p className="text-xs text-text-muted leading-tight truncate m-0 flex-1">
+                    <p className="text-sm text-text-primary leading-tight truncate m-0 flex-1">
                       {task.title}
                     </p>
                     {getTaskTypeTag(task)}
@@ -267,7 +355,7 @@ export default function TaskListSection({
                     style={{ flexShrink: 0 }}
                   />
                 )}
-                {hoveredTaskId === task.id && (
+                {showMenu && (
                   <TaskMenu
                     taskId={task.id}
                     handleCopyTaskId={handleCopyTaskId}

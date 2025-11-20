@@ -183,8 +183,6 @@ backend/
 └── requirements.txt     # Python 依赖
 ```
 
-详细信息请参阅 [后端开发指南](./backend-dev.md)。
-
 ---
 
 ### 4️⃣ 前端服务开发
@@ -239,8 +237,6 @@ npm run build
 npm run start
 ```
 
-详细信息请参阅 [前端开发指南](./frontend-dev.md)。
-
 ---
 
 ### 5️⃣ Executor Manager 开发
@@ -273,8 +269,6 @@ export EXECUTOR_WORKSPCE=${HOME}/wecode-bot
 # 运行服务
 python main.py
 ```
-
-详细信息请参阅 [Executor 开发指南](./executor-dev.md)。
 
 ---
 
@@ -403,11 +397,7 @@ docker exec -it <executor-container-id> /bin/bash
 
 ## 🔗 相关资源
 
-- [后端开发](./backend-dev.md) - 后端服务开发详细指南
-- [前端开发](./frontend-dev.md) - 前端应用开发详细指南
-- [Executor 开发](./executor-dev.md) - Executor 开发详细指南
 - [测试](./testing.md) - 测试指南
-- [贡献指南](../../contributing/how-to-contribute.md) - 如何为 Wegent 贡献
 
 ---
 

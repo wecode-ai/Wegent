@@ -3,7 +3,16 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
-import { Button, Select, Switch } from 'antd';
+import { Button } from '@/components/ui/button';
+import { Switch } from '@/components/ui/switch';
+import { Loader2 } from 'lucide-react';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import McpConfigImportModal from './McpConfigImportModal';
 
 import { Bot } from '@/types/api';
@@ -12,8 +21,7 @@ import { isPredefinedModel, getModelFromConfig } from '@/features/settings/servi
 import { agentApis, Agent } from '@/apis/agents';
 import { modelApis, Model } from '@/apis/models';
 import { useTranslation } from 'react-i18next';
-
-import type { MessageInstance } from 'antd/es/message/interface';
+import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
 interface BotEditProps {
   bots: Bot[];
@@ -21,7 +29,7 @@ interface BotEditProps {
   editingBotId: number;
   cloningBot: Bot | null;
   onClose: () => void;
-  message: MessageInstance;
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
 }
 const BotEdit: React.FC<BotEditProps> = ({
   bots,
@@ -29,7 +37,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   editingBotId,
   cloningBot,
   onClose,
-  message,
+  toast,
 }) => {
   const { t } = useTranslation('common');
 
@@ -40,12 +48,6 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [loadingModels, setLoadingModels] = useState(false);
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
-
-  // Convert agents to options format for Select component
-  const agentOptions = agents.map(agent => ({
-    value: agent.name,
-    label: agent.name,
-  }));
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null;
@@ -86,12 +88,15 @@ const BotEdit: React.FC<BotEditProps> = ({
         setAgentConfigError(false);
         return JSON.stringify(parsed, null, 2);
       } catch {
-        message.error(t('bot.errors.agent_config_json'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.agent_config_json'),
+        });
         setAgentConfigError(true);
         return prev;
       }
     });
-  }, [message, t]);
+  }, [toast, t]);
 
   const prettifyMcpConfig = useCallback(() => {
     setMcpConfig(prev => {
@@ -105,12 +110,15 @@ const BotEdit: React.FC<BotEditProps> = ({
         setMcpConfigError(false);
         return JSON.stringify(parsed, null, 2);
       } catch {
-        message.error(t('bot.errors.mcp_config_json'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_config_json'),
+        });
         setMcpConfigError(true);
         return prev;
       }
     });
-  }, [message, t]);
+  }, [toast, t]);
 
   // Handle MCP configuration import
   const handleImportMcpConfig = useCallback(() => {
@@ -125,25 +133,35 @@ const BotEdit: React.FC<BotEditProps> = ({
         if (mode === 'replace') {
           // Replace mode: directly use new configuration
           setMcpConfig(JSON.stringify(config, null, 2));
-          message.success(t('bot.import_success'));
+          toast({
+            title: t('bot.import_success'),
+          });
         } else {
           // Append mode: merge existing configuration with new configuration
           try {
             const currentConfig = mcpConfig.trim() ? JSON.parse(mcpConfig) : {};
             const mergedConfig = { ...currentConfig, ...config };
             setMcpConfig(JSON.stringify(mergedConfig, null, 2));
-            message.success(t('bot.append_success'));
+            toast({
+              title: t('bot.append_success'),
+            });
           } catch {
-            message.error(t('bot.errors.mcp_config_json'));
+            toast({
+              variant: 'destructive',
+              title: t('bot.errors.mcp_config_json'),
+            });
             return;
           }
         }
         setImportModalVisible(false);
       } catch {
-        message.error(t('bot.errors.mcp_config_json'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_config_json'),
+        });
       }
     },
-    [mcpConfig, message, t]
+    [mcpConfig, toast, t]
   );
 
   // Get agents list
@@ -155,14 +173,17 @@ const BotEdit: React.FC<BotEditProps> = ({
         setAgents(response.items);
       } catch (error) {
         console.error('Failed to fetch agents:', error);
-        message.error(t('bot.errors.fetch_agents_failed'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.fetch_agents_failed'),
+        });
       } finally {
         setLoadingAgents(false);
       }
     };
 
     fetchAgents();
-  }, [message, t]);
+  }, [toast, t]);
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -184,7 +205,10 @@ const BotEdit: React.FC<BotEditProps> = ({
         }
       } catch (error) {
         console.error('Failed to fetch models:', error);
-        message.error(t('bot.errors.fetch_models_failed'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.fetch_models_failed'),
+        });
         // On error, also switch to custom model mode
         setIsCustomModel(true);
         setSelectedModel('');
@@ -194,8 +218,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     };
 
     fetchModels();
-  }, [agentName, message, t]);
-
+  }, [agentName, toast, t]);
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '');
@@ -247,9 +270,13 @@ const BotEdit: React.FC<BotEditProps> = ({
   }, [handleBack]);
 
   // Save logic
+  // Save logic
   const handleSave = async () => {
     if (!botName.trim() || !agentName.trim()) {
-      message.error(t('bot.errors.required'));
+      toast({
+        variant: 'destructive',
+        title: t('bot.errors.required'),
+      });
       return;
     }
     let parsedAgentConfig: unknown = undefined;
@@ -257,7 +284,10 @@ const BotEdit: React.FC<BotEditProps> = ({
       const trimmedConfig = agentConfig.trim();
       if (!trimmedConfig) {
         setAgentConfigError(true);
-        message.error(t('bot.errors.agent_config_json'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.agent_config_json'),
+        });
         return;
       }
       try {
@@ -265,7 +295,10 @@ const BotEdit: React.FC<BotEditProps> = ({
         setAgentConfigError(false);
       } catch {
         setAgentConfigError(true);
-        message.error(t('bot.errors.agent_config_json'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.agent_config_json'),
+        });
         return;
       }
     } else {
@@ -276,10 +309,21 @@ const BotEdit: React.FC<BotEditProps> = ({
     if (mcpConfig.trim()) {
       try {
         parsedMcpConfig = JSON.parse(mcpConfig);
+        // Adapt MCP config types based on selected agent
+        if (parsedMcpConfig && agentName) {
+          if (isValidAgentType(agentName)) {
+            parsedMcpConfig = adaptMcpConfigForAgent(parsedMcpConfig, agentName);
+          } else {
+            console.warn(`Unknown agent type "${agentName}", skipping MCP config adaptation`);
+          }
+        }
         setMcpConfigError(false);
       } catch {
         setMcpConfigError(true);
-        message.error(t('bot.errors.mcp_config_json'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_config_json'),
+        });
         return;
       }
     } else {
@@ -305,12 +349,14 @@ const BotEdit: React.FC<BotEditProps> = ({
       }
       onClose();
     } catch (error) {
-      message.error((error as Error)?.message || t('bot.errors.save_failed'));
+      toast({
+        variant: 'destructive',
+        title: (error as Error)?.message || t('bot.errors.save_failed'),
+      });
     } finally {
       setBotSaving(false);
     }
   };
-
   return (
     <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 min-h-[650px] overflow-hidden">
       {/* Top navigation bar */}
@@ -332,8 +378,8 @@ const BotEdit: React.FC<BotEditProps> = ({
           </svg>
           {t('common.back')}
         </button>
-
-        <Button onClick={handleSave} disabled={botSaving} loading={botSaving} type="primary">
+        <Button onClick={handleSave} disabled={botSaving}>
+          {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {botSaving ? t('actions.saving') : t('actions.save')}
         </Button>
       </div>
@@ -366,22 +412,47 @@ const BotEdit: React.FC<BotEditProps> = ({
             </div>
             <Select
               value={agentName}
-              onChange={value => {
+              onValueChange={value => {
                 if (value !== agentName) {
                   setIsCustomModel(false);
                   setSelectedModel('');
                   setAgentConfig('');
                   setAgentConfigError(false);
                   setModels([]);
+
+                  // Adapt MCP config when switching agent type
+                  if (mcpConfig.trim()) {
+                    try {
+                      const currentMcpConfig = JSON.parse(mcpConfig);
+                      if (isValidAgentType(value)) {
+                        const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value);
+                        setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
+                      } else {
+                        console.warn(
+                          `Unknown agent type "${value}", skipping MCP config adaptation`
+                        );
+                      }
+                    } catch (error) {
+                      // If parsing fails, keep the original config
+                      console.warn('Failed to adapt MCP config on agent change:', error);
+                    }
+                  }
                 }
                 setAgentName(value);
               }}
-              placeholder="choose an agent"
-              style={{ width: '100%' }}
-              options={agentOptions}
-              loading={loadingAgents}
-              optionRender={option => <div>{option.data.label}</div>}
-            />
+              disabled={loadingAgents}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="choose an agent" />
+              </SelectTrigger>
+              <SelectContent>
+                {agents.map(agent => (
+                  <SelectItem key={agent.name} value={agent.name}>
+                    {agent.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
 
           {/* Agent Config */}
@@ -395,9 +466,8 @@ const BotEdit: React.FC<BotEditProps> = ({
               <div className="flex items-center">
                 <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
                 <Switch
-                  size="small"
                   checked={isCustomModel}
-                  onChange={checked => {
+                  onCheckedChange={(checked: boolean) => {
                     setIsCustomModel(checked);
                     if (checked) {
                       setAgentConfig('');
@@ -449,17 +519,22 @@ const BotEdit: React.FC<BotEditProps> = ({
             ) : (
               <Select
                 value={selectedModel}
-                onChange={value => {
+                onValueChange={value => {
                   setSelectedModel(value);
                 }}
-                placeholder="Select a model"
-                style={{ width: '100%' }}
-                options={models.map(model => ({
-                  value: model.name,
-                  label: model.name,
-                }))}
-                loading={loadingModels}
-              />
+                disabled={loadingModels}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select a model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {models.map(model => (
+                    <SelectItem key={model.name} value={model.name}>
+                      {model.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             )}
           </div>
 
@@ -471,7 +546,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                   {t('bot.mcp_config')}
                 </label>
               </div>
-              <Button size="small" onClick={() => handleImportMcpConfig()} className="text-xs">
+              <Button size="sm" onClick={() => handleImportMcpConfig()} className="text-xs">
                 {t('bot.import_mcp_button')}
               </Button>
             </div>
@@ -538,7 +613,8 @@ const BotEdit: React.FC<BotEditProps> = ({
         visible={importModalVisible}
         onClose={() => setImportModalVisible(false)}
         onImport={handleImportConfirm}
-        message={message}
+        toast={toast}
+        agentType={agentName as 'ClaudeCode' | 'Agno'}
       />
 
       {/* Mobile responsive styles */}

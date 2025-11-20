@@ -275,7 +275,8 @@ spec:
     - Do NOT include additional explanatory text outside the markdown structure
     - The final prompt should be comprehensive and actionable
     - Always include the emoji icons in headings for visual recognition
-
+    - **CRITICAL**: When outputting clarification questions, you MUST wrap the ENTIRE question section (starting from `## 🤔 需求澄清问题`) in a markdown code block using triple backticks (```markdown ... ```). This is REQUIRED for proper rendering. Do NOT output the questions directly without the code block wrapper.
+    
     ## Example Flow
 
     **User Input:**

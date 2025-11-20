@@ -6,7 +6,8 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import Modal from '@/features/common/Modal';
-import { Button, App } from 'antd';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
 import { useUser } from '@/features/common/UserContext';
 import { fetchGitInfo, saveGitToken } from '../services/github';
 import { GitInfo } from '@/types/api';
@@ -45,7 +46,7 @@ const isValidDomain = (value: string) => {
 const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo }) => {
   const { user, refresh } = useUser();
   const { t } = useTranslation('common');
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const [platforms, setPlatforms] = useState<GitInfo[]>([]);
   const [domain, setDomain] = useState('');
   const [token, setToken] = useState('');
@@ -87,11 +88,17 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     const domainToSave = type === 'github' ? 'github.com' : sanitizedDomain;
     const tokenToSave = token.trim();
     if (!domainToSave || !tokenToSave) {
-      message.error(t('github.error.required'));
+      toast({
+        variant: 'destructive',
+        title: t('github.error.required'),
+      });
       return;
     }
     if (isGitlabLike && !isValidDomain(domainToSave)) {
-      message.error(t('github.error.invalid_domain'));
+      toast({
+        variant: 'destructive',
+        title: t('github.error.invalid_domain'),
+      });
       setDomain(sanitizedDomain);
       return;
     }
@@ -101,7 +108,10 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       onClose();
       await refresh();
     } catch (error) {
-      message.error((error as Error)?.message || t('github.error.save_failed'));
+      toast({
+        variant: 'destructive',
+        title: (error as Error)?.message || t('github.error.save_failed'),
+      });
     } finally {
       setTokenSaving(false);
     }
@@ -245,7 +255,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       </div>
       {/* Bottom button area */}
       <div className="flex space-x-3 mt-6">
-        <Button onClick={onClose} type="default" size="small" style={{ flex: 1 }}>
+        <Button onClick={onClose} variant="outline" size="sm" style={{ flex: 1 }}>
           {t('common.cancel')}
         </Button>
         <Button
@@ -253,9 +263,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
           disabled={
             (isGitlabLike && (!domain || isGitlabDomainInvalid)) || !token.trim() || tokenSaving
           }
-          type="primary"
-          size="small"
-          loading={tokenSaving}
+          variant="default"
+          size="sm"
           style={{ flex: 1 }}
         >
           {tokenSaving ? t('github.saving') : t('github.save_token')}

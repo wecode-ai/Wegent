@@ -108,6 +108,8 @@
     "execution_type": "执行类型",
     "mcp_init_fail": "❌ MCP 初始化失败。"
   },
+  "send_shortcut_ctrl": "Ctrl+Enter 发送",
+  "send_shortcut_cmd": "Cmd+Enter 发送",
   "clarification": {
     "title": "与产品经理搏斗 - 需求澄清",
     "recommended": "推荐",
