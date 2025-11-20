@@ -147,9 +147,9 @@ export default function BranchSelector({
   };
 
   return (
-    <div className="flex items-center space-x-1 min-w-0">
+    <div className="flex items-center space-x-2 min-w-0">
       <FiGitBranch
-        className={`w-3 h-3 text-text-muted flex-shrink-0 ${showLoading ? 'animate-pulse' : ''}`}
+        className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${showLoading ? 'animate-pulse' : ''}`}
       />
       <div className="relative" style={{ width: 'auto', maxWidth: 200 }}>
         <SearchableSelect
