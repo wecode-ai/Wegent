@@ -96,13 +96,13 @@ export default function ChatArea({
     if (lastTeamId) {
       const lastTeam = teams.find(team => team.id === lastTeamId);
       if (lastTeam) {
-        console.log('[ChatArea] ✅ Restoring team from localStorage:', lastTeam.name, lastTeam.id);
+        console.log('[ChatArea] âœ… Restoring team from localStorage:', lastTeam.name, lastTeam.id);
         setSelectedTeam(lastTeam);
         setHasRestoredPreferences(true);
         return;
       } else {
         console.log(
-          '[ChatArea] ❌ Team from localStorage not found in teams list, ID:',
+          '[ChatArea] â�Œ Team from localStorage not found in teams list, ID:',
           lastTeamId
         );
       }
@@ -407,7 +407,7 @@ export default function ChatArea({
                 taskType={taskType}
               />
               {/* Team Selector and Send Button */}
-              <div className="flex items-end justify-between px-3 py-0 gap-2">
+              <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
                 <div className="flex-1 min-w-0 overflow-hidden">
                   {teams.length > 0 && (
                     <TeamSelector
@@ -430,7 +430,7 @@ export default function ChatArea({
                       selectedTaskDetail?.status === 'PENDING' ||
                       selectedTaskDetail?.status === 'RUNNING'
                     }
-                    className="h-10 w-10 rounded-full hover:bg-primary/10 flex-shrink-0"
+                    className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
                   >
                     {isLoading ||
                     selectedTaskDetail?.status === 'PENDING' ||
