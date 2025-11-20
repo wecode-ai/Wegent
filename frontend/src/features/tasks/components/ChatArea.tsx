@@ -118,7 +118,7 @@ export default function ChatArea({
       setSelectedTeam(teams[0]);
     }
     setHasRestoredPreferences(true);
-  }, [teams, hasRestoredPreferences]);
+  }, [teams, hasRestoredPreferences, selectedTeam]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
@@ -276,7 +276,7 @@ export default function ChatArea({
       // Force scroll to bottom when opening a historical task
       setTimeout(() => scrollToBottom(true), 100);
     }
-  }, [selectedTaskDetail?.id]);
+  }, [selectedTaskDetail?.id, hasMessages]);
 
   useEffect(() => {
     if (!hasMessages || !lastSubtaskId) return;

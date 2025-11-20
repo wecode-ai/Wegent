@@ -88,7 +88,7 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
         message.error(t('bot.errors.mcp_config_invalid'));
       }
     }
-  }, [importConfig, importMode, message, onImport, t]);
+  }, [importConfig, importMode, message, onImport, t, agentType]);
 
   // Reset state when closing modal
   const handleCancel = () => {

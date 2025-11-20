@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { driver, Driver, AllowedButtons, Config } from 'driver.js';
 import { useTranslation } from 'react-i18next';
@@ -64,7 +64,7 @@ export const useOnboarding = ({
     localStorage.setItem(ONBOARDING_CURRENT_STEP_KEY, step.toString());
   };
 
-  const startTour = () => {
+  const startTour = useCallback(() => {
     if (isLoading) {
       return;
     }
@@ -129,7 +129,7 @@ export const useOnboarding = ({
     }
 
     setOnboardingInProgress(true);
-  };
+  }, [isLoading, t, hasTeams, hasGitToken, currentPage, router]);
 
   const restartTour = () => {
     localStorage.removeItem(ONBOARDING_COMPLETED_KEY);
@@ -163,7 +163,7 @@ export const useOnboarding = ({
       }, 500);
       return () => clearTimeout(timer);
     }
-  }, [isReady, isLoading, hasShareId, currentPage]);
+  }, [isReady, isLoading, hasShareId, currentPage, startTour]);
 
   // Cleanup on unmount
   useEffect(() => {

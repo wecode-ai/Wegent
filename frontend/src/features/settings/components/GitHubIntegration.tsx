@@ -47,7 +47,7 @@ export default function GitHubIntegration() {
       }
     }
     loadGitInfo();
-  }, [user]);
+  }, [user, message, t]);
 
   const platforms = gitInfo || [];
 

@@ -2,16 +2,16 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React, { useState, useEffect, useRef, ReactNode } from 'react'
+import React, { useState, useEffect, useRef, ReactNode } from 'react';
 
 interface ResizableSidebarProps {
-  children: ReactNode
-  minWidth?: number
-  maxWidth?: number
-  defaultWidth?: number
-  storageKey?: string
+  children: ReactNode;
+  minWidth?: number;
+  maxWidth?: number;
+  defaultWidth?: number;
+  storageKey?: string;
 }
 
 export default function ResizableSidebar({
@@ -19,82 +19,85 @@ export default function ResizableSidebar({
   minWidth = 200,
   maxWidth = 500,
   defaultWidth = 224, // 56 * 4 = 224px (w-56 equivalent)
-  storageKey = 'task-sidebar-width'
+  storageKey = 'task-sidebar-width',
 }: ResizableSidebarProps) {
-  const [sidebarWidth, setSidebarWidth] = useState(defaultWidth)
-  const [isResizing, setIsResizing] = useState(false)
-  const sidebarRef = useRef<HTMLDivElement>(null)
-  const widthRef = useRef(defaultWidth)
+  const [sidebarWidth, setSidebarWidth] = useState(defaultWidth);
+  const [isResizing, setIsResizing] = useState(false);
+  const sidebarRef = useRef<HTMLDivElement>(null);
+  const widthRef = useRef(defaultWidth);
 
   // Keep widthRef in sync with sidebarWidth
   useEffect(() => {
-    widthRef.current = sidebarWidth
-  }, [sidebarWidth])
+    widthRef.current = sidebarWidth;
+  }, [sidebarWidth]);
 
   // Load saved width from localStorage
   useEffect(() => {
-    const savedWidth = localStorage.getItem(storageKey)
+    const savedWidth = localStorage.getItem(storageKey);
     if (savedWidth) {
-      const width = parseInt(savedWidth, 10)
+      const width = parseInt(savedWidth, 10);
       if (width >= minWidth && width <= maxWidth) {
-        setSidebarWidth(width)
+        setSidebarWidth(width);
       }
     }
-  }, [storageKey, minWidth, maxWidth])
+  }, [storageKey, minWidth, maxWidth]);
 
   // Save width to localStorage
-  const saveWidth = (width: number) => {
-    localStorage.setItem(storageKey, width.toString())
-  }
+  const saveWidth = React.useCallback(
+    (width: number) => {
+      localStorage.setItem(storageKey, width.toString());
+    },
+    [storageKey]
+  );
 
   // Handle mouse down on resizer
   const handleMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault()
-    setIsResizing(true)
-  }
+    e.preventDefault();
+    setIsResizing(true);
+  };
 
   // Handle mouse move and mouse up
   useEffect(() => {
-    if (!isResizing) return
+    if (!isResizing) return;
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (!sidebarRef.current) return
+      if (!sidebarRef.current) return;
 
       // Calculate width based on mouse position relative to sidebar's left edge
-      const sidebarLeft = sidebarRef.current.getBoundingClientRect().left
-      const newWidth = e.clientX - sidebarLeft
+      const sidebarLeft = sidebarRef.current.getBoundingClientRect().left;
+      const newWidth = e.clientX - sidebarLeft;
 
       if (newWidth >= minWidth && newWidth <= maxWidth) {
-        setSidebarWidth(newWidth)
+        setSidebarWidth(newWidth);
       }
-    }
+    };
 
     const handleMouseUp = () => {
-      setIsResizing(false)
-      saveWidth(widthRef.current)
-    }
+      setIsResizing(false);
+      saveWidth(widthRef.current);
+    };
 
-    document.addEventListener('mousemove', handleMouseMove)
-    document.addEventListener('mouseup', handleMouseUp)
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
     // Prevent text selection while resizing
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none';
+    document.body.style.cursor = 'col-resize';
 
     return () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-      document.removeEventListener('mouseup', handleMouseUp)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
-    }
-  }, [isResizing, minWidth, maxWidth])
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.userSelect = '';
+      document.body.style.cursor = '';
+    };
+  }, [isResizing, minWidth, maxWidth, saveWidth]);
 
   return (
-    <div className="hidden lg:flex relative border-r border-border" style={{ width: `${sidebarWidth}px` }}>
+    <div
+      className="hidden lg:flex relative border-r border-border"
+      style={{ width: `${sidebarWidth}px` }}
+    >
       {/* Sidebar content container */}
-      <div
-        ref={sidebarRef}
-        className="flex flex-col w-full h-full"
-      >
+      <div ref={sidebarRef} className="flex flex-col w-full h-full">
         {children}
       </div>
 
@@ -103,7 +106,7 @@ export default function ResizableSidebar({
         className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 transition-colors group"
         onMouseDown={handleMouseDown}
         style={{
-          zIndex: 10
+          zIndex: 10,
         }}
       >
         {/* Visual indicator on hover */}
@@ -116,10 +119,10 @@ export default function ResizableSidebar({
           className="fixed inset-0 z-50"
           style={{
             cursor: 'col-resize',
-            userSelect: 'none'
+            userSelect: 'none',
           }}
         />
       )}
     </div>
-  )
+  );
 }

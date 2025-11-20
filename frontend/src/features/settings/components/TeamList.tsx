@@ -89,7 +89,7 @@ export default function TeamList() {
       }
     }
     loadData();
-  }, []);
+  }, [message, setBotsSorted, setTeamsSorted, t]);
 
   useEffect(() => {
     if (editingTeamId === null) {
