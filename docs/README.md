@@ -126,9 +126,6 @@ Found an issue in the documentation? We welcome contributions!
 
 发现文档问题？欢迎贡献！
 
-- [English: How to Contribute](./en/contributing/how-to-contribute.md)
-- [中文：如何贡献](./zh/contributing/how-to-contribute.md)
-
 ---
 
 <p align="center">Made with ❤️ by WeCode-AI Team</p>
