@@ -373,101 +373,171 @@ export default function ChatArea({
       </div>
 
       {/* Main Content Area */}
-      <div
-        className={
-          hasMessages ? 'w-full' : 'flex-1 flex flex-col items-center justify-center w-full'
-        }
-      >
-        {/* Floating Input Area */}
-        <div
-          ref={floatingInputRef}
-          className={
-            hasMessages
-              ? 'fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0'
-              : 'w-full max-w-4xl px-4 sm:px-6'
-          }
-          style={
-            hasMessages
-              ? {
-                  left: floatingMetrics.width ? floatingMetrics.left : 0,
-                  width: floatingMetrics.width || '100%',
-                  right: floatingMetrics.width ? undefined : 0,
-                }
-              : {}
-          }
-        >
-          <div className={hasMessages ? 'w-full max-w-4xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
-            {/* Chat Input Card */}
-            <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
-              <ChatInput
-                message={taskInputMessage}
-                setMessage={setTaskInputMessage}
-                handleSendMessage={handleSendMessage}
-                isLoading={isLoading}
-                taskType={taskType}
-              />
-              {/* Team Selector and Send Button */}
-              <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
-                <div className="flex-1 min-w-0 overflow-hidden">
-                  {teams.length > 0 && (
-                    <TeamSelector
-                      selectedTeam={selectedTeam}
-                      setSelectedTeam={handleTeamChange}
-                      teams={teams}
-                      disabled={hasMessages}
-                      isLoading={isTeamsLoading}
-                    />
-                  )}
+      <div className={hasMessages ? 'w-full' : 'flex-1 flex flex-col w-full'}>
+        {/* Center area for input when no messages */}
+        {!hasMessages && (
+          <div className="flex-1 flex items-center justify-center w-full">
+            {/* Floating Input Area */}
+            <div ref={floatingInputRef} className="w-full max-w-4xl px-4 sm:px-6">
+              <div className="w-full">
+                {/* Chat Input Card */}
+                <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
+                  <ChatInput
+                    message={taskInputMessage}
+                    setMessage={setTaskInputMessage}
+                    handleSendMessage={handleSendMessage}
+                    isLoading={isLoading}
+                    taskType={taskType}
+                  />
+                  {/* Team Selector and Send Button */}
+                  <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      {teams.length > 0 && (
+                        <TeamSelector
+                          selectedTeam={selectedTeam}
+                          setSelectedTeam={handleTeamChange}
+                          teams={teams}
+                          disabled={hasMessages}
+                          isLoading={isTeamsLoading}
+                        />
+                      )}
+                    </div>
+                    <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                      {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleSendMessage}
+                        disabled={
+                          isLoading ||
+                          selectedTaskDetail?.status === 'PENDING' ||
+                          selectedTaskDetail?.status === 'RUNNING'
+                        }
+                        className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                      >
+                        {isLoading ||
+                        selectedTaskDetail?.status === 'PENDING' ||
+                        selectedTaskDetail?.status === 'RUNNING' ? (
+                          <LoadingDots />
+                        ) : (
+                          <Send className="h-5 w-5 text-text-muted" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-                <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-                  {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    onClick={handleSendMessage}
-                    disabled={
-                      isLoading ||
-                      selectedTaskDetail?.status === 'PENDING' ||
-                      selectedTaskDetail?.status === 'RUNNING'
-                    }
-                    className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
-                  >
-                    {isLoading ||
-                    selectedTaskDetail?.status === 'PENDING' ||
-                    selectedTaskDetail?.status === 'RUNNING' ? (
-                      <LoadingDots />
-                    ) : (
-                      <Send className="h-5 w-5 text-text-muted" />
-                    )}
-                  </Button>
+
+                {/* Bottom Controls */}
+                <div className="flex flex-row gap-1 mb-2 ml-3 mt-3 items-center flex-wrap">
+                  {showRepositorySelector && (
+                    <>
+                      <RepositorySelector
+                        selectedRepo={selectedRepo}
+                        handleRepoChange={setSelectedRepo}
+                        disabled={hasMessages}
+                        selectedTaskDetail={selectedTaskDetail}
+                      />
+
+                      {selectedRepo && (
+                        <BranchSelector
+                          selectedRepo={selectedRepo}
+                          selectedBranch={selectedBranch}
+                          handleBranchChange={setSelectedBranch}
+                          disabled={hasMessages}
+                        />
+                      )}
+                    </>
+                  )}
                 </div>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Bottom Controls */}
-            <div className="flex flex-row gap-1 mb-2 ml-3 mt-3 items-center flex-wrap">
-              {showRepositorySelector && (
-                <>
-                  <RepositorySelector
-                    selectedRepo={selectedRepo}
-                    handleRepoChange={setSelectedRepo}
-                    disabled={hasMessages}
-                    selectedTaskDetail={selectedTaskDetail}
-                  />
+        {/* Floating Input Area for messages view */}
+        {hasMessages && (
+          <div
+            ref={floatingInputRef}
+            className="fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0"
+            style={{
+              left: floatingMetrics.width ? floatingMetrics.left : 0,
+              width: floatingMetrics.width || '100%',
+              right: floatingMetrics.width ? undefined : 0,
+            }}
+          >
+            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+              {/* Chat Input Card */}
+              <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
+                <ChatInput
+                  message={taskInputMessage}
+                  setMessage={setTaskInputMessage}
+                  handleSendMessage={handleSendMessage}
+                  isLoading={isLoading}
+                  taskType={taskType}
+                />
+                {/* Team Selector and Send Button */}
+                <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    {teams.length > 0 && (
+                      <TeamSelector
+                        selectedTeam={selectedTeam}
+                        setSelectedTeam={handleTeamChange}
+                        teams={teams}
+                        disabled={hasMessages}
+                        isLoading={isTeamsLoading}
+                      />
+                    )}
+                  </div>
+                  <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                    {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleSendMessage}
+                      disabled={
+                        isLoading ||
+                        selectedTaskDetail?.status === 'PENDING' ||
+                        selectedTaskDetail?.status === 'RUNNING'
+                      }
+                      className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                    >
+                      {isLoading ||
+                      selectedTaskDetail?.status === 'PENDING' ||
+                      selectedTaskDetail?.status === 'RUNNING' ? (
+                        <LoadingDots />
+                      ) : (
+                        <Send className="h-5 w-5 text-text-muted" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
 
-                  {selectedRepo && (
-                    <BranchSelector
+              {/* Bottom Controls */}
+              <div className="flex flex-row gap-1 mb-2 ml-3 mt-3 items-center flex-wrap">
+                {showRepositorySelector && (
+                  <>
+                    <RepositorySelector
                       selectedRepo={selectedRepo}
-                      selectedBranch={selectedBranch}
-                      handleBranchChange={setSelectedBranch}
+                      handleRepoChange={setSelectedRepo}
                       disabled={hasMessages}
+                      selectedTaskDetail={selectedTaskDetail}
                     />
-                  )}
-                </>
-              )}
+
+                    {selectedRepo && (
+                      <BranchSelector
+                        selectedRepo={selectedRepo}
+                        selectedBranch={selectedBranch}
+                        handleBranchChange={setSelectedBranch}
+                        disabled={hasMessages}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );
