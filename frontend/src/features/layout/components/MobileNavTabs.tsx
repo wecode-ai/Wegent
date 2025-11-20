@@ -39,7 +39,10 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
   ];
 
   return (
-    <div className="flex items-center bg-surface/50 backdrop-blur-sm rounded-full p-1 border border-border/50 shadow-sm min-w-0 max-w-full" data-tour="mode-toggle">
+    <div
+      className="flex items-center bg-surface/50 backdrop-blur-sm rounded-full p-1 border border-border/50 shadow-sm min-w-0 max-w-full"
+      data-tour="mode-toggle"
+    >
       {tabs.map(tab => {
         const Icon = tab.icon;
         const isActive = activePage === tab.key;
@@ -51,7 +54,7 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
             onClick={() => router.push(tab.path)}
             className={`
               flex items-center justify-center gap-1.5
-              px-3 py-1.5 rounded-full text-sm font-medium
+              px-3 py-1.5 rounded-full text-sm font-normal
               transition-all duration-200
               min-w-0 flex-shrink-0
               ${

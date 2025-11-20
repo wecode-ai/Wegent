@@ -7,9 +7,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
 import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch } from '@/types/api';
-import { RiRobot2Line, RiUser3Line } from 'react-icons/ri';
-import { FiCopy, FiCheck, FiDownload } from 'react-icons/fi';
-import { Button } from 'antd';
+import { Bot, User, Copy, Check, Download } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
@@ -78,25 +77,18 @@ const CopyButton = ({ content, className }: { content: string; className?: strin
 
   return (
     <Button
-      type="text"
+      variant="ghost"
+      size="icon"
       onClick={handleCopy}
-      className={className ?? ''}
-      // className="absolute bottom-0 left-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+      className={className ?? 'h-8 w-8 hover:bg-muted'}
       title={t('messages.copy_markdown')}
-      icon={
-        copied ? (
-          <FiCheck className="w-4 h-4 text-green-400" />
-        ) : (
-          <FiCopy className="w-4 h-4 text-gray-400 hover:text-white" />
-        )
-      }
-      style={{
-        padding: '4px',
-        height: 'auto',
-        minWidth: 'auto',
-        borderRadius: '4px',
-      }}
-    />
+    >
+      {copied ? (
+        <Check className="h-4 w-4 text-green-500" />
+      ) : (
+        <Copy className="h-4 w-4 text-text-muted" />
+      )}
+    </Button>
   );
 };
 
@@ -114,23 +106,19 @@ const BubbleTools = ({
   }>;
 }) => {
   return (
-    <div className="absolute bottom-1 left-2 flex items-center gap-1 z-10">
+    <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
       <CopyButton content={contentToCopy} />
       {tools.map(tool => (
         <Button
           key={tool.key}
-          type="text"
+          variant="ghost"
+          size="icon"
           onClick={tool.onClick}
           title={tool.title}
-          icon={tool.icon}
-          className=""
-          style={{
-            padding: '4px',
-            height: 'auto',
-            minWidth: 'auto',
-            borderRadius: '4px',
-          }}
-        />
+          className="h-8 w-8 hover:bg-muted"
+        >
+          {tool.icon}
+        </Button>
       ))}
     </div>
   );
@@ -393,7 +381,7 @@ export default function MessagesArea({
             {
               key: 'download',
               title: t('messages.download') || 'Download',
-              icon: <FiDownload className="w-4 h-4 text-gray-400 hover:text-white" />,
+              icon: <Download className="h-4 w-4 text-text-muted" />,
               onClick: () => {
                 const blob = new Blob([`${normalizedResult}`], {
                   type: 'text/plain;charset=utf-8',
@@ -693,18 +681,18 @@ export default function MessagesArea({
       {displayMessages.length > 0 && (
         <div
           ref={messagesContainerRef}
-          className="flex-1 overflow-y-auto mb-4 space-y-4 messages-container custom-scrollbar"
+          className="flex-1 overflow-y-auto mb-4 space-y-8 messages-container custom-scrollbar"
         >
           {displayMessages.map((msg, index) => {
             const bubbleBaseClasses =
-              'relative group w-full p-3 pb-8 rounded-lg border border-border text-text-primary';
+              'relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm';
             const bubbleTypeClasses = msg.type === 'user' ? 'bg-muted my-6' : 'bg-surface';
             const isUserMessage = msg.type === 'user';
             const timestampLabel = formatTimestamp(msg.timestamp);
             const headerIcon = isUserMessage ? (
-              <RiUser3Line className="w-4 h-4" />
+              <User className="w-4 h-4" />
             ) : (
-              <RiRobot2Line className="w-4 h-4" />
+              <Bot className="w-4 h-4" />
             );
             const headerLabel = isUserMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
 
@@ -717,10 +705,7 @@ export default function MessagesArea({
                   className={`flex ${isUserMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${isUserMessage ? 'items-end' : 'items-start'}`}
                 >
                   {msg.type === 'ai' && msg.thinking && (
-                    <ThinkingComponent
-                      thinking={msg.thinking}
-                      taskStatus={msg.subtaskStatus}
-                    />
+                    <ThinkingComponent thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
                   )}
                   <div className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}>
                     <div className="flex items-center gap-2 mb-2 text-xs opacity-80">

@@ -4,15 +4,8 @@
 
 'use client';
 
-import { useEffect, useRef, useState, useLayoutEffect } from 'react';
-import { RiBrainLine } from 'react-icons/ri';
-import {
-  FiChevronDown,
-  FiChevronUp,
-  FiChevronsDown,
-  FiMaximize2,
-  FiMinimize2,
-} from 'react-icons/fi';
+import { useEffect, useRef, useState, useLayoutEffect, useMemo } from 'react';
+import { Brain, ChevronDown, ChevronUp, ChevronsDown, Maximize2, Minimize2 } from 'lucide-react';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface ThinkingStep {
@@ -62,6 +55,8 @@ interface ThinkingStep {
       output_tokens?: number;
     };
     result?: string;
+    timestamp?: string;
+    created_at?: string;
     // Custom details
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     [key: string]: any;
@@ -105,13 +100,13 @@ const TOOL_ICONS: Record<string, string> = {
 export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComponentProps) {
   const { t: tTasks } = useTranslation('tasks');
   const { t: tChat } = useTranslation('chat');
-  const items = thinking ?? [];
+  const items = useMemo(() => thinking ?? [], [thinking]);
 
   // Initialize isOpen based on taskStatus
   const shouldBeCollapsed =
     taskStatus === 'COMPLETED' || taskStatus === 'FAILED' || taskStatus === 'CANCELLED';
-  const [isOpen, setIsOpen] = useState(!shouldBeCollapsed);
 
+  const [isOpen, setIsOpen] = useState(!shouldBeCollapsed);
   const previousSignatureRef = useRef<string | null>(null);
   const userCollapsedRef = useRef(false);
   const previousStatusRef = useRef<string | undefined>(taskStatus);
@@ -253,7 +248,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
       if (step.details?.message?.id) {
         // Assuming message id might contain timestamp info, or we need to find timestamp field
         // For now, we'll try to use created_at or timestamp if available
-        const timestamp = (step.details as any).timestamp || (step.details as any).created_at;
+        const timestamp = step.details?.timestamp || step.details?.created_at;
         if (timestamp) {
           startTime = new Date(timestamp).getTime();
           break;
@@ -265,7 +260,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
     for (let i = thinkingSteps.length - 1; i >= 0; i--) {
       const step = thinkingSteps[i];
       if (step.details?.message?.id) {
-        const timestamp = (step.details as any).timestamp || (step.details as any).created_at;
+        const timestamp = step.details?.timestamp || step.details?.created_at;
         if (timestamp) {
           endTime = new Date(timestamp).getTime();
           break;
@@ -561,12 +556,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               >
                 {isExpanded ? (
                   <>
-                    <FiMinimize2 className="h-3 w-3" />
+                    <Minimize2 className="h-3 w-3" />
                     <span className="text-xs">{tChat('thinking.collapse') || 'Collapse'}</span>
                   </>
                 ) : (
                   <>
-                    <FiMaximize2 className="h-3 w-3" />
+                    <Maximize2 className="h-3 w-3" />
                     <span className="text-xs">{tChat('thinking.expand') || 'Expand'}</span>
                   </>
                 )}
@@ -687,17 +682,19 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               onClick={() => toggleParamExpansion(paramKey)}
               className="flex items-center gap-1 text-blue-400 hover:text-blue-300 transition-colors"
               title={
-                isExpanded ? tChat('thinking.collapse') || 'Collapse' : tChat('thinking.expand') || 'Expand'
+                isExpanded
+                  ? tChat('thinking.collapse') || 'Collapse'
+                  : tChat('thinking.expand') || 'Expand'
               }
             >
               {isExpanded ? (
                 <>
-                  <FiMinimize2 className="h-3 w-3" />
+                  <Minimize2 className="h-3 w-3" />
                   <span className="text-xs">{tChat('thinking.collapse') || 'Collapse'}</span>
                 </>
               ) : (
                 <>
-                  <FiMaximize2 className="h-3 w-3" />
+                  <Maximize2 className="h-3 w-3" />
                   <span className="text-xs">{tChat('thinking.expand') || 'Expand'}</span>
                 </>
               )}
@@ -818,7 +815,8 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                     <div
                       className={`text-xs font-medium ${content.is_error ? 'text-red-400' : 'text-green-400'}`}
                     >
-                      {content.is_error ? '❌' : '✅'} {tChat('thinking.tool_result') || 'Tool Result'}
+                      {content.is_error ? '❌' : '✅'}{' '}
+                      {tChat('thinking.tool_result') || 'Tool Result'}
                     </div>
                     {isCollapsible && (
                       <button
@@ -827,12 +825,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                       >
                         {isExpanded ? (
                           <>
-                            <FiMinimize2 className="h-3 w-3" />
-                            <span className="text-xs">{tChat('thinking.collapse') || 'Collapse'}</span>
+                            <Minimize2 className="h-3 w-3" />
+                            <span className="text-xs">
+                              {tChat('thinking.collapse') || 'Collapse'}
+                            </span>
                           </>
                         ) : (
                           <>
-                            <FiMaximize2 className="h-3 w-3" />
+                            <Maximize2 className="h-3 w-3" />
                             <span className="text-xs">{tChat('thinking.expand') || 'Expand'}</span>
                           </>
                         )}
@@ -961,12 +961,12 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               >
                 {isExpanded ? (
                   <>
-                    <FiMinimize2 className="h-3 w-3" />
+                    <Minimize2 className="h-3 w-3" />
                     <span className="text-xs">{tChat('thinking.collapse') || 'Collapse'}</span>
                   </>
                 ) : (
                   <>
-                    <FiMaximize2 className="h-3 w-3" />
+                    <Maximize2 className="h-3 w-3" />
                     <span className="text-xs">{tChat('thinking.expand') || 'Expand'}</span>
                   </>
                 )}
@@ -1128,7 +1128,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
         className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left transition-colors hover:bg-surface/60"
       >
         <div className="flex items-center gap-2">
-          <RiBrainLine className="h-4 w-4 text-blue-400" />
+          <Brain className="h-4 w-4 text-blue-400" />
           <span
             className={`text-sm font-medium ${isThinkingCompleted ? 'text-blue-300' : 'text-blue-400'}`}
           >
@@ -1140,9 +1140,9 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
           </span>
         </div>
         {isOpen ? (
-          <FiChevronUp className="h-4 w-4 text-text-tertiary" />
+          <ChevronUp className="h-4 w-4 text-text-tertiary" />
         ) : (
-          <FiChevronDown className="h-4 w-4 text-text-tertiary" />
+          <ChevronDown className="h-4 w-4 text-text-tertiary" />
         )}
       </button>
 
@@ -1171,13 +1171,17 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                     <>
                       {item.action && (
                         <div className="mb-2 text-xs text-text-secondary">
-                          <span className="font-medium">{tChat('messages.action') || 'Action'}: </span>
+                          <span className="font-medium">
+                            {tChat('messages.action') || 'Action'}:{' '}
+                          </span>
                           {getThinkingText(item.action)}
                         </div>
                       )}
                       {item.result && (
                         <div key="result" className="mb-2 text-xs text-text-tertiary">
-                          <span className="font-medium">{tChat('messages.result') || 'Result'}: </span>
+                          <span className="font-medium">
+                            {tChat('messages.result') || 'Result'}:{' '}
+                          </span>
                           {(() => {
                             const resultText = getThinkingText(item.result);
                             const isCollapsible = shouldCollapse(resultText);
@@ -1198,14 +1202,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                                     >
                                       {isExpanded ? (
                                         <>
-                                          <FiMinimize2 className="h-3 w-3" />
+                                          <Minimize2 className="h-3 w-3" />
                                           <span className="text-xs">
                                             {tChat('thinking.collapse') || 'Collapse'}
                                           </span>
                                         </>
                                       ) : (
                                         <>
-                                          <FiMaximize2 className="h-3 w-3" />
+                                          <Maximize2 className="h-3 w-3" />
                                           <span className="text-xs">
                                             {tChat('thinking.expand') || 'Expand'}
                                           </span>
@@ -1250,14 +1254,14 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
                                     >
                                       {isExpanded ? (
                                         <>
-                                          <FiMinimize2 className="h-3 w-3" />
+                                          <Minimize2 className="h-3 w-3" />
                                           <span className="text-xs">
                                             {tChat('thinking.collapse') || 'Collapse'}
                                           </span>
                                         </>
                                       ) : (
                                         <>
-                                          <FiMaximize2 className="h-3 w-3" />
+                                          <Maximize2 className="h-3 w-3" />
                                           <span className="text-xs">
                                             {tChat('thinking.expand') || 'Expand'}
                                           </span>
@@ -1312,7 +1316,7 @@ export default function ThinkingComponent({ thinking, taskStatus }: ThinkingComp
               onClick={handleScrollToBottom}
               className="absolute bottom-3 right-3 flex items-center gap-1 rounded-full bg-primary px-3 py-1 text-xs text-white shadow-md transition-all hover:bg-primary/90"
             >
-              <FiChevronsDown className="h-3 w-3" />
+              <ChevronsDown className="h-3 w-3" />
               <span>{tChat('thinking.scroll_to_bottom') || 'Scroll to bottom'}</span>
             </button>
           )}

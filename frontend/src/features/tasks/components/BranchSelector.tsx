@@ -151,6 +151,7 @@ export default function BranchSelector({
       <Select
         labelInValue
         showSearch
+        variant="borderless"
         value={
           selectedBranch
             ? {

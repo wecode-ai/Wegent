@@ -121,13 +121,14 @@ export default function TeamSelector({
   if (!selectedTeam || teams.length === 0) return null;
 
   return (
-    <div className="flex items-baseline space-x-1 min-w-0" data-tour="team-selector">
+    <div className="flex items-center space-x-1 min-w-0" data-tour="team-selector">
       <FaUsers
-        className={`w-3 h-3 text-text-muted flex-shrink-0  ${isLoading ? 'animate-pulse' : ''}`}
+        className={`w-3 h-3 text-text-muted flex-shrink-0 ${isLoading ? 'animate-pulse' : ''}`}
       />
       <Select
         labelInValue
         showSearch
+        variant="borderless"
         value={
           selectedTeam
             ? {
@@ -154,8 +155,7 @@ export default function TeamSelector({
         }
         className="repository-selector min-w-0 truncate"
         style={{
-          width: 'auto',
-          maxWidth: isMobile ? 150 : 200,
+          width: isMobile ? 150 : 200,
           display: 'inline-block',
           paddingRight: 20,
         }}

@@ -5,8 +5,9 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Button, message } from 'antd';
-import { FiSend } from 'react-icons/fi';
+import { message } from 'antd';
+import { Send } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { ClarificationData, ClarificationAnswer } from '@/types/api';
 import ClarificationQuestion from './ClarificationQuestion';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -311,12 +312,12 @@ export default function ClarificationForm({
       {!isSubmitted && (
         <div className="flex justify-end pt-2">
           <Button
-            type="primary"
-            icon={<FiSend className="w-4 h-4" />}
+            variant="secondary"
             onClick={handleSubmit}
-            loading={isSubmitting}
-            size="large"
+            disabled={isSubmitting}
+            size="lg"
           >
+            <Send className="w-4 h-4 mr-2" />
             {t('clarification.submit_answers') || 'Submit Answers'}
           </Button>
         </div>

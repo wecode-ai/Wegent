@@ -5,13 +5,12 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useCallback } from 'react';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { MagnifyingGlassIcon, PlusIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { Search, Plus, Settings, X } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
-import { XMarkIcon } from '@heroicons/react/24/outline';
 import TaskListSection from './TaskListSection';
 import { useTranslation } from '@/hooks/useTranslation';
 import MobileSidebar from '@/features/layout/MobileSidebar';
@@ -157,7 +156,7 @@ export default function TaskSidebar({
   const sidebarContent = (
     <>
       {/* Logo */}
-      <div className="px-3 pt-2 pb-1">
+      <div className="px-3 pt-2 pb-3">
         <div className="flex items-center justify-start pl-2 gap-2">
           <Image
             src="/weibo-logo.png"
@@ -166,44 +165,43 @@ export default function TaskSidebar({
             height={20}
             className="object-container"
           />
-          <span className="text-sm font-medium text-text-primary">Wegent</span>
+          <span className="text-sm text-text-primary">Wegent</span>
         </div>
       </div>
 
+      {/* New Task Button */}
+      <div className="px-3 mb-1">
+        <Button
+          variant="ghost"
+          onClick={handleNewAgentClick}
+          className="w-full justify-start px-2 text-sm text-text-primary hover:bg-hover"
+          size="default"
+        >
+          <Plus className="h-4 w-4 mr-0.5" />
+          {t('tasks.new_task')}
+        </Button>
+      </div>
+
       {/* Search */}
-      <div className="p-3">
-        <div className="relative">
-          <MagnifyingGlassIcon className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+      <div className="px-3 mb-1">
+        <div className="relative group">
+          <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
           <input
             type="text"
             value={localSearchTerm}
             onChange={handleSearchChange}
             placeholder={t('tasks.search_placeholder')}
-            className="w-full pl-8 pr-8 py-1.5 bg-surface border border-border rounded text-xs text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
+            className="w-full pl-8 pr-8 py-1.5 bg-transparent group-hover:bg-hover border border-transparent group-hover:border-border rounded text-sm text-text-primary placeholder:text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent focus:bg-hover cursor-text"
           />
           {localSearchTerm && (
             <button
               onClick={handleClearSearch}
               className="absolute right-2 top-1/2 transform -translate-y-1/2"
             >
-              <XMarkIcon className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
+              <X className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
             </button>
           )}
         </div>
-      </div>
-
-      {/* New Task Button */}
-      <div className="px-3 mb-3">
-        <Button
-          onClick={handleNewAgentClick}
-          type="primary"
-          size="small"
-          icon={<PlusIcon className="h-4 w-4 align-middle" />}
-          style={{ width: '100%' }}
-          className="!text-base"
-        >
-          {t('tasks.new_task')}
-        </Button>
       </div>
 
       {/* Mark All As Read Button */}
@@ -211,7 +209,7 @@ export default function TaskSidebar({
         <div className="px-3 mb-2">
           <button
             onClick={handleMarkAllAsViewed}
-            className="w-full text-xs text-text-muted hover:text-text-primary py-1 px-2 rounded hover:bg-muted transition-colors text-center"
+            className="w-full text-xs text-text-primary hover:text-text-primary py-1 px-2 rounded hover:bg-hover transition-colors text-center"
           >
             {t('tasks.mark_all_read')} ({totalUnreadCount})
           </button>
@@ -219,7 +217,7 @@ export default function TaskSidebar({
       )}
 
       {/* Tasks Section */}
-      <div className="flex-1 px-3 overflow-y-auto custom-scrollbar" ref={scrollRef}>
+      <div className="flex-1 px-3 pt-2 overflow-y-auto custom-scrollbar" ref={scrollRef}>
         {isSearching ? (
           <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
         ) : tasks.length === 0 ? (
@@ -266,16 +264,16 @@ export default function TaskSidebar({
       {/* Settings */}
       <div className="p-3 border-t border-border">
         <Button
+          variant="ghost"
+          size="sm"
           onClick={() => {
             router.push(paths.settings.root.getHref());
             setIsMobileSidebarOpen(false);
           }}
-          type="link"
-          size="small"
-          icon={<Cog6ToothIcon className="h-3.5 w-3.5" />}
-          className="!text-text-muted hover:!text-text-primary"
+          className="text-text-primary hover:text-text-primary hover:bg-hover"
           data-tour="settings-link"
         >
+          <Settings className="h-3.5 w-3.5 mr-2" />
           {t('tasks.settings')}
         </Button>
       </div>
@@ -285,7 +283,12 @@ export default function TaskSidebar({
   return (
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
-      <div className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full" data-tour="task-sidebar">{sidebarContent}</div>
+      <div
+        className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full"
+        data-tour="task-sidebar"
+      >
+        {sidebarContent}
+      </div>
 
       {/* Mobile Sidebar */}
       <MobileSidebar

@@ -24,7 +24,7 @@ export default function UserMenu({ className = '' }: UserMenuProps) {
   return (
     <div className={className}>
       <Menu as="div" className="relative">
-        <Menu.Button className="px-4 py-1.5 bg-muted border border-border rounded-full flex items-center justify-center text-base font-semibold text-text-primary hover:bg-border/40 transition-colors duration-200">
+        <Menu.Button className="px-4 py-1.5 bg-muted border border-border rounded-full flex items-center justify-center text-sm font-normal text-text-primary hover:bg-border/40 transition-colors duration-200">
           {userDisplayName}
         </Menu.Button>
         <Menu.Items

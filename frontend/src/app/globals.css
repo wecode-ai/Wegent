@@ -11,43 +11,47 @@
 :root {
   color-scheme: light;
   --color-bg-base: 255 255 255;
-  --color-bg-surface: 248 250 252;
-  --color-bg-muted: 241 245 249;
-  --color-border: 226 232 240;
-  --color-border-strong: 203 213 225;
-  --color-text-primary: 17 24 39;
-  --color-text-secondary: 71 85 105;
-  --color-text-muted: 100 116 139;
+  --color-bg-surface: 247 247 248;
+  --color-bg-muted: 249 250 251;
+  --color-bg-hover: 236 236 241;
+  --color-border: 217 217 227;
+  --color-border-strong: 192 192 207;
+  --color-text-primary: 13 13 13;
+  --color-text-secondary: 64 64 64;
+  --color-text-muted: 115 115 115;
   --color-text-inverted: 255 255 255;
-  --color-primary: 37 99 235;
+  --color-primary: 16 163 127;
   --color-primary-contrast: 255 255 255;
-  --color-focus-ring: 96 165 250;
-  --color-scrollbar-track: 226 232 240;
-  --color-scrollbar-thumb: 148 163 184;
+  --color-focus-ring: 16 163 127;
+  --color-scrollbar-track: 217 217 227;
+  --color-scrollbar-thumb: 192 192 207;
   --color-success: 34 197 94;
   --color-error: 239 68 68;
   --shadow-popover: 0 12px 32px rgba(15, 23, 42, 0.12);
+  --radius: 0.5rem;
 }
 
 [data-theme='dark'] {
   color-scheme: dark;
-  --color-bg-base: 13 17 23;
-  --color-bg-surface: 22 27 34;
-  --color-bg-muted: 33 38 45;
-  --color-border: 48 54 61;
-  --color-border-strong: 63 68 76;
-  --color-text-primary: 240 246 252;
-  --color-text-secondary: 201 209 217;
-  --color-text-muted: 156 163 175;
-  --color-text-inverted: 13 17 23;
-  --color-primary: 112 167 215;
-  --color-primary-contrast: 13 17 23;
-  --color-focus-ring: 112 167 215;
-  --color-scrollbar-track: 33 38 45;
-  --color-scrollbar-thumb: 48 54 61;
+  --color-bg-base: 33 33 33;
+  --color-bg-surface: 52 53 65;
+  --color-bg-muted: 64 65 79;
+  --color-bg-hover: 64 65 79;
+  --color-border: 64 65 79;
+  --color-border-strong: 86 88 105;
+  --color-text-primary: 236 236 241;
+  --color-text-secondary: 217 217 227;
+  --color-text-muted: 172 172 190;
+  --color-text-inverted: 33 33 33;
+  --color-primary: 16 163 127;
+  --color-primary-contrast: 255 255 255;
+  --color-focus-ring: 16 163 127;
+  --color-scrollbar-track: 64 65 79;
+  --color-scrollbar-thumb: 86 88 105;
   --color-success: 86 211 100;
   --color-error: 248 81 73;
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --radius: 0.5rem;
 }
 
 body {
@@ -257,119 +261,6 @@ button:focus-visible {
   }
 }
 
-/* Custom styles for RepositorySelector antd Select */
-.repository-selector.ant-select .ant-select-selector {
-  background-color: transparent !important;
-  border: none !important;
-  box-shadow: none !important;
-  padding: 0 !important;
-}
-
-.repository-selector.ant-select .ant-select-selection-placeholder,
-.repository-selector.ant-select .ant-select-selection-item {
-  color: rgb(var(--color-text-muted));
-  display: flex;
-  align-items: center;
-  flex-grow: 1;
-  min-width: 0;
-}
-
-.repository-selector.ant-select:hover .ant-select-selection-placeholder,
-.repository-selector.ant-select:hover .ant-select-selection-item {
-  color: rgb(var(--color-text-secondary));
-}
-
-.repository-selector.ant-select .ant-select-selection-item .truncate {
-  overflow: hidden !important;
-  white-space: nowrap !important;
-  text-overflow: ellipsis !important;
-  max-width: 120px !important;
-  display: inline-block;
-}
-
-.repository-selector.ant-select .ant-select-arrow {
-  color: rgb(var(--color-text-muted));
-}
-
-.repository-selector-dropdown.ant-select-dropdown {
-  background-color: rgb(var(--color-bg-surface)) !important;
-  border: 1px solid rgb(var(--color-border)) !important;
-  box-shadow: var(--shadow-popover) !important;
-  padding-top: 4px !important;
-  padding-bottom: 4px !important;
-  min-width: 320px !important;
-}
-
-.repository-selector-dropdown .ant-select-item {
-  color: rgb(var(--color-text-primary)) !important;
-  font-size: 12px !important;
-  padding: 6px 10px !important;
-  border-radius: 4px;
-  margin: 0 4px;
-  width: calc(100% - 8px);
-}
-
-.repository-selector-dropdown .ant-select-item-option-selected {
-  background-color: rgb(var(--color-bg-muted)) !important;
-  color: rgb(var(--color-text-primary)) !important;
-}
-
-.repository-selector-dropdown .ant-select-item-option-active:not(.ant-select-item-option-selected) {
-  background-color: rgb(var(--color-primary) / 0.15) !important;
-  color: rgb(var(--color-text-primary)) !important;
-}
-
-.repository-selector-dropdown .ant-select-item-empty {
-  color: rgb(var(--color-text-muted));
-  font-size: 12px;
-  text-align: center;
-}
-
-/* Custom antd message style for prefixCls="custom-message" */
-.custom-message {
-  display: flex;
-  justify-content: center;
-  pointer-events: none;
-}
-
-.custom-message-notice {
-  width: 100%;
-}
-
-.custom-message-notice-content {
-  display: block;
-  max-width: 640px;
-  min-width: 320px;
-  width: auto;
-  border-radius: 8px;
-  padding: 12px 16px;
-  margin-left: auto;
-  margin-right: auto;
-  text-align: left;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-  pointer-events: all;
-  background-color: rgb(var(--color-bg-surface));
-  border: 1px solid rgb(var(--color-border));
-  color: rgb(var(--color-text-primary));
-}
-
-.custom-message-notice-content .ant-message-custom-content {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-}
-
-.custom-message-notice-content .ant-message-custom-content .anticon {
-  line-height: 1.2;
-  margin-top: 2px;
-}
-
-.custom-message-notice-content .ant-message-custom-content > span {
-  flex: 1 1 auto;
-}
-
 /* Thinking text flow animation for active tasks */
 @keyframes thinkingTextFlow {
   0% {
@@ -548,4 +439,19 @@ button:focus-visible {
 
 .animate-pulse-dot {
   animation: pulse-dot 2s ease-in-out infinite;
+}
+
+/* Repository and Team Selector - Hide arrow by default, show on hover */
+.repository-selector .ant-select-arrow {
+  opacity: 0;
+  transition: opacity 0.2s ease-in-out;
+}
+
+.repository-selector:hover .ant-select-arrow {
+  opacity: 1;
+}
+
+/* Keep arrow visible when dropdown is open */
+.repository-selector.ant-select-open .ant-select-arrow {
+  opacity: 1;
 }

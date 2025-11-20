@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { PaperAirplaneIcon } from '@heroicons/react/24/outline';
+import { Send } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -16,7 +16,8 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { sendMessage } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
-import { App, Button } from 'antd';
+import { App } from 'antd';
+import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
@@ -359,7 +360,7 @@ export default function ChatArea({
         aria-hidden={!hasMessages}
         style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
       >
-        <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6">
           <MessagesArea
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
@@ -380,7 +381,7 @@ export default function ChatArea({
           className={
             hasMessages
               ? 'fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0'
-              : 'w-full max-w-3xl px-4 sm:px-6'
+              : 'w-full max-w-4xl px-4 sm:px-6'
           }
           style={
             hasMessages
@@ -392,9 +393,9 @@ export default function ChatArea({
               : {}
           }
         >
-          <div className={hasMessages ? 'w-full max-w-3xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
+          <div className={hasMessages ? 'w-full max-w-4xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
             {/* Chat Input Card */}
-            <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface shadow-lg">
+            <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
               <ChatInput
                 message={taskInputMessage}
                 setMessage={setTaskInputMessage}
@@ -418,28 +419,24 @@ export default function ChatArea({
                 <div className="ml-auto flex items-center">
                   {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
                   <Button
-                    type="text"
+                    variant="ghost"
+                    size="icon"
                     onClick={handleSendMessage}
                     disabled={
                       isLoading ||
                       selectedTaskDetail?.status === 'PENDING' ||
                       selectedTaskDetail?.status === 'RUNNING'
                     }
-                    icon={
-                      isLoading ||
-                      selectedTaskDetail?.status === 'PENDING' ||
-                      selectedTaskDetail?.status === 'RUNNING' ? (
-                        <LoadingDots />
-                      ) : (
-                        <PaperAirplaneIcon className="w-4 h-4" />
-                      )
-                    }
-                    style={{
-                      color: 'rgb(var(--color-text-muted))',
-                      padding: '0',
-                      height: 'auto',
-                    }}
-                  />
+                    className="h-10 w-10 rounded-full hover:bg-primary/10"
+                  >
+                    {isLoading ||
+                    selectedTaskDetail?.status === 'PENDING' ||
+                    selectedTaskDetail?.status === 'RUNNING' ? (
+                      <LoadingDots />
+                    ) : (
+                      <Send className="h-5 w-5 text-text-muted" />
+                    )}
+                  </Button>
                 </div>
               </div>
             </div>

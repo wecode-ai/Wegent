@@ -229,7 +229,7 @@
     "set_token": "Set Token"
   },
   "tasks": {
-    "search_placeholder": "Search task...",
+    "search_placeholder": "Search task",
     "new_task": "New Task",
     "no_tasks": "No tasks",
     "today": "Today",

@@ -38,7 +38,7 @@ export default function TopNavigation({
   const shouldShowLogo = showLogo || (variant === 'standalone' && !isMobile);
 
   return (
-    <div className="relative flex items-center justify-between px-4 sm:px-6 py-6 sm:py-8 min-h-[60px]">
+    <div className="relative flex items-center justify-between px-4 sm:px-6 py-2 sm:py-3 min-h-[44px] border-b border-border bg-base">
       {/* Left side - Mobile sidebar toggle or Logo */}
       <div className="flex items-center">
         {showHamburgerMenu && (
@@ -68,7 +68,7 @@ export default function TopNavigation({
       </div>
 
       {/* Center - Navigation links */}
-      <nav className="flex-1 flex justify-center" aria-label={t('common.main_navigation')}>
+      <nav className="flex-1 flex justify-center items-center" aria-label={t('common.main_navigation')}>
         {isMobile ? (
           <MobileNavTabs activePage={activePage} />
         ) : (
