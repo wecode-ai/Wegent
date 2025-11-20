@@ -50,6 +50,23 @@
     "collapse_all": "Collapse All",
     "changes": "Changes",
     "loading_diff_message": "Loading diff...",
-    "no_changes_between_branches": "No changes found between branches"
+    "no_changes_between_branches": "No changes found between branches",
+    "execution_timeline": "Execution Timeline"
+  },
+  "thinking": {
+    "execution_completed": "Execution Completed",
+    "execution_failed": "Execution Failed",
+    "execution_cancelled": "Execution Cancelled",
+    "tool_actions": {
+      "Read": "Read Files",
+      "Edit": "Edit Files",
+      "Write": "Write Files",
+      "Bash": "Execute Commands",
+      "Grep": "Search Code",
+      "Glob": "Find Files",
+      "Task": "Execute Task",
+      "WebFetch": "Fetch Web Content",
+      "WebSearch": "Search Web"
+    }
   }
 }
