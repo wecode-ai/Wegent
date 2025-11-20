@@ -85,7 +85,7 @@ export function SearchableSelect({
             disabled={disabled}
             className={cn(
               'flex h-9 w-full items-center justify-between rounded-lg border',
-              'border-border bg-base px-3 text-sm text-text-primary font-light',
+              'border-border bg-base px-3 text-xs text-text-muted',
               'shadow-sm hover:bg-hover transition-colors',
               'focus:outline-none focus:ring-2 focus:ring-primary/20',
               'disabled:cursor-not-allowed disabled:opacity-50',
