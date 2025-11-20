@@ -16,7 +16,6 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - wegent-network
     healthcheck:
@@ -51,6 +50,8 @@ services:
     restart: always
     ports:
       - "8000:8000"
+    volumes:
+      - ./backend/init_data:/app/init_data:ro
     environment:
       DATABASE_URL: mysql+pymysql://task_user:task_password@mysql:3306/task_manager
       EXECUTOR_DELETE_TASK_URL: http://executor_manager:8001/executor-manager/executor/delete
@@ -62,6 +63,8 @@ services:
       APPEND_CODE_TASK_EXPIRE_HOURS: 2
       CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS: 2
       CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS: 2
+      INIT_DATA_DIR: /app/init_data
+      INIT_DATA_ENABLED: "True"
     depends_on:
       mysql:
         condition: service_healthy

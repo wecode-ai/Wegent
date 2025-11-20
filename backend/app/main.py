@@ -18,9 +18,10 @@ from app.core.exceptions import (
     RequestValidationError
 )
 from app.core.logging import setup_logging
-from app.db.session import engine
+from app.db.session import engine, SessionLocal
 from app.db.base import Base
 from app.services.jobs import start_background_jobs, stop_background_jobs
+from app.core.yaml_init import run_yaml_initialization
 from app.models import *  # noqa: F401,F403
 
 def create_app():
@@ -96,6 +97,16 @@ def create_app():
     @app.on_event("startup")
     def startup():
         Base.metadata.create_all(bind=engine)
+
+        # Initialize database with YAML configuration
+        db = SessionLocal()
+        try:
+            run_yaml_initialization(db)
+        except Exception as e:
+            logger.error(f"Failed to initialize database from YAML: {e}")
+        finally:
+            db.close()
+
         # Start background jobs
         start_background_jobs(app)
 

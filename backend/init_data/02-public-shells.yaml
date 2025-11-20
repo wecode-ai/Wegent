@@ -1,0 +1,27 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Public shell configurations
+---
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: ClaudeCode
+  namespace: default
+spec:
+  runtime: ClaudeCode
+  supportModel: []
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: Agno
+  namespace: default
+spec:
+  runtime: Agno
+  supportModel: []
+status:
+  state: Available

@@ -105,20 +105,9 @@ docker-compose ps
 docker-compose logs -f
 ```
 
-### 步骤 4: 初始化数据库
+### 步骤 4: 验证安装
 
-```bash
-# 等待 MySQL 启动（约 30 秒）
-sleep 30
-
-# 初始化数据库表
-docker-compose exec backend python -m alembic upgrade head
-
-# 或者使用 SQL 脚本
-docker-compose exec -T mysql mysql -u task_user -p task_manager < backend/init.sql
-```
-
-### 步骤 5: 验证安装
+等待服务启动完成（约30秒），数据库表和初始数据会自动创建。
 
 访问以下 URL 验证安装：
 
@@ -127,7 +116,7 @@ docker-compose exec -T mysql mysql -u task_user -p task_manager < backend/init.s
 - **API 文档**: http://localhost:8000/api/docs
 - **Executor Manager**: http://localhost:8001
 
-### 步骤 6: 配置 GitHub 集成（可选）
+### 步骤 5: 配置 GitHub 集成（可选）
 
 1. 访问 http://localhost:3000
 2. 按照界面提示配置 GitHub Personal Access Token
@@ -222,8 +211,8 @@ pip install -r requirements.txt
 cp .env.example .env
 vim .env  # 编辑配置
 
-# 初始化数据库
-mysql -u task_user -p task_manager < init.sql
+# 创建数据库（表结构和初始数据会在首次启动时自动创建）
+mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 
 # 运行后端服务
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

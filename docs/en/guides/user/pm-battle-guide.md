@@ -6,9 +6,9 @@
 
 ## Quick Start
 
-### 1. Database Initialization
+### 1. System Initialization
 
-For new installations, running `backend/init.sql` automatically creates the following entities:
+On first startup, the system automatically creates the following entities:
 
 - **pm-battle-ghost**: Requirement clarification system prompt
 - **pm-battle-bot**: Requirement clarification Bot
