@@ -253,6 +253,6 @@ Agent 输出 Markdown 格式的最终需求提示词：
 
 ## 参考资料
 
-- [Wegent 系统架构](../docs/architecture.md)
-- [Bot 配置指南](../docs/bot-configuration.md)
-- [Task 机制说明](../docs/task-mechanism.md)
+- [架构设计](../../concepts/architecture.md)
+- [核心概念](../../concepts/core-concepts.md)
+- [YAML 规范](../../reference/yaml-specification.md)

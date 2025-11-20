@@ -891,8 +891,6 @@ status:
 
 ### 前置步骤
 - [创建 Ghost](./creating-ghosts.md) - 定义 Bot 的"灵魂"
-- [配置 Model](../../reference/model-configuration.md) - 配置 AI 模型
-- [配置 Shell](../../reference/shell-configuration.md) - 配置运行环境
 
 ### 下一步
 - [创建 Team](./creating-teams.md) - 组建多 Bot 协作团队
@@ -901,7 +899,6 @@ status:
 ### 参考文档
 - [核心概念](../../concepts/core-concepts.md) - 理解 Bot 的角色
 - [YAML 规范](../../reference/yaml-specification.md) - 完整的配置格式
-- [最佳实践](../../best-practices/bot-design.md) - Bot 设计最佳实践
 
 ---
 

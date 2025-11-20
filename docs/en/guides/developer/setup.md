@@ -188,8 +188,6 @@ backend/
 └── requirements.txt     # Python dependencies
 ```
 
-For more details, see [Backend Development Guide](./backend-dev.md).
-
 ---
 
 ### 4️⃣ Frontend Service Development
@@ -244,8 +242,6 @@ npm run build
 npm run start
 ```
 
-For more details, see [Frontend Development Guide](./frontend-dev.md).
-
 ---
 
 ### 5️⃣ Executor Manager Development
@@ -278,8 +274,6 @@ export EXECUTOR_WORKSPCE=${HOME}/wecode-bot
 # Run service
 python main.py
 ```
-
-For more details, see [Executor Development Guide](./executor-dev.md).
 
 ---
 
@@ -408,11 +402,7 @@ If you encounter issues:
 
 ## 🔗 Related Resources
 
-- [Backend Development](./backend-dev.md) - Detailed backend development guide
-- [Frontend Development](./frontend-dev.md) - Detailed frontend development guide
-- [Executor Development](./executor-dev.md) - Detailed executor development guide
 - [Testing](./testing.md) - Testing guide
-- [Contributing](../../contributing/how-to-contribute.md) - How to contribute to Wegent
 
 ---
 
