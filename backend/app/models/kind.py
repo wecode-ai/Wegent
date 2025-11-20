@@ -5,7 +5,7 @@
 """
 Kubernetes-style CRD models for cloud-native agent management
 """
-from sqlalchemy import Column, Integer, String, Text, JSON, Boolean, ForeignKey, DateTime
+from sqlalchemy import Column, Integer, String, Text, JSON, Boolean, ForeignKey, DateTime, Index
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.db.base import Base
@@ -16,16 +16,20 @@ class Kind(Base):
     __tablename__ = "kinds"
     
     id = Column(Integer, primary_key=True, index=True)
-    user_id = Column(Integer, nullable=False)
+    user_id = Column(Integer, nullable=False, index=True)
     kind = Column(String(50), nullable=False, index=True)
     name = Column(String(100), nullable=False)
     namespace = Column(String(100), nullable=False, default="default")
     json = Column(JSON, nullable=False)
-    is_active = Column(Boolean, default=True)
-    created_at = Column(DateTime, default=datetime.now)
+    is_active = Column(Boolean, default=True, index=True)
+    created_at = Column(DateTime, default=datetime.now, index=True)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     
     __table_args__ = (
+        Index('idx_kind_user_kind', 'user_id', 'kind'),
+        Index('idx_kind_user_kind_active', 'user_id', 'kind', 'is_active'),
+        Index('idx_kind_user_name_namespace', 'user_id', 'name', 'namespace'),
+        Index('idx_kind_user_kind_name_namespace', 'user_id', 'kind', 'name', 'namespace'),
         {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_unicode_ci"},
     )
 
