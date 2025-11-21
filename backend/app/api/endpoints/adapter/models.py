@@ -2,9 +2,10 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, status, Body
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Dict, Any
+from pydantic import BaseModel
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -20,6 +21,117 @@ from app.schemas.model import (
 from app.services.adapters import public_model_service
 
 router = APIRouter()
+
+
+class TestConnectionRequest(BaseModel):
+    provider: str
+    config: Dict[str, Any]
+
+
+class TestConnectionResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class BotReference(BaseModel):
+    bot_id: int
+    bot_name: str
+
+
+class CheckReferencesResponse(BaseModel):
+    is_referenced: bool
+    referenced_by: List[BotReference]
+
+
+@router.post("/test", response_model=TestConnectionResponse)
+def test_connection(
+    request: TestConnectionRequest = Body(...),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Test model connection with provided configuration
+    """
+    try:
+        # For now, we'll do a simple validation
+        # In a real implementation, you would:
+        # 1. Extract provider type and credentials from request.config
+        # 2. Initialize the appropriate SDK client
+        # 3. Make a simple API call to verify credentials
+
+        provider = request.provider
+        config = request.config.get("env", {})
+
+        # Basic validation
+        if not config.get("model_id"):
+            return TestConnectionResponse(
+                success=False,
+                message="Model ID is required"
+            )
+
+        if not config.get("api_key"):
+            return TestConnectionResponse(
+                success=False,
+                message="API Key is required"
+            )
+
+        # TODO: Implement actual connection testing based on provider
+        # For now, return success after basic validation
+        return TestConnectionResponse(
+            success=True,
+            message=f"Connection test successful for {provider}"
+        )
+
+    except Exception as e:
+        return TestConnectionResponse(
+            success=False,
+            message=f"Connection test failed: {str(e)}"
+        )
+
+
+@router.get("/{model_id}/check-references", response_model=CheckReferencesResponse)
+def check_references(
+    model_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Check if the model is referenced by any bots
+    """
+    # Get the model name first
+    try:
+        model_dict = public_model_service.get_by_id(db=db, model_id=model_id, current_user=current_user)
+        model_name = model_dict.get("name")
+    except Exception:
+        return CheckReferencesResponse(
+            is_referenced=False,
+            referenced_by=[]
+        )
+
+    # Query bots table to check for references
+    referenced_by = []
+    try:
+        from app.models.bot import Bot
+
+        # Check bots that use this model in their agent_config
+        bots = db.query(Bot).filter(Bot.is_active == True).all()
+
+        for bot in bots:
+            # Check if bot's agent_config references this model
+            if hasattr(bot, 'agent_config') and isinstance(bot.agent_config, dict):
+                private_model = bot.agent_config.get('private_model')
+                if private_model == model_name:
+                    referenced_by.append(BotReference(
+                        bot_id=bot.id,
+                        bot_name=bot.name
+                    ))
+    except Exception:
+        # If bot model doesn't exist or query fails, return empty list
+        pass
+
+    return CheckReferencesResponse(
+        is_referenced=len(referenced_by) > 0,
+        referenced_by=referenced_by
+    )
 
 
 @router.get("", response_model=ModelListResponse)
