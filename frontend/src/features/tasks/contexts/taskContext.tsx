@@ -54,7 +54,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadedPages, setLoadedPages] = useState([1]);
-  const limit = 100;
+  const limit = 50;
 
   // Batch load specified pages (only responsible for data requests and responses, does not handle loading state)
   const loadPages = async (pagesArr: number[], _append = false) => {
