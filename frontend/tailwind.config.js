@@ -62,6 +62,10 @@ module.exports = {
         warning: 'rgb(245 158 11)', // Tailwind orange-500
         link: withOpacity('--color-link'),
         'code-bg': withOpacity('--color-code-bg'),
+        popover: {
+          DEFAULT: withOpacity('--color-popover'),
+          foreground: withOpacity('--color-popover-foreground'),
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
