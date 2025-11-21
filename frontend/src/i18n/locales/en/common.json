@@ -221,8 +221,8 @@
   },
   "branches": {
     "load_failed": "Failed to load branches",
-    "select_repository": "Select Repository",
-    "select_branch": "Select Branch",
+    "search_repository": "Search Repository...",
+    "search_branch": "Select Branch...",
     "loading": "loading branch...",
     "no_branch": "No Branch Found",
     "default": "(default)",
