@@ -811,8 +811,8 @@ export default function TeamEdit(props: TeamEditProps) {
                   titles={[t('team.candidates'), t('team.in_team')]}
                   className="h-full transfer-fill"
                   listStyle={{
-                    backgroundColor: 'hsl(var(--background))',
-                    borderColor: 'hsl(var(--border))',
+                    backgroundColor: 'rgb(var(--color-bg-surface))',
+                    borderColor: 'rgb(var(--color-border))',
                   }}
                   leftFooter={
                     <Button
