@@ -1,653 +1,480 @@
 # AGENTS.md
 
-Wegent is an open-source AI-native operating system for defining, organizing, and running intelligent agent teams. This guide provides comprehensive instructions for AI coding agents working on this multi-module project.
-
-## 📋 Project Overview
-
-Wegent is built on a microservices architecture with the following core components:
-
-- **Frontend** (Next.js 15 + TypeScript + React 19): Web-based management interface
-- **Backend** (FastAPI + SQLAlchemy + MySQL): RESTful API and business logic
-- **Executor**: Task execution engine running AI agents (Claude Code, Agno)
-- **Executor Manager**: Task orchestration and Docker container management
-- **Shared**: Common utilities and data models used across modules
-
-### Architecture Principles
-
-- **Kubernetes-inspired CRD design**: Declarative API for resources (Ghost, Model, Shell, Bot, Team, Task)
-- **Containerized execution**: Each agent team runs in isolated sandboxes
-- **Cloud-native**: Horizontal scaling, service mesh ready
-- **High cohesion, low coupling**: Keep related logic together, avoid scattered implementations
+Wegent is an open-source AI-native operating system for defining, organizing, and running intelligent agent teams. This guide provides instructions for AI coding agents working on this multi-module project.
 
 ---
 
-## 🚀 Setup Commands
+## 🔄 Maintaining This File
 
-### Initial Setup
+**When to update AGENTS.md:**
+- Adding new modules, commands, or workflows
+- Changing code style guidelines or testing requirements
+- Updating dependencies, tech stack, or architecture patterns
+- Adding new UI components or design patterns
+
+**How to update:**
+1. Edit this file directly with clear, concise instructions
+2. Use imperative voice for commands (e.g., "Run tests" not "You should run tests")
+3. Keep examples minimal but complete
+4. Remove outdated information immediately
+5. Test all commands before documenting them
+
+---
+
+## 📋 Project Overview
+
+**Multi-module architecture:**
+- **Backend** (FastAPI + SQLAlchemy + MySQL): RESTful API and business logic
+- **Frontend** (Next.js 15 + TypeScript + React 19): Web UI with shadcn/ui components
+- **Executor**: Task execution engine (Claude Code, Agno)
+- **Executor Manager**: Task orchestration via Docker
+- **Shared**: Common utilities and models
+
+**Core principles:**
+- Kubernetes-inspired CRD design (Ghost, Model, Shell, Bot, Team, Task)
+- High cohesion, low coupling - extract common logic, avoid duplication
+- Choose simplest working solution - prioritize code simplicity and extensibility
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-# Clone the repository
+# Clone and start all services
 git clone https://github.com/wecode-ai/wegent.git
 cd wegent
-
-# Quick start with Docker Compose (recommended for first-time setup)
 docker-compose up -d
+
+# Access points
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:8000/api/docs
+# Executor Manager: http://localhost:8001
 ```
 
-### Access Points
+### Module Development
 
-- Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Documentation: http://localhost:8000/api/docs
-- MySQL: localhost:3306
-- Redis: localhost:6379
-- Executor Manager: http://localhost:8001
-
-### Module-Specific Setup
-
-#### Backend Development
-
+**Backend:**
 ```bash
 cd backend
-python3 -m venv venv
-source venv/bin/activate  # Windows: venv\Scripts\activate
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-# Configure environment
-cp .env.example .env
-# Edit .env with your database and Redis URLs
-
-# Run development server
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-**Database initialization**: Tables and initial data are created automatically on first startup from YAML files in `backend/init_data/`. See `backend/init_data/README.md` for details.
-
-#### Frontend Development
-
+**Frontend:**
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Frontend runs on http://localhost:3000 by default.
-
-#### Executor Development
-
+**Executor / Executor Manager:**
 ```bash
-cd executor
-pip install -r requirements.txt
-python main.py
-```
-
-#### Executor Manager Development
-
-```bash
-cd executor_manager
+cd executor  # or executor_manager
 pip install -r requirements.txt
 python main.py
 ```
 
 ---
 
-## 🧪 Testing Instructions
+## 🧪 Testing
 
-Wegent uses comprehensive testing across all modules. **Always run tests before committing changes.**
-
-### Backend Tests
+**Always run tests before committing.** Target coverage: 40-60% minimum, 70-80% preferred.
 
 ```bash
-cd backend
-# Run all tests
-pytest
+# Backend
+cd backend && pytest --cov=app
 
-# Run with coverage report
-pytest --cov=app --cov-report=html
+# Frontend
+cd frontend && npm test
 
-# Run only unit tests
-pytest -m unit
-
-# Run specific test file
-pytest tests/test_api.py
+# Executor / Executor Manager / Shared
+cd <module> && pytest tests/ --cov
 ```
 
-**Testing framework**: pytest + pytest-asyncio + pytest-cov + pytest-mock
-**Target coverage**: Maintain minimum 40-60%, target 70-80%
-
-### Frontend Tests
-
-```bash
-cd frontend
-# Run all tests
-npm test
-
-# Run in watch mode
-npm run test:watch
-
-# Generate coverage report
-npm run test:coverage
-```
-
-**Testing framework**: Jest + React Testing Library + MSW (for API mocking)
-
-### Executor Tests
-
-```bash
-cd executor
-pytest tests/ --cov=agents
-
-# Run specific test markers
-pytest -m "not slow"
-```
-
-### Executor Manager Tests
-
-```bash
-cd executor_manager
-pytest tests/ --cov=executors
-```
-
-### Shared Module Tests
-
-```bash
-cd shared
-pytest tests/ --cov=utils
-```
-
-### Testing Best Practices
-
-1. **Follow AAA Pattern**: Arrange, Act, Assert
-2. **Mock external services**: Never call real APIs (Anthropic, OpenAI, Docker) in tests
-3. **Use descriptive test names**: Clearly indicate what behavior is being tested
-4. **Test edge cases**: Include error conditions and boundary values
-5. **Keep tests independent**: Each test should run in isolation
-6. **Use fixtures**: Share common setup via pytest fixtures (Python) or beforeEach (Jest)
-
-### CI/CD
-
-All tests run automatically via GitHub Actions on:
-- Push to `main`, `master`, or `develop` branches
-- All pull requests
-
-Tests must pass before merging.
+**Test principles:**
+- Follow AAA pattern: Arrange, Act, Assert
+- Mock external services (Anthropic, OpenAI, Docker, APIs)
+- Use descriptive test names explaining what's tested
+- Test edge cases and error conditions
+- Keep tests independent and isolated
 
 ---
 
 ## 💻 Code Style
 
-### Python Code (Backend, Executor, Executor Manager, Shared)
+### Python (Backend, Executor, Executor Manager, Shared)
 
-- **Style guide**: PEP 8
-- **Formatter**: Black (line length: 88)
-- **Import organizer**: isort
-- **Linter**: pylint, flake8
-- **Type hints**: Use type annotations for functions and classes
+**Standards:**
+- PEP 8 compliant
+- Black formatter (line length: 88)
+- isort for imports
+- Type hints required
 
 ```bash
-# Format code
-black .
-isort .
-
-# Lint code
-pylint app/
-flake8 app/
+# Format and lint
+black . && isort .
+pylint app/ && flake8 app/
 ```
 
-**Key conventions**:
-- Use descriptive variable and function names
-- Add docstrings to all public functions and classes
-- Avoid magic numbers; use constants
-- Keep functions focused and short (max 50 lines preferred)
+**Guidelines:**
+- Descriptive names for functions/variables
+- Docstrings for public functions/classes
+- Extract magic numbers to constants
+- Max 50 lines per function (preferred)
 
-### TypeScript/React Code (Frontend)
+### TypeScript/React (Frontend)
 
-- **TypeScript**: Strict mode enabled
-- **Style**: Functional components with hooks
-- **Formatter**: Prettier
-- **Linter**: ESLint (Next.js config)
+**Standards:**
+- TypeScript strict mode
+- Functional components with hooks
+- Prettier formatter
+- ESLint (Next.js config)
+- Single quotes, no semicolons
 
 ```bash
-# Format code
+# Format and lint
 npm run format
-
-# Lint code
 npm run lint
 ```
 
-**Key conventions**:
-- Use functional patterns where possible
-- Prefer `const` over `let`, avoid `var`
-- Use single quotes for strings
-- No semicolons (Prettier enforced)
-- Component names in PascalCase, files in kebab-case
-- Place interfaces/types in `src/types/`
-
-### General Guidelines
-
-- **DRY principle**: Don't repeat yourself; extract common logic
-- **High cohesion**: Keep related functionality together
-- **Low coupling**: Minimize dependencies between modules
-- **Simplicity**: Choose the simplest solution that works
-- **Comments**: Explain *why*, not *what* (code should be self-documenting)
+**Guidelines:**
+- Use `const` over `let`, never `var`
+- Functional patterns preferred
+- Component names: PascalCase, files: kebab-case
+- Types in `src/types/`
 
 ---
 
-## 🔄 Development Workflow
+## 🎨 Frontend Design System
 
-### Branch Strategy
+### Color System - Calm UI Philosophy
 
-```bash
-# Create feature branch from main
-git checkout main
-git pull origin main
-git checkout -b feature/your-feature-name
+**Design principles:**
+- Low saturation + low contrast = reduced eye strain
+- Minimal shadows, generous whitespace
+- Subtle component differentiation (<10% background variance)
+- Mint blue (`#14B8A6`) as primary accent - use sparingly
+
+**Core colors (CSS variables):**
+
+```css
+/* Backgrounds */
+--color-bg-base          /* Main: white (light) / #0E0F0F (dark) */
+--color-bg-surface       /* Cards: #F7F7F8 (light) / #1A1C1C (dark) */
+--color-bg-muted         /* Subtle: #F2F2F2 (light) / #212424 (dark) */
+--color-bg-hover         /* Hover: #E0E0E0 (light) / #2A2D2D (dark) */
+
+/* Text */
+--color-text-primary     /* Main text: #1A1A1A (light) / #ECECEC (dark) */
+--color-text-secondary   /* Secondary: #666 (light) / #D4D4D4 (dark) */
+--color-text-muted       /* Hints: #A0A0A0 (both themes) */
+
+/* Borders */
+--color-border           /* Default: #E0E0E0 (light) / #2A2D2D (dark) */
+--color-border-strong    /* Emphasis: #C0C0C0 (light) / #343535 (dark) */
+
+/* Theme colors */
+--color-primary          /* Mint blue: #14B8A6 */
+--color-success          /* Same as primary: #14B8A6 */
+--color-error            /* Red: #EF4444 (light) / #F85149 (dark) */
+--color-link             /* Blue: #55B9F7 */
+--color-code-bg          /* #F6F8FA (light) / #0D1117 (dark) */
 ```
 
-**Branch naming conventions**:
-- `feature/`: New features (e.g., `feature/add-ghost-api`)
-- `fix/`: Bug fixes (e.g., `fix/task-status-update`)
-- `refactor/`: Code refactoring (e.g., `refactor/simplify-executor-logic`)
-- `docs/`: Documentation updates (e.g., `docs/update-api-guide`)
-- `test/`: Test additions/improvements (e.g., `test/add-bot-integration-tests`)
-- `chore/`: Build/tooling changes (e.g., `chore/update-dependencies`)
+**Tailwind usage:**
+```jsx
+className="bg-base text-text-primary"        // Page background
+className="bg-surface border-border"         // Card
+className="text-text-muted"                  // Subtle text
+className="bg-primary text-white"            // Primary button
+className="text-link hover:underline"        // Link
+```
 
-### Commit Conventions
+### Spacing & Sizing
 
-Follow [Conventional Commits](https://www.conventionalcommits.org/):
+**Standard spacing (1 unit = 4px):**
+- `p-2` (8px): Small element padding
+- `p-4` (16px): Default card padding
+- `p-6` (24px): Large card padding
+- `gap-3` (12px): Default element gap
+- `space-y-3` (12px): Vertical stacking
+
+**Border radius:**
+- `rounded-2xl` (16px): Large containers (ChatArea input, modals)
+- `rounded-lg` (12px): Cards, dropdowns
+- `rounded-md` (6px): Buttons, inputs, tags
+- `rounded-full`: Badges, avatars
+
+**Typography:**
+- H1: `text-xl font-semibold` (20px/600) - Page titles
+- H2: `text-lg font-semibold` (18px/600) - Section titles
+- H3: `text-base font-medium` (16px/500) - Card titles
+- Body: `text-sm` (14px/400) - Content, buttons
+- Caption: `text-xs text-text-muted` (12px/400) - Hints
+
+### Component Library (shadcn/ui)
+
+**Location:** `frontend/src/components/ui/`
+
+**Core components:**
+- **Button**: variants = `default | secondary | ghost | outline | link`
+- **Card**: Use for list items, settings panels
+- **Input**: Standard text inputs
+- **Dialog**: Modals and confirmations
+- **Drawer**: Slide-out panels
+- **Select**: Dropdowns
+- **Switch**: Toggle controls
+- **Checkbox / RadioGroup**: Form selections
+- **Badge / Tag**: Status indicators
+- **Alert**: Page-level notifications
+- **Toast**: Temporary notifications (use `useToast()` hook)
+- **Dropdown Menu**: Context menus
+- **Form**: Built on react-hook-form + zod validation
+
+**Button example:**
+```jsx
+import { Button } from '@/components/ui/button'
+
+<Button variant="default">Save</Button>
+<Button variant="ghost" size="icon"><PencilIcon className="w-4 h-4" /></Button>
+<Button className="bg-error hover:bg-error/90">Delete</Button>
+```
+
+**Card list layout:**
+```jsx
+<div className="space-y-3 p-1">
+  {items.map(item => (
+    <Card key={item.id} className="p-4 hover:shadow-md transition-shadow">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <Icon className="w-5 h-5 text-primary" />
+          <div className="min-w-0 flex-1">
+            <h3 className="text-base font-medium truncate">{item.name}</h3>
+            <div className="flex gap-1.5 mt-2">
+              <Tag variant="default">{item.type}</Tag>
+            </div>
+          </div>
+        </div>
+        <div className="flex gap-1">
+          <Button variant="ghost" size="icon" className="h-8 w-8">
+            <PencilIcon className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+    </Card>
+  ))}
+</div>
+```
+
+**Form with validation:**
+```jsx
+import { useForm } from 'react-hook-form'
+import { zodResolver } from '@hookform/resolvers/zod'
+import * as z from 'zod'
+import { Form, FormField, FormItem, FormLabel, FormControl } from '@/components/ui/form'
+import { Input } from '@/components/ui/input'
+
+const schema = z.object({
+  name: z.string().min(2).max(50),
+})
+
+const form = useForm({ resolver: zodResolver(schema) })
+
+<Form {...form}>
+  <form onSubmit={form.handleSubmit(onSubmit)}>
+    <FormField
+      control={form.control}
+      name="name"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>Name</FormLabel>
+          <FormControl>
+            <Input {...field} />
+          </FormControl>
+        </FormItem>
+      )}
+    />
+  </form>
+</Form>
+```
+
+**Responsive design:**
+```jsx
+// Mobile-first approach
+<div className="px-4 sm:px-6">              // Responsive padding
+<div className="grid grid-cols-1 md:grid-cols-2">  // Responsive grid
+<p className="hidden sm:block">             // Hide on small screens
+```
+
+---
+
+## 🔄 Git Workflow
+
+### Branch Naming
+
+**Pattern:** `<type>/<description>`
+
+- `feature/`: New features
+- `fix/`: Bug fixes
+- `refactor/`: Code refactoring
+- `docs/`: Documentation
+- `test/`: Tests
+- `chore/`: Build/tools
+
+**Example:** `feature/add-ghost-yaml-import`
+
+### Commit Messages
+
+**Format:** [Conventional Commits](https://www.conventionalcommits.org/)
 
 ```
-<type>[optional scope]: <description>
+<type>[scope]: <description>
 
 [optional body]
-
-[optional footer(s)]
 ```
 
-**Commit types**:
-- `feat`: New feature
-- `fix`: Bug fix
-- `docs`: Documentation changes
-- `style`: Code formatting (no functional changes)
-- `refactor`: Code refactoring
-- `test`: Test additions/modifications
-- `chore`: Build scripts, dependencies, tooling
+**Types:** `feat | fix | docs | style | refactor | test | chore`
 
-**Examples**:
+**Examples:**
 ```
-feat(backend): add user authentication API
-
+feat(backend): add Ghost YAML import API
 fix(frontend): resolve task status display issue
-
-docs: update AGENTS.md with testing instructions
-
-refactor(executor): simplify agent initialization logic
+docs: update AGENTS.md with design system
+refactor(executor): simplify agent initialization
 ```
 
-### Pre-commit Checklist
+### Pull Requests
 
-Before committing, ensure:
+**Title format:** `<type>[scope]: <Title>`
 
-- [ ] Code follows style guidelines (run formatters)
-- [ ] All tests pass (`pytest` for Python, `npm test` for frontend)
-- [ ] No linting errors (`pylint`, `npm run lint`)
-- [ ] Added tests for new features or bug fixes
-- [ ] Updated documentation if API or behavior changed
-- [ ] Commit message follows conventions
+**Before submitting PR:**
+- [ ] All tests pass
+- [ ] Code formatted and linted
+- [ ] No merge conflicts
+- [ ] Documentation updated if needed
 
 ---
 
-## 📦 Pull Request Guidelines
-
-### PR Title Format
-
-Use Conventional Commits format:
-```
-<type>[scope]: <Title>
-```
-
-**Examples**:
-```
-feat(backend): Add Ghost YAML import functionality
-fix(frontend): Fix team creation form validation
-docs: Update contributing guide with testing details
-```
-
-### PR Description Template
-
-```markdown
-## Summary
-Brief description of what this PR does and why.
-
-## Changes
-- Bullet point list of key changes
-- Another change
-
-## Testing
-- [ ] Unit tests added/updated
-- [ ] Integration tests added/updated
-- [ ] Manual testing performed
-
-## Screenshots (if applicable)
-[Add screenshots for UI changes]
-
-## Related Issues
-Closes #123
-Related to #456
-```
-
-### PR Checklist
-
-Before requesting review:
-
-- [ ] All tests pass locally
-- [ ] Code coverage maintained or improved
-- [ ] No merge conflicts with target branch
-- [ ] Documentation updated (if needed)
-- [ ] CHANGELOG.md updated (for significant changes)
-- [ ] Commit history is clean and logical
-
-### Review Process
-
-1. Create PR from your feature branch to `main`
-2. Assign at least one reviewer
-3. Address review feedback promptly
-4. Keep PR scope focused (prefer smaller PRs)
-5. Squash commits if history is messy before merging
-
----
-
-## 🏗️ Project Structure Deep Dive
-
-### Directory Layout
+## 🏗️ Project Structure
 
 ```
 wegent/
-├── backend/               # FastAPI backend service
+├── backend/          # FastAPI backend
 │   ├── app/
-│   │   ├── api/          # API route handlers
-│   │   ├── core/         # Core configuration (settings, security)
-│   │   ├── models/       # SQLAlchemy ORM models
-│   │   ├── schemas/      # Pydantic schemas for validation
-│   │   └── services/     # Business logic layer
-│   ├── init_data/        # YAML-based initialization data
-│   └── tests/            # Backend tests
-├── frontend/             # Next.js web interface
-│   ├── src/
-│   │   ├── app/          # App Router pages and layouts
-│   │   ├── apis/         # API client functions
-│   │   ├── features/     # Feature-based modules
-│   │   └── types/        # TypeScript type definitions
-│   └── public/           # Static assets
-├── executor/             # Task execution engine
-│   ├── agents/           # Agent implementations (Claude Code, Agno)
-│   ├── tasks/            # Task handlers
-│   ├── services/         # Executor services
-│   └── tests/            # Executor tests
-├── executor_manager/     # Execution orchestration
-│   ├── executors/        # Executor lifecycle management
-│   ├── routers/          # API routes
-│   ├── scheduler/        # Task scheduling
-│   └── tests/            # Executor Manager tests
-├── shared/               # Common utilities
-│   ├── models/           # Shared data models
-│   ├── utils/            # Utility functions
-│   └── logger.py         # Centralized logging
-├── docker/               # Docker configurations
-└── docs/                 # Documentation (EN + ZH)
+│   │   ├── api/      # Route handlers
+│   │   ├── models/   # SQLAlchemy models
+│   │   ├── schemas/  # Pydantic schemas
+│   │   └── services/ # Business logic
+│   └── init_data/    # YAML initialization data
+├── frontend/         # Next.js frontend
+│   └── src/
+│       ├── app/      # Pages (App Router)
+│       ├── apis/     # API clients
+│       ├── components/ui/  # shadcn/ui components
+│       ├── features/ # Feature modules
+│       └── types/    # TypeScript types
+├── executor/         # Task executor
+│   ├── agents/       # Agent implementations
+│   └── tasks/        # Task handlers
+├── executor_manager/ # Orchestration
+│   ├── executors/    # Executor lifecycle
+│   └── scheduler/    # Task scheduling
+└── shared/           # Common utilities
+    ├── models/       # Shared models
+    └── utils/        # Utility functions
 ```
-
-### Navigation Tips
-
-**Finding files**:
-- Use `find` to locate files by name: `find . -name "*.py" | grep service`
-- Use `grep -r` to search for keywords: `grep -r "class Ghost" backend/`
-- Check module READMEs: `backend/README.md`, `executor_manager/README.md`
-
-**Understanding data flow**:
-1. User creates task via Frontend
-2. Frontend calls Backend API
-3. Backend stores task in MySQL, sends to Executor Manager
-4. Executor Manager spawns Docker container with Executor
-5. Executor runs AI agent (Claude Code/Agno)
-6. Results flow back through callback chain
-
----
-
-## 🔒 Security Considerations
-
-### API Keys and Secrets
-
-- **Never commit secrets**: Use environment variables
-- **Backend**: Store in `.env` file (excluded from git)
-- **Frontend**: Prefix with `NEXT_PUBLIC_` only for client-safe values
-- **Executor**: Pass via environment variables in Docker
-
-### Git Token Encryption
-
-Backend encrypts Git tokens before storing in database. See `backend/MIGRATION_GIT_TOKEN_ENCRYPTION.md` for migration details.
-
-### Database Credentials
-
-Default credentials in `docker-compose.yml` are for development only. **Change in production**:
-- `MYSQL_ROOT_PASSWORD`
-- `MYSQL_PASSWORD`
-- `SECRET_KEY` (JWT signing key)
-
----
-
-## 🐛 Debugging Tips
-
-### Backend Debugging
-
-```bash
-# Enable debug logging
-export LOG_LEVEL=DEBUG
-uvicorn app.main:app --reload --log-level debug
-
-# Check database connection
-mysql -u task_user -ptask_password -h localhost task_manager
-
-# View logs
-docker logs -f wegent-backend
-```
-
-### Frontend Debugging
-
-```bash
-# Enable verbose logging
-npm run dev -- --debug
-
-# Check API calls in browser DevTools Network tab
-# Use React DevTools for component inspection
-```
-
-### Executor Debugging
-
-```bash
-# Run executor directly with debug logs
-cd executor
-LOG_LEVEL=DEBUG python main.py
-
-# Check executor container logs
-docker logs -f <executor-container-id>
-```
-
-### Common Issues
-
-1. **Database connection failed**: Check MySQL is running, credentials match
-2. **Port already in use**: Stop conflicting services or change ports in docker-compose.yml
-3. **Module import errors**: Ensure virtual environment is activated and dependencies installed
-4. **Frontend build fails**: Clear `.next` cache: `rm -rf .next && npm run build`
-
----
-
-## 📚 Documentation Requirements
-
-### Code Documentation
-
-**Python**:
-```python
-def create_task(task_data: dict) -> Task:
-    """Create a new task in the system.
-
-    Args:
-        task_data: Dictionary containing task configuration
-
-    Returns:
-        Task: Created task instance
-
-    Raises:
-        ValueError: If task_data is invalid
-    """
-    # Implementation
-```
-
-**TypeScript**:
-```typescript
-/**
- * Creates a new task via API
- * @param taskData - Task configuration object
- * @returns Promise resolving to created task
- * @throws {ApiError} If request fails
- */
-async function createTask(taskData: TaskData): Promise<Task> {
-  // Implementation
-}
-```
-
-### API Documentation
-
-Backend uses FastAPI auto-generated OpenAPI docs at `/api/docs`. When adding endpoints:
-
-1. Use Pydantic schemas for request/response models
-2. Add clear descriptions to route decorators
-3. Include example values in schema fields
-4. Document error responses
-
-### User-Facing Documentation
-
-Located in `docs/en/` (English) and `docs/zh/` (Chinese):
-
-- **Update when**: Adding features, changing behavior, fixing bugs
-- **Includes**: User guides, developer guides, API reference, troubleshooting
-- **Format**: Markdown with clear headings, code examples, screenshots
-
----
-
-## 🚢 Release Process
-
-### Version Management
-
-Wegent follows [Semantic Versioning](https://semver.org/):
-
-- `MAJOR.MINOR.PATCH` (e.g., `1.0.7`)
-- **MAJOR**: Breaking changes
-- **MINOR**: New features (backward compatible)
-- **PATCH**: Bug fixes
-
-### Release Checklist
-
-1. [ ] Update version in `docker-compose.yml` image tags
-2. [ ] Update CHANGELOG.md with release notes
-3. [ ] Run full test suite on all modules
-4. [ ] Build Docker images: `./build_image.sh` (or `build_image_mac.sh` on macOS)
-5. [ ] Tag release: `git tag -a v1.0.8 -m "Release 1.0.8"`
-6. [ ] Push to GitHub: `git push origin v1.0.8`
-7. [ ] Create GitHub Release with notes
-8. [ ] Update documentation if needed
 
 ---
 
 ## 🔧 Module-Specific Guidance
 
-### Backend (`backend/`)
+### Backend
 
-**Key technologies**: FastAPI, SQLAlchemy, Pydantic, MySQL, Redis
+**Tech:** FastAPI, SQLAlchemy, Pydantic, MySQL, Redis
 
-**Common tasks**:
-- Adding API endpoint: Create route in `app/api/`, add schema in `app/schemas/`, implement logic in `app/services/`
-- Adding database model: Create in `app/models/`, run migration or restart (auto-create enabled)
-- Adding background task: Use FastAPI BackgroundTasks or implement in services
+**Common tasks:**
+- Add endpoint: Create in `app/api/`, schema in `app/schemas/`, logic in `app/services/`
+- Add model: Create in `app/models/`, restart (auto-creates table)
 
-**Environment variables** (see `backend/.env.example`):
-- `DATABASE_URL`: MySQL connection string
-- `REDIS_URL`: Redis connection string
-- `SECRET_KEY`: JWT signing key
-- `EXECUTOR_DELETE_TASK_URL`: Executor Manager endpoint
+**Environment variables:** `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`
 
-### Frontend (`frontend/`)
+### Frontend
 
-**Key technologies**: Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui
+**Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui
 
-**Common tasks**:
-- Adding page: Create in `src/app/` (App Router)
-- Adding API call: Add function in `src/apis/`
-- Adding component: Create in `src/features/<feature>/components/`
-- Adding type: Define in `src/types/`
+**Common tasks:**
+- Add page: Create in `src/app/`
+- Add API call: Add function in `src/apis/`
+- Add component: Use/extend `src/components/ui/`
+- Add type: Define in `src/types/`
 
-**Environment variables**:
-- `NEXT_PUBLIC_API_URL`: Backend API base URL (for client-side calls)
+**Environment:** `NEXT_PUBLIC_API_URL` for client-side API calls
 
-### Executor (`executor/`)
+### Executor
 
-**Key technologies**: Python, Claude Code SDK, Agno, Docker
+**Tech:** Python, Claude Code SDK, Agno, Docker
 
-**Common tasks**:
-- Adding new agent type: Implement in `agents/`
-- Modifying task execution: Update `tasks/`
-- Adding callback logic: Modify `callback/`
+**Common tasks:**
+- Add agent type: Implement in `agents/`
+- Modify execution: Update `tasks/`
 
-**Environment variables** (passed from Executor Manager):
-- `ANTHROPIC_AUTH_TOKEN` (for Claude Code)
-- `ANTHROPIC_API_KEY` (for Agno)
-- `TASK_ID`, `CALLBACK_URL`, etc.
+**Environment:** `ANTHROPIC_AUTH_TOKEN` (Claude Code) or `ANTHROPIC_API_KEY` (Agno)
 
-### Executor Manager (`executor_manager/`)
+### Executor Manager
 
-**Key technologies**: Python, Docker SDK, FastAPI
+**Tech:** Python, Docker SDK, FastAPI
 
-**Common tasks**:
-- Modifying executor lifecycle: Update `executors/`
-- Adding task scheduling logic: Modify `scheduler/`
-- Adding API endpoint: Create in `routers/`
-
-**Environment variables**:
-- `TASK_API_DOMAIN`: Backend API URL
-- `EXECUTOR_IMAGE`: Docker image for executors
-- `MAX_CONCURRENT_TASKS`: Concurrent task limit
-- `NETWORK`: Docker network name
-
-### Shared (`shared/`)
-
-**Key technologies**: Python utilities, common models
-
-**Usage**: Import shared utilities in other modules:
-```python
-from shared.logger import get_logger
-from shared.models import TaskStatus
-```
-
-**Common tasks**:
-- Adding utility function: Create in `utils/`
-- Adding shared model: Create in `models/`
+**Environment:** `TASK_API_DOMAIN`, `EXECUTOR_IMAGE`, `MAX_CONCURRENT_TASKS`, `NETWORK`
 
 ---
 
-## 📖 Additional Resources
+## 🔒 Security
 
-- **Main README**: [README.md](README.md) - Project overview
-- **Contributing Guide**: [CONTRIBUTING.md](CONTRIBUTING.md) - Detailed contribution instructions
-- **Developer Setup**: [docs/en/guides/developer/setup.md](docs/en/guides/developer/setup.md) - Comprehensive setup guide
-- **Testing Guide**: [docs/en/guides/developer/testing.md](docs/en/guides/developer/testing.md) - Testing framework details
-- **YAML Specification**: [docs/en/reference/yaml-specification.md](docs/en/reference/yaml-specification.md) - CRD resource definitions
-- **Architecture**: [docs/en/concepts/architecture.md](docs/en/concepts/architecture.md) - System architecture
+- Never commit credentials - use `.env` files (excluded from git)
+- Frontend: Only use `NEXT_PUBLIC_*` for client-safe values
+- Backend encrypts Git tokens before database storage
+- Change default passwords in production (`docker-compose.yml`)
+
+---
+
+## 🐛 Debugging
+
+```bash
+# Backend logs
+docker logs -f wegent-backend
+
+# Frontend verbose mode
+npm run dev -- --debug
+
+# Executor logs
+docker logs -f <executor-container-id>
+
+# Database access
+docker exec -it wegent-mysql mysql -u root -p123456 task_manager
+
+# Redis access
+docker exec -it wegent-redis redis-cli
+```
+
+**Common issues:**
+- Database connection failed: Check MySQL is running, verify credentials
+- Port in use: Change ports in `docker-compose.yml`
+- Import errors: Activate venv, reinstall dependencies
+
+---
+
+## 📖 Resources
+
+- **Main README**: Project overview and quick start
+- **CONTRIBUTING.md**: Detailed contribution guidelines
+- **API Docs**: http://localhost:8000/api/docs (when backend running)
+- **Testing Guide**: `docs/en/guides/developer/testing.md`
+- **Setup Guide**: `docs/en/guides/developer/setup.md`
 
 ---
 
 ## 🎯 Quick Reference
-
-### Most Common Commands
 
 ```bash
 # Start all services
@@ -657,49 +484,21 @@ docker-compose up -d
 docker-compose down
 
 # View logs
-docker-compose logs -f [service-name]
+docker-compose logs -f [service]
 
-# Rebuild specific service
-docker-compose up -d --build [service-name]
-
-# Run backend tests
+# Run tests
 cd backend && pytest
-
-# Run frontend tests
 cd frontend && npm test
 
-# Format Python code
-black . && isort .
+# Format code
+cd backend && black . && isort .
+cd frontend && npm run format
 
-# Format TypeScript code
-npm run format
-
-# Access MySQL
-docker exec -it wegent-mysql mysql -u root -p123456 task_manager
-
-# Access Redis
-docker exec -it wegent-redis redis-cli
+# Rebuild service
+docker-compose up -d --build [service]
 ```
 
-### Key Ports
-
-- **3000**: Frontend
-- **8000**: Backend API
-- **8001**: Executor Manager
-- **3306**: MySQL
-- **6379**: Redis
-- **10001-10100**: Executor containers (dynamic)
-
----
-
-## 🤝 Getting Help
-
-If you encounter issues or have questions:
-
-1. Check existing documentation in `docs/`
-2. Search GitHub Issues: https://github.com/wecode-ai/wegent/issues
-3. Create new issue with detailed reproduction steps
-4. For security issues, email maintainers directly (see CONTRIBUTING.md)
+**Ports:** 3000 (frontend), 8000 (backend), 8001 (executor manager), 3306 (MySQL), 6379 (Redis)
 
 ---
 
