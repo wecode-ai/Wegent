@@ -59,6 +59,11 @@ export default function ChatArea({
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
 
+  // Register the input setter with TaskContext
+  useEffect(() => {
+    registerInputSetter(setTaskInputMessage);
+  }, [registerInputSetter]);
+
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isUserNearBottomRef = useRef(true);
@@ -70,7 +75,7 @@ export default function ChatArea({
   const [inputHeight, setInputHeight] = useState(0);
 
   // New: Get selectedTask to determine if there are messages
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
+  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask, inputRef, registerInputSetter } =
     useTaskContext();
   const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id);
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
@@ -388,6 +393,7 @@ export default function ChatArea({
                     handleSendMessage={handleSendMessage}
                     isLoading={isLoading}
                     taskType={taskType}
+                    inputRef={inputRef}
                   />
                   {/* Team Selector and Send Button */}
                   <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
@@ -474,6 +480,7 @@ export default function ChatArea({
                   handleSendMessage={handleSendMessage}
                   isLoading={isLoading}
                   taskType={taskType}
+                  inputRef={inputRef}
                 />
                 {/* Team Selector and Send Button */}
                 <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
