@@ -137,6 +137,7 @@
     "waiting_response": "Waiting for response...",
     "my_answers": "My Answers",
     "question": "Q",
-    "required_field": "This question is required"
+    "required_field": "This question is required",
+    "text_filled": "Answer filled to input, you can continue editing"
   }
 }

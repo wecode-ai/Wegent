@@ -17,6 +17,7 @@ interface ChatInputProps {
   isLoading: boolean;
   disabled?: boolean;
   taskType?: 'chat' | 'code';
+  inputRef?: React.RefObject<HTMLTextAreaElement>;
 }
 
 export default function ChatInput({
@@ -25,6 +26,7 @@ export default function ChatInput({
   handleSendMessage,
   disabled = false,
   taskType = 'code',
+  inputRef,
 }: ChatInputProps) {
   const { t } = useTranslation('chat');
   const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
@@ -67,6 +69,7 @@ export default function ChatInput({
         <TooltipTrigger asChild>
           <div className="w-full" data-tour="task-input">
             <TextareaAutosize
+              ref={inputRef}
               value={message}
               onChange={e => {
                 if (!disabled) setMessage(e.target.value);

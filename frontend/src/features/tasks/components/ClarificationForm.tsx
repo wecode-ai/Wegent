@@ -27,11 +27,10 @@ export default function ClarificationForm({
 }: ClarificationFormProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
-  const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail, refreshSelectedTaskDetail, appendToInput } = useTaskContext();
   const [answers, setAnswers] = useState<
     Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>
   >(new Map());
-  const [isSubmitting, setIsSubmitting] = useState(false);
   // Track if user has interacted with the form to prevent re-initialization
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   // Track validation errors for each question
@@ -221,66 +220,13 @@ export default function ClarificationForm({
       }
     });
 
-    setIsSubmitting(true);
+    // Fill the markdown answer to input instead of sending
+    appendToInput(markdownAnswer);
 
-    try {
-      // Extract team, repo, and branch info from selectedTaskDetail
-      const team = selectedTaskDetail?.team || null;
-      const repo = selectedTaskDetail?.git_repo
-        ? {
-            git_repo_id: selectedTaskDetail.git_repo_id || 0,
-            name: selectedTaskDetail.git_repo,
-            git_repo: selectedTaskDetail.git_repo,
-            git_url: selectedTaskDetail.git_url || '',
-            git_domain: selectedTaskDetail.git_domain || '',
-            private: false, // Default value, actual value unknown from task detail
-            type: (selectedTaskDetail.git_domain?.includes('github')
-              ? 'github'
-              : selectedTaskDetail.git_domain?.includes('gitlab')
-                ? 'gitlab'
-                : 'gitee') as 'github' | 'gitlab' | 'gitee',
-          }
-        : null;
-      const branch = selectedTaskDetail?.branch_name
-        ? {
-            name: selectedTaskDetail.branch_name,
-            protected: false, // Default value, actual value unknown from task detail
-            default: false,
-          }
-        : null;
-
-      // Send answer as Markdown string
-      const result = await sendMessage({
-        message: markdownAnswer,
-        team: team,
-        repo: repo,
-        branch: branch,
-        task_id: taskId,
-      });
-
-      if (result.error) {
-        toast({
-          variant: 'destructive',
-          title: result.error,
-        });
-      } else {
-        toast({
-          title: t('clarification.submitted') || 'Answers submitted successfully',
-        });
-        // Refresh task detail to get new messages
-        setTimeout(() => {
-          refreshSelectedTaskDetail();
-        }, 1000);
-      }
-    } catch (error) {
-      toast({
-        variant: 'destructive',
-        title: t('clarification.submit_failed') || 'Failed to submit answers',
-      });
-      console.error('Submit clarification answers error:', error);
-    } finally {
-      setIsSubmitting(false);
-    }
+    // Show success toast
+    toast({
+      title: t('clarification.text_filled') || 'Answer filled to input, you can continue editing',
+    });
   };
 
   return (
@@ -321,7 +267,7 @@ export default function ClarificationForm({
 
       {!isSubmitted && (
         <div className="flex justify-end pt-2">
-          <Button variant="secondary" onClick={handleSubmit} disabled={isSubmitting} size="lg">
+          <Button variant="secondary" onClick={handleSubmit} size="lg">
             <Send className="w-4 h-4 mr-2" />
             {t('clarification.submit_answers') || 'Submit Answers'}
           </Button>

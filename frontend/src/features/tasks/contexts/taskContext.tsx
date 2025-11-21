@@ -34,6 +34,9 @@ type TaskContextType = {
   markTaskAsViewed: (taskId: number, status: TaskStatus) => void;
   getUnreadCount: (tasks: Task[]) => number;
   markAllTasksAsViewed: () => void;
+  appendToInput: (text: string) => void;
+  inputRef: React.RefObject<HTMLTextAreaElement>;
+  registerInputSetter: (setter: (message: string) => void) => void;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -49,6 +52,10 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
+
+  // Ref for input textarea and state setter
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const setTaskInputMessageRef = useRef<((message: string) => void) | null>(null);
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true);
@@ -241,6 +248,32 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     markAllTasksAsViewed(tasks);
   };
 
+  // Append text to input with proper formatting
+  const appendToInput = (text: string) => {
+    if (!setTaskInputMessageRef.current) {
+      console.warn('appendToInput called but setTaskInputMessage is not initialized');
+      return;
+    }
+
+    setTaskInputMessageRef.current((prev: string) => {
+      const newValue = prev.trim() ? prev + '\n\n' + text : text;
+      return newValue;
+    });
+
+    // Focus and scroll to input
+    setTimeout(() => {
+      if (inputRef.current) {
+        inputRef.current.focus();
+        inputRef.current.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }, 100);
+  };
+
+  // Register the input setter function from ChatArea
+  const registerInputSetter = (setter: (message: string) => void) => {
+    setTaskInputMessageRef.current = setter;
+  };
+
   return (
     <TaskContext.Provider
       value={{
@@ -262,6 +295,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         markTaskAsViewed,
         getUnreadCount,
         markAllTasksAsViewed: handleMarkAllTasksAsViewed,
+        appendToInput,
+        inputRef,
+        registerInputSetter,
       }}
     >
       {children}
