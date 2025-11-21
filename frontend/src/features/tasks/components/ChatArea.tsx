@@ -428,7 +428,7 @@ export default function ChatArea({
                 </div>
 
                 {/* Bottom Controls */}
-                <div className="flex flex-row gap-1 mb-2 ml-3 mt-3 items-center flex-wrap">
+                <div className="flex flex-row gap-3 mb-2 ml-3 mt-3 items-center flex-wrap">
                   {showRepositorySelector && (
                     <>
                       <RepositorySelector
@@ -514,7 +514,7 @@ export default function ChatArea({
               </div>
 
               {/* Bottom Controls */}
-              <div className="flex flex-row gap-1 mb-2 ml-3 mt-3 items-center flex-wrap">
+              <div className="flex flex-row gap-3 mb-2 ml-3 mt-3 items-center flex-wrap">
                 {showRepositorySelector && (
                   <>
                     <RepositorySelector
