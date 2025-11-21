@@ -28,6 +28,7 @@ export interface SearchableSelectItem {
 interface SearchableSelectProps {
   value?: string;
   onValueChange?: (value: string) => void;
+  onSearchChange?: (value: string) => void; // Callback for search text changes (for server-side search)
   disabled?: boolean;
   placeholder?: string;
   searchPlaceholder?: string;
@@ -41,12 +42,13 @@ interface SearchableSelectProps {
   triggerClassName?: string;
   renderTriggerValue?: (item: SearchableSelectItem | undefined) => React.ReactNode;
   footer?: React.ReactNode;
-  showChevron?: boolean; // 是否显示下箭头图标
+  showChevron?: boolean; // Whether to show chevron icon
 }
 
 export function SearchableSelect({
   value,
   onValueChange,
+  onSearchChange,
   disabled,
   placeholder = 'Select...',
   searchPlaceholder = 'Search...',
@@ -63,6 +65,7 @@ export function SearchableSelect({
   showChevron = false,
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = React.useState(false);
+  const [searchValue, setSearchValue] = React.useState('');
 
   // Find selected item
   const selectedItem = React.useMemo(() => {
@@ -73,6 +76,19 @@ export function SearchableSelect({
     onValueChange?.(currentValue);
     setIsOpen(false);
   };
+
+  const handleSearchValueChange = (search: string) => {
+    setSearchValue(search);
+    onSearchChange?.(search);
+  };
+
+  // Reset search when popover closes
+  React.useEffect(() => {
+    if (!isOpen) {
+      setSearchValue('');
+      onSearchChange?.('');
+    }
+  }, [isOpen, onSearchChange]);
 
   return (
     <div className={className}>
@@ -112,9 +128,11 @@ export function SearchableSelect({
           align="start"
           sideOffset={4}
         >
-          <Command className="border-0">
+          <Command className="border-0" shouldFilter={!onSearchChange}>
             <CommandInput
               placeholder={searchPlaceholder}
+              value={searchValue}
+              onValueChange={handleSearchValueChange}
               className={cn(
                 'h-9 rounded-none border-b border-border',
                 'placeholder:text-text-muted text-sm'
