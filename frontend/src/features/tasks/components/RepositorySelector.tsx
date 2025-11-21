@@ -284,16 +284,9 @@ export default function RepositorySelector({
         return;
       }
 
-      // Scenario 2: No task selected and no repo selected - restore from localStorage
+      // Scenario 2: No task selected and no repo selected - load repos and optionally restore from localStorage
       if (!selectedTaskDetail && !selectedRepo && !disabled) {
-        console.log('[RepositorySelector] Scenario 2: Attempting to restore from localStorage');
-        const lastRepo = getLastRepo();
-        console.log('[RepositorySelector] Last repo from storage:', lastRepo);
-
-        if (!lastRepo) {
-          console.log('[RepositorySelector] No last repo in storage, exiting');
-          return;
-        }
+        console.log('[RepositorySelector] Scenario 2: Load repos and restore from localStorage');
 
         // Load repositories if not already loaded
         let repoList = repos;
@@ -307,16 +300,26 @@ export default function RepositorySelector({
           }
         }
 
-        // Find and select the last repo
-        const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId);
-        if (repoToRestore) {
-          console.log(
-            '[RepositorySelector] ✅ Restoring repo from localStorage:',
-            repoToRestore.git_repo
-          );
-          handleRepoChange(repoToRestore);
+        // Try to restore from localStorage if available
+        const lastRepo = getLastRepo();
+        console.log('[RepositorySelector] Last repo from storage:', lastRepo);
+
+        if (lastRepo) {
+          // Find and select the last repo
+          const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId);
+          if (repoToRestore) {
+            console.log(
+              '[RepositorySelector] ✅ Restoring repo from localStorage:',
+              repoToRestore.git_repo
+            );
+            handleRepoChange(repoToRestore);
+          } else {
+            console.log('[RepositorySelector] ❌ Repo not found in list, ID:', lastRepo.repoId);
+          }
         } else {
-          console.log('[RepositorySelector] ❌ Repo not found in list, ID:', lastRepo.repoId);
+          console.log(
+            '[RepositorySelector] No last repo in storage, repos loaded but no selection'
+          );
         }
       } else {
         console.log('[RepositorySelector] Scenario 2 conditions not met:', {

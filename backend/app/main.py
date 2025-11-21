@@ -99,7 +99,15 @@ def create_app():
         # Auto-create database tables if enabled
         if settings.DB_AUTO_CREATE_TABLES:
             logger.info("Auto-creating database tables...")
-            Base.metadata.create_all(bind=engine)
+            try:
+                Base.metadata.create_all(bind=engine, checkfirst=True)
+            except Exception as e:
+                # Log the error but don't fail startup if tables already exist
+                if "already exists" in str(e).lower():
+                    logger.warning(f"Some tables already exist, continuing: {e}")
+                else:
+                    logger.error(f"Error creating database tables: {e}")
+                    raise
         else:
             logger.info("Database auto-create tables is disabled")
 
