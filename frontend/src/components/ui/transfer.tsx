@@ -181,7 +181,10 @@ export function Transfer({
                   <Checkbox
                     checked={checked.includes(item.key)}
                     disabled={item.disabled}
-                    onCheckedChange={() => handleCheck(item.key)}
+                    onCheckedChange={(checked) => {
+                      handleCheck(item.key);
+                    }}
+                    onClick={(e) => e.stopPropagation()}
                   />
                   <div className="flex-1 min-w-0">{renderItem(item)}</div>
                 </div>
