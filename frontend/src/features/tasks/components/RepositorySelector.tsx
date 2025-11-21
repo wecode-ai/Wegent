@@ -5,6 +5,24 @@
 'use client';
 
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+
+/**
+ * Truncate text to a maximum length, keeping start and end with ellipsis in the middle
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length of the text
+ * @param startChars - Number of characters to keep at the start (default: 10)
+ * @param endChars - Number of characters to keep at the end (default: 8)
+ * @returns Truncated text with ellipsis in the middle if needed
+ */
+function truncateMiddle(text: string, maxLength: number, startChars = 8, endChars = 10): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  const start = text.slice(0, startChars);
+  const end = text.slice(-endChars);
+  return `${start}...${end}`;
+}
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGithub } from 'react-icons/fi';
 import { Loader2 } from 'lucide-react';
@@ -172,7 +190,14 @@ export default function RepositorySelector({
   }, []);
 
   const handleChange = (value: string) => {
-    const repo = repos.find(r => r.git_repo_id === Number(value));
+    // First try to find in current repos list (includes search results)
+    let repo = repos.find(r => r.git_repo_id === Number(value));
+
+    // If not found in current list, try cached repos (all initially loaded repos)
+    if (!repo) {
+      repo = cachedRepos.find(r => r.git_repo_id === Number(value));
+    }
+
     if (repo) {
       handleRepoChange(repo);
     }
@@ -321,18 +346,38 @@ export default function RepositorySelector({
   const isMobile = useIsMobile();
 
   // Convert repos to SearchableSelectItem format
+  // Always include the selected repo to ensure it displays correctly
   const selectItems: SearchableSelectItem[] = useMemo(() => {
-    return repos.map(repo => ({
+    const items = repos.map(repo => ({
       value: repo.git_repo_id.toString(),
       label: repo.git_repo,
       searchText: repo.git_repo,
     }));
-  }, [repos]);
+
+    // Ensure selected repo is in the items list
+    if (selectedRepo) {
+      const hasSelected = items.some(item => item.value === selectedRepo.git_repo_id.toString());
+      if (!hasSelected) {
+        // Add selected repo at the beginning if not in current list
+        items.unshift({
+          value: selectedRepo.git_repo_id.toString(),
+          label: selectedRepo.git_repo,
+          searchText: selectedRepo.git_repo,
+        });
+      }
+    }
+
+    return items;
+  }, [repos, selectedRepo]);
 
   return (
-    <div className="flex items-center space-x-2 min-w-0" data-tour="repo-selector">
+    <div
+      className="flex items-center space-x-2 flex-shrink-0"
+      data-tour="repo-selector"
+      style={{ maxWidth: isMobile ? 140 : 180 }}
+    >
       <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0 ml-1" />
-      <div className="relative flex items-center gap-2" style={{ width: isMobile ? 150 : 200 }}>
+      <div className="relative flex items-center gap-2 min-w-0 flex-1">
         <SearchableSelect
           value={selectedRepo?.git_repo_id.toString()}
           onValueChange={handleChange}
@@ -347,7 +392,11 @@ export default function RepositorySelector({
           noMatchText={t('branches.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
           contentClassName="max-w-[200px]"
-          renderTriggerValue={item => <span className="truncate">{item?.label}</span>}
+          renderTriggerValue={item => (
+            <span className="block" title={item?.label}>
+              {item?.label ? truncateMiddle(item.label, isMobile ? 20 : 25) : ''}
+            </span>
+          )}
         />
         {isSearching && (
           <Loader2 className="w-3 h-3 text-text-muted animate-spin flex-shrink-0 absolute right-0" />
