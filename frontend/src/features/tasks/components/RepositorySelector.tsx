@@ -4,9 +4,10 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGithub } from 'react-icons/fi';
+import { Loader2 } from 'lucide-react';
 import { GitRepoInfo, TaskDetail } from '@/types/api';
 import { useUser } from '@/features/common/UserContext';
 import { useRouter } from 'next/navigation';
@@ -36,9 +37,12 @@ export default function RepositorySelector({
   const { user } = useUser();
   const router = useRouter();
   const [repos, setRepos] = useState<GitRepoInfo[]>([]);
+  const [cachedRepos, setCachedRepos] = useState<GitRepoInfo[]>([]); // Cache initially loaded repositories
   const [loading, setLoading] = useState<boolean>(false);
+  const [isSearching, setIsSearching] = useState<boolean>(false); // User is searching (includes waiting period)
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Check if user has git_info configured
   const hasGitInfo = () => {
     return user && user.git_info && user.git_info.length > 0;
@@ -59,6 +63,7 @@ export default function RepositorySelector({
     try {
       const data = await githubApis.getRepositories();
       setRepos(data);
+      setCachedRepos(data); // Cache initial repository list
       setError(null);
       return data;
     } catch {
@@ -72,6 +77,99 @@ export default function RepositorySelector({
       setLoading(false);
     }
   };
+
+  /**
+   * Search repositories locally (in cache)
+   */
+  const searchLocalRepos = useCallback(
+    (query: string): GitRepoInfo[] => {
+      if (!query.trim()) {
+        return cachedRepos;
+      }
+      const lowerQuery = query.toLowerCase();
+      return cachedRepos.filter(repo => repo.git_repo.toLowerCase().includes(lowerQuery));
+    },
+    [cachedRepos]
+  );
+
+  /**
+   * Search repositories remotely (delayed execution)
+   */
+  const searchRemoteRepos = useCallback(
+    async (query: string) => {
+      if (!query.trim()) {
+        setRepos(cachedRepos);
+        return;
+      }
+
+      try {
+        const results = await githubApis.searchRepositories(query, {
+          fullmatch: false,
+          timeout: 30,
+        });
+
+        // Merge local and remote results, remove duplicates
+        const localResults = searchLocalRepos(query);
+        const mergedResults = [...localResults];
+
+        results.forEach(remoteRepo => {
+          if (!mergedResults.find(r => r.git_repo_id === remoteRepo.git_repo_id)) {
+            mergedResults.push(remoteRepo);
+          }
+        });
+
+        setRepos(mergedResults);
+        setError(null);
+      } catch {
+        // Keep local results when remote search fails
+        console.error('Remote search failed, keeping local results');
+      } finally {
+        setIsSearching(false); // Hide loading indicator when remote search completes
+      }
+    },
+    [cachedRepos, searchLocalRepos]
+  );
+
+  /**
+   * Handle search input changes
+   */
+  const handleSearchChange = useCallback(
+    (query: string) => {
+      // Clear previous timer
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+
+      // If search is empty, restore cached repos immediately
+      if (!query.trim()) {
+        setRepos(cachedRepos);
+        setIsSearching(false);
+        return;
+      }
+
+      // Show loading indicator immediately when user starts typing
+      setIsSearching(true);
+
+      // Immediately perform local search
+      const localResults = searchLocalRepos(query);
+      setRepos(localResults);
+
+      // Delay 1 second before remote search (regardless of local results)
+      searchTimeoutRef.current = setTimeout(() => {
+        searchRemoteRepos(query);
+      }, 1000);
+    },
+    [searchLocalRepos, searchRemoteRepos, cachedRepos]
+  );
+
+  // Cleanup timer
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const handleChange = (value: string) => {
     const repo = repos.find(r => r.git_repo_id === Number(value));
@@ -234,10 +332,11 @@ export default function RepositorySelector({
   return (
     <div className="flex items-center space-x-2 min-w-0" data-tour="repo-selector">
       <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0 ml-1" />
-      <div className="relative" style={{ width: isMobile ? 150 : 200 }}>
+      <div className="relative flex items-center gap-2" style={{ width: isMobile ? 150 : 200 }}>
         <SearchableSelect
           value={selectedRepo?.git_repo_id.toString()}
           onValueChange={handleChange}
+          onSearchChange={handleSearchChange}
           disabled={disabled || loading}
           placeholder={t('branches.select_repository')}
           searchPlaceholder={t('branches.search_repository')}
@@ -250,6 +349,9 @@ export default function RepositorySelector({
           contentClassName="max-w-[200px]"
           renderTriggerValue={item => <span className="truncate">{item?.label}</span>}
         />
+        {isSearching && (
+          <Loader2 className="w-3 h-3 text-text-muted animate-spin flex-shrink-0 absolute right-0" />
+        )}
       </div>
       <Modal
         isOpen={isModalOpen}
