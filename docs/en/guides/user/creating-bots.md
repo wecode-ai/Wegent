@@ -75,9 +75,9 @@ Bot uses `Ref` (references) to combine resources instead of directly including c
 
 Before creating a Bot, ensure these resources exist:
 
-1. **Ghost**: Already created with agent personality defined
-2. **Shell**: Runtime environment configured
-3. **Model**: AI model parameters configured
+1. **Ghost**: Already created with agent personality defined → [Detailed Creation Guide](./creating-ghosts.md)
+2. **Shell**: Runtime environment configured (ClaudeCode and Agno are preset) → [Detailed Configuration Guide](./configuring-shells.md)
+3. **Model**: AI model parameters configured → [Detailed Configuration Guide](./configuring-models.md)
 
 **Checklist**:
 ```bash
