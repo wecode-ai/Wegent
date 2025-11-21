@@ -90,6 +90,13 @@
     "import_mode_append": "追加到现有配置",
     "import_success": "MCP配置导入成功",
     "append_success": "MCP配置追加成功",
+    "quick_templates": "使用预设模板快速配置",
+    "template": "模板",
+    "template_hint": "点击模板按钮将自动填充配置,您只需修改 API Key 即可",
+    "template_applied": "模板已应用",
+    "please_update_api_key": "请将配置中的 API Key 修改为您的实际密钥",
+    "view_model_config_guide": "查看模型配置详细指南",
+    "view_shell_config_guide": "查看执行器配置详细指南",
     "errors": {
       "required": "请填写所有必填项",
       "agent_config_json": "模型配置必须是合法 JSON 格式",
