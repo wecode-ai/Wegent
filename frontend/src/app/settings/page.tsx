@@ -9,12 +9,13 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import { Tab } from '@headlessui/react';
-import { PuzzlePieceIcon, UsersIcon, BellIcon } from '@heroicons/react/24/outline';
+import { PuzzlePieceIcon, UsersIcon, BellIcon, CubeIcon } from '@heroicons/react/24/outline';
 import { RiRobot2Line } from 'react-icons/ri';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
 import BotList from '@/features/settings/components/BotList';
 import TeamList from '@/features/settings/components/TeamList';
 import NotificationSettings from '@/features/settings/components/NotificationSettings';
+import ModelList from '@/features/settings/components/ModelList';
 import { UserProvider } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -28,9 +29,10 @@ function DashboardContent() {
   const tabIndexToName = useMemo(
     (): Record<number, string> => ({
       0: 'integrations',
-      1: 'bots',
-      2: 'team',
-      3: 'notifications',
+      1: 'models',
+      2: 'bots',
+      3: 'team',
+      4: 'notifications',
     }),
     []
   );
@@ -39,9 +41,10 @@ function DashboardContent() {
   const tabNameToIndex = useMemo(
     (): Record<string, number> => ({
       integrations: 0,
-      bots: 1,
-      team: 2,
-      notifications: 3,
+      models: 1,
+      bots: 2,
+      team: 3,
+      notifications: 4,
     }),
     []
   );
@@ -125,6 +128,19 @@ function DashboardContent() {
                         }`
                       }
                     >
+                      <CubeIcon className="w-4 h-4" />
+                      <span>{t('settings.models')}</span>
+                    </Tab>
+
+                    <Tab
+                      className={({ selected }) =>
+                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                          selected
+                            ? 'bg-muted text-text-primary'
+                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                        }`
+                      }
+                    >
                       <RiRobot2Line className="w-4 h-4" />
                       <span>{t('settings.bot')}</span>
                     </Tab>
@@ -162,6 +178,9 @@ function DashboardContent() {
                         <GitHubIntegration />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
+                        <ModelList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
                         <BotList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
@@ -189,6 +208,19 @@ function DashboardContent() {
                       >
                         <PuzzlePieceIcon className="w-3 h-3" />
                         <span className="hidden xs:inline">{t('settings.integrations')}</span>
+                      </Tab>
+
+                      <Tab
+                        className={({ selected }) =>
+                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
+                            selected
+                              ? 'bg-muted text-text-primary'
+                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                          }`
+                        }
+                      >
+                        <CubeIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('settings.models')}</span>
                       </Tab>
 
                       <Tab
@@ -236,6 +268,9 @@ function DashboardContent() {
                     <Tab.Panels>
                       <Tab.Panel className="focus:outline-none">
                         <GitHubIntegration />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <ModelList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <BotList />
