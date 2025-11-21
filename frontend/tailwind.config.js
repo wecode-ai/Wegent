@@ -66,6 +66,10 @@ module.exports = {
           DEFAULT: withOpacity('--color-popover'),
           foreground: withOpacity('--color-popover-foreground'),
         },
+        tooltip: {
+          DEFAULT: withOpacity('--color-tooltip'),
+          foreground: withOpacity('--color-tooltip-foreground'),
+        },
       },
       borderRadius: {
         lg: 'var(--radius)',
