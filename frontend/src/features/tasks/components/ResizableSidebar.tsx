@@ -93,7 +93,7 @@ export default function ResizableSidebar({
 
   return (
     <div
-      className="hidden lg:flex relative border-r border-border"
+      className="hidden lg:flex relative"
       style={{ width: `${sidebarWidth}px` }}
     >
       {/* Sidebar content container */}
