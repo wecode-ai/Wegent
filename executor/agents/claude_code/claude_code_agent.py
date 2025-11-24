@@ -682,17 +682,45 @@ class ClaudeCodeAgent(Agent):
 
             # Check if a client connection already exists for the corresponding task_id
             if self.session_id in self._clients:
-                logger.info(
-                    f"Reusing existing Claude client for session_id: {self.session_id}"
-                )
-                self.add_thinking_step(
-                    title="Reuse Existing Client",
-                    report_immediately=False,
-                    use_i18n_keys=False,
-                    details={"session_id": self.session_id}
-                )
-                self.client = self._clients[self.session_id]
-            else:
+                cached_client = self._clients[self.session_id]
+
+                # Verify the cached client is still valid
+                # Check if client process is still running
+                try:
+                    if hasattr(cached_client, '_process') and cached_client._process:
+                        if cached_client._process.poll() is not None:
+                            # Process has terminated, remove from cache
+                            logger.warning(
+                                f"Cached client process terminated for session_id: {self.session_id}, creating new client"
+                            )
+                            del self._clients[self.session_id]
+                            # Proceed to create new client
+                        else:
+                            # Process is still running, reuse client
+                            logger.info(
+                                f"Reusing existing Claude client for session_id: {self.session_id}"
+                            )
+                            self.add_thinking_step(
+                                title="Reuse Existing Client",
+                                report_immediately=False,
+                                use_i18n_keys=False,
+                                details={"session_id": self.session_id}
+                            )
+                            self.client = cached_client
+                    else:
+                        # No process info available, assume client is valid
+                        logger.info(
+                            f"Reusing existing Claude client for session_id: {self.session_id}"
+                        )
+                        self.client = cached_client
+                except Exception as e:
+                    logger.warning(f"Error checking client validity: {e}, creating new client")
+                    # Remove potentially invalid client from cache
+                    if self.session_id in self._clients:
+                        del self._clients[self.session_id]
+
+            # Create new client if not reusing
+            if self.client is None:
                 # Create new client connection
                 logger.info(
                     f"Creating new Claude client for session_id: {self.session_id}"
@@ -965,11 +993,16 @@ class ClaudeCodeAgent(Agent):
             logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")
     
     async def _cleanup_client(self) -> None:
-        """Clean up client connection"""
+        """Clean up client connection and remove from cache"""
         try:
             if self.client and hasattr(self.client, 'close'):
                 await self.client.close()
                 logger.info(f"Closed client for task {self.task_id}")
+
+            # Remove client from cache to prevent reuse of terminated client
+            if self.session_id in self._clients:
+                del self._clients[self.session_id]
+                logger.info(f"Removed client from cache for session_id: {self.session_id}")
         except Exception as e:
             logger.exception(f"Error closing client for task {self.task_id}: {e}")
     
