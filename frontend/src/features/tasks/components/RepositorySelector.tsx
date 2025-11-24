@@ -375,9 +375,9 @@ export default function RepositorySelector({
 
   return (
     <div
-      className="flex items-center space-x-2 flex-shrink-0"
+      className="flex items-center space-x-2 min-w-0"
       data-tour="repo-selector"
-      style={{ maxWidth: isMobile ? 140 : 180 }}
+      style={{ maxWidth: isMobile ? 150 : 200 }}
     >
       <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0 ml-1" />
       <div className="relative flex items-center gap-2 min-w-0 flex-1">
