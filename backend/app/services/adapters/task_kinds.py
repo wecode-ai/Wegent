@@ -67,12 +67,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     status_code=400,
                     detail="Task is still running, please wait for it to complete"
                 )
-            elif task_status in ["DELETE", "CANCELLED"]:
+            elif task_status in ["DELETE"]:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Task has {task_status.lower()}, please create a new task"
                 )
-            elif task_status not in ["COMPLETED", "FAILED"]:
+            elif task_status not in ["COMPLETED", "FAILED", "CANCELLED"]:
                 raise HTTPException(
                     status_code=400,
                     detail="Task is in progress, please wait for it to complete"

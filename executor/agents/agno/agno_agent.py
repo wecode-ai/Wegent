@@ -442,7 +442,7 @@ class AgnoAgent(Agent):
         if reasoning is None:
             reasoning = self.thinking_manager.get_thinking_steps()
 
-        if result_content:
+        if result_content is not None:
             logger.info(
                 f"{execution_type} completed with content length: {len(result_content)}"
             )

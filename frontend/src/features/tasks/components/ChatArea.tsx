@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, XCircle } from 'lucide-react';
+import { Send, CircleStop } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -464,18 +464,21 @@ export default function ChatArea({
                     </div>
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                       {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
-                      {selectedTaskDetail?.status === 'RUNNING' ||
-                      selectedTaskDetail?.status === 'PENDING' ||
-                      selectedTaskDetail?.status === 'CANCELLING' ? (
+                      {selectedTaskDetail?.status === 'PENDING' ? (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled
+                          className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
+                        >
+                          <LoadingDots />
+                        </Button>
+                      ) : selectedTaskDetail?.status === 'RUNNING' ? (
                         isCancelling ? (
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            disabled
-                            className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
-                          >
-                            <LoadingDots />
-                          </Button>
+                          <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                            <CircleStop className="h-5 w-5 text-orange-500" />
+                          </div>
                         ) : (
                           <Button
                             variant="ghost"
@@ -484,9 +487,14 @@ export default function ChatArea({
                             className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
                             title="Cancel task"
                           >
-                            <XCircle className="h-5 w-5 text-orange-500" />
+                            <CircleStop className="h-5 w-5 text-orange-500" />
                           </Button>
                         )
+                      ) : selectedTaskDetail?.status === 'CANCELLING' ? (
+                        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                          <CircleStop className="h-5 w-5 text-orange-500" />
+                        </div>
                       ) : (
                         <Button
                           variant="ghost"
@@ -569,18 +577,21 @@ export default function ChatArea({
                   </div>
                   <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                     {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
-                    {selectedTaskDetail?.status === 'RUNNING' ||
-                    selectedTaskDetail?.status === 'PENDING' ||
-                    selectedTaskDetail?.status === 'CANCELLING' ? (
+                    {selectedTaskDetail?.status === 'PENDING' ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled
+                        className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
+                      >
+                        <LoadingDots />
+                      </Button>
+                    ) : selectedTaskDetail?.status === 'RUNNING' ? (
                       isCancelling ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          disabled
-                          className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
-                        >
-                          <LoadingDots />
-                        </Button>
+                        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                          <CircleStop className="h-5 w-5 text-orange-500" />
+                        </div>
                       ) : (
                         <Button
                           variant="ghost"
@@ -589,9 +600,14 @@ export default function ChatArea({
                           className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
                           title="Cancel task"
                         >
-                          <XCircle className="h-5 w-5 text-orange-500" />
+                          <CircleStop className="h-5 w-5 text-orange-500" />
                         </Button>
                       )
+                    ) : selectedTaskDetail?.status === 'CANCELLING' ? (
+                      <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                        <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                        <CircleStop className="h-5 w-5 text-orange-500" />
+                      </div>
                     ) : (
                       <Button
                         variant="ghost"
@@ -600,11 +616,7 @@ export default function ChatArea({
                         disabled={isLoading || !taskInputMessage.trim()}
                         className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
                       >
-                        {isLoading ? (
-                          <LoadingDots />
-                        ) : (
-                          <Send className="h-5 w-5 text-text-muted" />
-                        )}
+                        {isLoading ? <LoadingDots /> : <Send className="h-5 w-5 text-text-muted" />}
                       </Button>
                     )}
                   </div>
