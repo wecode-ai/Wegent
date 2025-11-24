@@ -7,6 +7,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import type { ClarificationData, ClarificationAnswer } from '@/types/api';
 import ClarificationQuestion from './ClarificationQuestion';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -36,6 +37,8 @@ export default function ClarificationForm({
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   // Track validation errors for each question
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
+  // Track additional input value (fixed custom input box)
+  const [additionalInput, setAdditionalInput] = useState('');
 
   // Check if this clarification has been answered
   // Check if there's a USER message after this clarification's message index
@@ -123,9 +126,9 @@ export default function ClarificationForm({
       const answer = answers.get(q.question_id);
       if (!answer) return true;
 
-      // For custom answers, check if the value is not empty
+      // For custom answers (text_input type), allow empty values - no validation required
       if (answer.answer_type === 'custom') {
-        return !answer.value || (typeof answer.value === 'string' && answer.value.trim() === '');
+        return false;
       }
 
       // For choice answers (both single and multiple)
@@ -192,6 +195,16 @@ export default function ClarificationForm({
         return payload;
       }
     );
+
+    // Add additional input if it has content
+    if (additionalInput && additionalInput.trim() !== '') {
+      answerPayload.push({
+        question_id: 'additional_input',
+        question_text: t('clarification.additional_thoughts') || 'Additional Thoughts or Remarks',
+        answer_type: 'custom',
+        value: additionalInput.trim(),
+      });
+    }
 
     // Build Markdown formatted answer
     let markdownAnswer = '## 📝 我的回答 (My Answers)\n\n';
@@ -317,6 +330,26 @@ export default function ClarificationForm({
             </div>
           );
         })}
+
+        {/* Fixed additional input box */}
+        <div className="p-3 rounded bg-surface/50 border border-border">
+          <div className="space-y-3">
+            <div className="text-sm font-medium text-text-primary">
+              {t('clarification.additional_thoughts') || '其他想法或补充说明'}
+            </div>
+            <Textarea
+              value={additionalInput}
+              onChange={e => setAdditionalInput(e.target.value)}
+              placeholder={
+                t('clarification.additional_placeholder') ||
+                '在此输入其他想法、补充需求或特殊说明...'
+              }
+              disabled={isSubmitted}
+              rows={3}
+              className="w-full"
+            />
+          </div>
+        </div>
       </div>
 
       {!isSubmitted && (
