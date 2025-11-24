@@ -193,6 +193,11 @@ class AgnoAgent(Agent):
             TaskStatus: Initialization status
         """
         try:
+            # Check if task was cancelled before initialization
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} was cancelled before initialization")
+                return TaskStatus.COMPLETED
+            
             logger.info("Initializing Agno Agent")
             self.add_thinking_step_by_key(
                 title_key="thinking.initialize_agent",
@@ -437,7 +442,7 @@ class AgnoAgent(Agent):
         if reasoning is None:
             reasoning = self.thinking_manager.get_thinking_steps()
 
-        if result_content:
+        if result_content is not None:
             logger.info(
                 f"{execution_type} completed with content length: {len(result_content)}"
             )
@@ -1065,20 +1070,21 @@ class AgnoAgent(Agent):
     def cancel_run(self) -> bool:
         """
         Cancel the current running task for this agent instance
-        
+
         Supports cancellation at any stage of the task lifecycle:
-        1. If task hasn't started yet (no run_id), mark state as CANCELLING
+        1. Immediately mark state as CANCELLED (not CANCELLING)
         2. If task is executing (has run_id), call SDK's cancel_run()
-        3. Clean up resources and sync status
+        3. 不再在这里发送callback，由后台任务异步发送，避免阻塞
 
         Returns:
             bool: True if cancellation was successful, False otherwise
         """
         try:
-            # Layer 1: Mark state as CANCELLING
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLING)
-            logger.info(f"Marked task {self.task_id} as CANCELLING")
-            
+            # Layer 1: Immediately mark state as CANCELLED
+            # This ensures execution loops will immediately detect cancellation
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            logger.info(f"Marked task {self.task_id} as CANCELLED immediately")
+
             # Layer 2: If run_id exists, call SDK's cancel_run()
             cancelled = False
             if self.current_run_id is not None:
@@ -1088,7 +1094,7 @@ class AgnoAgent(Agent):
                 elif self.single_agent is not None:
                     logger.info(f"Cancelling agent run with run_id: {self.current_run_id}")
                     cancelled = self.single_agent.cancel_run(self.current_run_id)
-                
+
                 if cancelled:
                     logger.info(f"Successfully cancelled run_id: {self.current_run_id}")
                     self.current_run_id = None
@@ -1096,26 +1102,20 @@ class AgnoAgent(Agent):
                     logger.warning(f"Failed to cancel run_id: {self.current_run_id}")
             else:
                 # Task hasn't started executing yet, no run_id
-                # But state is marked as CANCELLING, execution loop will check and exit
-                logger.info(f"Task {self.task_id} has no run_id yet, will be cancelled at next checkpoint")
+                # State is already marked as CANCELLED, execution will exit immediately
+                logger.info(f"Task {self.task_id} has no run_id yet, cancelled before execution")
                 cancelled = True  # Consider cancellation successful
-            
-            # Layer 3: Mark state as CANCELLED
-            if cancelled:
-                self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
-                
-                # Layer 4: Report progress
-                self.report_progress(
-                    100,
-                    TaskStatus.COMPLETED.value,
-                    "${{tasks.cancel_task}}",
-                    result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict(),
-                )
-            
+
+            # 注意：不再在这里发送callback
+            # callback将由main.py中的后台任务异步发送，避免阻塞executor_manager的cancel请求
+            logger.info(f"Task {self.task_id} cancellation completed, callback will be sent asynchronously")
+
             return cancelled
-            
+
         except Exception as e:
             logger.exception(f"Error cancelling task {self.task_id}: {str(e)}")
+            # Ensure cancelled state even on error
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
             return False
 
     async def _cleanup_resources(self) -> None:

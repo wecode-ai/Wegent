@@ -392,6 +392,11 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Initialization status
         """
         try:
+            # Check if task was cancelled before initialization
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} was cancelled before initialization")
+                return TaskStatus.COMPLETED
+            
             self.add_thinking_step_by_key(
                 title_key="thinking.initialize_agent",
                 report_immediately=False
@@ -677,17 +682,45 @@ class ClaudeCodeAgent(Agent):
 
             # Check if a client connection already exists for the corresponding task_id
             if self.session_id in self._clients:
-                logger.info(
-                    f"Reusing existing Claude client for session_id: {self.session_id}"
-                )
-                self.add_thinking_step(
-                    title="Reuse Existing Client",
-                    report_immediately=False,
-                    use_i18n_keys=False,
-                    details={"session_id": self.session_id}
-                )
-                self.client = self._clients[self.session_id]
-            else:
+                cached_client = self._clients[self.session_id]
+
+                # Verify the cached client is still valid
+                # Check if client process is still running
+                try:
+                    if hasattr(cached_client, '_process') and cached_client._process:
+                        if cached_client._process.poll() is not None:
+                            # Process has terminated, remove from cache
+                            logger.warning(
+                                f"Cached client process terminated for session_id: {self.session_id}, creating new client"
+                            )
+                            del self._clients[self.session_id]
+                            # Proceed to create new client
+                        else:
+                            # Process is still running, reuse client
+                            logger.info(
+                                f"Reusing existing Claude client for session_id: {self.session_id}"
+                            )
+                            self.add_thinking_step(
+                                title="Reuse Existing Client",
+                                report_immediately=False,
+                                use_i18n_keys=False,
+                                details={"session_id": self.session_id}
+                            )
+                            self.client = cached_client
+                    else:
+                        # No process info available, assume client is valid
+                        logger.info(
+                            f"Reusing existing Claude client for session_id: {self.session_id}"
+                        )
+                        self.client = cached_client
+                except Exception as e:
+                    logger.warning(f"Error checking client validity: {e}, creating new client")
+                    # Remove potentially invalid client from cache
+                    if self.session_id in self._clients:
+                        del self._clients[self.session_id]
+
+            # Create new client if not reusing
+            if self.client is None:
                 # Create new client connection
                 logger.info(
                     f"Creating new Claude client for session_id: {self.session_id}"
@@ -880,44 +913,47 @@ class ClaudeCodeAgent(Agent):
     def cancel_run(self) -> bool:
         """
         Cancel the current running task using multi-level cancellation strategy:
-        1. Set cancellation state
+        1. Set cancellation state to CANCELLED immediately (not CANCELLING)
         2. Try SDK interrupt
-        3. Wait for graceful shutdown
-        4. Force mark as cancelled
+        3. 不再在这里发送callback，由后台任务异步发送，避免阻塞
+        4. Wait briefly for cleanup
 
         Returns:
             bool: True if cancellation was successful, False otherwise
         """
         try:
-            # Step 1: Set cancellation state
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLING)
-            logger.info(f"Task {self.task_id} marked as cancelling")
-            
+            # Step 1: Immediately set to CANCELLED state (skip CANCELLING)
+            # This ensures response_processor checks will immediately detect cancellation
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            logger.info(f"Task {self.task_id} marked as cancelled immediately")
+
             # Step 2: Try SDK interrupt if client is available
             if self.client and hasattr(self.client, 'interrupt'):
                 self._sync_cancel_run()
                 logger.info(f"Sent interrupt signal to task {self.task_id}")
             else:
                 logger.warning(f"No client or interrupt method available for task {self.task_id}")
-            
-            # Step 3: Wait for graceful shutdown
-            max_wait = config.GRACEFUL_SHUTDOWN_TIMEOUT
+
+            # Step 3: Wait briefly (2 seconds max) for graceful cleanup
+            max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
             waited = 0
             while waited < max_wait:
-                if self.task_state_manager.get_state(self.task_id) == TaskState.CANCELLED:
-                    logger.info(f"Task {self.task_id} cancelled gracefully")
+                # Check if cleanup completed (task state is None means cleaned up)
+                if self.task_state_manager.get_state(self.task_id) is None:
+                    logger.info(f"Task {self.task_id} cleaned up gracefully")
                     return True
-                time.sleep(0.5)
-                waited += 0.5
-            
-            # Step 4: Force mark as cancelled
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
-            logger.warning(f"Task {self.task_id} force cancelled after timeout")
-            
+                time.sleep(0.1)  # Check more frequently (100ms)
+                waited += 0.1
+
+            # 注意：不再在这里发送callback
+            # callback将由main.py中的后台任务异步发送，避免阻塞executor_manager的cancel请求
+            logger.info(f"Task {self.task_id} cancelled (cleanup may continue in background), callback will be sent asynchronously")
             return True
-            
+
         except Exception as e:
             logger.exception(f"Error cancelling task {self.task_id}: {e}")
+            # Ensure cancelled state even on error
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
             return False
 
     def _sync_cancel_run(self) -> None:
@@ -945,26 +981,28 @@ class ClaudeCodeAgent(Agent):
     async def _async_cancel_run(self) -> None:
         """
         Asynchronous helper method to cancel the current run
+        不再发送callback，由后台任务处理
         """
         try:
             if self.client is not None:
                 await self.client.interrupt()
-                self.report_progress(
-                    100,
-                    TaskStatus.COMPLETED.value,
-                    f"${{tasks.cancel_task}}",
-                    result=ExecutionResult(value="", thinking=self.thinking_manager.get_thinking_steps()).dict(),
-                )
+                # 注意：不再在这里发送callback
+                # callback将由main.py中的后台任务异步发送
                 logger.info(f"Successfully sent interrupt to client for session_id: {self.session_id}")
         except Exception as e:
             logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")
     
     async def _cleanup_client(self) -> None:
-        """Clean up client connection"""
+        """Clean up client connection and remove from cache"""
         try:
             if self.client and hasattr(self.client, 'close'):
                 await self.client.close()
                 logger.info(f"Closed client for task {self.task_id}")
+
+            # Remove client from cache to prevent reuse of terminated client
+            if self.session_id in self._clients:
+                del self._clients[self.session_id]
+                logger.info(f"Removed client from cache for session_id: {self.session_id}")
         except Exception as e:
             logger.exception(f"Error closing client for task {self.task_id}: {e}")
     
