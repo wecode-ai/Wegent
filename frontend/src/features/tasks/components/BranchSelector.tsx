@@ -153,7 +153,7 @@ export default function BranchSelector({
       <FiGitBranch
         className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${showLoading ? 'animate-pulse' : ''}`}
       />
-      <div className="relative" style={{ width: isMobile ? 150 : 200 }}>
+      <div className="relative" style={{ width: isMobile ? 200 : 260 }}>
         <SearchableSelect
           value={selectedBranch?.name}
           onValueChange={handleChange}
@@ -166,7 +166,7 @@ export default function BranchSelector({
           emptyText={showNoBranch ? t('branches.no_branch') : t('branches.select_branch')}
           noMatchText={t('branches.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
-          contentClassName="max-w-[200px]"
+          contentClassName="max-w-[260px]"
           renderTriggerValue={item => {
             if (!item) return null;
             const branch = branches.find(b => b.name === item.value);
