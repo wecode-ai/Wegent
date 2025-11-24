@@ -503,10 +503,23 @@ export default function MessagesArea({
 
   // Helper function to parse Markdown clarification questions
   const parseMarkdownClarification = (content: string): ClarificationData | null => {
+    // First, check if content is wrapped in a markdown code block
+    // Support both ```markdown and ``` formats
+    let actualContent = content;
+
+    // Match markdown code block: ```markdown or ``` at start, followed by content, then ```
+    const codeBlockRegex = /^```(?:markdown)?\s*\n([\s\S]+?)\n```\s*$/;
+    const codeBlockMatch = content.match(codeBlockRegex);
+
+    if (codeBlockMatch) {
+      // Extract content from within the code block
+      actualContent = codeBlockMatch[1];
+    }
+
     // Check for clarification questions heading
     if (
-      !content.includes('## 🤔 需求澄清问题') &&
-      !content.includes('## 🤔 Clarification Questions')
+      !actualContent.includes('## 🤔 需求澄清问题') &&
+      !actualContent.includes('## 🤔 Clarification Questions')
     ) {
       return null;
     }
@@ -515,18 +528,18 @@ export default function MessagesArea({
 
     // Match all questions: ### Q{number}: {question_text}
     const questionRegex = /### Q(\d+): (.*?)(?=\n\*\*Type\*\*:|$)/g;
-    const matches = Array.from(content.matchAll(questionRegex));
+    const matches = Array.from(actualContent.matchAll(questionRegex));
 
     for (const match of matches) {
       const questionNumber = parseInt(match[1]);
       const questionText = match[2].trim();
 
       // Find the type and options for this question
-      const questionBlock = content.substring(
+      const questionBlock = actualContent.substring(
         match.index!,
-        content.indexOf('\n### Q', match.index! + 1) !== -1
-          ? content.indexOf('\n### Q', match.index! + 1)
-          : content.length
+        actualContent.indexOf('\n### Q', match.index! + 1) !== -1
+          ? actualContent.indexOf('\n### Q', match.index! + 1)
+          : actualContent.length
       );
 
       // Extract type
@@ -585,17 +598,30 @@ export default function MessagesArea({
 
   // Helper function to parse Markdown final prompt
   const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
+    // First, check if content is wrapped in a markdown code block
+    // Support both ```markdown and ``` formats
+    let actualContent = content;
+
+    // Match markdown code block: ```markdown or ``` at start, followed by content, then ```
+    const codeBlockRegex = /^```(?:markdown)?\s*\n([\s\S]+?)\n```\s*$/;
+    const codeBlockMatch = content.match(codeBlockRegex);
+
+    if (codeBlockMatch) {
+      // Extract content from within the code block
+      actualContent = codeBlockMatch[1];
+    }
+
     // Check for final prompt heading
     if (
-      !content.includes('## ✅ 最终需求提示词') &&
-      !content.includes('## ✅ Final Requirement Prompt')
+      !actualContent.includes('## ✅ 最终需求提示词') &&
+      !actualContent.includes('## ✅ Final Requirement Prompt')
     ) {
       return null;
     }
 
     // Extract everything after the heading
     const headingRegex = /## ✅ (?:最终需求提示词|Final Requirement Prompt)[^\n]*\n+([\s\S]+)/;
-    const match = content.match(headingRegex);
+    const match = actualContent.match(headingRegex);
 
     if (!match) return null;
 
