@@ -86,9 +86,17 @@ export default function ChatArea({
       selectedTeam: selectedTeam?.name || 'null',
       selectedTeamId: selectedTeam?.id || 'null',
       initialTeamId: initialTeamIdRef.current,
+      hasSelectedTeamForNewTask: !!selectedTeamForNewTask,
     });
 
+    // Skip if already restored or no teams available
     if (hasRestoredPreferences || !teams.length) return;
+
+    // Skip if selectedTeamForNewTask is set (let the other effect handle it)
+    if (selectedTeamForNewTask) {
+      console.log('[ChatArea] Skipping preference restoration, selectedTeamForNewTask is set');
+      return;
+    }
 
     const lastTeamId = initialTeamIdRef.current;
     console.log('[ChatArea] Trying to restore team with ID:', lastTeamId);
@@ -118,12 +126,15 @@ export default function ChatArea({
       setSelectedTeam(teams[0]);
     }
     setHasRestoredPreferences(true);
-  }, [teams, hasRestoredPreferences, selectedTeam]);
+  }, [teams, hasRestoredPreferences, selectedTeam, selectedTeamForNewTask]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
     if (selectedTeamForNewTask && !hasMessages) {
+      console.log('[ChatArea] Setting team from share handler:', selectedTeamForNewTask.name, selectedTeamForNewTask.id);
       setSelectedTeam(selectedTeamForNewTask);
+      // Mark preferences as restored to prevent being overridden
+      setHasRestoredPreferences(true);
     }
   }, [selectedTeamForNewTask, hasMessages]);
 
