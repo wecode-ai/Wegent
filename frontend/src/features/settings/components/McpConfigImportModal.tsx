@@ -3,19 +3,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import React, { useState, useCallback } from 'react';
-import { Modal, Input } from 'antd';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
 import { useTranslation } from 'react-i18next';
-import type { MessageInstance } from 'antd/es/message/interface';
+import { adaptMcpConfigForAgent, type AgentType } from '../utils/mcpTypeAdapter';
 
 interface McpConfigImportModalProps {
   visible: boolean;
   onClose: () => void;
   onImport: (config: Record<string, unknown>, mode: 'replace' | 'append') => void;
-  message: MessageInstance;
+  toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  agentType?: AgentType;
 }
 
 // Utility function to normalize MCP servers configuration
-function normalizeMcpServers(config: Record<string, unknown>): Record<string, unknown> {
+function normalizeMcpServers(
+  config: Record<string, unknown>,
+  agentType?: AgentType
+): Record<string, unknown> {
   const servers: Record<string, unknown> = (config.mcpServers ??
     config.mcp_servers ??
     config) as Record<string, unknown>;
@@ -34,6 +46,11 @@ function normalizeMcpServers(config: Record<string, unknown>): Record<string, un
     }
   });
 
+  // Apply type adaptation if agent type is specified
+  if (agentType) {
+    return adaptMcpConfigForAgent(servers, agentType);
+  }
+
   return servers;
 }
 
@@ -41,7 +58,8 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
   visible,
   onClose,
   onImport,
-  message,
+  toast,
+  agentType,
 }) => {
   const { t } = useTranslation('common');
   const [importConfig, setImportConfig] = useState('');
@@ -53,15 +71,18 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
     const trimmed = importConfig.trim();
     if (!trimmed) {
       setImportConfigError(true);
-      message.error(t('bot.errors.mcp_config_json'));
+      toast({
+        variant: 'destructive',
+        title: t('bot.errors.mcp_config_json'),
+      });
       return;
     }
 
     try {
       // Parse the imported configuration
       const parsed = JSON.parse(trimmed);
-      // Normalize the MCP servers configuration
-      const normalized = normalizeMcpServers(parsed);
+      // Normalize the MCP servers configuration with agent type adaptation
+      const normalized = normalizeMcpServers(parsed, agentType);
 
       // Call parent component's import handler function
       onImport(normalized, importMode);
@@ -72,12 +93,18 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
     } catch (error) {
       setImportConfigError(true);
       if (error instanceof SyntaxError) {
-        message.error(t('bot.errors.mcp_config_json'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_config_json'),
+        });
       } else {
-        message.error(t('bot.errors.mcp_config_invalid'));
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.mcp_config_invalid'),
+        });
       }
     }
-  }, [importConfig, importMode, message, onImport, t]);
+  }, [importConfig, importMode, toast, onImport, t, agentType]);
 
   // Reset state when closing modal
   const handleCancel = () => {
@@ -87,73 +114,77 @@ const McpConfigImportModal: React.FC<McpConfigImportModalProps> = ({
   };
 
   return (
-    <Modal
-      title={t('bot.import_mcp_title')}
-      open={visible}
-      onOk={handleImportConfirm}
-      onCancel={handleCancel}
-      okText={t('actions.confirm')}
-      cancelText={t('actions.cancel')}
-    >
-      <div className="mb-2">
-        <p>{t('bot.import_mcp_desc')}</p>
-        <div className="mt-2 mb-3">
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center">
-              <input
-                type="radio"
-                id="replace-mode"
-                name="import-mode"
-                value="replace"
-                checked={importMode === 'replace'}
-                onChange={() => setImportMode('replace')}
-                className="mr-2"
-              />
-              <label htmlFor="replace-mode">{t('bot.import_mode_replace')}</label>
-            </div>
-            <div className="flex items-center">
-              <input
-                type="radio"
-                id="append-mode"
-                name="import-mode"
-                value="append"
-                checked={importMode === 'append'}
-                onChange={() => setImportMode('append')}
-                className="mr-2"
-              />
-              <label htmlFor="append-mode">{t('bot.import_mode_append')}</label>
+    <Dialog open={visible} onOpenChange={open => !open && handleCancel()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('bot.import_mcp_title')}</DialogTitle>
+        </DialogHeader>
+        <div className="mb-2">
+          <p>{t('bot.import_mcp_desc')}</p>
+          <div className="mt-2 mb-3">
+            <div className="flex items-center space-x-4">
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="replace-mode"
+                  name="import-mode"
+                  value="replace"
+                  checked={importMode === 'replace'}
+                  onChange={() => setImportMode('replace')}
+                  className="mr-2"
+                />
+                <label htmlFor="replace-mode">{t('bot.import_mode_replace')}</label>
+              </div>
+              <div className="flex items-center">
+                <input
+                  type="radio"
+                  id="append-mode"
+                  name="import-mode"
+                  value="append"
+                  checked={importMode === 'append'}
+                  onChange={() => setImportMode('append')}
+                  className="mr-2"
+                />
+                <label htmlFor="append-mode">{t('bot.import_mode_append')}</label>
+              </div>
             </div>
           </div>
         </div>
-      </div>
-      <Input.TextArea
-        value={importConfig}
-        onChange={e => {
-          setImportConfig(e.target.value);
-          setImportConfigError(false);
-        }}
-        placeholder={`{
-  "mcpServers": {
-    "remote-server": {
-      "url": "http://127.0.0.1:9099/sse"
-    },
-    "weibo-search-mcp": {
-      "transport": "streamable_http"
-    },
-    "EcoMCP-server": {
-      "url": "http://example.com:9999/sse",
-      "disabled": false,
-      "alwaysAllow": []
+        <Textarea
+          value={importConfig}
+          onChange={e => {
+            setImportConfig(e.target.value);
+            setImportConfigError(false);
+          }}
+          placeholder={`{
+    "mcpServers": {
+      "remote-server": {
+        "url": "http://127.0.0.1:9099/sse"
+      },
+      "weibo-search-mcp": {
+        "transport": "streamable_http"
+      },
+      "EcoMCP-server": {
+        "url": "http://example.com:9999/sse",
+        "disabled": false,
+        "alwaysAllow": []
+      }
     }
-  }
-}`}
-        rows={10}
-        className={importConfigError ? 'border-red-500' : ''}
-      />
-      {importConfigError && (
-        <div className="text-red-500 mt-1">{t('bot.errors.mcp_config_json')}</div>
-      )}
-    </Modal>
+  }`}
+          rows={10}
+          className={importConfigError ? 'border-red-500' : ''}
+        />
+        {importConfigError && (
+          <div className="text-red-500 mt-1">{t('bot.errors.mcp_config_json')}</div>
+        )}
+        <DialogFooter>
+          <Button variant="outline" onClick={handleCancel}>
+            {t('actions.cancel')}
+          </Button>
+          <Button onClick={handleImportConfirm}>{t('actions.confirm')}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 

@@ -5,7 +5,7 @@
 'use client';
 
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 
 interface Props {
   children: ReactNode;
@@ -69,12 +69,13 @@ export default class ErrorBoundary extends Component<Props, State> {
             </div>
 
             <div className="space-y-3">
-              <Button type="primary" onClick={this.handleReload} size="large" className="w-full">
+              <Button variant="default" onClick={this.handleReload} size="lg" className="w-full">
                 刷新页面
               </Button>
 
               {isChunkError && (
                 <Button
+                  variant="outline"
                   onClick={() => {
                     // Clear cache and reload
                     if ('caches' in window) {
@@ -86,7 +87,7 @@ export default class ErrorBoundary extends Component<Props, State> {
                     }
                     this.handleReload();
                   }}
-                  size="large"
+                  size="lg"
                   className="w-full"
                 >
                   清除缓存并刷新

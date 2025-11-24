@@ -40,35 +40,21 @@ Guides for Wegent platform users:
 Technical documentation for Wegent developers:
 
 - [Development Setup](./guides/developer/setup.md) - Local development environment configuration
-- [Backend Development](./guides/developer/backend-dev.md) - Backend service development guide
-- [Frontend Development](./guides/developer/frontend-dev.md) - Frontend development guide
-- [Executor Development](./guides/developer/executor-dev.md) - Execution engine development
 - [Testing](./guides/developer/testing.md) - Unit and integration testing
-
-### 🚀 Deployment & Operations
-
-Production deployment and operations guides:
-
-- [Configuration Reference](./deployment/configuration.md) - Environment variables and configuration details
-- [Docker Compose Deployment](./deployment/docker-compose.md) - Quick deployment with Docker Compose
-- [Production Deployment](./deployment/production.md) - Production environment best practices
-- [Migration Guides](./deployment/migrations/) - Version upgrades and data migrations
 
 ### 📋 Reference
 
 Detailed technical references:
 
 - [YAML Specification](./reference/yaml-specification.md) - Complete YAML configuration format
-- [Environment Variables](./reference/environment-variables.md) - All environment variables reference
-- [API Reference](./reference/api-reference.md) - REST API documentation
+
+### 📝 Configuration Examples
+
+- [Team Configuration Example](../examples/team-example.yaml) - Complete Team YAML configuration example
 
 ### 🤝 Contributing
 
-Participate in Wegent project contributions:
-
-- [How to Contribute](./contributing/how-to-contribute.md) - Contribution process and guidelines
-- [Code Standards](./contributing/code-standards.md) - Code style and quality requirements
-- [Pull Request Process](./contributing/pull-request-process.md) - PR submission workflow
+- [Contribution Guide](../../../CONTRIBUTING.md) - How to participate in Wegent project contributions
 
 ### 🔧 Help & Support
 

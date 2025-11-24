@@ -87,12 +87,7 @@ GRANT ALL PRIVILEGES ON task_manager.* TO 'task_user'@'localhost';
 FLUSH PRIVILEGES;
 ```
 
-#### 初始化数据库表
-
-```bash
-cd backend
-mysql -u task_user -p task_manager < init.sql
-```
+> **注意**: 数据库表和初始数据会在后端服务首次启动时自动创建，无需手动执行SQL脚本。
 
 ---
 
@@ -184,11 +179,9 @@ backend/
 │   ├── repository/      # 数据访问层
 │   ├── schemas/         # Pydantic 模式
 │   └── services/        # 业务逻辑层
-├── init.sql             # 数据库初始化脚本
+├── init_data/           # YAML 初始化数据
 └── requirements.txt     # Python 依赖
 ```
-
-详细信息请参阅 [后端开发指南](./backend-dev.md)。
 
 ---
 
@@ -244,8 +237,6 @@ npm run build
 npm run start
 ```
 
-详细信息请参阅 [前端开发指南](./frontend-dev.md)。
-
 ---
 
 ### 5️⃣ Executor Manager 开发
@@ -278,8 +269,6 @@ export EXECUTOR_WORKSPCE=${HOME}/wecode-bot
 # 运行服务
 python main.py
 ```
-
-详细信息请参阅 [Executor 开发指南](./executor-dev.md)。
 
 ---
 
@@ -408,11 +397,7 @@ docker exec -it <executor-container-id> /bin/bash
 
 ## 🔗 相关资源
 
-- [后端开发](./backend-dev.md) - 后端服务开发详细指南
-- [前端开发](./frontend-dev.md) - 前端应用开发详细指南
-- [Executor 开发](./executor-dev.md) - Executor 开发详细指南
 - [测试](./testing.md) - 测试指南
-- [贡献指南](../../contributing/how-to-contribute.md) - 如何为 Wegent 贡献
 
 ---
 

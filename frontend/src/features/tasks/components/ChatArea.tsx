@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { PaperAirplaneIcon, StopCircleIcon } from '@heroicons/react/24/outline';
+import { Send } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -16,11 +16,11 @@ import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { sendMessage } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
-import { App, Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
-import { taskApis } from '@/apis/tasks';
+import { useToast } from '@/hooks/use-toast';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -39,7 +39,7 @@ export default function ChatArea({
   showRepositorySelector = true,
   taskType = 'chat',
 }: ChatAreaProps) {
-  const { message } = App.useApp();
+  const { toast } = useToast();
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -96,13 +96,13 @@ export default function ChatArea({
     if (lastTeamId) {
       const lastTeam = teams.find(team => team.id === lastTeamId);
       if (lastTeam) {
-        console.log('[ChatArea] ✅ Restoring team from localStorage:', lastTeam.name, lastTeam.id);
+        console.log('[ChatArea] âœ… Restoring team from localStorage:', lastTeam.name, lastTeam.id);
         setSelectedTeam(lastTeam);
         setHasRestoredPreferences(true);
         return;
       } else {
         console.log(
-          '[ChatArea] ❌ Team from localStorage not found in teams list, ID:',
+          '[ChatArea] â�Œ Team from localStorage not found in teams list, ID:',
           lastTeamId
         );
       }
@@ -118,7 +118,7 @@ export default function ChatArea({
       setSelectedTeam(teams[0]);
     }
     setHasRestoredPreferences(true);
-  }, [teams, hasRestoredPreferences]);
+  }, [teams, hasRestoredPreferences, selectedTeam]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
@@ -193,7 +193,10 @@ export default function ChatArea({
       taskType: taskType,
     });
     if (error) {
-      message.error(error);
+      toast({
+        variant: 'destructive',
+        title: error,
+      });
     } else {
       setTaskInputMessage('');
       // Redirect to task URL after successfully creating a task
@@ -291,7 +294,7 @@ export default function ChatArea({
       // Force scroll to bottom when opening a historical task
       setTimeout(() => scrollToBottom(true), 100);
     }
-  }, [selectedTaskDetail?.id]);
+  }, [selectedTaskDetail?.id, hasMessages]);
 
   useEffect(() => {
     if (!hasMessages || !lastSubtaskId) return;
@@ -375,7 +378,7 @@ export default function ChatArea({
         aria-hidden={!hasMessages}
         style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
       >
-        <div className="w-full max-w-3xl mx-auto px-4 sm:px-6">
+        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6">
           <MessagesArea
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
@@ -385,114 +388,171 @@ export default function ChatArea({
       </div>
 
       {/* Main Content Area */}
-      <div
-        className={
-          hasMessages ? 'w-full' : 'flex-1 flex flex-col items-center justify-center w-full'
-        }
-      >
-        {/* Floating Input Area */}
-        <div
-          ref={floatingInputRef}
-          className={
-            hasMessages
-              ? 'fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0'
-              : 'w-full max-w-3xl px-4 sm:px-6'
-          }
-          style={
-            hasMessages
-              ? {
-                  left: floatingMetrics.width ? floatingMetrics.left : 0,
-                  width: floatingMetrics.width || '100%',
-                  right: floatingMetrics.width ? undefined : 0,
-                }
-              : {}
-          }
-        >
-          <div className={hasMessages ? 'w-full max-w-3xl mx-auto px-4 sm:px-6 py-4' : 'w-full'}>
-            {/* Chat Input Card */}
-            <div className="relative w-full flex flex-col rounded-xl border border-border bg-surface shadow-lg">
-              <ChatInput
-                message={taskInputMessage}
-                setMessage={setTaskInputMessage}
-                handleSendMessage={handleSendMessage}
-                isLoading={isLoading}
-                taskType={taskType}
-              />
-              {/* Team Selector and Send Button */}
-              <div className="flex items-end justify-between px-3 py-0">
-                <div>
-                  {teams.length > 0 && (
-                    <TeamSelector
-                      selectedTeam={selectedTeam}
-                      setSelectedTeam={handleTeamChange}
-                      teams={teams}
-                      disabled={hasMessages}
-                      isLoading={isTeamsLoading}
-                    />
-                  )}
-                </div>
-                <div className="ml-auto flex items-center">
-                  {!shouldHideQuotaUsage && <QuotaUsage className="mr-2" />}
-                  {/* Show Stop button when task is running, otherwise show Send button */}
-                  {selectedTaskDetail?.status === 'PENDING' ||
-                  selectedTaskDetail?.status === 'RUNNING' ? (
-                    <Button
-                      type="text"
-                      onClick={handleCancelTask}
-                      icon={<StopCircleIcon className="w-4 h-4" />}
-                      style={{
-                        color: 'rgb(var(--color-text-muted))',
-                        padding: '0',
-                        height: 'auto',
-                      }}
-                    />
-                  ) : (
-                    <Button
-                      type="text"
-                      onClick={handleSendMessage}
-                      disabled={isLoading}
-                      icon={
-                        isLoading ? (
+      <div className={hasMessages ? 'w-full' : 'flex-1 flex flex-col w-full'}>
+        {/* Center area for input when no messages */}
+        {!hasMessages && (
+          <div className="flex-1 flex items-center justify-center w-full">
+            {/* Floating Input Area */}
+            <div ref={floatingInputRef} className="w-full max-w-4xl px-4 sm:px-6">
+              <div className="w-full">
+                {/* Chat Input Card */}
+                <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
+                  <ChatInput
+                    message={taskInputMessage}
+                    setMessage={setTaskInputMessage}
+                    handleSendMessage={handleSendMessage}
+                    isLoading={isLoading}
+                    taskType={taskType}
+                  />
+                  {/* Team Selector and Send Button */}
+                  <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
+                    <div className="flex-1 min-w-0 overflow-hidden">
+                      {teams.length > 0 && (
+                        <TeamSelector
+                          selectedTeam={selectedTeam}
+                          setSelectedTeam={handleTeamChange}
+                          teams={teams}
+                          disabled={hasMessages}
+                          isLoading={isTeamsLoading}
+                        />
+                      )}
+                    </div>
+                    <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                      {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleSendMessage}
+                        disabled={
+                          isLoading ||
+                          selectedTaskDetail?.status === 'PENDING' ||
+                          selectedTaskDetail?.status === 'RUNNING'
+                        }
+                        className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                      >
+                        {isLoading ||
+                        selectedTaskDetail?.status === 'PENDING' ||
+                        selectedTaskDetail?.status === 'RUNNING' ? (
                           <LoadingDots />
                         ) : (
-                          <PaperAirplaneIcon className="w-4 h-4" />
-                        )
-                      }
-                      style={{
-                        color: 'rgb(var(--color-text-muted))',
-                        padding: '0',
-                        height: 'auto',
-                      }}
-                    />
+                          <Send className="h-5 w-5 text-text-muted" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bottom Controls */}
+                <div className="flex flex-row gap-3 mb-2 ml-3 mt-3 items-center flex-wrap">
+                  {showRepositorySelector && (
+                    <>
+                      <RepositorySelector
+                        selectedRepo={selectedRepo}
+                        handleRepoChange={setSelectedRepo}
+                        disabled={hasMessages}
+                        selectedTaskDetail={selectedTaskDetail}
+                      />
+
+                      {selectedRepo && (
+                        <BranchSelector
+                          selectedRepo={selectedRepo}
+                          selectedBranch={selectedBranch}
+                          handleBranchChange={setSelectedBranch}
+                          disabled={hasMessages}
+                        />
+                      )}
+                    </>
                   )}
                 </div>
               </div>
             </div>
+          </div>
+        )}
 
-            {/* Bottom Controls */}
-            <div className="flex flex-row gap-1 mb-2 ml-3 mt-1 items-center flex-wrap">
-              {showRepositorySelector && (
-                <>
-                  <RepositorySelector
-                    selectedRepo={selectedRepo}
-                    handleRepoChange={setSelectedRepo}
-                    disabled={hasMessages}
-                    selectedTaskDetail={selectedTaskDetail}
-                  />
+        {/* Floating Input Area for messages view */}
+        {hasMessages && (
+          <div
+            ref={floatingInputRef}
+            className="fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0"
+            style={{
+              left: floatingMetrics.width ? floatingMetrics.left : 0,
+              width: floatingMetrics.width || '100%',
+              right: floatingMetrics.width ? undefined : 0,
+            }}
+          >
+            <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+              {/* Chat Input Card */}
+              <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
+                <ChatInput
+                  message={taskInputMessage}
+                  setMessage={setTaskInputMessage}
+                  handleSendMessage={handleSendMessage}
+                  isLoading={isLoading}
+                  taskType={taskType}
+                />
+                {/* Team Selector and Send Button */}
+                <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
+                  <div className="flex-1 min-w-0 overflow-hidden">
+                    {teams.length > 0 && (
+                      <TeamSelector
+                        selectedTeam={selectedTeam}
+                        setSelectedTeam={handleTeamChange}
+                        teams={teams}
+                        disabled={hasMessages}
+                        isLoading={isTeamsLoading}
+                      />
+                    )}
+                  </div>
+                  <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                    {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleSendMessage}
+                      disabled={
+                        isLoading ||
+                        selectedTaskDetail?.status === 'PENDING' ||
+                        selectedTaskDetail?.status === 'RUNNING'
+                      }
+                      className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                    >
+                      {isLoading ||
+                      selectedTaskDetail?.status === 'PENDING' ||
+                      selectedTaskDetail?.status === 'RUNNING' ? (
+                        <LoadingDots />
+                      ) : (
+                        <Send className="h-5 w-5 text-text-muted" />
+                      )}
+                    </Button>
+                  </div>
+                </div>
+              </div>
 
-                  {selectedRepo && (
-                    <BranchSelector
+              {/* Bottom Controls */}
+              <div className="flex flex-row gap-3 mb-2 ml-3 mt-3 items-center flex-wrap">
+                {showRepositorySelector && (
+                  <>
+                    <RepositorySelector
                       selectedRepo={selectedRepo}
-                      selectedBranch={selectedBranch}
-                      handleBranchChange={setSelectedBranch}
+                      handleRepoChange={setSelectedRepo}
                       disabled={hasMessages}
+                      selectedTaskDetail={selectedTaskDetail}
                     />
-                  )}
-                </>
-              )}
+
+                    {selectedRepo && (
+                      <BranchSelector
+                        selectedRepo={selectedRepo}
+                        selectedBranch={selectedBranch}
+                        handleBranchChange={setSelectedBranch}
+                        disabled={hasMessages}
+                      />
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   );

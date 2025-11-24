@@ -4,18 +4,39 @@
 
 'use client';
 
-import { useState, useEffect } from 'react';
-import { Select, App } from 'antd';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+
+/**
+ * Truncate text to a maximum length, keeping start and end with ellipsis in the middle
+ * @param text - The text to truncate
+ * @param maxLength - Maximum length of the text
+ * @param startChars - Number of characters to keep at the start (default: 10)
+ * @param endChars - Number of characters to keep at the end (default: 8)
+ * @returns Truncated text with ellipsis in the middle if needed
+ */
+function truncateMiddle(text: string, maxLength: number, startChars = 8, endChars = 10): string {
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  const start = text.slice(0, startChars);
+  const end = text.slice(-endChars);
+  return `${start}...${end}`;
+}
+import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGithub } from 'react-icons/fi';
+import { Loader2 } from 'lucide-react';
 import { GitRepoInfo, TaskDetail } from '@/types/api';
 import { useUser } from '@/features/common/UserContext';
 import { useRouter } from 'next/navigation';
 import Modal from '@/features/common/Modal';
-import { Button } from 'antd';
+import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from 'react-i18next';
 import { getLastRepo } from '@/utils/userPreferences';
 import { githubApis } from '@/apis/github';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+import { useToast } from '@/hooks/use-toast';
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null;
@@ -30,13 +51,16 @@ export default function RepositorySelector({
   disabled,
   selectedTaskDetail,
 }: RepositorySelectorProps) {
-  const { message } = App.useApp();
+  const { toast } = useToast();
   const { user } = useUser();
   const router = useRouter();
   const [repos, setRepos] = useState<GitRepoInfo[]>([]);
+  const [cachedRepos, setCachedRepos] = useState<GitRepoInfo[]>([]); // Cache initially loaded repositories
   const [loading, setLoading] = useState<boolean>(false);
+  const [isSearching, setIsSearching] = useState<boolean>(false); // User is searching (includes waiting period)
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Check if user has git_info configured
   const hasGitInfo = () => {
     return user && user.git_info && user.git_info.length > 0;
@@ -57,46 +81,127 @@ export default function RepositorySelector({
     try {
       const data = await githubApis.getRepositories();
       setRepos(data);
+      setCachedRepos(data); // Cache initial repository list
       setError(null);
       return data;
     } catch {
       setError('Failed to load repositories');
-      message.error('Failed to load repositories');
+      toast({
+        variant: 'destructive',
+        title: 'Failed to load repositories',
+      });
       return [];
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSearch = (query: string) => {
-    githubApis
-      .searchRepositories(query)
-      .then(data => {
-        setRepos(data);
-        setError(null);
-      })
-      .catch(() => {
-        setError('Failed to search repositories');
-        message.error('Failed to search repositories');
-      })
-      .finally(() => setLoading(false));
-  };
+  /**
+   * Search repositories locally (in cache)
+   */
+  const searchLocalRepos = useCallback(
+    (query: string): GitRepoInfo[] => {
+      if (!query.trim()) {
+        return cachedRepos;
+      }
+      const lowerQuery = query.toLowerCase();
+      return cachedRepos.filter(repo => repo.git_repo.toLowerCase().includes(lowerQuery));
+    },
+    [cachedRepos]
+  );
 
-  const handleChange = (value: { value: number; label: React.ReactNode } | undefined) => {
-    if (!value) {
-      handleRepoChange(null);
-      return;
+  /**
+   * Search repositories remotely (delayed execution)
+   */
+  const searchRemoteRepos = useCallback(
+    async (query: string) => {
+      if (!query.trim()) {
+        setRepos(cachedRepos);
+        return;
+      }
+
+      try {
+        const results = await githubApis.searchRepositories(query, {
+          fullmatch: false,
+          timeout: 30,
+        });
+
+        // Merge local and remote results, remove duplicates
+        const localResults = searchLocalRepos(query);
+        const mergedResults = [...localResults];
+
+        results.forEach(remoteRepo => {
+          if (!mergedResults.find(r => r.git_repo_id === remoteRepo.git_repo_id)) {
+            mergedResults.push(remoteRepo);
+          }
+        });
+
+        setRepos(mergedResults);
+        setError(null);
+      } catch {
+        // Keep local results when remote search fails
+        console.error('Remote search failed, keeping local results');
+      } finally {
+        setIsSearching(false); // Hide loading indicator when remote search completes
+      }
+    },
+    [cachedRepos, searchLocalRepos]
+  );
+
+  /**
+   * Handle search input changes
+   */
+  const handleSearchChange = useCallback(
+    (query: string) => {
+      // Clear previous timer
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+
+      // If search is empty, restore cached repos immediately
+      if (!query.trim()) {
+        setRepos(cachedRepos);
+        setIsSearching(false);
+        return;
+      }
+
+      // Show loading indicator immediately when user starts typing
+      setIsSearching(true);
+
+      // Immediately perform local search
+      const localResults = searchLocalRepos(query);
+      setRepos(localResults);
+
+      // Delay 1 second before remote search (regardless of local results)
+      searchTimeoutRef.current = setTimeout(() => {
+        searchRemoteRepos(query);
+      }, 1000);
+    },
+    [searchLocalRepos, searchRemoteRepos, cachedRepos]
+  );
+
+  // Cleanup timer
+  useEffect(() => {
+    return () => {
+      if (searchTimeoutRef.current) {
+        clearTimeout(searchTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  const handleChange = (value: string) => {
+    // First try to find in current repos list (includes search results)
+    let repo = repos.find(r => r.git_repo_id === Number(value));
+
+    // If not found in current list, try cached repos (all initially loaded repos)
+    if (!repo) {
+      repo = cachedRepos.find(r => r.git_repo_id === Number(value));
     }
-    const repo = repos.find(r => r.git_repo_id === value.value);
+
     if (repo) {
       handleRepoChange(repo);
     }
   };
-
-  const repoOptions = repos.map(repo => ({
-    label: repo.git_repo,
-    value: repo.git_repo_id,
-  }));
 
   /**
    * Centralized repository selection logic
@@ -160,11 +265,17 @@ export default function RepositorySelector({
             handleRepoChange(matched);
             setError(null);
           } else {
-            message.error('No repositories found');
+            toast({
+              variant: 'destructive',
+              title: 'No repositories found',
+            });
           }
         } catch {
           setError('Failed to search repositories');
-          message.error('Failed to search repositories');
+          toast({
+            variant: 'destructive',
+            title: 'Failed to search repositories',
+          });
         } finally {
           if (!canceled) {
             setLoading(false);
@@ -173,16 +284,9 @@ export default function RepositorySelector({
         return;
       }
 
-      // Scenario 2: No task selected and no repo selected - restore from localStorage
+      // Scenario 2: No task selected and no repo selected - load repos and optionally restore from localStorage
       if (!selectedTaskDetail && !selectedRepo && !disabled) {
-        console.log('[RepositorySelector] Scenario 2: Attempting to restore from localStorage');
-        const lastRepo = getLastRepo();
-        console.log('[RepositorySelector] Last repo from storage:', lastRepo);
-
-        if (!lastRepo) {
-          console.log('[RepositorySelector] No last repo in storage, exiting');
-          return;
-        }
+        console.log('[RepositorySelector] Scenario 2: Load repos and restore from localStorage');
 
         // Load repositories if not already loaded
         let repoList = repos;
@@ -196,16 +300,26 @@ export default function RepositorySelector({
           }
         }
 
-        // Find and select the last repo
-        const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId);
-        if (repoToRestore) {
-          console.log(
-            '[RepositorySelector] ✅ Restoring repo from localStorage:',
-            repoToRestore.git_repo
-          );
-          handleRepoChange(repoToRestore);
+        // Try to restore from localStorage if available
+        const lastRepo = getLastRepo();
+        console.log('[RepositorySelector] Last repo from storage:', lastRepo);
+
+        if (lastRepo) {
+          // Find and select the last repo
+          const repoToRestore = repoList.find(r => r.git_repo_id === lastRepo.repoId);
+          if (repoToRestore) {
+            console.log(
+              '[RepositorySelector] ✅ Restoring repo from localStorage:',
+              repoToRestore.git_repo
+            );
+            handleRepoChange(repoToRestore);
+          } else {
+            console.log('[RepositorySelector] ❌ Repo not found in list, ID:', lastRepo.repoId);
+          }
         } else {
-          console.log('[RepositorySelector] ❌ Repo not found in list, ID:', lastRepo.repoId);
+          console.log(
+            '[RepositorySelector] No last repo in storage, repos loaded but no selection'
+          );
         }
       } else {
         console.log('[RepositorySelector] Scenario 2 conditions not met:', {
@@ -225,81 +339,72 @@ export default function RepositorySelector({
   }, [selectedTaskDetail?.git_repo, disabled, user, repos.length]);
 
   /**
-   * Handle dropdown open/close
-   * Load repos on first open if not already loaded
-   */
-  const handleOpenChange = (visible: boolean) => {
-    if (!hasGitInfo() && visible) {
-      setIsModalOpen(true);
-      return;
-    }
-
-    // Load repositories on first open if not already loaded
-    if (visible && repos.length === 0 && hasGitInfo() && !loading) {
-      loadRepositories();
-    }
-  };
-
-  /**
-   * Handle clear button click
-   * Reload repositories to refresh the list
-   */
-  const handleClear = () => {
-    loadRepositories();
-  };
-
-  /**
    * Navigate to settings page to configure git integration
    */
   const handleModalClick = () => {
     setIsModalOpen(false);
     router.push(paths.settings.integrations.getHref());
   };
-
   const { t } = useTranslation();
+  const isMobile = useIsMobile();
+
+  // Convert repos to SearchableSelectItem format
+  // Always include the selected repo to ensure it displays correctly
+  const selectItems: SearchableSelectItem[] = useMemo(() => {
+    const items = repos.map(repo => ({
+      value: repo.git_repo_id.toString(),
+      label: repo.git_repo,
+      searchText: repo.git_repo,
+    }));
+
+    // Ensure selected repo is in the items list
+    if (selectedRepo) {
+      const hasSelected = items.some(item => item.value === selectedRepo.git_repo_id.toString());
+      if (!hasSelected) {
+        // Add selected repo at the beginning if not in current list
+        items.unshift({
+          value: selectedRepo.git_repo_id.toString(),
+          label: selectedRepo.git_repo,
+          searchText: selectedRepo.git_repo,
+        });
+      }
+    }
+
+    return items;
+  }, [repos, selectedRepo]);
 
   return (
-    <div className="flex items-center space-x-1 min-w-0" data-tour="repo-selector">
-      <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0" />
-      <Select
-        labelInValue
-        showSearch
-        allowClear
-        value={
-          selectedRepo
-            ? { value: selectedRepo.git_repo_id, label: selectedRepo.git_repo }
-            : undefined
-        }
-        placeholder={
-          <span className="text-sx truncate h-2">{t('branches.select_repository')}</span>
-        }
-        className="repository-selector min-w-0 truncate"
-        style={{ width: 'auto', maxWidth: 200, display: 'inline-block', paddingRight: 8 }}
-        popupMatchSelectWidth={false}
-        styles={{ popup: { root: { maxWidth: 200 } } }}
-        classNames={{ popup: { root: 'repository-selector-dropdown custom-scrollbar' } }}
-        disabled={disabled}
-        loading={loading}
-        filterOption={false}
-        onSearch={handleSearch}
-        onChange={handleChange}
-        notFoundContent={
-          error ? (
-            <div className="px-3 py-2 text-sm" style={{ color: 'rgb(var(--color-error))' }}>
-              {error}
-              {/* antd message.error is globally prompted */}
-            </div>
-          ) : !loading ? (
-            <div className="px-3 py-2 text-sm text-text-muted">
-              {repos.length === 0 ? 'Select Repository' : 'No repositories found'}
-            </div>
-          ) : null
-        }
-        options={repoOptions}
-        open={hasGitInfo() ? undefined : false}
-        onOpenChange={handleOpenChange}
-        onClear={handleClear}
-      />
+    <div
+      className="flex items-center space-x-2 flex-shrink-0"
+      data-tour="repo-selector"
+      style={{ maxWidth: isMobile ? 140 : 180 }}
+    >
+      <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0 ml-1" />
+      <div className="relative flex items-center gap-2 min-w-0 flex-1">
+        <SearchableSelect
+          value={selectedRepo?.git_repo_id.toString()}
+          onValueChange={handleChange}
+          onSearchChange={handleSearchChange}
+          disabled={disabled || loading}
+          placeholder={t('branches.select_repository')}
+          searchPlaceholder={t('branches.search_repository')}
+          items={selectItems}
+          loading={loading}
+          error={error}
+          emptyText={t('branches.select_repository')}
+          noMatchText={t('branches.no_match')}
+          triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
+          contentClassName="max-w-[200px]"
+          renderTriggerValue={item => (
+            <span className="block" title={item?.label}>
+              {item?.label ? truncateMiddle(item.label, isMobile ? 20 : 25) : ''}
+            </span>
+          )}
+        />
+        {isSearching && (
+          <Loader2 className="w-3 h-3 text-text-muted animate-spin flex-shrink-0 absolute right-0" />
+        )}
+      </div>
       <Modal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
@@ -311,8 +416,8 @@ export default function RepositorySelector({
             {t('guide.description')}
           </p>
           <Button
-            type="primary"
-            size="small"
+            variant="default"
+            size="sm"
             onClick={handleModalClick}
             style={{ minWidth: '100px' }}
           >

@@ -18,9 +18,10 @@ from app.core.exceptions import (
     RequestValidationError
 )
 from app.core.logging import setup_logging
-from app.db.session import engine
+from app.db.session import engine, SessionLocal
 from app.db.base import Base
 from app.services.jobs import start_background_jobs, stop_background_jobs
+from app.core.yaml_init import run_yaml_initialization
 from app.models import *  # noqa: F401,F403
 
 def create_app():
@@ -95,7 +96,30 @@ def create_app():
     # Create database tables and start background worker
     @app.on_event("startup")
     def startup():
-        Base.metadata.create_all(bind=engine)
+        # Auto-create database tables if enabled
+        if settings.DB_AUTO_CREATE_TABLES:
+            logger.info("Auto-creating database tables...")
+            try:
+                Base.metadata.create_all(bind=engine, checkfirst=True)
+            except Exception as e:
+                # Log the error but don't fail startup if tables already exist
+                if "already exists" in str(e).lower():
+                    logger.warning(f"Some tables already exist, continuing: {e}")
+                else:
+                    logger.error(f"Error creating database tables: {e}")
+                    raise
+        else:
+            logger.info("Database auto-create tables is disabled")
+
+        # Initialize database with YAML configuration
+        db = SessionLocal()
+        try:
+            run_yaml_initialization(db)
+        except Exception as e:
+            logger.error(f"Failed to initialize database from YAML: {e}")
+        finally:
+            db.close()
+
         # Start background jobs
         start_background_jobs(app)
 

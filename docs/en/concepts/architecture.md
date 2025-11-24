@@ -575,7 +575,6 @@ logger.info("task.created",
 - [Collaboration Models](./collaboration-models.md) - Deep dive into collaboration patterns
 - [YAML Specification](../reference/yaml-specification.md) - Complete configuration guide
 - [Developer Guide](../guides/developer/setup.md) - Start developing with Wegent
-- [Deployment Guide](../guides/deployment/production.md) - Production deployment
 
 ---
 

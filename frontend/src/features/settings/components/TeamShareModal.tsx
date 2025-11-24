@@ -6,7 +6,9 @@
 
 import React from 'react';
 import Modal from '@/features/common/Modal';
-import { Button, App, Alert } from 'antd';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/hooks/use-toast';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { DocumentDuplicateIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from '@/hooks/useTranslation';
 
@@ -24,12 +26,14 @@ export default function TeamShareModal({
   shareUrl,
 }: TeamShareModalProps) {
   const { t } = useTranslation('common');
-  const { message } = App.useApp();
+  const { toast } = useToast();
 
   const handleCopyLink = async () => {
     try {
       await navigator.clipboard.writeText(shareUrl);
-      message.success(t('teams.copy_success'));
+      toast({
+        title: t('teams.copy_success'),
+      });
       onClose();
     } catch {
       // Fallback to traditional method if clipboard API is not available
@@ -39,7 +43,9 @@ export default function TeamShareModal({
       textArea.select();
       document.execCommand('copy');
       document.body.removeChild(textArea);
-      message.success(t('teams.copy_success'));
+      toast({
+        title: t('teams.copy_success'),
+      });
       onClose();
     }
   };
@@ -59,34 +65,23 @@ export default function TeamShareModal({
 
           {/* Instructions */}
           <div className="mx-auto max-w-md">
-            <Alert
-              description={t('teams.share_instructions_content1')}
-              type="info"
-              showIcon
-              className="text-sm"
-            />
+            <Alert variant="default" className="text-sm">
+              <AlertDescription>{t('teams.share_instructions_content1')}</AlertDescription>
+            </Alert>
             <div className="mt-2"></div>
-            <Alert
-              description={t('teams.share_instructions_content2')}
-              type="info"
-              showIcon
-              className="text-sm mt-2"
-            />
+            <Alert variant="default" className="text-sm mt-2">
+              <AlertDescription>{t('teams.share_instructions_content2')}</AlertDescription>
+            </Alert>
           </div>
         </div>
 
         {/* Bottom button area */}
         <div className="flex space-x-3 mt-6">
-          <Button onClick={onClose} type="default" size="small" style={{ flex: 1 }}>
+          <Button onClick={onClose} variant="outline" size="sm" style={{ flex: 1 }}>
             {t('common.cancel')}
           </Button>
-          <Button
-            onClick={handleCopyLink}
-            type="primary"
-            size="small"
-            icon={<DocumentDuplicateIcon className="w-4 h-4" />}
-            style={{ flex: 1 }}
-          >
+          <Button onClick={handleCopyLink} variant="default" size="sm" style={{ flex: 1 }}>
+            <DocumentDuplicateIcon className="w-4 h-4" />
             {t('teams.copy_link')}
           </Button>
         </div>

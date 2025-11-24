@@ -2,7 +2,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-const withOpacity = (variable) => `rgb(var(${variable}) / <alpha-value>)`
+import tailwindcssAnimate from 'tailwindcss-animate';
+
+const withOpacity = variable => `rgb(var(${variable}) / <alpha-value>)`;
 
 /** @type {import('tailwindcss').Config} */
 module.exports = {
@@ -11,13 +13,42 @@ module.exports = {
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/features/**/*.{js,ts,jsx,tsx,mdx}',
     './src/app/**/*.{js,ts,jsx,tsx,mdx}',
+    './src/components/**/*.{js,ts,jsx,tsx,mdx}',
   ],
   theme: {
     extend: {
+      fontFamily: {
+        sans: [
+          '-apple-system',
+          'BlinkMacSystemFont',
+          '"Segoe UI"',
+          'Roboto',
+          '"Helvetica Neue"',
+          'Arial',
+          '"Noto Sans"',
+          'sans-serif',
+          '"Apple Color Emoji"',
+          '"Segoe UI Emoji"',
+          '"Segoe UI Symbol"',
+          '"Noto Color Emoji"',
+        ],
+        mono: [
+          'ui-monospace',
+          'SFMono-Regular',
+          '"SF Mono"',
+          'Menlo',
+          'Monaco',
+          'Consolas',
+          '"Liberation Mono"',
+          '"Courier New"',
+          'monospace',
+        ],
+      },
       colors: {
         base: withOpacity('--color-bg-base'),
         surface: withOpacity('--color-bg-surface'),
         muted: withOpacity('--color-bg-muted'),
+        hover: withOpacity('--color-bg-hover'),
         border: withOpacity('--color-border'),
         'border-strong': withOpacity('--color-border-strong'),
         'text-primary': withOpacity('--color-text-primary'),
@@ -26,8 +57,40 @@ module.exports = {
         'text-inverted': withOpacity('--color-text-inverted'),
         primary: withOpacity('--color-primary'),
         'primary-contrast': withOpacity('--color-primary-contrast'),
+        success: withOpacity('--color-success'),
+        error: withOpacity('--color-error'),
+        warning: 'rgb(245 158 11)', // Tailwind orange-500
+        link: withOpacity('--color-link'),
+        'code-bg': withOpacity('--color-code-bg'),
+        popover: {
+          DEFAULT: withOpacity('--color-popover'),
+          foreground: withOpacity('--color-popover-foreground'),
+        },
+        tooltip: {
+          DEFAULT: withOpacity('--color-tooltip'),
+          foreground: withOpacity('--color-tooltip-foreground'),
+        },
+      },
+      borderRadius: {
+        lg: 'var(--radius)',
+        md: 'calc(var(--radius) - 2px)',
+        sm: 'calc(var(--radius) - 4px)',
+      },
+      keyframes: {
+        'accordion-down': {
+          from: { height: '0' },
+          to: { height: 'var(--radix-accordion-content-height)' },
+        },
+        'accordion-up': {
+          from: { height: 'var(--radix-accordion-content-height)' },
+          to: { height: '0' },
+        },
+      },
+      animation: {
+        'accordion-down': 'accordion-down 0.2s ease-out',
+        'accordion-up': 'accordion-up 0.2s ease-out',
       },
     },
   },
-  plugins: [],
-}
+  plugins: [tailwindcssAnimate],
+};

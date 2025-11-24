@@ -5,7 +5,8 @@
 """
 Models package
 """
-from app.models.base import Base
+# Do NOT import Base here to avoid conflicts with app.db.base.Base
+# All models should import Base directly from app.db.base
 from app.models.user import User
 from app.models.kind import (
     Kind,
@@ -19,8 +20,8 @@ from app.models.kind import (
 )
 from app.models.subtask import Subtask
 from app.models.shared_team import SharedTeam
+
 __all__ = [
-    "Base",
     "User",
     "Kind",
     "KGhost",
