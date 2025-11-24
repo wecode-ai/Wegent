@@ -137,6 +137,8 @@
     "waiting_response": "Waiting for response...",
     "my_answers": "My Answers",
     "question": "Q",
-    "required_field": "This question is required"
+    "required_field": "This question is required",
+    "additional_thoughts": "Additional Thoughts or Remarks",
+    "additional_placeholder": "Enter additional thoughts, requirements, or special notes here..."
   }
 }
