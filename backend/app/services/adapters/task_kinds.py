@@ -260,12 +260,125 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Get all related data in batch to avoid N+1 queries
         related_data_batch = self._get_tasks_related_data_batch(db, tasks, user_id)
-        
+
         result = []
         for task in tasks:
             task_crd = Task.model_validate(task.json)
             task_related_data = related_data_batch.get(str(task.id), {})
             result.append(self._convert_to_task_dict_optimized(task, task_related_data, task_crd))
+
+        return result, total
+
+    def get_user_tasks_lite(
+        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get user's Task list with pagination (lightweight version for list display)
+        Only returns essential fields without JOIN queries for better performance
+        """
+        query = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'")
+        )
+
+        total = query.with_entities(func.count(Kind.id)).scalar()
+        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+
+        if not tasks:
+            return [], total
+
+        # Build lightweight result without expensive JOIN operations
+        result = []
+        for task in tasks:
+            task_crd = Task.model_validate(task.json)
+
+            # Extract basic fields from task JSON
+            task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
+            type_value = task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+            status = task_crd.status.status if task_crd.status else "PENDING"
+
+            # Parse timestamps
+            created_at = task.created_at
+            updated_at = task.updated_at
+            if task_crd.status:
+                try:
+                    if task_crd.status.createdAt:
+                        created_at = task_crd.status.createdAt
+                    if task_crd.status.updatedAt:
+                        updated_at = task_crd.status.updatedAt
+                except:
+                    pass
+
+            # Get team_id using direct SQL query (more efficient than ORM)
+            team_name = task_crd.spec.teamRef.name
+            team_namespace = task_crd.spec.teamRef.namespace
+            team_result = db.execute(
+                text("""
+                    SELECT id FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Team'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """),
+                {"user_id": user_id, "name": team_name, "namespace": team_namespace}
+            ).fetchone()
+
+            # If not found in user's teams, check shared teams
+            team_id = team_result[0] if team_result else None
+            if not team_id:
+                shared_team_result = db.execute(
+                    text("""
+                        SELECT k.id FROM kinds k
+                        INNER JOIN shared_teams st ON k.user_id = st.original_user_id
+                        WHERE st.user_id = :user_id
+                        AND st.is_active = true
+                        AND k.kind = 'Team'
+                        AND k.name = :name
+                        AND k.namespace = :namespace
+                        AND k.is_active = true
+                        LIMIT 1
+                    """),
+                    {"user_id": user_id, "name": team_name, "namespace": team_namespace}
+                ).fetchone()
+                team_id = shared_team_result[0] if shared_team_result else None
+
+            # Get git_repo from workspace using direct SQL query
+            workspace_name = task_crd.spec.workspaceRef.name
+            workspace_namespace = task_crd.spec.workspaceRef.namespace
+            workspace_result = db.execute(
+                text("""
+                    SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
+                    FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Workspace'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """),
+                {"user_id": user_id, "name": workspace_name, "namespace": workspace_namespace}
+            ).fetchone()
+
+            git_repo = None
+            if workspace_result and workspace_result[0]:
+                # Remove JSON quotes from extracted value
+                git_repo = workspace_result[0].strip('"') if isinstance(workspace_result[0], str) else workspace_result[0]
+
+            result.append({
+                "id": task.id,
+                "title": task_crd.spec.title,
+                "status": status,
+                "task_type": task_type,
+                "type": type_value,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "team_id": team_id,
+                "git_repo": git_repo,
+            })
 
         return result, total
 
