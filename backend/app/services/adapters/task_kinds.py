@@ -505,9 +505,37 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             task_crd.spec.prompt = update_data["prompt"]
 
         # Update task status fields
+        # Update task status fields
         if task_crd.status:
             if "status" in update_data:
-                task_crd.status.status = update_data["status"].value if hasattr(update_data["status"], 'value') else update_data["status"]
+                new_status = update_data["status"].value if hasattr(update_data["status"], 'value') else update_data["status"]
+                current_status = task_crd.status.status
+                
+                # 状态转换保护：防止终态被非终态覆盖
+                # 定义终态和非终态
+                final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
+                non_final_states = ["PENDING", "RUNNING", "CANCELLING"]
+                
+                # 如果当前是CANCELLING状态，只允许转换到CANCELLED或FAILED
+                if current_status == "CANCELLING":
+                    if new_status not in ["CANCELLED", "FAILED"]:
+                        logger.warning(
+                            f"Task {task_id}: Ignoring status update from CANCELLING to {new_status}. "
+                            f"CANCELLING can only transition to CANCELLED or FAILED."
+                        )
+                        # 不更新状态，但允许更新其他字段（如progress）
+                    else:
+                        task_crd.status.status = new_status
+                        logger.info(f"Task {task_id}: Status updated from CANCELLING to {new_status}")
+                # 如果当前已经是终态，不允许被非终态覆盖
+                elif current_status in final_states and new_status in non_final_states:
+                    logger.warning(
+                        f"Task {task_id}: Ignoring status update from final state {current_status} to non-final state {new_status}"
+                    )
+                    # 不更新状态，但允许更新其他字段
+                else:
+                    # 正常状态转换
+                    task_crd.status.status = new_status
             if "progress" in update_data:
                 task_crd.status.progress = update_data["progress"]
             if "result" in update_data:

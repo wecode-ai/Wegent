@@ -146,6 +146,22 @@ async def cancel_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
+    # Check if task is already in a final state
+    current_status = task.get("status", "")
+    final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
+    
+    if current_status in final_states:
+        logger.warning(f"Task {task_id} is already in final state {current_status}, cannot cancel")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Task is already {current_status.lower()}, cannot cancel"
+        )
+    
+    # Check if task is already being cancelled
+    if current_status == "CANCELLING":
+        logger.info(f"Task {task_id} is already being cancelled")
+        return {"message": "Task is already being cancelled", "status": "CANCELLING"}
+
     # Update task status to CANCELLING immediately
     try:
         task_kinds_service.update_task(

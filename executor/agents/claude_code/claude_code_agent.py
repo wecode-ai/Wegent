@@ -887,7 +887,7 @@ class ClaudeCodeAgent(Agent):
         Cancel the current running task using multi-level cancellation strategy:
         1. Set cancellation state to CANCELLED immediately (not CANCELLING)
         2. Try SDK interrupt
-        3. Report progress as completed
+        3. 不再在这里发送callback，由后台任务异步发送，避免阻塞
         4. Wait briefly for cleanup
 
         Returns:
@@ -910,14 +910,16 @@ class ClaudeCodeAgent(Agent):
             max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
             waited = 0
             while waited < max_wait:
-                # Check if cleanup completed
-                if not self.task_state_manager.has_task(self.task_id):
+                # Check if cleanup completed (task state is None means cleaned up)
+                if self.task_state_manager.get_state(self.task_id) is None:
                     logger.info(f"Task {self.task_id} cleaned up gracefully")
                     return True
                 time.sleep(0.1)  # Check more frequently (100ms)
                 waited += 0.1
 
-            logger.info(f"Task {self.task_id} cancelled (cleanup may continue in background)")
+            # 注意：不再在这里发送callback
+            # callback将由main.py中的后台任务异步发送，避免阻塞executor_manager的cancel请求
+            logger.info(f"Task {self.task_id} cancelled (cleanup may continue in background), callback will be sent asynchronously")
             return True
 
         except Exception as e:
@@ -951,16 +953,13 @@ class ClaudeCodeAgent(Agent):
     async def _async_cancel_run(self) -> None:
         """
         Asynchronous helper method to cancel the current run
+        不再发送callback，由后台任务处理
         """
         try:
             if self.client is not None:
                 await self.client.interrupt()
-                self.report_progress(
-                    100,
-                    TaskStatus.COMPLETED.value,
-                    f"${{tasks.cancel_task}}",
-                    result=ExecutionResult(value="", thinking=self.thinking_manager.get_thinking_steps()).dict(),
-                )
+                # 注意：不再在这里发送callback
+                # callback将由main.py中的后台任务异步发送
                 logger.info(f"Successfully sent interrupt to client for session_id: {self.session_id}")
         except Exception as e:
             logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")

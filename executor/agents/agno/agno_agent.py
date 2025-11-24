@@ -1074,7 +1074,7 @@ class AgnoAgent(Agent):
         Supports cancellation at any stage of the task lifecycle:
         1. Immediately mark state as CANCELLED (not CANCELLING)
         2. If task is executing (has run_id), call SDK's cancel_run()
-        3. Report progress and clean up resources
+        3. 不再在这里发送callback，由后台任务异步发送，避免阻塞
 
         Returns:
             bool: True if cancellation was successful, False otherwise
@@ -1106,14 +1106,9 @@ class AgnoAgent(Agent):
                 logger.info(f"Task {self.task_id} has no run_id yet, cancelled before execution")
                 cancelled = True  # Consider cancellation successful
 
-            # Layer 3: Report progress
-            if cancelled:
-                self.report_progress(
-                    100,
-                    TaskStatus.COMPLETED.value,
-                    "${{tasks.cancel_task}}",
-                    result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict(),
-                )
+            # 注意：不再在这里发送callback
+            # callback将由main.py中的后台任务异步发送，避免阻塞executor_manager的cancel请求
+            logger.info(f"Task {self.task_id} cancellation completed, callback will be sent asynchronously")
 
             return cancelled
 

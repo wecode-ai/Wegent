@@ -465,7 +465,8 @@ export default function ChatArea({
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                       {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
                       {selectedTaskDetail?.status === 'RUNNING' ||
-                      selectedTaskDetail?.status === 'PENDING' ? (
+                      selectedTaskDetail?.status === 'PENDING' ||
+                      selectedTaskDetail?.status === 'CANCELLING' ? (
                         isCancelling ? (
                           <Button
                             variant="ghost"
@@ -491,7 +492,7 @@ export default function ChatArea({
                           variant="ghost"
                           size="icon"
                           onClick={handleSendMessage}
-                          disabled={isLoading}
+                          disabled={isLoading || !taskInputMessage.trim()}
                           className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
                         >
                           {isLoading ? (
@@ -569,7 +570,8 @@ export default function ChatArea({
                   <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                     {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
                     {selectedTaskDetail?.status === 'RUNNING' ||
-                    selectedTaskDetail?.status === 'PENDING' ? (
+                    selectedTaskDetail?.status === 'PENDING' ||
+                    selectedTaskDetail?.status === 'CANCELLING' ? (
                       isCancelling ? (
                         <Button
                           variant="ghost"
@@ -595,7 +597,7 @@ export default function ChatArea({
                         variant="ghost"
                         size="icon"
                         onClick={handleSendMessage}
-                        disabled={isLoading}
+                        disabled={isLoading || !taskInputMessage.trim()}
                         className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
                       >
                         {isLoading ? (
