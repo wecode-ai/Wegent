@@ -40,6 +40,7 @@ export default function TaskSidebar({
     isSearchResult,
     getUnreadCount,
     markAllTasksAsViewed,
+    viewStatusVersion,
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
@@ -110,7 +111,7 @@ export default function TaskSidebar({
       thisWeekUnread: getUnreadCount(thisWeekTasks),
       earlierUnread: getUnreadCount(earlierTasks),
     };
-  }, [tasks, getUnreadCount]);
+  }, [tasks, getUnreadCount, viewStatusVersion]);
 
   // New task
   const handleNewAgentClick = () => {
@@ -138,7 +139,7 @@ export default function TaskSidebar({
   // Calculate total unread count
   const totalUnreadCount = React.useMemo(() => {
     return getUnreadCount(tasks);
-  }, [tasks, getUnreadCount]);
+  }, [tasks, getUnreadCount, viewStatusVersion]);
 
   // Scroll to bottom to load more
   useEffect(() => {
@@ -230,6 +231,7 @@ export default function TaskSidebar({
             title={t('tasks.search_results')}
             unreadCount={getUnreadCount(tasks)}
             onTaskClick={() => setIsMobileSidebarOpen(false)}
+            key={`search-${viewStatusVersion}`}
           />
         ) : (
           <>
@@ -238,18 +240,21 @@ export default function TaskSidebar({
               title={t('tasks.today')}
               unreadCount={groupTasksByDate.todayUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
+              key={`today-${viewStatusVersion}`}
             />
             <TaskListSection
               tasks={groupTasksByDate.thisWeek}
               title={t('tasks.this_week')}
               unreadCount={groupTasksByDate.thisWeekUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
+              key={`week-${viewStatusVersion}`}
             />
             <TaskListSection
               tasks={groupTasksByDate.earlier}
               title={t('tasks.earlier')}
               unreadCount={groupTasksByDate.earlierUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
+              key={`earlier-${viewStatusVersion}`}
             />
           </>
         )}

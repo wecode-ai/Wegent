@@ -30,6 +30,10 @@
   --color-error: 239 68 68;
   --color-link: 85 185 247;
   --color-code-bg: 246 248 250;
+  --color-popover: 255 255 255;
+  --color-popover-foreground: 26 26 26;
+  --color-tooltip: 26 26 26;
+  --color-tooltip-foreground: 255 255 255;
   --shadow-popover: 0 12px 32px rgba(15, 23, 42, 0.12);
   --radius: 0.5rem;
 }
@@ -56,6 +60,10 @@
   --color-error: 248 81 73;
   --color-link: 85 185 247;
   --color-code-bg: 13 17 23;
+  --color-popover: 26 28 28;
+  --color-popover-foreground: 236 236 236;
+  --color-tooltip: 236 236 236;
+  --color-tooltip-foreground: 14 15 15;
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
   --radius: 0.5rem;
 }
