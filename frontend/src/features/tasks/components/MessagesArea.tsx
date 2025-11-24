@@ -608,7 +608,54 @@ export default function MessagesArea({
   const renderAiMessage = (msg: Message, messageIndex: number) => {
     const content = msg.content ?? '';
 
-    // Try to parse as clarification or final_prompt data
+    // Try to parse PM Battle data from thinking details first (Tool Use mode)
+    if (msg.thinking && Array.isArray(msg.thinking)) {
+      for (const step of msg.thinking) {
+        if (step.details && typeof step.details === 'object') {
+          const details = step.details as Record<string, unknown>;
+
+          // Check for PM Battle data in details
+          if (details.pm_battle_data && typeof details.pm_battle_data === 'object') {
+            const pmData = details.pm_battle_data as {
+              type?: string;
+              questions?: unknown[];
+              prompt?: string;
+            };
+
+            // Handle clarification questions
+            if (pmData.type === 'clarification' && pmData.questions) {
+              return (
+                <ClarificationForm
+                  data={{
+                    type: 'clarification',
+                    questions: pmData.questions as ClarificationData['questions'],
+                  }}
+                  taskId={selectedTaskDetail?.id || 0}
+                  currentMessageIndex={messageIndex}
+                />
+              );
+            }
+
+            // Handle final prompt
+            if (pmData.type === 'final_prompt' && pmData.prompt) {
+              return (
+                <FinalPromptMessage
+                  data={{
+                    type: 'final_prompt',
+                    prompt: pmData.prompt,
+                  }}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                />
+              );
+            }
+          }
+        }
+      }
+    }
+
+    // Try to parse as clarification or final_prompt data from content (Markdown fallback mode)
     try {
       let contentToParse = content;
 
@@ -620,7 +667,7 @@ export default function MessagesArea({
         }
       }
 
-      // Try Markdown parsing first (new format)
+      // Try Markdown parsing as fallback
       const markdownClarification = parseMarkdownClarification(contentToParse);
       if (markdownClarification) {
         return (

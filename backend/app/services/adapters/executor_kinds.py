@@ -384,6 +384,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 bots.append({
                     "id": bot.id,
                     "name": bot.name,
+                    "ghost_name": ghost.name if ghost else "",
                     "agent_name": agent_name,
                     "agent_config": agent_config_data,
                     "system_prompt": bot_prompt,

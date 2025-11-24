@@ -221,7 +221,7 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
 
 def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_manager=None):
     """处理助手消息，提取详细信息"""
-    
+
     # 收集所有内容块的详细信息，符合目标格式
     message_details = {
         "type": "assistant",
@@ -234,7 +234,7 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
             "parent_tool_use_id": msg.parent_tool_use_id
         }
     }
-    
+
     # Convert content blocks to dict format for JSON serialization
     content_dicts = []
     for block in msg.content:
@@ -245,13 +245,16 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
     masked_msg_dict = mask_sensitive_data(msg_dict)
     logger.info(f"AssistantMessage: {len(msg.content)} content blocks, msg = {json.dumps(masked_msg_dict, ensure_ascii=False)}")
 
+    # Check if this message contains PM Battle tool calls
+    pm_battle_tool_result = None
+
     # 处理每个内容块
     for block in msg.content:
         # Mask sensitive data in block for logging
         block_dict = asdict(block) if hasattr(block, '__dataclass_fields__') else block
         masked_block_dict = mask_sensitive_data(block_dict)
         logger.info(f"Block content: {masked_block_dict}")
-        
+
         if isinstance(block, ToolUseBlock):
             # 工具使用详情，符合目标格式
             tool_detail = {
@@ -261,9 +264,13 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
                 "input": block.input
             }
             message_details["message"]["content"].append(tool_detail)
-            
+
             logger.info(f"ToolUseBlock: tool = {block.name}")
-                
+
+            # Check if this is a PM Battle tool
+            if block.name in ["ask_clarification_questions", "provide_final_prompt"]:
+                pm_battle_tool_result = _handle_pm_battle_tool(block.name, block.input, state_manager)
+
         elif isinstance(block, TextBlock):
             # 文本内容详情，符合目标格式
             text_detail = {
@@ -273,9 +280,9 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
             message_details["message"]["content"].append(text_detail)
 
             state_manager.update_workbench_status("running", block.text)
-            
+
             logger.info(f"TextBlock: {len(block.text)} chars")
-        
+
         elif isinstance(block, ToolResultBlock):
             # 工具结果详情，符合目标格式
             result_detail = {
@@ -285,9 +292,9 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
                 "is_error": block.is_error
             }
             message_details["message"]["content"].append(result_detail)
-            
+
             logger.info(f"ToolResultBlock: tool_use_id = {block.tool_use_id}, is_error = {block.is_error}")
-        
+
         else:
             # 未知块类型，符合目标格式
             unknown_detail = {
@@ -298,6 +305,15 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
             message_details["message"]["content"].append(unknown_detail)
 
             logger.debug(f"Unknown block type: {type(block)}")
+
+    # If PM Battle tool was called, update workbench with the result
+    if pm_battle_tool_result:
+        # Convert the tool result to text format for workbench
+        tool_result_text = json.dumps(pm_battle_tool_result, ensure_ascii=False)
+        state_manager.update_workbench_status("running", tool_result_text)
+
+        # Add the tool result to message details
+        message_details["pm_battle_data"] = pm_battle_tool_result
 
     # Mask sensitive data in message details before sending
     masked_message_details = mask_sensitive_data(message_details)
@@ -310,6 +326,42 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
             use_i18n_keys=True,
             details=masked_message_details
         )
+
+
+def _handle_pm_battle_tool(tool_name: str, tool_input: Dict[str, Any], state_manager) -> Dict[str, Any]:
+    """
+    Handle PM Battle tool calls (ask_clarification_questions and provide_final_prompt)
+
+    Args:
+        tool_name: Name of the tool being called
+        tool_input: Input parameters for the tool
+        state_manager: State manager for reporting progress
+
+    Returns:
+        Dict containing the formatted tool result
+    """
+    logger.info(f"Handling PM Battle tool: {tool_name}")
+
+    if tool_name == "ask_clarification_questions":
+        # Format clarification questions
+        result = {
+            "type": "clarification",
+            "questions": tool_input.get("questions", [])
+        }
+        logger.info(f"Formatted clarification questions: {len(result['questions'])} questions")
+        return result
+
+    elif tool_name == "provide_final_prompt":
+        # Format final prompt
+        result = {
+            "type": "final_prompt",
+            "prompt": tool_input.get("prompt", "")
+        }
+        logger.info(f"Formatted final prompt: {len(result['prompt'])} chars")
+        return result
+
+    logger.warning(f"Unknown PM Battle tool: {tool_name}")
+    return {}
 
 def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
     msg_type = msg.get("type", "unknown")

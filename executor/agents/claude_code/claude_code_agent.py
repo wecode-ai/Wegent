@@ -488,6 +488,85 @@ class ClaudeCodeAgent(Agent):
         
         return final_claude_code_config
 
+    def _get_pm_battle_tools(self) -> List[Dict[str, Any]]:
+        """
+        Define tools for PM Battle mode (clarification questions and final prompt)
+
+        Returns:
+            List[Dict[str, Any]]: Tool definitions for PM Battle mode
+        """
+        return [
+            {
+                "name": "ask_clarification_questions",
+                "description": "向用户提出结构化的需求澄清问题",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "questions": {
+                            "type": "array",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "question_id": {
+                                        "type": "string",
+                                        "description": "问题的唯一标识符，例如 'q1', 'q2'"
+                                    },
+                                    "question_text": {
+                                        "type": "string",
+                                        "description": "问题的文本内容"
+                                    },
+                                    "question_type": {
+                                        "type": "string",
+                                        "enum": ["single_choice", "multiple_choice", "text_input"],
+                                        "description": "问题类型：single_choice(单选), multiple_choice(多选), text_input(文本输入)"
+                                    },
+                                    "options": {
+                                        "type": "array",
+                                        "description": "选项列表（仅用于 single_choice 和 multiple_choice 类型）",
+                                        "items": {
+                                            "type": "object",
+                                            "properties": {
+                                                "value": {
+                                                    "type": "string",
+                                                    "description": "选项的技术值（用于提交）"
+                                                },
+                                                "label": {
+                                                    "type": "string",
+                                                    "description": "选项的显示文本（用户可见）"
+                                                },
+                                                "recommended": {
+                                                    "type": "boolean",
+                                                    "description": "是否为推荐选项",
+                                                    "default": False
+                                                }
+                                            },
+                                            "required": ["value", "label"]
+                                        }
+                                    }
+                                },
+                                "required": ["question_id", "question_text", "question_type"]
+                            }
+                        }
+                    },
+                    "required": ["questions"]
+                }
+            },
+            {
+                "name": "provide_final_prompt",
+                "description": "提供最终精炼后的需求提示词",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {
+                        "prompt": {
+                            "type": "string",
+                            "description": "清晰、详细的需求描述，可直接用于开发"
+                        }
+                    },
+                    "required": ["prompt"]
+                }
+            }
+        ]
+
     def _extract_claude_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Extract Claude Code options from task data
@@ -515,6 +594,7 @@ class ClaudeCodeAgent(Agent):
             "model",
             "permission_prompt_tool_name",
             "cwd",
+            "tools",
         ]
 
         logger.info(f"Extracting Claude options from task data: {mask_sensitive_data(task_data)}")
@@ -532,6 +612,14 @@ class ClaudeCodeAgent(Agent):
             if mcp_servers:
                 logger.info(f"Detected MCP servers configuration: {mcp_servers}")
                 bot_config["mcp_servers"] = mcp_servers
+
+            # Check if this is a PM Battle bot and add custom tools
+            bot_name = bot_config.get("name", "")
+            ghost_name = bot_config.get("ghost_name", "")
+
+            if "pm-battle" in bot_name.lower() or "pm-battle" in ghost_name.lower():
+                logger.info("Detected PM Battle bot, adding custom tools")
+                bot_config["tools"] = self._get_pm_battle_tools()
 
             for key in valid_options:
                 if key in bot_config and bot_config[key] is not None:
