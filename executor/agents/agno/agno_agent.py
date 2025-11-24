@@ -193,6 +193,11 @@ class AgnoAgent(Agent):
             TaskStatus: Initialization status
         """
         try:
+            # Check if task was cancelled before initialization
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} was cancelled before initialization")
+                return TaskStatus.COMPLETED
+            
             logger.info("Initializing Agno Agent")
             self.add_thinking_step_by_key(
                 title_key="thinking.initialize_agent",

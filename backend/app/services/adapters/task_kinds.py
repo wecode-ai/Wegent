@@ -548,7 +548,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if "status" in update_data and update_data["status"] in ["COMPLETED", "FAILED", "CANCELLED"]:
                 task_crd.status.completedAt = datetime.now()
 
-        task.json = task_crd.model_dump()
+        task.json = task_crd.model_dump(mode='json', exclude_none=True)
         task.updated_at = datetime.now()
         flag_modified(task, "json")
 
