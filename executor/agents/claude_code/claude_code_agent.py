@@ -885,44 +885,45 @@ class ClaudeCodeAgent(Agent):
     def cancel_run(self) -> bool:
         """
         Cancel the current running task using multi-level cancellation strategy:
-        1. Set cancellation state
+        1. Set cancellation state to CANCELLED immediately (not CANCELLING)
         2. Try SDK interrupt
-        3. Wait for graceful shutdown
-        4. Force mark as cancelled
+        3. Report progress as completed
+        4. Wait briefly for cleanup
 
         Returns:
             bool: True if cancellation was successful, False otherwise
         """
         try:
-            # Step 1: Set cancellation state
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLING)
-            logger.info(f"Task {self.task_id} marked as cancelling")
-            
+            # Step 1: Immediately set to CANCELLED state (skip CANCELLING)
+            # This ensures response_processor checks will immediately detect cancellation
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            logger.info(f"Task {self.task_id} marked as cancelled immediately")
+
             # Step 2: Try SDK interrupt if client is available
             if self.client and hasattr(self.client, 'interrupt'):
                 self._sync_cancel_run()
                 logger.info(f"Sent interrupt signal to task {self.task_id}")
             else:
                 logger.warning(f"No client or interrupt method available for task {self.task_id}")
-            
-            # Step 3: Wait for graceful shutdown
-            max_wait = config.GRACEFUL_SHUTDOWN_TIMEOUT
+
+            # Step 3: Wait briefly (2 seconds max) for graceful cleanup
+            max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
             waited = 0
             while waited < max_wait:
-                if self.task_state_manager.get_state(self.task_id) == TaskState.CANCELLED:
-                    logger.info(f"Task {self.task_id} cancelled gracefully")
+                # Check if cleanup completed
+                if not self.task_state_manager.has_task(self.task_id):
+                    logger.info(f"Task {self.task_id} cleaned up gracefully")
                     return True
-                time.sleep(0.5)
-                waited += 0.5
-            
-            # Step 4: Force mark as cancelled
-            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
-            logger.warning(f"Task {self.task_id} force cancelled after timeout")
-            
+                time.sleep(0.1)  # Check more frequently (100ms)
+                waited += 0.1
+
+            logger.info(f"Task {self.task_id} cancelled (cleanup may continue in background)")
             return True
-            
+
         except Exception as e:
             logger.exception(f"Error cancelling task {self.task_id}: {e}")
+            # Ensure cancelled state even on error
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
             return False
 
     def _sync_cancel_run(self) -> None:
