@@ -22,7 +22,6 @@ import { agentApis, Agent } from '@/apis/agents';
 import { modelApis, Model } from '@/apis/models';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
-import { useToast } from '@/hooks/use-toast';
 
 interface BotEditProps {
   bots: Bot[];
@@ -76,6 +75,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [agentConfigError, setAgentConfigError] = useState(false);
   const [mcpConfigError, setMcpConfigError] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
+  const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false);
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -169,12 +169,12 @@ const BotEdit: React.FC<BotEditProps> = ({
   const handleApplyClaudeSonnetTemplate = useCallback(() => {
     const template = {
       env: {
-        ANTHROPIC_MODEL: "anthropic/claude-sonnet-4",
-        ANTHROPIC_AUTH_TOKEN: "sk-ant-your-api-key-here",
-        ANTHROPIC_API_KEY: "sk-ant-your-api-key-here",
-        ANTHROPIC_BASE_URL: "https://api.anthropic.com",
-        ANTHROPIC_DEFAULT_HAIKU_MODEL: "anthropic/claude-haiku-4.5"
-      }
+        ANTHROPIC_MODEL: 'anthropic/claude-sonnet-4',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-your-api-key-here',
+        ANTHROPIC_API_KEY: 'sk-ant-your-api-key-here',
+        ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4.5',
+      },
     };
     setAgentConfig(JSON.stringify(template, null, 2));
     setAgentConfigError(false);
@@ -187,10 +187,10 @@ const BotEdit: React.FC<BotEditProps> = ({
   const handleApplyOpenAIGPT4Template = useCallback(() => {
     const template = {
       env: {
-        OPENAI_API_KEY: "sk-your-openai-api-key-here",
-        OPENAI_MODEL: "gpt-4",
-        OPENAI_BASE_URL: "https://api.openai.com/v1"
-      }
+        OPENAI_API_KEY: 'sk-your-openai-api-key-here',
+        OPENAI_MODEL: 'gpt-4',
+        OPENAI_BASE_URL: 'https://api.openai.com/v1',
+      },
     };
     setAgentConfig(JSON.stringify(template, null, 2));
     setAgentConfigError(false);
@@ -529,7 +529,7 @@ const BotEdit: React.FC<BotEditProps> = ({
           {/* Agent Config */}
           <div className="flex flex-col">
             <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center">
+              <div className="flex items-center gap-2">
                 <label className="block text-base font-medium text-text-primary">
                   {t('bot.agent_config')} <span className="text-red-400">*</span>
                 </label>
@@ -537,7 +537,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                 <button
                   type="button"
                   onClick={() => handleOpenModelDocs()}
-                  className="ml-2 text-text-muted hover:text-primary transition-colors"
+                  className="text-text-muted hover:text-primary transition-colors"
                   title={t('bot.view_model_config_guide')}
                 >
                   <svg
@@ -555,6 +555,18 @@ const BotEdit: React.FC<BotEditProps> = ({
                     />
                   </svg>
                 </button>
+                {/* Template Button - Only show when Custom Model is enabled */}
+                {isCustomModel && (
+                  <button
+                    type="button"
+                    onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
+                    className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+                    title={t('bot.quick_templates')}
+                  >
+                    <span className="text-sm">📋</span>
+                    <span>{t('bot.template')}</span>
+                  </button>
+                )}
               </div>
               <div className="flex items-center">
                 <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
@@ -568,19 +580,17 @@ const BotEdit: React.FC<BotEditProps> = ({
                     }
                     if (!checked) {
                       setAgentConfigError(false);
+                      setTemplateSectionExpanded(false);
                     }
                   }}
                 />
               </div>
             </div>
 
-            {/* Template Buttons - Only show when Custom Model is enabled */}
-            {isCustomModel && (
-              <div className="mb-3 p-3 bg-base-secondary rounded-md">
-                <div className="text-sm font-medium text-text-primary mb-2">
-                  📋 {t('bot.quick_templates')}
-                </div>
-                <div className="flex gap-2 flex-wrap">
+            {/* Template Expanded Content - Only show when expanded */}
+            {isCustomModel && templateSectionExpanded && (
+              <div className="mb-3 bg-base-secondary rounded-md p-3">
+                <div className="flex gap-2 flex-wrap mb-2">
                   <Button
                     size="sm"
                     variant="outline"
@@ -600,9 +610,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                     OpenAI GPT-4 {t('bot.template')}
                   </Button>
                 </div>
-                <p className="text-xs text-text-muted mt-2">
-                  ⚠️ {t('bot.template_hint')}
-                </p>
+                <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
               </div>
             )}
 
