@@ -8,6 +8,8 @@
 
 import os
 from typing import Dict, Any, Optional, Tuple
+from datetime import datetime
+from collections import OrderedDict
 
 
 from shared.utils import git_util
@@ -238,4 +240,185 @@ class Agent:
                 logger.info(f"Recorded error thinking for {title}: {error_message}")
         except Exception as e:
             logger.error(f"Failed to record error thinking: {str(e)}")
+
+    def _validate_file_path(self, file_path: str) -> bool:
+        """
+        Validate file path security
+
+        Args:
+            file_path: File path to validate
+
+        Returns:
+            bool - Whether the path is safe
+        """
+        # Reject absolute paths
+        if os.path.isabs(file_path):
+            logger.warning(f"Absolute path not allowed: {file_path}")
+            return False
+
+        # Reject paths containing '..'
+        if '..' in file_path.split(os.sep):
+            logger.warning(f"Path traversal detected: {file_path}")
+            return False
+
+        # Normalize path and check if it points outside the project
+        normalized = os.path.normpath(file_path)
+        if normalized.startswith('..'):
+            logger.warning(f"Path points outside project: {file_path}")
+            return False
+
+        return True
+
+    def _load_custom_instructions(self, project_path: str) -> Dict[str, str]:
+        """
+        Load custom instruction files from project root directory
+
+        Args:
+            project_path: Project root directory path
+
+        Returns:
+            Dict[file_relative_path, file_content] - Ordered dictionary of successfully loaded files
+        """
+        custom_rules = OrderedDict()
+
+        # Get file list from config
+        file_list = config.CUSTOM_INSTRUCTION_FILES
+        logger.info(f"Loading custom instruction files from config: {file_list}")
+
+        for file_path in file_list:
+            # Strip whitespace
+            file_path = file_path.strip()
+            if not file_path:
+                continue
+
+            # Validate path security
+            if not self._validate_file_path(file_path):
+                continue
+
+            # Construct full file path
+            full_path = os.path.join(project_path, file_path)
+            logger.debug(f"Checking custom instruction file: {file_path}")
+
+            # Check if file exists
+            if not os.path.exists(full_path):
+                logger.debug(f"File not found, skipping: {file_path}")
+                continue
+
+            # Try to read file
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    file_size = len(content.encode('utf-8'))
+                    custom_rules[file_path] = content
+                    logger.info(f"Successfully loaded custom instruction file: {file_path} ({file_size} bytes)")
+            except Exception as e:
+                logger.warning(f"Failed to read custom instruction file {file_path}: {e}")
+                continue
+
+        return custom_rules
+
+    def _merge_instructions(self, base_prompt: str, custom_rules: Dict[str, str]) -> str:
+        """
+        Merge systemPrompt and custom instruction rules
+
+        Args:
+            base_prompt: systemPrompt from YAML config
+            custom_rules: Custom instruction file content dictionary (ordered)
+
+        Returns:
+            Merged complete instruction text
+        """
+        if not custom_rules:
+            return base_prompt
+
+        # Start with base prompt
+        merged_parts = [base_prompt] if base_prompt else []
+
+        # Add each custom rule file with separator
+        for file_path, content in custom_rules.items():
+            merged_parts.append(f"\n# ===== Custom Instructions from {file_path} =====\n{content}")
+
+        merged = "\n".join(merged_parts)
+        logger.debug(f"Merged instructions preview: {merged[:200]}...")
+
+        return merged
+
+    def _setup_claudecode_dir(self, project_path: str, merged_instructions: str) -> None:
+        """
+        Setup .claudecode directory and custom_instructions file
+
+        Args:
+            project_path: Project root directory
+            merged_instructions: Merged instruction content
+        """
+        try:
+            claudecode_dir = os.path.join(project_path, ".claudecode")
+
+            # Check if .claudecode directory exists
+            if os.path.exists(claudecode_dir):
+                # Backup existing directory
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                backup_dir = os.path.join(project_path, f".claudecode.backup.{timestamp}")
+                os.rename(claudecode_dir, backup_dir)
+                logger.info(f"Backed up existing .claudecode to {backup_dir}")
+
+            # Create new .claudecode directory
+            os.makedirs(claudecode_dir, exist_ok=True)
+
+            # Write custom_instructions file
+            custom_instructions_file = os.path.join(claudecode_dir, "custom_instructions")
+            with open(custom_instructions_file, 'w', encoding='utf-8') as f:
+                f.write(merged_instructions)
+
+            logger.info(f"Created .claudecode directory at {claudecode_dir}")
+
+        except Exception as e:
+            logger.warning(f"Failed to create .claudecode directory: {e}")
+
+    def _update_git_exclude(self, project_path: str) -> None:
+        """
+        Update .git/info/exclude file to exclude .claudecode directory
+
+        Args:
+            project_path: Project root directory
+        """
+        try:
+            exclude_file = os.path.join(project_path, ".git", "info", "exclude")
+
+            # Check if .git directory exists
+            git_dir = os.path.join(project_path, ".git")
+            if not os.path.exists(git_dir):
+                logger.debug(".git directory does not exist, skipping git exclude update")
+                return
+
+            # Ensure .git/info directory exists
+            info_dir = os.path.join(git_dir, "info")
+            os.makedirs(info_dir, exist_ok=True)
+
+            exclude_pattern = ".claudecode/"
+
+            # Check if file exists and read content
+            if os.path.exists(exclude_file):
+                with open(exclude_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+                # Check if pattern already exists
+                if exclude_pattern in content:
+                    logger.debug(f".claudecode/ already in {exclude_file}")
+                    return
+
+                # Append pattern
+                with open(exclude_file, 'a', encoding='utf-8') as f:
+                    if not content.endswith('\n'):
+                        f.write('\n')
+                    f.write(f"{exclude_pattern}\n")
+            else:
+                # Create file with pattern
+                with open(exclude_file, 'w', encoding='utf-8') as f:
+                    f.write(f"{exclude_pattern}\n")
+
+            logger.info(f"Updated .git/info/exclude to ignore .claudecode")
+
+        except Exception as e:
+            logger.warning(f"Failed to update .git/info/exclude: {e}")
 
