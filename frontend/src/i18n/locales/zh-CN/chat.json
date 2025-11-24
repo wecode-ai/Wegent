@@ -135,6 +135,8 @@
     "final_prompt_hint": "这是基于您的回答精炼出的需求。您可以复制它或直接创建新的代码任务。",
     "answers_submitted": "已提交",
     "waiting_response": "等待响应中...",
+    "my_answers": "我的回答",
+    "question": "问题",
     "required_field": "此问题必须回答",
     "additional_thoughts": "其他想法或补充说明",
     "additional_placeholder": "在此输入其他想法、补充需求或特殊说明..."
