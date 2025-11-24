@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM registry.api.weibo.com/ci/wegent-runtime:0.0.2-update-executor-base-image
+FROM registry.api.weibo.com/ci/wegent-runtime:0.0.2-add-go
 
 WORKDIR /app/executor
 
