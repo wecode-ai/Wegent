@@ -14,6 +14,7 @@ from app.models.user import User
 from app.repository.github_provider import GitHubProvider
 from app.repository.gitlab_provider import GitLabProvider
 from app.repository.gitee_provider import GiteeProvider
+from app.repository.gerrit_provider import GerritProvider
 
 
 class RepositoryService:
@@ -26,7 +27,8 @@ class RepositoryService:
         self.providers = {
             "github": GitHubProvider(),
             "gitlab": GitLabProvider(),
-            "gitee": GiteeProvider()
+            "gitee": GiteeProvider(),
+            "gerrit": GerritProvider()
         }
     
     def _get_user_providers(self, user: User) -> List[str]:
