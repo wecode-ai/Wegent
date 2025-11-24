@@ -75,9 +75,9 @@ Bot 通过 `Ref` (引用) 来组合资源,而不是直接包含配置。这样�
 
 在创建 Bot 之前,确保以下资源已存在:
 
-1. **Ghost**: 已创建并定义好智能体的个性
-2. **Shell**: 已配置运行时环境
-3. **Model**: 已配置 AI 模型参数
+1. **Ghost**: 已创建并定义好智能体的个性 → [详细创建指南](./creating-ghosts.md)
+2. **Shell**: 已配置运行时环境(系统预设有 ClaudeCode 和 Agno) → [详细配置指南](./configuring-shells.md)
+3. **Model**: 已配置 AI 模型参数 → [详细配置指南](./configuring-models.md)
 
 **检查清单**:
 ```bash

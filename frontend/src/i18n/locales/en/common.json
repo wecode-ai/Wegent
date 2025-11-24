@@ -76,6 +76,13 @@
     "import_mode_append": "Append to existing config",
     "import_success": "MCP configuration imported successfully",
     "append_success": "MCP configuration appended successfully",
+    "quick_templates": "Use Preset Templates for Quick Configuration",
+    "template": "Template",
+    "template_hint": "Click template button to autofill configuration, then modify the API Key",
+    "template_applied": "Template Applied",
+    "please_update_api_key": "Please update the API Key to your actual key",
+    "view_model_config_guide": "View Model Configuration Guide",
+    "view_shell_config_guide": "View Shell Configuration Guide",
     "errors": {
       "required": "Please fill in all required fields",
       "agent_config_json": "Model configuration must be valid JSON",
