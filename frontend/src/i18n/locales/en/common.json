@@ -232,6 +232,7 @@
     "search_branch": "Select Branch...",
     "loading": "loading branch...",
     "no_branch": "No Branch Found",
+    "no_match": "No matching results",
     "default": "(default)",
     "set_token": "Set Token"
   },
