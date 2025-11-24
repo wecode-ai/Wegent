@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from typing import Optional
-from fastapi import APIRouter, Depends, status, Query, HTTPException
+from fastapi import APIRouter, Depends, status, Query, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 import httpx
 import logging
@@ -17,6 +17,22 @@ from app.services.adapters.task_kinds import task_kinds_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+async def call_executor_cancel(task_id: int):
+    """Background task to call executor_manager cancel API"""
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                settings.EXECUTOR_CANCEL_TASK_URL,
+                json={"task_id": task_id},
+                timeout=60.0
+            )
+            response.raise_for_status()
+            logger.info(f"Task {task_id} cancelled successfully via executor_manager")
+    except Exception as e:
+        logger.error(f"Error calling executor_manager to cancel task {task_id}: {str(e)}")
+
 
 
 @router.post("", response_model=dict)
@@ -120,6 +136,7 @@ def delete_task(
 @router.post("/{task_id}/cancel")
 async def cancel_task(
     task_id: int,
+    background_tasks: BackgroundTasks,
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -129,21 +146,20 @@ async def cancel_task(
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
 
-    # Call executor_manager to cancel the task
+    # Update task status to CANCELLING immediately
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                settings.EXECUTOR_CANCEL_TASK_URL,
-                json={"task_id": task_id},
-                timeout=10.0
-            )
-            response.raise_for_status()
-            result = response.json()
-            logger.info(f"Task {task_id} cancellation requested by user {current_user.id}")
-            return result
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Failed to cancel task {task_id}: {e.response.text}")
-        raise HTTPException(status_code=e.response.status_code, detail=f"Failed to cancel task: {e.response.text}")
+        task_kinds_service.update_task(
+            db=db,
+            task_id=task_id,
+            obj_in=TaskUpdate(status="CANCELLING"),
+            user_id=current_user.id
+        )
+        logger.info(f"Task {task_id} status updated to CANCELLING by user {current_user.id}")
     except Exception as e:
-        logger.error(f"Error cancelling task {task_id}: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error cancelling task: {str(e)}")
+        logger.error(f"Failed to update task {task_id} status to CANCELLING: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to update task status: {str(e)}")
+
+    # Call executor_manager in the background
+    background_tasks.add_task(call_executor_cancel, task_id)
+
+    return {"message": "Cancel request accepted", "status": "CANCELLING"}

@@ -136,7 +136,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Only refresh periodically when there are unfinished tasks
   useEffect(() => {
     const hasIncompleteTasks = tasks.some(
-      task => task.status !== 'COMPLETED' && task.status !== 'FAILED' && task.status !== 'CANCELLED'
+      task =>
+        task.status !== 'COMPLETED' &&
+        task.status !== 'FAILED' &&
+        task.status !== 'CANCELLED' &&
+        task.status !== 'DELETE'
     );
 
     let interval: NodeJS.Timeout | null = null;
@@ -162,7 +166,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       selectedTaskDetail &&
       (selectedTaskDetail.status === 'COMPLETED' ||
         selectedTaskDetail.status === 'FAILED' ||
-        selectedTaskDetail.status === 'CANCELLED')
+        selectedTaskDetail.status === 'CANCELLED' ||
+        selectedTaskDetail.status === 'DELETE')
     ) {
       return;
     }
