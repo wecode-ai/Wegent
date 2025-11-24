@@ -120,6 +120,11 @@ export function Transfer({
     const allKeys = data.filter(item => !item.disabled).map(item => item.key);
     const checkedAll = allKeys.length > 0 && allKeys.every(key => checked.includes(key));
     const indeterminate = checked.length > 0 && !checkedAll;
+    const mergedListStyle: React.CSSProperties = {
+      borderColor: 'rgb(var(--color-border))',
+      backgroundColor: 'rgb(var(--color-bg-surface))',
+      ...listStyle,
+    };
 
     const handleCheckAll = () => {
       if (checkedAll) {
@@ -134,9 +139,12 @@ export function Transfer({
     };
 
     return (
-      <div className="flex flex-col border rounded-md h-full bg-background" style={listStyle}>
+      <div
+        className="flex flex-col border border-border rounded-md h-full bg-surface"
+        style={mergedListStyle}
+      >
         {/* 标题栏 */}
-        <div className="flex items-center gap-2 p-3 border-b bg-background">
+        <div className="flex items-center gap-2 p-3 border-b border-border bg-surface">
           <Checkbox
             checked={checkedAll}
             onCheckedChange={handleCheckAll}
@@ -150,7 +158,7 @@ export function Transfer({
 
         {/* 搜索框 */}
         {showSearch && (
-          <div className="p-2 border-b">
+          <div className="p-2 border-b border-border">
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
@@ -181,7 +189,10 @@ export function Transfer({
                   <Checkbox
                     checked={checked.includes(item.key)}
                     disabled={item.disabled}
-                    onCheckedChange={() => handleCheck(item.key)}
+                    onCheckedChange={() => {
+                      handleCheck(item.key);
+                    }}
+                    onClick={e => e.stopPropagation()}
                   />
                   <div className="flex-1 min-w-0">{renderItem(item)}</div>
                 </div>
@@ -191,7 +202,7 @@ export function Transfer({
         </ScrollArea>
 
         {/* Footer */}
-        {footer && <div className="p-2 border-t">{footer}</div>}
+        {footer && <div className="p-2 border-t border-border">{footer}</div>}
       </div>
     );
   };

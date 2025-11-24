@@ -613,7 +613,7 @@ export default function TeamEdit(props: TeamEditProps) {
                     <div className="flex items-center justify-between w-full">
                       <div className="flex items-center gap-2 flex-1 min-w-0">
                         <RiRobot2Line className="w-4 h-4 text-text-muted flex-shrink-0" />
-                        <span className="truncate">
+                        <span className="truncate max-w-[200px]">
                           {bots.find(b => b.id === leaderBotId)?.name || ''}
                           <span className="text-text-muted text-xs ml-1">
                             ({bots.find(b => b.id === leaderBotId)?.agent_name || ''})
@@ -662,10 +662,10 @@ export default function TeamEdit(props: TeamEditProps) {
                       <SelectItem key={b.id} value={b.id.toString()}>
                         <div className="flex items-center w-full">
                           <div className="flex min-w-0 flex-1 items-center space-x-2">
-                            <RiRobot2Line className="w-4 h-4 text-text-muted" />
+                            <RiRobot2Line className="w-4 h-4 text-text-muted flex-shrink-0" />
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <span className="block truncate">
+                                <span className="block truncate max-w-[200px]">
                                   {b.name}{' '}
                                   <span className="text-text-muted text-xs">({b.agent_name})</span>
                                 </span>
@@ -763,7 +763,7 @@ export default function TeamEdit(props: TeamEditProps) {
                     <div className="flex items-center justify-between w-full">
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <span className="truncate">
+                          <span className="truncate max-w-[150px]">
                             {item.title}
                             <span className="text-xs text-text-muted">({item.description})</span>
                           </span>
@@ -811,8 +811,8 @@ export default function TeamEdit(props: TeamEditProps) {
                   titles={[t('team.candidates'), t('team.in_team')]}
                   className="h-full transfer-fill"
                   listStyle={{
-                    backgroundColor: 'hsl(var(--background))',
-                    borderColor: 'hsl(var(--border))',
+                    backgroundColor: 'rgb(var(--color-bg-surface))',
+                    borderColor: 'rgb(var(--color-border))',
                   }}
                   leftFooter={
                     <Button
