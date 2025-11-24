@@ -5,7 +5,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { Send } from 'lucide-react';
+import { Send, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import type { ClarificationData, ClarificationAnswer } from '@/types/api';
@@ -362,8 +362,9 @@ export default function ClarificationForm({
       )}
 
       {isSubmitted && (
-        <div className="text-sm text-green-400 text-center py-2">
-          ✓ {t('clarification.form_submitted') || 'Form submitted. Waiting for response...'}
+        <div className="flex items-center justify-center gap-2 text-sm text-green-400 bg-green-500/10 rounded-md py-2 px-4">
+          <CheckCircle2 className="w-4 h-4" />
+          <span>{t('clarification.form_submitted') || 'Form submitted. Waiting for response...'}</span>
         </div>
       )}
     </div>
