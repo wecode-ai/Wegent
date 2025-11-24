@@ -728,7 +728,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             git_domain = workspace_crd.spec.repository.gitDomain
             branch_name = workspace_crd.spec.repository.branchName
 
-        # Get team data
+        # Get team data (including shared teams)
         team = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Team",
@@ -736,6 +736,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             Kind.namespace == task_crd.spec.teamRef.namespace,
             Kind.is_active == True
         ).first()
+
+        # If not found in user's own teams, check shared teams
+        if not team:
+            shared_teams = db.query(SharedTeam).filter(
+                SharedTeam.user_id == user_id,
+                SharedTeam.is_active == True
+            ).all()
+
+            original_user_ids = [st.original_user_id for st in shared_teams]
+            if original_user_ids:
+                team = db.query(Kind).filter(
+                    Kind.user_id.in_(original_user_ids),
+                    Kind.kind == "Team",
+                    Kind.name == task_crd.spec.teamRef.name,
+                    Kind.namespace == task_crd.spec.teamRef.namespace,
+                    Kind.is_active == True
+                ).first()
 
         team_id = team.id if team else None
 
@@ -1054,10 +1071,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         "branch_name": "",
                     }
         
-        # Batch query teams
+        # Batch query teams (including shared teams)
         team_data = {}
         if team_refs:
             team_names, team_namespaces = zip(*team_refs)
+            # First query user's own teams
             teams = db.query(Kind).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Team",
@@ -1065,10 +1083,37 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 Kind.namespace.in_(team_namespaces),
                 Kind.is_active == True
             ).all()
-            
+
             for team in teams:
                 key = f"{team.name}:{team.namespace}"
                 team_data[key] = team
+
+            # Then query shared teams for missing team refs
+            missing_team_refs = [ref for ref in team_refs if f"{ref[0]}:{ref[1]}" not in team_data]
+            if missing_team_refs:
+                # Get all shared teams for this user
+                shared_teams = db.query(SharedTeam).filter(
+                    SharedTeam.user_id == user_id,
+                    SharedTeam.is_active == True
+                ).all()
+
+                # Get original user IDs from shared teams
+                original_user_ids = [st.original_user_id for st in shared_teams]
+
+                if original_user_ids:
+                    # Query teams from shared team owners
+                    missing_team_names, missing_team_namespaces = zip(*missing_team_refs)
+                    shared_team_kinds = db.query(Kind).filter(
+                        Kind.user_id.in_(original_user_ids),
+                        Kind.kind == "Team",
+                        Kind.name.in_(missing_team_names),
+                        Kind.namespace.in_(missing_team_namespaces),
+                        Kind.is_active == True
+                    ).all()
+
+                    for team in shared_team_kinds:
+                        key = f"{team.name}:{team.namespace}"
+                        team_data[key] = team
         
         # Get user info once
         user = db.query(User).filter(User.id == user_id).first()
