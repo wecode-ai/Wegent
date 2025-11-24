@@ -39,7 +39,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   onClose,
   toast,
 }) => {
-  const { t } = useTranslation('common');
+  const { t, i18n } = useTranslation('common');
 
   const [botSaving, setBotSaving] = useState(false);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -75,6 +75,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [agentConfigError, setAgentConfigError] = useState(false);
   const [mcpConfigError, setMcpConfigError] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
+  const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false);
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -163,6 +164,54 @@ const BotEdit: React.FC<BotEditProps> = ({
     },
     [mcpConfig, toast, t]
   );
+
+  // Template handlers
+  const handleApplyClaudeSonnetTemplate = useCallback(() => {
+    const template = {
+      env: {
+        ANTHROPIC_MODEL: 'anthropic/claude-sonnet-4',
+        ANTHROPIC_AUTH_TOKEN: 'sk-ant-your-api-key-here',
+        ANTHROPIC_API_KEY: 'sk-ant-your-api-key-here',
+        ANTHROPIC_BASE_URL: 'https://api.anthropic.com',
+        ANTHROPIC_DEFAULT_HAIKU_MODEL: 'anthropic/claude-haiku-4.5',
+      },
+    };
+    setAgentConfig(JSON.stringify(template, null, 2));
+    setAgentConfigError(false);
+    toast({
+      title: t('bot.template_applied'),
+      description: t('bot.please_update_api_key'),
+    });
+  }, [toast, t]);
+
+  const handleApplyOpenAIGPT4Template = useCallback(() => {
+    const template = {
+      env: {
+        OPENAI_API_KEY: 'sk-your-openai-api-key-here',
+        OPENAI_MODEL: 'gpt-4',
+        OPENAI_BASE_URL: 'https://api.openai.com/v1',
+      },
+    };
+    setAgentConfig(JSON.stringify(template, null, 2));
+    setAgentConfigError(false);
+    toast({
+      title: t('bot.template_applied'),
+      description: t('bot.please_update_api_key'),
+    });
+  }, [toast, t]);
+
+  // Documentation handlers
+  const handleOpenModelDocs = useCallback(() => {
+    const lang = i18n.language === 'zh-CN' ? 'zh' : 'en';
+    const docsUrl = `/docs/${lang}/guides/user/configuring-models.md`;
+    window.open(docsUrl, '_blank');
+  }, [t]);
+
+  const handleOpenShellDocs = useCallback(() => {
+    const lang = i18n.language === 'zh-CN' ? 'zh' : 'en';
+    const docsUrl = `/docs/${lang}/guides/user/configuring-shells.md`;
+    window.open(docsUrl, '_blank');
+  }, [t]);
 
   // Get agents list
   useEffect(() => {
@@ -409,6 +458,28 @@ const BotEdit: React.FC<BotEditProps> = ({
               <label className="block text-lg font-semibold text-text-primary">
                 {t('bot.agent')} <span className="text-red-400">*</span>
               </label>
+              {/* Help Icon */}
+              <button
+                type="button"
+                onClick={() => handleOpenShellDocs()}
+                className="ml-2 text-text-muted hover:text-primary transition-colors"
+                title={t('bot.view_shell_config_guide')}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-5 w-5"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                  />
+                </svg>
+              </button>
             </div>
             <Select
               value={agentName}
@@ -458,10 +529,44 @@ const BotEdit: React.FC<BotEditProps> = ({
           {/* Agent Config */}
           <div className="flex flex-col">
             <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center">
+              <div className="flex items-center gap-2">
                 <label className="block text-base font-medium text-text-primary">
                   {t('bot.agent_config')} <span className="text-red-400">*</span>
                 </label>
+                {/* Help Icon */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenModelDocs()}
+                  className="text-text-muted hover:text-primary transition-colors"
+                  title={t('bot.view_model_config_guide')}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </button>
+                {/* Template Button - Only show when Custom Model is enabled */}
+                {isCustomModel && (
+                  <button
+                    type="button"
+                    onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
+                    className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+                    title={t('bot.quick_templates')}
+                  >
+                    <span className="text-sm">📋</span>
+                    <span>{t('bot.template')}</span>
+                  </button>
+                )}
               </div>
               <div className="flex items-center">
                 <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
@@ -475,11 +580,39 @@ const BotEdit: React.FC<BotEditProps> = ({
                     }
                     if (!checked) {
                       setAgentConfigError(false);
+                      setTemplateSectionExpanded(false);
                     }
                   }}
                 />
               </div>
             </div>
+
+            {/* Template Expanded Content - Only show when expanded */}
+            {isCustomModel && templateSectionExpanded && (
+              <div className="mb-3 bg-base-secondary rounded-md p-3">
+                <div className="flex gap-2 flex-wrap mb-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleApplyClaudeSonnetTemplate()}
+                    className="text-xs"
+                    type="button"
+                  >
+                    Claude Sonnet 4 {t('bot.template')}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => handleApplyOpenAIGPT4Template()}
+                    className="text-xs"
+                    type="button"
+                  >
+                    OpenAI GPT-4 {t('bot.template')}
+                  </Button>
+                </div>
+                <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
+              </div>
+            )}
 
             {isCustomModel ? (
               <textarea

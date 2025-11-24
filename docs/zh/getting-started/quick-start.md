@@ -71,6 +71,10 @@ Wegent 内置了一个开发 Bot。对于 Claude Code 运行时,请设置以下�
 
 ⚠️ **注意**: 部分运行时可能使用 `ANTHROPIC_API_KEY` 而非 `ANTHROPIC_AUTH_TOKEN`,具体以文档说明为准。
 
+📖 **需要更详细的配置说明?**
+- [Shell (执行器) 配置完整指南](../guides/user/configuring-shells.md)
+- [Model (模型) 配置完整指南](../guides/user/configuring-models.md)
+
 ---
 
 ## 🎯 运行您的第一个任务

@@ -34,6 +34,7 @@ type TaskContextType = {
   markTaskAsViewed: (taskId: number, status: TaskStatus) => void;
   getUnreadCount: (tasks: Task[]) => number;
   markAllTasksAsViewed: () => void;
+  viewStatusVersion: number;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -46,6 +47,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false);
+  const [viewStatusVersion, setViewStatusVersion] = useState<number>(0);
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
@@ -239,6 +241,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Handle marking all tasks as viewed
   const handleMarkAllTasksAsViewed = () => {
     markAllTasksAsViewed(tasks);
+    // Trigger re-render by updating version
+    setViewStatusVersion(prev => prev + 1);
   };
 
   return (
@@ -262,6 +266,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         markTaskAsViewed,
         getUnreadCount,
         markAllTasksAsViewed: handleMarkAllTasksAsViewed,
+        viewStatusVersion,
       }}
     >
       {children}
