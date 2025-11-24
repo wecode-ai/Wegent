@@ -229,9 +229,12 @@
   "branches": {
     "load_failed": "Failed to load branches",
     "search_repository": "Search Repository...",
+    "select_repository": "Select Repository...",
     "search_branch": "Select Branch...",
+    "select_branch": "Select Branch...",
     "loading": "loading branch...",
     "no_branch": "No Branch Found",
+    "no_match": "No matching results",
     "default": "(default)",
     "set_token": "Set Token"
   },

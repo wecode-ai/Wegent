@@ -230,7 +230,9 @@
   "branches": {
     "load_failed": "加载分支失败",
     "search_repository": "搜索仓库...",
+    "select_repository": "选择仓库...",
     "search_branch": "搜索分支...",
+    "select_branch": "选择分支...",
     "loading": "加载分支中...",
     "no_branch": "未找到分支",
     "no_match": "没有匹配的结果",
