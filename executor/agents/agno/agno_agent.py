@@ -523,7 +523,7 @@ class AgnoAgent(Agent):
             logger.info(f"🔧 AGENT TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
             
-            # 构建工具调用详情，符合目标格式
+            # Build tool call details in target format
             tool_details = {
                 "type": "assistant",
                 "message": {
@@ -553,7 +553,7 @@ class AgnoAgent(Agent):
             logger.info(f"✅ AGENT TOOL COMPLETED: {run_response_event.tool.tool_name}")
             logger.info(f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}...")
             
-            # 构建工具结果详情，符合目标格式
+            # Build tool result details in target format
             tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -857,7 +857,7 @@ class AgnoAgent(Agent):
                 confidence_value = reasoning.confidence if reasoning.confidence is not None else 0.5
                 next_action_value = reasoning.next_action if reasoning.next_action is not None else "continue"
                 
-                # 构建推理步骤详情，符合目标格式
+                # Build reasoning step details in target format
                 reasoning_details = {
                     "type": "assistant",
                     "message": {
@@ -904,7 +904,7 @@ class AgnoAgent(Agent):
             logger.info(f"\n🔧 TEAM TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
             
-            # 构建团队工具调用详情，符合目标格式
+            # Build team tool call details in target format
             team_tool_details = {
                 "type": "assistant",
                 "message": {
@@ -932,7 +932,7 @@ class AgnoAgent(Agent):
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
             logger.info(f"\n✅ TEAM TOOL COMPLETED: {run_response_event.tool.tool_name}")
             
-            # 构建团队工具结果详情，符合目标格式
+            # Build team tool result details in target format
             team_tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -961,7 +961,7 @@ class AgnoAgent(Agent):
             logger.info(f"   Tool: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
             
-            # 构建成员工具调用详情，符合目标格式
+            # Build member tool call details in target format
             member_tool_details = {
                 "type": "assistant",
                 "message": {
@@ -990,7 +990,7 @@ class AgnoAgent(Agent):
                 f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..."
             )
             
-            # 构建成员工具结果详情，符合目标格式
+            # Build member tool result details in target format
             member_tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -1074,7 +1074,7 @@ class AgnoAgent(Agent):
         Supports cancellation at any stage of the task lifecycle:
         1. Immediately mark state as CANCELLED (not CANCELLING)
         2. If task is executing (has run_id), call SDK's cancel_run()
-        3. 不再在这里发送callback，由后台任务异步发送，避免阻塞
+        3. No longer send callback here, it will be sent asynchronously by background task to avoid blocking
 
         Returns:
             bool: True if cancellation was successful, False otherwise
@@ -1106,8 +1106,8 @@ class AgnoAgent(Agent):
                 logger.info(f"Task {self.task_id} has no run_id yet, cancelled before execution")
                 cancelled = True  # Consider cancellation successful
 
-            # 注意：不再在这里发送callback
-            # callback将由main.py中的后台任务异步发送，避免阻塞executor_manager的cancel请求
+            # Note: No longer send callback here
+            # Callback will be sent asynchronously by background task in main.py to avoid blocking executor_manager's cancel request
             logger.info(f"Task {self.task_id} cancellation completed, callback will be sent asynchronously")
 
             return cancelled

@@ -7,7 +7,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Cancel Handler - 处理任务取消的重试和超时逻辑
+Cancel Handler - Handles retry and timeout logic for task cancellation
 """
 
 import asyncio
@@ -20,7 +20,7 @@ from shared.logger import setup_logger
 
 logger = setup_logger("cancel_handler")
 
-# 默认配置
+# Default configuration
 DEFAULT_CANCEL_TIMEOUT_SECONDS = 30
 DEFAULT_CANCEL_RETRY_ATTEMPTS = 3
 DEFAULT_CANCEL_RETRY_DELAY = 2
@@ -28,7 +28,7 @@ DEFAULT_GRACEFUL_SHUTDOWN_TIMEOUT = 10
 
 
 class CancelMethod(Enum):
-    """取消方法枚举"""
+    """Cancel method enumeration"""
     SDK_INTERRUPT = "sdk_interrupt"
     API_CANCEL = "api_cancel"
     CONTAINER_STOP = "container_stop"
@@ -37,7 +37,7 @@ class CancelMethod(Enum):
 
 @dataclass
 class CancelResult:
-    """取消结果"""
+    """Cancel result"""
     success: bool
     method: CancelMethod
     message: str
@@ -46,7 +46,7 @@ class CancelResult:
 
 
 class CancelHandler:
-    """处理任务取消的重试和超时逻辑"""
+    """Handles retry and timeout logic for task cancellation"""
     
     def __init__(
         self,
@@ -55,12 +55,12 @@ class CancelHandler:
         timeout: int = DEFAULT_CANCEL_TIMEOUT_SECONDS
     ):
         """
-        初始化取消处理器
+        Initialize cancel handler
         
         Args:
-            max_attempts: 最大重试次数
-            retry_delay: 重试延迟（秒）
-            timeout: 超时时间（秒）
+            max_attempts: Maximum retry attempts
+            retry_delay: Retry delay (seconds)
+            timeout: Timeout duration (seconds)
         """
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
@@ -74,16 +74,16 @@ class CancelHandler:
         verify_func: Optional[Callable] = None
     ) -> CancelResult:
         """
-        带重试的取消操作
+        Cancel operation with retry
         
         Args:
-            cancel_func: 取消函数
-            task_id: 任务ID
-            method: 取消方法
-            verify_func: 验证函数，用于确认取消是否成功
+            cancel_func: Cancel function
+            task_id: Task ID
+            method: Cancel method
+            verify_func: Verification function to confirm cancellation success
             
         Returns:
-            取消结果
+            Cancel result
         """
         start_time = time.time()
         
@@ -94,15 +94,15 @@ class CancelHandler:
                     f"(attempt {attempt}/{self.max_attempts})"
                 )
                 
-                # 执行取消操作
+                # Execute cancel operation
                 if asyncio.iscoroutinefunction(cancel_func):
                     result = await cancel_func()
                 else:
                     result = cancel_func()
                 
-                # 如果提供了验证函数，验证取消是否成功
+                # If verification function is provided, verify cancellation success
                 if verify_func:
-                    await asyncio.sleep(1)  # 等待一秒让状态更新
+                    await asyncio.sleep(1)  # Wait one second for status update
                     
                     if asyncio.iscoroutinefunction(verify_func):
                         verified = await verify_func()
@@ -127,7 +127,7 @@ class CancelHandler:
                             f"Cancel verification failed for task {task_id} (attempt {attempt})"
                         )
                 else:
-                    # 没有验证函数，假设成功
+                    # No verification function, assume success
                     duration = time.time() - start_time
                     return CancelResult(
                         success=True,
@@ -137,7 +137,7 @@ class CancelHandler:
                         duration=duration
                     )
                 
-                # 如果不是最后一次尝试，等待后重试
+                # If not the last attempt, wait and retry
                 if attempt < self.max_attempts:
                     logger.info(
                         f"Retrying cancel for task {task_id} in {self.retry_delay} seconds..."
@@ -177,15 +177,15 @@ class CancelHandler:
         method: CancelMethod
     ) -> CancelResult:
         """
-        带超时的取消操作
+        Cancel operation with timeout
         
         Args:
-            cancel_func: 取消函数
-            task_id: 任务ID
-            method: 取消方法
+            cancel_func: Cancel function
+            task_id: Task ID
+            method: Cancel method
             
         Returns:
-            取消结果
+            Cancel result
         """
         try:
             logger.info(

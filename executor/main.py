@@ -127,12 +127,12 @@ async def cancel_task(
 ):
     """
     Cancel the currently running task for a specific task_id
-    立即返回，callback在后台异步发送，避免阻塞executor_manager的cancel请求
+    Returns immediately, callback is sent asynchronously in background to avoid blocking executor_manager's cancel request
     """
     status, message = agent_service.cancel_task(task_id)
 
     if status == TaskStatus.SUCCESS:
-        # 在后台发送cancel callback，不阻塞响应
+        # Send cancel callback in background without blocking response
         if background_tasks:
             background_tasks.add_task(
                 agent_service.send_cancel_callback_async,

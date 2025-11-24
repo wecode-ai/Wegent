@@ -209,9 +209,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "name": f"task-{task_id}",
                     "namespace": "default",
                     "labels": {
-                        "type": obj_in.type, # default：online、offline"
-                        "taskType": obj_in.task_type, # defalut：chat、code
-                        "autoDeleteExecutor": obj_in.auto_delete_executor, #default: false 、true
+                        "type": obj_in.type, # default: online, offline
+                        "taskType": obj_in.task_type, # default: chat, code
+                        "autoDeleteExecutor": obj_in.auto_delete_executor, # default: false, true
                         "source": obj_in.source,
                     }
                 },
@@ -511,30 +511,30 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 new_status = update_data["status"].value if hasattr(update_data["status"], 'value') else update_data["status"]
                 current_status = task_crd.status.status
                 
-                # 状态转换保护：防止终态被非终态覆盖
-                # 定义终态和非终态
+                # State transition protection: prevent final states from being overwritten by non-final states
+                # Define final states and non-final states
                 final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
                 non_final_states = ["PENDING", "RUNNING", "CANCELLING"]
                 
-                # 如果当前是CANCELLING状态，只允许转换到CANCELLED或FAILED
+                # If current status is CANCELLING, only allow transition to CANCELLED or FAILED
                 if current_status == "CANCELLING":
                     if new_status not in ["CANCELLED", "FAILED"]:
                         logger.warning(
                             f"Task {task_id}: Ignoring status update from CANCELLING to {new_status}. "
                             f"CANCELLING can only transition to CANCELLED or FAILED."
                         )
-                        # 不更新状态，但允许更新其他字段（如progress）
+                        # Do not update status, but allow updating other fields (e.g., progress)
                     else:
                         task_crd.status.status = new_status
                         logger.info(f"Task {task_id}: Status updated from CANCELLING to {new_status}")
-                # 如果当前已经是终态，不允许被非终态覆盖
+                # If current status is already a final state, do not allow it to be overwritten by non-final states
                 elif current_status in final_states and new_status in non_final_states:
                     logger.warning(
                         f"Task {task_id}: Ignoring status update from final state {current_status} to non-final state {new_status}"
                     )
-                    # 不更新状态，但允许更新其他字段
+                    # Do not update status, but allow updating other fields
                 else:
-                    # 正常状态转换
+                    # Normal state transition
                     task_crd.status.status = new_status
             if "progress" in update_data:
                 task_crd.status.progress = update_data["progress"]
@@ -966,7 +966,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     progress=0,
                     message_id=next_message_id,
                     parent_id=parent_id,
-                    # If executor_infos is not empty, take the i-th one, otherwise empty string
+                    # If executor_infos is not empty, take the i-th one, otherwise use empty string
                     executor_name=executor_infos[i].get('executor_name') if len(executor_infos) > i else "",
                     executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > i else "",
                     error_message="",
@@ -984,7 +984,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             executor_name = ""
             executor_namespace = ""
             if existing_subtasks:
-                # Take executor_name and executor_namespace from the last existing_subtasks
+                # Take executor_name and executor_namespace from the last existing subtask
                 executor_name = existing_subtasks[0].executor_name
                 executor_namespace = existing_subtasks[0].executor_namespace
                 

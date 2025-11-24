@@ -198,11 +198,11 @@ class AgentService:
 
     async def send_cancel_callback_async(self, task_id: int) -> None:
         """
-        异步发送取消任务的callback
-        这个方法在后台任务中调用，不会阻塞cancel API的响应
+        Asynchronously send cancel task callback
+        This method is called in a background task and will not block the cancel API response
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
         """
         try:
             session = self._agent_sessions.get(task_id)
@@ -213,14 +213,14 @@ class AgentService:
             agent = session.agent
             task_data = getattr(agent, 'task_data', {})
             
-            # 获取任务信息
+            # Get task information
             subtask_id = task_data.get("subtask_id", -1)
             task_title = task_data.get("task_title", "")
             subtask_title = task_data.get("subtask_title", "")
             
             logger.info(f"[{_format_task_log(task_id, subtask_id)}] Sending cancel callback asynchronously")
             
-            # 发送CANCELLED状态的callback（而不是COMPLETED）
+            # Send CANCELLED status callback (not COMPLETED)
             result = send_status_callback(
                 task_id=task_id,
                 subtask_id=subtask_id,

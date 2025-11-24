@@ -915,7 +915,7 @@ class ClaudeCodeAgent(Agent):
         Cancel the current running task using multi-level cancellation strategy:
         1. Set cancellation state to CANCELLED immediately (not CANCELLING)
         2. Try SDK interrupt
-        3. 不再在这里发送callback，由后台任务异步发送，避免阻塞
+        3. No longer send callback here, it will be sent asynchronously by background task to avoid blocking
         4. Wait briefly for cleanup
 
         Returns:
@@ -945,8 +945,8 @@ class ClaudeCodeAgent(Agent):
                 time.sleep(0.1)  # Check more frequently (100ms)
                 waited += 0.1
 
-            # 注意：不再在这里发送callback
-            # callback将由main.py中的后台任务异步发送，避免阻塞executor_manager的cancel请求
+            # Note: No longer send callback here
+            # Callback will be sent asynchronously by background task in main.py to avoid blocking executor_manager's cancel request
             logger.info(f"Task {self.task_id} cancelled (cleanup may continue in background), callback will be sent asynchronously")
             return True
 
@@ -981,13 +981,13 @@ class ClaudeCodeAgent(Agent):
     async def _async_cancel_run(self) -> None:
         """
         Asynchronous helper method to cancel the current run
-        不再发送callback，由后台任务处理
+        No longer send callback, handled by background task
         """
         try:
             if self.client is not None:
                 await self.client.interrupt()
-                # 注意：不再在这里发送callback
-                # callback将由main.py中的后台任务异步发送
+                # Note: No longer send callback here
+                # Callback will be sent asynchronously by background task in main.py
                 logger.info(f"Successfully sent interrupt to client for session_id: {self.session_id}")
         except Exception as e:
             logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")

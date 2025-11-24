@@ -7,7 +7,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Resource Manager - 管理任务相关的资源，确保在取消时能够正确清理
+Resource Manager - Manages task-related resources and ensures proper cleanup on cancellation
 """
 
 import asyncio
@@ -22,7 +22,7 @@ logger = setup_logger("resource_manager")
 
 @dataclass
 class ResourceHandle:
-    """资源句柄"""
+    """Resource handle"""
     resource_id: str
     cleanup_func: Callable
     cleanup_args: tuple = field(default_factory=tuple)
@@ -32,9 +32,9 @@ class ResourceHandle:
 
 class ResourceManager:
     """
-    管理任务相关的资源，确保在取消时能够正确清理
+    Manages task-related resources and ensures proper cleanup on cancellation
     
-    这是一个单例类，用于在整个应用中共享资源管理
+    This is a singleton class for sharing resource management across the application
     """
     
     _instance: Optional['ResourceManager'] = None
@@ -59,15 +59,15 @@ class ResourceManager:
         is_async: bool = False
     ) -> None:
         """
-        注册需要清理的资源
+        Register resource that needs cleanup
         
         Args:
-            task_id: 任务ID
-            resource_id: 资源唯一标识
-            cleanup_func: 清理函数
-            cleanup_args: 清理函数的位置参数
-            cleanup_kwargs: 清理函数的关键字参数
-            is_async: 清理函数是否是异步的
+            task_id: Task ID
+            resource_id: Unique resource identifier
+            cleanup_func: Cleanup function
+            cleanup_args: Positional arguments for cleanup function
+            cleanup_kwargs: Keyword arguments for cleanup function
+            is_async: Whether cleanup function is asynchronous
         """
         if cleanup_kwargs is None:
             cleanup_kwargs = {}
@@ -88,11 +88,11 @@ class ResourceManager:
     
     def unregister_resource(self, task_id: int, resource_id: str) -> None:
         """
-        取消注册资源
+        Unregister resource
         
         Args:
-            task_id: 任务ID
-            resource_id: 资源唯一标识
+            task_id: Task ID
+            resource_id: Unique resource identifier
         """
         with self._resource_lock:
             if task_id in self._resources:
@@ -106,10 +106,10 @@ class ResourceManager:
     
     async def cleanup_task_resources(self, task_id: int) -> None:
         """
-        清理任务的所有资源（异步版本）
+        Clean up all resources for a task (async version)
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
         """
         resources = []
         with self._resource_lock:
@@ -121,7 +121,7 @@ class ResourceManager:
         
         logger.info(f"Cleaning up {len(resources)} resources for task {task_id}")
         
-        # 反向清理，后注册的先清理
+        # Cleanup in reverse order, last registered cleaned up first
         for handle in reversed(resources):
             try:
                 if handle.is_async:
@@ -134,46 +134,46 @@ class ResourceManager:
     
     def cleanup_task_resources_sync(self, task_id: int) -> None:
         """
-        清理任务的所有资源（同步版本）
+        Clean up all resources for a task (sync version)
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
         """
         try:
-            # 尝试获取当前事件循环
+            # Try to get current event loop
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # 如果在异步上下文中，创建任务
+                # If in async context, create task
                 asyncio.create_task(self.cleanup_task_resources(task_id))
                 logger.debug(f"Created async cleanup task for task {task_id}")
             else:
-                # 否则直接运行
+                # Otherwise run directly
                 loop.run_until_complete(self.cleanup_task_resources(task_id))
         except RuntimeError:
-            # 没有事件循环，创建新的
+            # No event loop, create new one
             asyncio.run(self.cleanup_task_resources(task_id))
     
     def get_resource_count(self, task_id: int) -> int:
         """
-        获取任务注册的资源数量
+        Get count of registered resources for a task
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
             
         Returns:
-            资源数量
+            Resource count
         """
         with self._resource_lock:
             return len(self._resources.get(task_id, []))
     
     def has_resources(self, task_id: int) -> bool:
         """
-        检查任务是否有注册的资源
+        Check if task has registered resources
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
             
         Returns:
-            如果有资源返回 True
+            True if resources exist
         """
         return self.get_resource_count(task_id) > 0

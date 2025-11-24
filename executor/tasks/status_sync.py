@@ -7,7 +7,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Status Synchronizer - 确保任务状态在取消时正确同步到后端
+Status Synchronizer - Ensures task status is correctly synchronized to backend on cancellation
 """
 
 import asyncio
@@ -20,14 +20,14 @@ logger = setup_logger("status_sync")
 
 
 class StatusSynchronizer:
-    """确保任务状态在取消时正确同步到后端"""
+    """Ensures task status is correctly synchronized to backend on cancellation"""
     
     def __init__(self, callback_client: Optional[CallbackClient] = None):
         """
-        初始化状态同步器
+        Initialize status synchronizer
         
         Args:
-            callback_client: 回调客户端，如果不提供则创建新的
+            callback_client: Callback client, creates new one if not provided
         """
         self.callback_client = callback_client or CallbackClient()
     
@@ -38,18 +38,18 @@ class StatusSynchronizer:
         executor_name: Optional[str] = None
     ) -> bool:
         """
-        同步取消状态到后端（异步版本）
+        Synchronize cancel status to backend (async version)
         
         Args:
-            task_id: 任务ID
-            subtask_id: 子任务ID
-            executor_name: 执行器名称
+            task_id: Task ID
+            subtask_id: Subtask ID
+            executor_name: Executor name
             
         Returns:
-            是否同步成功
+            Whether synchronization was successful
         """
         try:
-            # 发送取消状态更新
+            # Send cancel status update
             success = await self.callback_client.report_progress_async(
                 task_id=task_id,
                 subtask_id=subtask_id,
@@ -77,24 +77,24 @@ class StatusSynchronizer:
         executor_name: Optional[str] = None
     ) -> bool:
         """
-        同步取消状态到后端（同步版本）
+        Synchronize cancel status to backend (sync version)
         
         Args:
-            task_id: 任务ID
-            subtask_id: 子任务ID
-            executor_name: 执行器名称
+            task_id: Task ID
+            subtask_id: Subtask ID
+            executor_name: Executor name
             
         Returns:
-            是否同步成功
+            Whether synchronization was successful
         """
         try:
             loop = asyncio.get_event_loop()
             if loop.is_running():
-                # 在异步上下文中创建任务
+                # Create task in async context
                 asyncio.create_task(
                     self.sync_cancel_status(task_id, subtask_id, executor_name)
                 )
-                return True  # 异步执行，返回 True
+                return True  # Async execution, return True
             else:
                 return loop.run_until_complete(
                     self.sync_cancel_status(task_id, subtask_id, executor_name)
@@ -114,18 +114,18 @@ class StatusSynchronizer:
         error_message: Optional[str] = None
     ) -> bool:
         """
-        同步任意状态到后端（异步版本）
+        Synchronize any status to backend (async version)
         
         Args:
-            task_id: 任务ID
-            subtask_id: 子任务ID
-            progress: 进度（0-100）
-            status: 状态
-            executor_name: 执行器名称
-            error_message: 错误消息
+            task_id: Task ID
+            subtask_id: Subtask ID
+            progress: Progress (0-100)
+            status: Status
+            executor_name: Executor name
+            error_message: Error message
             
         Returns:
-            是否同步成功
+            Whether synchronization was successful
         """
         try:
             success = await self.callback_client.report_progress_async(

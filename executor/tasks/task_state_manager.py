@@ -7,7 +7,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Task State Manager - 管理任务的运行状态，支持取消检查
+Task State Manager - Manages task execution state with cancellation support
 """
 
 import threading
@@ -21,7 +21,7 @@ logger = setup_logger("task_state_manager")
 
 
 class TaskState(Enum):
-    """任务状态枚举"""
+    """Task state enumeration"""
     RUNNING = "running"
     CANCELLING = "cancelling"
     CANCELLED = "cancelled"
@@ -31,9 +31,9 @@ class TaskState(Enum):
 
 class TaskStateManager:
     """
-    管理任务的运行状态，支持取消检查
+    Manages task execution state with cancellation support
     
-    这是一个单例类，用于在整个应用中共享任务状态
+    This is a singleton class for sharing task state across the application
     """
     
     _instance: Optional['TaskStateManager'] = None
@@ -51,11 +51,11 @@ class TaskStateManager:
     
     def set_state(self, task_id: int, state: TaskState) -> None:
         """
-        设置任务状态
+        Set task state
         
         Args:
-            task_id: 任务ID
-            state: 任务状态
+            task_id: Task ID
+            state: Task state
         """
         with self._state_lock:
             old_state = self._states.get(task_id)
@@ -69,51 +69,51 @@ class TaskStateManager:
     
     def get_state(self, task_id: int) -> Optional[TaskState]:
         """
-        获取任务状态
+        Get task state
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
             
         Returns:
-            任务状态，如果任务不存在则返回 None
+            Task state, returns None if task doesn't exist
         """
         with self._state_lock:
             return self._states.get(task_id)
     
     def is_cancelled(self, task_id: int) -> bool:
         """
-        检查任务是否已被取消
+        Check if task has been cancelled
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
             
         Returns:
-            如果任务处于取消中或已取消状态，返回 True
+            True if task is in cancelling or cancelled state
         """
         state = self.get_state(task_id)
         return state in [TaskState.CANCELLING, TaskState.CANCELLED]
     
     def should_continue(self, task_id: int) -> bool:
         """
-        检查任务是否应该继续执行
+        Check if task should continue execution
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
             
         Returns:
-            如果任务应该继续执行，返回 True
+            True if task should continue execution
         """
         return not self.is_cancelled(task_id)
     
     def get_cancel_duration(self, task_id: int) -> Optional[float]:
         """
-        获取取消请求已经持续的时间（秒）
+        Get duration since cancellation request (seconds)
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
             
         Returns:
-            取消持续时间（秒），如果任务未被取消则返回 None
+            Cancellation duration (seconds), returns None if task not cancelled
         """
         with self._state_lock:
             if task_id in self._cancel_timestamps:
@@ -122,10 +122,10 @@ class TaskStateManager:
     
     def cleanup(self, task_id: int) -> None:
         """
-        清理任务状态
+        Clean up task state
         
         Args:
-            task_id: 任务ID
+            task_id: Task ID
         """
         with self._state_lock:
             self._states.pop(task_id, None)
@@ -134,10 +134,10 @@ class TaskStateManager:
     
     def get_all_states(self) -> Dict[int, TaskState]:
         """
-        获取所有任务的状态（用于调试）
+        Get all task states (for debugging)
         
         Returns:
-            任务ID到状态的映射
+            Mapping of task ID to state
         """
         with self._state_lock:
             return self._states.copy()
