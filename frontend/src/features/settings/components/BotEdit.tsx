@@ -203,15 +203,15 @@ const BotEdit: React.FC<BotEditProps> = ({
   // Documentation handlers
   const handleOpenModelDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en';
-    const docsUrl = `/docs/${lang}/guides/user/configuring-models.md`;
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-models.md`;
     window.open(docsUrl, '_blank');
-  }, [t]);
+  }, [i18n.language]);
 
   const handleOpenShellDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en';
-    const docsUrl = `/docs/${lang}/guides/user/configuring-shells.md`;
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-shells.md`;
     window.open(docsUrl, '_blank');
-  }, [t]);
+  }, [i18n.language]);
 
   // Get agents list
   useEffect(() => {
