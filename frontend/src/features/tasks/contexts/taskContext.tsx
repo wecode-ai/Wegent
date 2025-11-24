@@ -34,9 +34,10 @@ type TaskContextType = {
   markTaskAsViewed: (taskId: number, status: TaskStatus) => void;
   getUnreadCount: (tasks: Task[]) => number;
   markAllTasksAsViewed: () => void;
+  viewStatusVersion: number;
   appendToInput: (text: string) => void;
-  inputRef: React.RefObject<HTMLTextAreaElement>;
-  registerInputSetter: (setter: (message: string) => void) => void;
+  inputRef: React.RefObject<HTMLTextAreaElement | null>;
+  registerInputSetter: (setter: (message: string | ((prev: string) => string)) => void) => void;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -49,13 +50,16 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false);
+  const [viewStatusVersion, setViewStatusVersion] = useState<number>(0);
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
 
   // Ref for input textarea and state setter
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const setTaskInputMessageRef = useRef<((message: string) => void) | null>(null);
+  const setTaskInputMessageRef = useRef<
+    ((message: string | ((prev: string) => string)) => void) | null
+  >(null);
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true);
@@ -246,6 +250,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   // Handle marking all tasks as viewed
   const handleMarkAllTasksAsViewed = () => {
     markAllTasksAsViewed(tasks);
+    // Trigger re-render by updating version
+    setViewStatusVersion(prev => prev + 1);
   };
 
   // Append text to input with proper formatting
@@ -270,7 +276,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // Register the input setter function from ChatArea
-  const registerInputSetter = (setter: (message: string) => void) => {
+  const registerInputSetter = (setter: (message: string | ((prev: string) => string)) => void) => {
     setTaskInputMessageRef.current = setter;
   };
 
@@ -295,6 +301,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         markTaskAsViewed,
         getUnreadCount,
         markAllTasksAsViewed: handleMarkAllTasksAsViewed,
+        viewStatusVersion,
         appendToInput,
         inputRef,
         registerInputSetter,

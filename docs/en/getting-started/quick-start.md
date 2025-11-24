@@ -71,6 +71,10 @@ Wegent ships with a built-in development bot. For the Claude Code runtime, set t
 
 ⚠️ **Note**: Some runtimes may use `ANTHROPIC_API_KEY` instead of `ANTHROPIC_AUTH_TOKEN`. See documentation for details.
 
+📖 **Need more detailed configuration instructions?**
+- [Shell (Executor) Configuration Guide](../guides/user/configuring-shells.md)
+- [Model Configuration Guide](../guides/user/configuring-models.md)
+
 ---
 
 ## 🎯 Run Your First Task
