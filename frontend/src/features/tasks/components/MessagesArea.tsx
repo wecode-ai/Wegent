@@ -406,8 +406,8 @@ export default function MessagesArea({
       // Parse Markdown answer format
       const answerPayload: ClarificationAnswer[] = [];
 
-      // Extract all Q blocks
-      const questionRegex = /### (Q\d+): (.*?)\n\*\*Answer\*\*: ([\s\S]*?)(?=\n###|$)/g;
+      // Extract all Q blocks (including Q1, Q2, etc. and ADDITIONAL_INPUT)
+      const questionRegex = /### ([A-Z_\d]+): (.*?)\n\*\*Answer\*\*: ([\s\S]*?)(?=\n###|$)/g;
       let match;
 
       while ((match = questionRegex.exec(msg.content)) !== null) {
