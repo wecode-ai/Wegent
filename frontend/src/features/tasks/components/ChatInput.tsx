@@ -17,7 +17,7 @@ interface ChatInputProps {
   isLoading: boolean;
   disabled?: boolean;
   taskType?: 'chat' | 'code';
-  inputRef?: React.RefObject<HTMLTextAreaElement>;
+  inputRef?: React.RefObject<HTMLTextAreaElement | null>;
 }
 
 export default function ChatInput({

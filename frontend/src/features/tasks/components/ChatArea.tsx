@@ -41,6 +41,16 @@ export default function ChatArea({
 }: ChatAreaProps) {
   const { toast } = useToast();
 
+  // Get context values first, before using them
+  const {
+    selectedTaskDetail,
+    refreshTasks,
+    refreshSelectedTaskDetail,
+    setSelectedTask,
+    inputRef,
+    registerInputSetter,
+  } = useTaskContext();
+
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
   if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
@@ -75,8 +85,6 @@ export default function ChatArea({
   const [inputHeight, setInputHeight] = useState(0);
 
   // New: Get selectedTask to determine if there are messages
-  const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask, inputRef, registerInputSetter } =
-    useTaskContext();
   const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id);
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
