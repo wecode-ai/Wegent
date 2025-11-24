@@ -405,14 +405,14 @@ class DockerExecutor(Executor):
                     "message": f"Task {task_id} cancellation requested successfully"
                 }
             except self.requests.exceptions.RequestException as e:
-                logger.error(f"Failed to call cancel API for task {task_id}: {e}")
+                logger.info(f"Failed to call cancel API for task {task_id}: {e}")
                 return {
                     "status": "failed",
                     "error_msg": f"Failed to communicate with executor: {str(e)}"
                 }
 
         except Exception as e:
-            logger.error(f"Error cancelling task {task_id}: {e}")
+            logger.info(f"Error cancelling task {task_id}: {e}")
             return {
                 "status": "failed",
                 "error_msg": f"Error cancelling task: {str(e)}"
