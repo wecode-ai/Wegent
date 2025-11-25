@@ -22,7 +22,7 @@ export interface GitInfo {
   /** Type: "github" | "gitlab" | "gitee" | "gerrit" */
   type: 'github' | 'gitlab' | 'gitee' | 'gerrit';
   /** Username (required for Gerrit) */
-  username?: string;
+  user_name?: string;
 }
 
 // Bot Types

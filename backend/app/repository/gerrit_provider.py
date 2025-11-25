@@ -12,6 +12,7 @@ import logging
 import re
 from typing import List, Dict, Any, Optional
 import requests
+from requests.auth import HTTPDigestAuth
 from fastapi import HTTPException
 
 from app.repository.interfaces.repository_provider import RepositoryProvider
@@ -20,6 +21,7 @@ from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
 from shared.utils.sensitive_data_masker import mask_string
+from shared.utils.url_util import build_url
 
 
 class GerritProvider(RepositoryProvider):
@@ -59,7 +61,7 @@ class GerritProvider(RepositoryProvider):
                 entries.append({
                     "git_domain": info.get("git_domain", ""),
                     "git_token": info.get("git_token", ""),
-                    "username": info.get("username", ""),
+                    "user_name": info.get("user_name", ""),
                     "type": info.get("type", "")
                 })
 
@@ -91,7 +93,7 @@ class GerritProvider(RepositoryProvider):
         Get API base URL based on git domain
 
         Args:
-            git_domain: Gerrit domain (e.g., gerrit.company.com)
+            git_domain: Gerrit domain (e.g., gerrit.company.com or http://gerrit.company.com)
 
         Returns:
             API base URL
@@ -101,7 +103,7 @@ class GerritProvider(RepositoryProvider):
                 status_code=400,
                 detail="Gerrit domain is required"
             )
-        return f"https://{git_domain}/a"
+        return build_url(git_domain, "/a")
 
     def _strip_xssi_prefix(self, response_text: str) -> str:
         """
@@ -130,11 +132,14 @@ class GerritProvider(RepositoryProvider):
         **kwargs
     ) -> requests.Response:
         """
-        Make HTTP request with HTTP Basic Authentication
+        Make HTTP request with HTTP Digest Authentication
+        
+        Gerrit uses HTTP Digest Authentication by default. The /a/ prefix in the URL
+        indicates authenticated access.
 
         Args:
             method: HTTP method (GET, POST, etc.)
-            url: Request URL
+            url: Request URL (should include /a/ prefix for authenticated endpoints)
             username: Gerrit username
             http_password: HTTP password from Gerrit Settings
             params: Query parameters
@@ -147,13 +152,10 @@ class GerritProvider(RepositoryProvider):
         Raises:
             requests.exceptions.RequestException: If request fails
         """
-        # Use HTTP Basic Authentication
-        auth_string = f"{username}:{http_password}"
-        auth_bytes = auth_string.encode('utf-8')
-        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+        # Use HTTP Digest Authentication (Gerrit default)
+        auth = HTTPDigestAuth(username, http_password)
 
         headers = {
-            "Authorization": f"Basic {auth_b64}",
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
@@ -161,6 +163,7 @@ class GerritProvider(RepositoryProvider):
         response = requests.request(
             method,
             url,
+            auth=auth,
             headers=headers,
             params=params,
             json=json_data,
@@ -180,11 +183,11 @@ class GerritProvider(RepositoryProvider):
         **kwargs
     ) -> requests.Response:
         """
-        Async version of _make_request
+        Async version of _make_request with HTTP Digest Authentication
 
         Args:
             method: HTTP method (GET, POST, etc.)
-            url: Request URL
+            url: Request URL (should include /a/ prefix for authenticated endpoints)
             username: Gerrit username
             http_password: HTTP password
             params: Query parameters
@@ -194,12 +197,10 @@ class GerritProvider(RepositoryProvider):
         Returns:
             Response object
         """
-        auth_string = f"{username}:{http_password}"
-        auth_bytes = auth_string.encode('utf-8')
-        auth_b64 = base64.b64encode(auth_bytes).decode('ascii')
+        # Use HTTP Digest Authentication (Gerrit default)
+        auth = HTTPDigestAuth(username, http_password)
 
         headers = {
-            "Authorization": f"Basic {auth_b64}",
             "Accept": "application/json",
             "Content-Type": "application/json"
         }
@@ -208,6 +209,7 @@ class GerritProvider(RepositoryProvider):
             requests.request,
             method,
             url,
+            auth=auth,
             headers=headers,
             params=params,
             json=json_data,
@@ -243,10 +245,10 @@ class GerritProvider(RepositoryProvider):
         for entry in entries:
             git_token = entry.get("git_token") or ""
             git_domain = entry.get("git_domain") or ""
-            username = entry.get("username") or ""
+            user_name = entry.get("user_name") or ""
 
-            if not git_token or not username:
-                # Skip empty token/username entries
+            if not git_token or not user_name:
+                # Skip empty token/user_name entries
                 continue
 
             # Get API base URL based on git domain
@@ -277,7 +279,7 @@ class GerritProvider(RepositoryProvider):
                 response = self._make_request(
                     method="GET",
                     url=f"{api_base_url}/projects/",
-                    username=username,
+                    username=user_name,
                     http_password=git_token,
                     params={"d": ""}  # Include descriptions
                 )
@@ -293,7 +295,7 @@ class GerritProvider(RepositoryProvider):
                     project_id = abs(hash(project_name)) % (10 ** 10)
 
                     # Build clone URL
-                    clone_url = f"https://{git_domain}/{project_name}.git"
+                    clone_url = build_url(git_domain, f"/{project_name}.git")
 
                     repos.append({
                         "id": project_id,
@@ -358,9 +360,9 @@ class GerritProvider(RepositoryProvider):
         """
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
-        username = git_info["username"]
+        user_name = git_info["user_name"]
 
-        if not git_token or not username:
+        if not git_token or not user_name:
             raise HTTPException(
                 status_code=400,
                 detail="Gerrit credentials not configured"
@@ -378,7 +380,7 @@ class GerritProvider(RepositoryProvider):
             response = self._make_request(
                 method="GET",
                 url=f"{api_base_url}/projects/{encoded_project}/branches/",
-                username=username,
+                username=user_name,
                 http_password=git_token
             )
 
@@ -387,7 +389,7 @@ class GerritProvider(RepositoryProvider):
             branches_data = requests.models.complexjson.loads(response_text) if response_text else []
 
             # Get default branch (HEAD ref)
-            default_branch_name = self._get_default_branch(repo_name, git_domain, username, git_token)
+            default_branch_name = self._get_default_branch(repo_name, git_domain, user_name, git_token)
 
             branches = []
             for branch in branches_data:
@@ -414,7 +416,7 @@ class GerritProvider(RepositoryProvider):
         self,
         repo_name: str,
         git_domain: str,
-        username: str,
+        user_name: str,
         git_token: str
     ) -> str:
         """
@@ -423,7 +425,7 @@ class GerritProvider(RepositoryProvider):
         Args:
             repo_name: Project name
             git_domain: Git domain
-            username: Gerrit username
+            user_name: Gerrit user_name
             git_token: HTTP password
 
         Returns:
@@ -437,7 +439,7 @@ class GerritProvider(RepositoryProvider):
             response = self._make_request(
                 method="GET",
                 url=f"{api_base_url}/projects/{encoded_project}/HEAD",
-                username=username,
+                username=user_name,
                 http_password=git_token
             )
 
@@ -459,7 +461,7 @@ class GerritProvider(RepositoryProvider):
         self,
         token: str,
         git_domain: str = None,
-        username: str = None
+        user_name: str = None
     ) -> Dict[str, Any]:
         """
         Validate Gerrit HTTP password
@@ -467,7 +469,7 @@ class GerritProvider(RepositoryProvider):
         Args:
             token: HTTP password from Gerrit Settings
             git_domain: Gerrit domain
-            username: Gerrit username
+            user_name: Gerrit user_name
 
         Returns:
             Validation result including validity, user information, etc.
@@ -475,10 +477,10 @@ class GerritProvider(RepositoryProvider):
         Raises:
             HTTPException: Raised when validation fails
         """
-        if not token or not git_domain or not username:
+        if not token or not git_domain or not user_name:
             raise HTTPException(
                 status_code=400,
-                detail="Gerrit credentials (token, domain, username) are required"
+                detail="Gerrit credentials (token, domain, user_name) are required"
             )
 
         api_base_url = self._get_api_base_url(git_domain)
@@ -490,7 +492,7 @@ class GerritProvider(RepositoryProvider):
             response = self._make_request(
                 method="GET",
                 url=f"{api_base_url}/accounts/self",
-                username=username,
+                username=user_name,
                 http_password=decrypt_token
             )
 
@@ -502,7 +504,7 @@ class GerritProvider(RepositoryProvider):
                 "valid": True,
                 "user": {
                     "id": user_data.get("_account_id", 0),
-                    "login": user_data.get("username", username),
+                    "login": user_data.get("user_name", user_name),
                     "name": user_data.get("name", ""),
                     "avatar_url": "",  # Gerrit doesn't provide avatar URL in account API
                     "email": user_data.get("email", "")
@@ -512,7 +514,7 @@ class GerritProvider(RepositoryProvider):
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Gerrit API request failed: {str(e)}")
             if hasattr(e, 'response') and e.response and e.response.status_code == 401:
-                self.logger.warning(f"Gerrit token validation failed: 401 Unauthorized, git_domain: {git_domain}, username: {username}")
+                self.logger.warning(f"Gerrit token validation failed: 401 Unauthorized, git_domain: {git_domain}, user_name: {user_name}")
                 return {
                     "valid": False,
                 }
@@ -559,10 +561,10 @@ class GerritProvider(RepositoryProvider):
         for entry in entries:
             git_token = entry.get("git_token") or ""
             git_domain = entry.get("git_domain") or ""
-            username = entry.get("username") or ""
+            user_name = entry.get("user_name") or ""
 
-            if not git_token or not username:
-                # Skip empty token/username entries
+            if not git_token or not user_name:
+                # Skip empty token/user_name entries
                 continue
 
             # 1) Try to get from full cache first (per domain)
@@ -630,7 +632,7 @@ class GerritProvider(RepositoryProvider):
                     continue
 
             # 3) No cache and not building, trigger domain-level full retrieval
-            await self._fetch_all_repositories_async(user, git_token, username, git_domain)
+            await self._fetch_all_repositories_async(user, git_token, user_name, git_domain)
 
             # 4) Try cache after building
             full_cached = await self._get_all_repositories_from_cache(user, git_domain)
@@ -663,7 +665,7 @@ class GerritProvider(RepositoryProvider):
         self,
         user: User,
         git_token: str,
-        username: str,
+        user_name: str,
         git_domain: str
     ) -> None:
         """
@@ -672,7 +674,7 @@ class GerritProvider(RepositoryProvider):
         Args:
             user: User object
             git_token: HTTP password
-            username: Gerrit username
+            user_name: Gerrit user_name
             git_domain: Git domain
         """
         # Check if already building
@@ -691,7 +693,7 @@ class GerritProvider(RepositoryProvider):
             response = await self._make_request_async(
                 method="GET",
                 url=f"{api_base_url}/projects/",
-                username=username,
+                username=user_name,
                 http_password=git_token,
                 params={"d": ""}  # Include descriptions
             )
@@ -704,7 +706,7 @@ class GerritProvider(RepositoryProvider):
             all_repos = []
             for project_name, project_info in projects.items():
                 project_id = abs(hash(project_name)) % (10 ** 10)
-                clone_url = f"https://{git_domain}/{project_name}.git"
+                clone_url = build_url(git_domain, f"/{project_name}.git")
 
                 all_repos.append({
                     "id": project_id,
@@ -782,9 +784,9 @@ class GerritProvider(RepositoryProvider):
         """
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
-        username = git_info["username"]
+        user_name = git_info["user_name"]
 
-        if not git_token or not username:
+        if not git_token or not user_name:
             raise HTTPException(
                 status_code=400,
                 detail="Gerrit credentials not configured"
@@ -812,8 +814,8 @@ class GerritProvider(RepositoryProvider):
                 "total_commits": 0,
                 "files": [],
                 "diff_url": "",
-                "html_url": f"https://{git_domain}/q/project:{repo_name}+branch:{source_branch}",
-                "permalink_url": f"https://{git_domain}/q/project:{repo_name}+branch:{source_branch}",
+                "html_url": build_url(git_domain, f"/q/project:{repo_name}+branch:{source_branch}"),
+                "permalink_url": build_url(git_domain, f"/q/project:{repo_name}+branch:{source_branch}"),
                 "message": "Gerrit branch comparison is not fully supported. Please use Gerrit web interface for detailed diff."
             }
 
@@ -874,9 +876,9 @@ class GerritProvider(RepositoryProvider):
         """
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
-        username = git_info["username"]
+        user_name = git_info["user_name"]
 
-        if not git_token or not username:
+        if not git_token or not user_name:
             raise HTTPException(
                 status_code=400,
                 detail="Gerrit credentials not configured"
@@ -901,7 +903,7 @@ class GerritProvider(RepositoryProvider):
             response = self._make_request(
                 method="POST",
                 url=f"{api_base_url}/changes/",
-                username=username,
+                username=user_name,
                 http_password=git_token,
                 json_data=change_input
             )
@@ -918,7 +920,7 @@ class GerritProvider(RepositoryProvider):
                 "status": change_data.get("status", ""),
                 "created": change_data.get("created", ""),
                 "updated": change_data.get("updated", ""),
-                "url": f"https://{git_domain}/c/{change_data.get('_number', 0)}"
+                "url": build_url(git_domain, f"/c/{change_data.get('_number', 0)}")
             }
 
         except requests.exceptions.RequestException as e:

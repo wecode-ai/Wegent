@@ -318,7 +318,8 @@
     "error": {
       "required": "Please fill in all required fields",
       "save_failed": "Save failed",
-      "invalid_domain": "Please enter a valid domain (e.g. gitlab.example.com) without protocol or trailing slash"
+      "invalid_domain": "Please enter a valid domain (e.g. gitlab.example.com or http://gitlab.internal.com)",
+      "gerrit_username_required": "Username is required for Gerrit"
     },
     "modal": {
       "title_edit": "Edit Token",

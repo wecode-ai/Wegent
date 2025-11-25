@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import '@/features/common/scrollbar.css';
 import { Button } from '@/components/ui/button';
 import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
-import { FiGithub, FiGitlab, FiGit } from 'react-icons/fi';
+import { FiGithub, FiGitlab, FiGitBranch } from 'react-icons/fi';
 import GitHubEdit from './GitHubEdit';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import LoadingState from '@/features/common/LoadingState';
@@ -121,7 +121,7 @@ export default function GitHubIntegration() {
                       {info.type === 'gitlab' || info.type === 'gitee' ? (
                         <FiGitlab className="w-4 h-4 text-text-primary" />
                       ) : info.type === 'gerrit' ? (
-                        <FiGit className="w-4 h-4 text-text-primary" />
+                        <FiGitBranch className="w-4 h-4 text-text-primary" />
                       ) : (
                         <FiGithub className="w-4 h-4 text-text-primary" />
                       )}
@@ -133,7 +133,7 @@ export default function GitHubIntegration() {
                         </div>
                         <div>
                           <p className="text-xs text-text-muted break-all font-mono mt-0">
-                            {info.type === 'gerrit' && info.username ? `${info.username} | ` : ''}
+                            {info.type === 'gerrit' && info.user_name ? `${info.user_name} | ` : ''}
                             {getMaskedTokenDisplay(info.git_token)}
                           </p>
                         </div>
@@ -164,7 +164,7 @@ export default function GitHubIntegration() {
                   </div>
                   {platforms.length > 1 &&
                     info.git_domain !== platforms[platforms.length - 1].git_domain && (
-                      <div className="border-t border-border mt-1 pt-1"></div>
+                      <div className="border-t border-border mt-1 pt-1" />
                     )}
                 </div>
               ))

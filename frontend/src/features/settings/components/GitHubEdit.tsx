@@ -24,14 +24,30 @@ const sanitizeDomainInput = (value: string) => {
   if (!value) return '';
   const trimmed = value.trim();
   if (!trimmed) return '';
-  const withoutProtocol = trimmed.replace(/^[a-zA-Z]+:\/\//, '');
+
+  // Check if it starts with http:// or https://
+  const httpMatch = trimmed.match(/^(https?:\/\/)/i);
+  const protocol = httpMatch ? httpMatch[1].toLowerCase() : '';
+
+  // Remove protocol for processing
+  const withoutProtocol = trimmed.replace(/^https?:\/\//i, '');
+
+  // Get domain only (remove path)
   const domainOnly = withoutProtocol.split('/')[0];
-  return domainOnly.trim().toLowerCase();
+
+  // Return with protocol if it was http://, otherwise return domain only
+  return protocol === 'http://'
+    ? `http://${domainOnly.trim().toLowerCase()}`
+    : domainOnly.trim().toLowerCase();
 };
 
 const isValidDomain = (value: string) => {
   if (!value) return false;
-  const [host, port] = value.split(':');
+
+  // Extract domain without protocol
+  const domainWithoutProtocol = value.replace(/^https?:\/\//i, '');
+  const [host, port] = domainWithoutProtocol.split(':');
+
   if (!host) return false;
   if (port !== undefined) {
     if (!/^\d{1,5}$/.test(port)) return false;
@@ -74,7 +90,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         const sanitizedDomain = sanitizeDomainInput(editInfo.git_domain);
         setDomain(sanitizedDomain);
         setToken(editInfo.git_token);
-        setUsername(editInfo.username || '');
+        setUsername(editInfo.user_name || '');
         setType(editInfo.type);
       } else {
         setDomain('');
@@ -202,10 +218,21 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             value={type === 'github' ? 'github.com' : domain}
             onChange={e => {
               if (isGitlabLike || isGerrit) {
+                setDomain(e.target.value);
+              }
+            }}
+            onBlur={e => {
+              if (isGitlabLike || isGerrit) {
                 setDomain(sanitizeDomainInput(e.target.value));
               }
             }}
-            placeholder={type === 'github' ? 'github.com' : isGerrit ? 'e.g. gerrit.company.com' : 'e.g. gitlab.example.com'}
+            placeholder={
+              type === 'github'
+                ? 'github.com'
+                : isGerrit
+                  ? 'e.g. http://gerrit.company.com or gerrit.company.com'
+                  : 'e.g. http://gitlab.example.com or gitlab.example.com'
+            }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             disabled={type === 'github'}
           />
@@ -231,7 +258,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         {/* Token input */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            {isGerrit ? (t('github.token.title_gerrit') || 'HTTP password') : t('github.token.title')}
+            {isGerrit ? t('github.token.title_gerrit') || 'HTTP password' : t('github.token.title')}
           </label>
           <input
             type="password"
@@ -241,8 +268,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               type === 'github'
                 ? t('github.token.placeholder_github')
                 : isGerrit
-                ? (t('github.token.placeholder_gerrit') || 'HTTP password from Gerrit Settings')
-                : t('github.token.placeholder_gitlab')
+                  ? t('github.token.placeholder_gerrit') || 'HTTP password from Gerrit Settings'
+                  : t('github.token.placeholder_gitlab')
             }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
@@ -254,8 +281,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               {type === 'github'
                 ? t('github.howto.github.title')
                 : isGerrit
-                ? (t('github.howto.gerrit.title') || 'How to get Gerrit HTTP password:')
-                : t('github.howto.gitlab.title')}
+                  ? t('github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
+                  : t('github.howto.gitlab.title')}
             </strong>
           </p>
           {type === 'github' ? (
@@ -280,11 +307,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
                 {t('github.howto.step1_visit') || 'Visit: '}
                 <a
-                  href={
-                    isGerrit && domain
-                      ? `https://${domain}/settings/#HTTPCredentials`
-                      : '#'
-                  }
+                  href={isGerrit && domain ? `https://${domain}/settings/#HTTPCredentials` : '#'}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
@@ -300,10 +323,12 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 </a>
               </p>
               <p className="text-xs text-text-muted mb-2">
-                {t('github.howto.gerrit.step2') || 'Generate a new HTTP password under "HTTP Credentials"'}
+                {t('github.howto.gerrit.step2') ||
+                  'Generate a new HTTP password under "HTTP Credentials"'}
               </p>
               <p className="text-xs text-text-muted">
-                {t('github.howto.gerrit.step3') || 'Copy the username and password, and paste them here'}
+                {t('github.howto.gerrit.step3') ||
+                  'Copy the username and password, and paste them here'}
               </p>
             </>
           ) : (

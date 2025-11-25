@@ -156,7 +156,7 @@ class RepositoryService:
             
             if git_info and git_info.get("git_token"):
                 try:
-                    validation_result = provider.validate_token(git_info["git_token"])
+                    validation_result = provider.validate_token(token=git_info["git_token"],user_name=git_info.get("user_name", None))
                     results["providers"][provider_type] = validation_result
                 except Exception as e:
                     self.logger.error(f"Error validating token for {provider_type}: {e}")

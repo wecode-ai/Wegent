@@ -23,9 +23,6 @@ export async function saveGitToken(
   username?: string,
   type?: GitInfo['type']
 ): Promise<void> {
-  const newGitInfo = Array.isArray(user.git_info) ? [...user.git_info] : [];
-  const idx = newGitInfo.findIndex(info => info.git_domain === git_domain);
-
   // Auto-detect type if not provided
   let detectedType: GitInfo['type'] = type || 'gitlab';
   if (!type) {
@@ -40,20 +37,20 @@ export async function saveGitToken(
     }
   }
 
-  if (idx >= 0) {
-    newGitInfo[idx].git_token = git_token;
-    if (username !== undefined) {
-      newGitInfo[idx].username = username;
-    }
-    newGitInfo[idx].type = detectedType;
-  } else {
-    const newEntry: GitInfo = { git_domain, git_token, type: detectedType };
-    if (username !== undefined && username !== '') {
-      newEntry.username = username;
-    }
-    newGitInfo.push(newEntry);
+  // Only send the git_info item being saved/updated
+  const gitInfoToSave: GitInfo = {
+    git_domain,
+    git_token,
+    type: detectedType,
+  };
+
+  // Add user_name if provided
+  if (username !== undefined && username !== '') {
+    gitInfoToSave.user_name = username;
   }
-  await userApis.updateUser({ git_info: newGitInfo });
+
+  // Send only the single git_info item being saved
+  await userApis.updateUser({ git_info: [gitInfoToSave] });
 }
 
 /**
