@@ -8,10 +8,8 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import { DifyApp } from '@/types/api';
 import { apiClient } from '@/apis/client';
-import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
-import { RocketLaunchIcon, InformationCircleIcon } from '@heroicons/react/24/outline';
+import { InformationCircleIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
 
 interface DifyBotConfigProps {
@@ -20,17 +18,25 @@ interface DifyBotConfigProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
 }
 
+interface DifyAppInfo {
+  name: string;
+  description?: string;
+  mode?: string;
+  icon?: string;
+  icon_background?: string;
+}
+
 const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
   agentConfig,
   onAgentConfigChange,
   toast,
 }) => {
   const { t } = useTranslation('common');
-  const [apps, setApps] = useState<DifyApp[]>([]);
-  const [isLoadingApps, setIsLoadingApps] = useState(false);
-  const [selectedAppId, setSelectedAppId] = useState<string>('');
   const [difyApiKey, setDifyApiKey] = useState<string>('');
   const [difyBaseUrl, setDifyBaseUrl] = useState<string>('https://api.dify.ai');
+  const [isValidating, setIsValidating] = useState(false);
+  const [appInfo, setAppInfo] = useState<DifyAppInfo | null>(null);
+  const [isValidated, setIsValidated] = useState(false);
 
   // Parse existing agent_config to extract Dify settings
   useEffect(() => {
@@ -45,18 +51,13 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
       // Extract Dify API credentials
       setDifyApiKey(env.DIFY_API_KEY || '');
       setDifyBaseUrl(env.DIFY_BASE_URL || 'https://api.dify.ai');
-
-      // Extract bot_prompt data (this is typically stored in bot_prompt field, but we check here too)
-      if (env.DIFY_APP_ID) {
-        setSelectedAppId(env.DIFY_APP_ID);
-      }
     } catch (error) {
       console.error('Failed to parse agent config:', error);
     }
   }, [agentConfig]);
 
-  // Fetch Dify apps when API key is available
-  const fetchApps = useCallback(async () => {
+  // Validate Dify API key by fetching app info
+  const validateApiKey = useCallback(async () => {
     if (!difyApiKey || !difyBaseUrl) {
       toast({
         variant: 'destructive',
@@ -65,36 +66,37 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
       return;
     }
 
-    setIsLoadingApps(true);
-    try {
-      // Note: Backend /dify/apps endpoint reads credentials from saved Model config
-      // For new bots, we need to pass credentials in the request
-      // TODO: Update backend to accept credentials in request body
-      const response = await apiClient.get<DifyApp[]>('/dify/apps');
-      setApps(response);
+    setIsValidating(true);
+    setIsValidated(false);
+    setAppInfo(null);
 
-      // Auto-select first app if none selected
-      if (!selectedAppId && response.length > 0) {
-        setSelectedAppId(response[0].id);
-      }
+    try {
+      const response = await apiClient.post<DifyAppInfo>('/dify/app/info', {
+        api_key: difyApiKey,
+        base_url: difyBaseUrl,
+      });
+
+      setAppInfo(response);
+      setIsValidated(true);
 
       toast({
-        title: t('bot.dify_apps_loaded') || 'Dify applications loaded successfully',
-        description: `Found ${response.length} application(s)`,
+        title: t('bot.dify_validation_success') || 'API Key validated successfully',
+        description: `Application: ${response.name}`,
       });
     } catch (error) {
-      console.error('Failed to fetch Dify apps:', error);
+      console.error('Failed to validate Dify API key:', error);
       toast({
         variant: 'destructive',
-        title: t('bot.errors.fetch_dify_apps_failed') || 'Failed to load Dify applications',
+        title: t('bot.errors.dify_validation_failed') || 'Failed to validate API key',
         description:
-          'Please make sure your API key is valid and you have at least one Dify application.',
+          'Please make sure your API key is valid and the base URL is correct.',
       });
-      setApps([]);
+      setIsValidated(false);
+      setAppInfo(null);
     } finally {
-      setIsLoadingApps(false);
+      setIsValidating(false);
     }
-  }, [difyApiKey, difyBaseUrl, selectedAppId, toast, t]);
+  }, [difyApiKey, difyBaseUrl, toast, t]);
 
   // Update agent_config whenever Dify settings change
   const updateAgentConfig = useCallback(() => {
@@ -102,41 +104,21 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
       env: {
         DIFY_API_KEY: difyApiKey,
         DIFY_BASE_URL: difyBaseUrl,
-        DIFY_APP_ID: selectedAppId,
       },
     };
 
     onAgentConfigChange(JSON.stringify(config, null, 2));
-  }, [difyApiKey, difyBaseUrl, selectedAppId, onAgentConfigChange]);
+  }, [difyApiKey, difyBaseUrl, onAgentConfigChange]);
 
   useEffect(() => {
     updateAgentConfig();
   }, [updateAgentConfig]);
 
-  // Convert apps to SearchableSelectItem format
-  const selectItems: SearchableSelectItem[] = apps.map(app => ({
-    value: app.id,
-    label: app.name,
-    searchText: app.name,
-    content: (
-      <div className="flex items-center gap-2 min-w-0">
-        {app.icon ? (
-          <div
-            className="w-6 h-6 flex-shrink-0 rounded flex items-center justify-center text-sm"
-            style={{ backgroundColor: app.icon_background }}
-          >
-            {app.icon}
-          </div>
-        ) : (
-          <RocketLaunchIcon className="w-4 h-4 flex-shrink-0 text-text-muted" />
-        )}
-        <span className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0" title={app.name}>
-          {app.name}
-        </span>
-        <span className="text-xs text-text-muted flex-shrink-0 capitalize">{app.mode}</span>
-      </div>
-    ),
-  }));
+  // Reset validation state when API key or base URL changes
+  useEffect(() => {
+    setIsValidated(false);
+    setAppInfo(null);
+  }, [difyApiKey, difyBaseUrl]);
 
   const handleOpenDifyDocs = useCallback(() => {
     window.open('https://docs.dify.ai/guides/application-publishing/developing-with-apis', '_blank');
@@ -154,7 +136,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
             </h4>
             <p className="text-xs text-blue-700 dark:text-blue-300 mb-2">
               {t('bot.dify_mode_description') ||
-                'Dify bot delegates execution to external Dify API service. Configure your Dify API credentials and select an application.'}
+                'Dify bot delegates execution to external Dify API service. Enter your Dify application API key to get started.'}
             </p>
             <Button
               size="sm"
@@ -183,7 +165,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
         />
         <p className="text-xs text-text-muted mt-1">
           {t('bot.dify_api_key_hint') ||
-            'Enter your Dify API key. You can find it in your Dify application settings.'}
+            'Enter your Dify application API key. Each Dify application has its own API key.'}
         </p>
       </div>
 
@@ -206,91 +188,52 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
         </p>
       </div>
 
-      {/* Dify Application Selector */}
+      {/* Validation Button and Result */}
       <div className="flex flex-col">
-        <div className="flex items-center justify-between mb-2">
-          <Label htmlFor="dify-app" className="text-base font-medium text-text-primary">
-            {t('bot.dify_app') || 'Dify Application'}
-          </Label>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={fetchApps}
-            disabled={isLoadingApps || !difyApiKey || !difyBaseUrl}
-            className="text-xs"
-          >
-            {isLoadingApps ? (
-              <>
-                <div className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full mr-1" />
-                {t('bot.loading') || 'Loading...'}
-              </>
-            ) : (
-              <>🔄 {t('bot.load_apps') || 'Load Applications'}</>
-            )}
-          </Button>
-        </div>
-        {apps.length === 0 ? (
-          <div className="bg-base-secondary border border-border rounded-md p-4 text-center">
-            <p className="text-sm text-text-muted mb-2">
-              {!difyApiKey || !difyBaseUrl
-                ? t('bot.enter_credentials_first') ||
-                  'Please enter your Dify API credentials above, then click "Load Applications".'
-                : t('bot.click_to_load') || 'Click "Load Applications" to fetch your Dify apps.'}
-            </p>
-            {difyApiKey && difyBaseUrl && (
-              <Button size="sm" onClick={fetchApps} disabled={isLoadingApps} className="mt-2">
-                {isLoadingApps ? (
-                  <>
-                    <div className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full mr-2" />
-                    {t('bot.loading') || 'Loading...'}
-                  </>
-                ) : (
-                  <>🚀 {t('bot.load_apps') || 'Load Applications'}</>
-                )}
-              </Button>
-            )}
+        <Button
+          size="default"
+          onClick={validateApiKey}
+          disabled={isValidating || !difyApiKey || !difyBaseUrl}
+          className="w-full"
+        >
+          {isValidating ? (
+            <>
+              <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full mr-2" />
+              {t('bot.validating') || 'Validating...'}
+            </>
+          ) : (
+            <>✓ {t('bot.validate_api_key') || 'Validate API Key'}</>
+          )}
+        </Button>
+
+        {/* Validation Success Message */}
+        {isValidated && appInfo && (
+          <div className="mt-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+            <div className="flex items-start gap-3">
+              <CheckCircleIcon className="w-5 h-5 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <h4 className="text-sm font-medium text-green-900 dark:text-green-100 mb-1">
+                  {t('bot.validation_success') || 'API Key Validated Successfully'}
+                </h4>
+                <div className="text-xs text-green-700 dark:text-green-300 space-y-1">
+                  <p>
+                    <span className="font-medium">Application:</span> {appInfo.name}
+                  </p>
+                  {appInfo.mode && (
+                    <p>
+                      <span className="font-medium">Mode:</span>{' '}
+                      <span className="capitalize">{appInfo.mode}</span>
+                    </p>
+                  )}
+                  {appInfo.description && (
+                    <p>
+                      <span className="font-medium">Description:</span> {appInfo.description}
+                    </p>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
-        ) : (
-          <>
-            <SearchableSelect
-              value={selectedAppId}
-              onValueChange={setSelectedAppId}
-              disabled={isLoadingApps || apps.length === 0}
-              placeholder={t('bot.select_dify_app') || 'Select Dify Application'}
-              searchPlaceholder={t('bot.search_apps') || 'Search applications...'}
-              items={selectItems}
-              loading={isLoadingApps}
-              emptyText={t('bot.no_apps_available') || 'No applications available'}
-              noMatchText={t('bot.no_matching_apps') || 'No matching applications'}
-              triggerClassName="w-full"
-              contentClassName="max-w-md"
-              renderTriggerValue={item => {
-                if (!item) return null;
-                const app = apps.find(a => a.id === item.value);
-                return (
-                  <div className="flex items-center gap-2 min-w-0">
-                    {app?.icon ? (
-                      <div
-                        className="w-5 h-5 flex-shrink-0 rounded flex items-center justify-center text-xs"
-                        style={{ backgroundColor: app.icon_background }}
-                      >
-                        {app.icon}
-                      </div>
-                    ) : (
-                      <RocketLaunchIcon className="w-4 h-4 flex-shrink-0" />
-                    )}
-                    <span className="truncate max-w-full flex-1 min-w-0" title={item.label}>
-                      {item.label}
-                    </span>
-                  </div>
-                );
-              }}
-            />
-            <p className="text-xs text-text-muted mt-1">
-              {t('bot.dify_app_hint') ||
-                'Select which Dify application to use. The application type and configuration will be used during task execution.'}
-            </p>
-          </>
         )}
       </div>
 
