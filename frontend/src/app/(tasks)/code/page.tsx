@@ -133,7 +133,7 @@ export default function CodePage() {
         isLoading={isTeamsLoading}
         hasShareId={hasShareId}
       />
-      <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      <div className="flex smart-h-screen bg-gradient-to-br from-base via-surface to-base text-text-primary box-border relative overflow-hidden">
         {/* Responsive resizable sidebar - fixed, not affected by right panel */}
         <ResizableSidebar>
           <TaskSidebar

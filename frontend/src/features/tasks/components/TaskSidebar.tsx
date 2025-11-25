@@ -161,7 +161,7 @@ export default function TaskSidebar({
   const sidebarContent = (
     <>
       {/* Logo */}
-      <div className="px-3 pt-2 pb-3">
+      <div className="px-4 pt-3 pb-3">
         <div className="flex items-center justify-start pl-2 gap-2">
           <Image
             src="/weibo-logo.png"
@@ -175,7 +175,7 @@ export default function TaskSidebar({
       </div>
 
       {/* New Task Button */}
-      <div className="px-3 mb-0">
+      <div className="px-4 mb-2">
         <Button
           variant="ghost"
           onClick={handleNewAgentClick}
@@ -188,7 +188,7 @@ export default function TaskSidebar({
       </div>
 
       {/* Search */}
-      <div className="px-3 mb-0">
+      <div className="px-4 mb-2">
         <div className="relative group">
           <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
           <input
@@ -211,7 +211,7 @@ export default function TaskSidebar({
 
       {/* Mark All As Read Button */}
       {totalUnreadCount > 0 && (
-        <div className="px-3 mb-2">
+        <div className="px-4 mb-2">
           <button
             onClick={handleMarkAllAsViewed}
             className="w-full text-xs text-text-primary hover:text-text-primary py-1 px-2 rounded hover:bg-hover transition-colors text-center"
@@ -222,7 +222,7 @@ export default function TaskSidebar({
       )}
 
       {/* Tasks Section */}
-      <div className="flex-1 px-3 pt-2 overflow-y-auto custom-scrollbar" ref={scrollRef}>
+      <div className="flex-1 px-4 pt-2 overflow-y-auto custom-scrollbar" ref={scrollRef}>
         {isSearching ? (
           <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
         ) : tasks.length === 0 ? (
@@ -271,7 +271,7 @@ export default function TaskSidebar({
       </div>
 
       {/* Settings */}
-      <div className="p-3 border-t border-border">
+      <div className="px-4 pb-3 pt-3 border-t border-border">
         <Button
           variant="ghost"
           size="sm"
@@ -292,11 +292,13 @@ export default function TaskSidebar({
   return (
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
-      <div
-        className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full"
-        data-tour="task-sidebar"
-      >
-        {sidebarContent}
+      <div className="hidden lg:flex lg:flex-col w-full h-full lg:p-[5px]">
+        <div
+          className="flex flex-col w-full h-full bg-surface/30 backdrop-blur-xl rounded-lg shadow-md hover:shadow-xl transition-all duration-300 border border-border/50 z-10"
+          data-tour="task-sidebar"
+        >
+          {sidebarContent}
+        </div>
       </div>
 
       {/* Mobile Sidebar */}
