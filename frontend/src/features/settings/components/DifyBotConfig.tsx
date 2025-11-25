@@ -56,36 +56,45 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
   }, [agentConfig]);
 
   // Fetch Dify apps when API key is available
-  useEffect(() => {
+  const fetchApps = useCallback(async () => {
     if (!difyApiKey || !difyBaseUrl) {
-      setApps([]);
+      toast({
+        variant: 'destructive',
+        title: t('bot.dify_api_key_required') || 'Please enter Dify API Key and Base URL first',
+      });
       return;
     }
 
-    const fetchApps = async () => {
-      setIsLoadingApps(true);
-      try {
-        const response = await apiClient.get<DifyApp[]>('/dify/apps');
-        setApps(response);
+    setIsLoadingApps(true);
+    try {
+      // Note: Backend /dify/apps endpoint reads credentials from saved Model config
+      // For new bots, we need to pass credentials in the request
+      // TODO: Update backend to accept credentials in request body
+      const response = await apiClient.get<DifyApp[]>('/dify/apps');
+      setApps(response);
 
-        // Auto-select first app if none selected
-        if (!selectedAppId && response.length > 0) {
-          setSelectedAppId(response[0].id);
-        }
-      } catch (error) {
-        console.error('Failed to fetch Dify apps:', error);
-        toast({
-          variant: 'destructive',
-          title: t('bot.errors.fetch_dify_apps_failed') || 'Failed to load Dify applications',
-        });
-        setApps([]);
-      } finally {
-        setIsLoadingApps(false);
+      // Auto-select first app if none selected
+      if (!selectedAppId && response.length > 0) {
+        setSelectedAppId(response[0].id);
       }
-    };
 
-    fetchApps();
-  }, [difyApiKey, difyBaseUrl]); // eslint-disable-line react-hooks/exhaustive-deps
+      toast({
+        title: t('bot.dify_apps_loaded') || 'Dify applications loaded successfully',
+        description: `Found ${response.length} application(s)`,
+      });
+    } catch (error) {
+      console.error('Failed to fetch Dify apps:', error);
+      toast({
+        variant: 'destructive',
+        title: t('bot.errors.fetch_dify_apps_failed') || 'Failed to load Dify applications',
+        description:
+          'Please make sure your API key is valid and you have at least one Dify application.',
+      });
+      setApps([]);
+    } finally {
+      setIsLoadingApps(false);
+    }
+  }, [difyApiKey, difyBaseUrl, selectedAppId, toast, t]);
 
   // Update agent_config whenever Dify settings change
   const updateAgentConfig = useCallback(() => {
@@ -199,19 +208,47 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
 
       {/* Dify Application Selector */}
       <div className="flex flex-col">
-        <Label htmlFor="dify-app" className="text-base font-medium text-text-primary mb-2">
-          {t('bot.dify_app') || 'Dify Application'}
-        </Label>
-        {isLoadingApps ? (
-          <div className="flex items-center gap-2 text-sm text-text-muted py-2">
-            <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full" />
-            <span>{t('bot.loading_apps') || 'Loading applications...'}</span>
-          </div>
-        ) : apps.length === 0 ? (
-          <div className="text-sm text-text-muted py-2">
-            {difyApiKey
-              ? t('bot.no_apps_found') || 'No applications found. Please check your API key.'
-              : t('bot.enter_api_key_first') || 'Please enter your Dify API key first.'}
+        <div className="flex items-center justify-between mb-2">
+          <Label htmlFor="dify-app" className="text-base font-medium text-text-primary">
+            {t('bot.dify_app') || 'Dify Application'}
+          </Label>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={fetchApps}
+            disabled={isLoadingApps || !difyApiKey || !difyBaseUrl}
+            className="text-xs"
+          >
+            {isLoadingApps ? (
+              <>
+                <div className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full mr-1" />
+                {t('bot.loading') || 'Loading...'}
+              </>
+            ) : (
+              <>🔄 {t('bot.load_apps') || 'Load Applications'}</>
+            )}
+          </Button>
+        </div>
+        {apps.length === 0 ? (
+          <div className="bg-base-secondary border border-border rounded-md p-4 text-center">
+            <p className="text-sm text-text-muted mb-2">
+              {!difyApiKey || !difyBaseUrl
+                ? t('bot.enter_credentials_first') ||
+                  'Please enter your Dify API credentials above, then click "Load Applications".'
+                : t('bot.click_to_load') || 'Click "Load Applications" to fetch your Dify apps.'}
+            </p>
+            {difyApiKey && difyBaseUrl && (
+              <Button size="sm" onClick={fetchApps} disabled={isLoadingApps} className="mt-2">
+                {isLoadingApps ? (
+                  <>
+                    <div className="animate-spin h-3 w-3 border-2 border-current border-t-transparent rounded-full mr-2" />
+                    {t('bot.loading') || 'Loading...'}
+                  </>
+                ) : (
+                  <>🚀 {t('bot.load_apps') || 'Load Applications'}</>
+                )}
+              </Button>
+            )}
           </div>
         ) : (
           <>
