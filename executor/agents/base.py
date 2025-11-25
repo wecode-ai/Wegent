@@ -395,30 +395,63 @@ class Agent:
             info_dir = os.path.join(git_dir, "info")
             os.makedirs(info_dir, exist_ok=True)
 
-            exclude_pattern = ".claudecode/"
+            exclude_patterns = [".claudecode/", "Claude.md"]
 
             # Check if file exists and read content
+            content = ""
             if os.path.exists(exclude_file):
                 with open(exclude_file, 'r', encoding='utf-8') as f:
                     content = f.read()
 
-                # Check if pattern already exists
-                if exclude_pattern in content:
-                    logger.debug(f".claudecode/ already in {exclude_file}")
-                    return
+            # Check which patterns need to be added
+            patterns_to_add = []
+            for pattern in exclude_patterns:
+                if pattern not in content:
+                    patterns_to_add.append(pattern)
 
-                # Append pattern
+            if patterns_to_add:
+                # Append patterns
                 with open(exclude_file, 'a', encoding='utf-8') as f:
-                    if not content.endswith('\n'):
+                    if content and not content.endswith('\n'):
                         f.write('\n')
-                    f.write(f"{exclude_pattern}\n")
+                    for pattern in patterns_to_add:
+                        f.write(f"{pattern}\n")
+                logger.info(f"Updated .git/info/exclude to ignore: {', '.join(patterns_to_add)}")
             else:
-                # Create file with pattern
-                with open(exclude_file, 'w', encoding='utf-8') as f:
-                    f.write(f"{exclude_pattern}\n")
-
-            logger.info(f"Updated .git/info/exclude to ignore .claudecode")
+                logger.debug(f"All patterns already in {exclude_file}")
 
         except Exception as e:
             logger.warning(f"Failed to update .git/info/exclude: {e}")
+
+    def _setup_claude_md_symlink(self, project_path: str) -> None:
+        """
+        Setup Claude.md symlink from Agents.md if it exists
+
+        Args:
+            project_path: Project root directory
+        """
+        try:
+            agents_md = os.path.join(project_path, "Agents.md")
+            claude_md = os.path.join(project_path, "Claude.md")
+
+            # Check if Agents.md exists
+            if not os.path.exists(agents_md):
+                logger.debug("Agents.md not found, skipping Claude.md symlink creation")
+                return
+
+            # Remove existing Claude.md if it exists
+            if os.path.exists(claude_md):
+                if os.path.islink(claude_md):
+                    os.unlink(claude_md)
+                    logger.debug("Removed existing Claude.md symlink")
+                else:
+                    logger.debug("Claude.md already exists as a regular file, skipping symlink creation")
+                    return
+
+            # Create symlink
+            os.symlink("Agents.md", claude_md)
+            logger.info(f"Created Claude.md symlink to Agents.md")
+
+        except Exception as e:
+            logger.warning(f"Failed to create Claude.md symlink: {e}")
 

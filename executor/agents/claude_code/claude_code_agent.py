@@ -558,14 +558,14 @@ class ClaudeCodeAgent(Agent):
                     self.options["cwd"] = self.project_path
                     logger.info(f"Set cwd to {self.project_path}")
 
-            # Load and merge custom instructions
+            # Setup Claude Code custom instructions
             if self.project_path:
                 try:
                     custom_rules = self._load_custom_instructions(self.project_path)
                     if custom_rules:
+                        # Merge instructions for .claudecode directory only (not for system_prompt)
                         base_prompt = self.options.get("system_prompt", "")
                         merged_prompt = self._merge_instructions(base_prompt, custom_rules)
-                        self.options["system_prompt"] = merged_prompt
 
                         # Setup .claudecode directory for Claude Code compatibility
                         self._setup_claudecode_dir(self.project_path, merged_prompt)
@@ -573,7 +573,11 @@ class ClaudeCodeAgent(Agent):
                         # Update .git/info/exclude to ignore .claudecode
                         self._update_git_exclude(self.project_path)
 
-                        logger.info(f"Merged {len(custom_rules)} custom instruction files")
+                        logger.info(f"Setup Claude Code custom instructions with {len(custom_rules)} files")
+
+                    # Setup Claude.md symlink from Agents.md if exists
+                    self._setup_claude_md_symlink(self.project_path)
+
                 except Exception as e:
                     logger.warning(f"Failed to process custom instructions: {e}")
                     # Continue execution with original systemPrompt
