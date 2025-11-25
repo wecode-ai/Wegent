@@ -30,7 +30,7 @@ logger = setup_logger("claude_response_processor")
 
 
 async def process_response(
-    client: ClaudeSDKClient, state_manager, thinking_manager=None
+    client: ClaudeSDKClient, state_manager, thinking_manager=None, task_state_manager=None
 ) -> TaskStatus:
     """
     Process the response messages from Claude
@@ -39,6 +39,7 @@ async def process_response(
         client: Claude SDK client
         state_manager: ProgressStateManager instance for managing state and reporting progress
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
+        task_state_manager: Optional TaskStateManager instance for checking cancellation
 
     Returns:
         TaskStatus: Processing status
@@ -47,6 +48,16 @@ async def process_response(
     try:
         async for msg in client.receive_response():
             index += 1
+            
+            # Check for cancellation before processing each message
+            if task_state_manager:
+                task_id = state_manager.task_data.get("task_id") if state_manager else None
+                if task_id and task_state_manager.is_cancelled(task_id):
+                    logger.info(f"Task {task_id} cancelled during response processing")
+                    if state_manager:
+                        state_manager.update_workbench_status("completed")
+                    return TaskStatus.COMPLETED
+            
             # Log the number of messages received
             logger.info(f"claude message index: {index}, received: {msg}")
 

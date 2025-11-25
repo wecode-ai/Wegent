@@ -166,3 +166,39 @@ async def get_executor_load(http_request: Request):
     except Exception as e:
         logger.error(f"Error getting executor load: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class CancelTaskRequest(BaseModel):
+    task_id: int
+
+
+@app.post("/executor-manager/tasks/cancel")
+async def cancel_task(request: CancelTaskRequest, http_request: Request):
+    """
+    Cancel a running task by calling the executor's cancel API.
+
+    Args:
+        request: Request containing task_id to cancel
+
+    Returns:
+        dict: Cancellation result
+    """
+    try:
+        client_ip = http_request.client.host if http_request.client else "unknown"
+        logger.info(f"Received request to cancel task {request.task_id} from {client_ip}")
+
+        executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
+        result = executor.cancel_task(request.task_id)
+
+        if result["status"] == "success":
+            logger.info(f"Successfully cancelled task {request.task_id}")
+            return result
+        else:
+            logger.warning(f"Failed to cancel task {request.task_id}: {result.get('error_msg', 'Unknown error')}")
+            raise HTTPException(status_code=400, detail=result.get("error_msg", "Failed to cancel task"))
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error cancelling task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

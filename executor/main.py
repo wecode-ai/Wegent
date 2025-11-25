@@ -8,7 +8,7 @@
 
 import json
 from typing import Dict, Optional, Any
-from fastapi import FastAPI, HTTPException, Body, Request, Query
+from fastapi import FastAPI, HTTPException, Body, Request, Query, BackgroundTasks
 from pydantic import BaseModel
 import uvicorn
 from executor.tasks import run_task
@@ -118,6 +118,29 @@ async def delete_session(task_id: str = Query(..., description="Task ID to delet
         return {"message": message}
     else:
         raise HTTPException(status_code=404, detail=message)
+
+
+@app.post("/api/tasks/cancel")
+async def cancel_task(
+    task_id: int = Query(..., description="Task ID to cancel"),
+    background_tasks: BackgroundTasks = None
+):
+    """
+    Cancel the currently running task for a specific task_id
+    Returns immediately, callback is sent asynchronously in background to avoid blocking executor_manager's cancel request
+    """
+    status, message = agent_service.cancel_task(task_id)
+
+    if status == TaskStatus.SUCCESS:
+        # Send cancel callback in background without blocking response
+        if background_tasks:
+            background_tasks.add_task(
+                agent_service.send_cancel_callback_async,
+                task_id
+            )
+        return {"message": message}
+    else:
+        raise HTTPException(status_code=400, detail=message)
 
 
 @app.get("/api/tasks/sessions")

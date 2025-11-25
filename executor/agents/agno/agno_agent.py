@@ -27,6 +27,8 @@ from .model_factory import ModelFactory
 from .mcp_manager import MCPManager
 from .team_builder import TeamBuilder
 from .thinking_step_manager import ThinkingStepManager
+from executor.tasks.task_state_manager import TaskStateManager, TaskState
+from executor.tasks.resource_manager import ResourceManager
 
 db = SqliteDb(db_file="/tmp/agno_data.db")
 logger = setup_logger("agno_agent")
@@ -58,19 +60,20 @@ class AgnoAgent(Agent):
 
         self.team: Optional[Team] = None
         self.single_agent: Optional[AgnoSDKAgent] = None
+        self.current_run_id: Optional[str] = None
 
         self.mode = task_data.get("mode", "")
         self.task_data = task_data
 
         # Initialize thinking step manager first
         self.thinking_manager = ThinkingStepManager(progress_reporter=self.report_progress)
-        
+
         # Initialize configuration manager
         self.config_manager = ConfigManager(EXECUTOR_ENV)
-        
+
         # Extract Agno options from task_data
         self.options = self.config_manager.extract_agno_options(task_data)
-        
+
         # Initialize team builder
         self.team_builder = TeamBuilder(db, self.config_manager, self.thinking_manager)
 
@@ -82,6 +85,13 @@ class AgnoAgent(Agent):
 
         # stream mode
         self.enable_streaming: bool = True
+
+        # Initialize task state manager for cancellation support
+        self.task_state_manager = TaskStateManager()
+        self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
+        
+        # Initialize resource manager for resource cleanup
+        self.resource_manager = ResourceManager()
 
     def add_thinking_step(self, title: str, report_immediately: bool = True,
                          use_i18n_keys: bool = False, details: Optional[Dict[str, Any]] = None) -> None:
@@ -183,6 +193,11 @@ class AgnoAgent(Agent):
             TaskStatus: Initialization status
         """
         try:
+            # Check if task was cancelled before initialization
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} was cancelled before initialization")
+                return TaskStatus.COMPLETED
+            
             logger.info("Initializing Agno Agent")
             self.add_thinking_step_by_key(
                 title_key="thinking.initialize_agent",
@@ -319,6 +334,12 @@ class AgnoAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            # Checkpoint 1: Check cancellation before execution starts
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} cancelled before execution")
+                await self._cleanup_resources()
+                return TaskStatus.COMPLETED
+            
             progress = 65
             # Update current progress
             self._update_progress(progress)
@@ -354,6 +375,13 @@ class AgnoAgent(Agent):
                 else:
                     self.single_agent = await self._create_agent()
                     self._clients[self.session_id] = self.single_agent
+            
+            # Checkpoint 2: Check cancellation after team/agent creation
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} cancelled after team/agent creation")
+                await self._cleanup_resources()
+                return TaskStatus.COMPLETED
+            
             # Prepare prompt
             prompt = self.prompt
             if self.options.get("cwd"):
@@ -414,7 +442,7 @@ class AgnoAgent(Agent):
         if reasoning is None:
             reasoning = self.thinking_manager.get_thinking_steps()
 
-        if result_content:
+        if result_content is not None:
             logger.info(
                 f"{execution_type} completed with content length: {len(result_content)}"
             )
@@ -467,17 +495,21 @@ class AgnoAgent(Agent):
     async def _handle_agent_streaming_event(self, run_response_event, result_content: str) -> str:
         """
         Handle agent streaming events
-        
+
         Args:
             run_response_event: The streaming event
             result_content: Current result content
-            
+
         Returns:
             str: Updated result content
         """
         # Handle agent run events
         if run_response_event.event in [RunEvent.run_started]:
             logger.info(f"🚀 AGENT RUN STARTED: {run_response_event.agent_id}")
+            # Store run_id for cancel_run functionality
+            if hasattr(run_response_event, 'run_id'):
+                self.current_run_id = run_response_event.run_id
+                logger.info(f"Stored run_id: {self.current_run_id}")
             self.report_progress(
                 75, TaskStatus.RUNNING.value, "${{thinking.agent_execution_started}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
@@ -491,7 +523,7 @@ class AgnoAgent(Agent):
             logger.info(f"🔧 AGENT TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
             
-            # 构建工具调用详情，符合目标格式
+            # Build tool call details in target format
             tool_details = {
                 "type": "assistant",
                 "message": {
@@ -521,7 +553,7 @@ class AgnoAgent(Agent):
             logger.info(f"✅ AGENT TOOL COMPLETED: {run_response_event.tool.tool_name}")
             logger.info(f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}...")
             
-            # 构建工具结果详情，符合目标格式
+            # Build tool result details in target format
             tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -666,10 +698,21 @@ class AgnoAgent(Agent):
                 debug_mode=self.debug_mode,
                 debug_level=2
             ):
+                # Checkpoint: Check cancellation during streaming
+                if self.task_state_manager.is_cancelled(self.task_id):
+                    logger.info(f"Task {self.task_id} cancelled during agent streaming")
+                    await self._cleanup_resources()
+                    return TaskStatus.COMPLETED
+                
                 result_content = await self._handle_agent_streaming_event(
                     run_response_event, result_content
                 )
 
+            # Check if task was cancelled
+            if self.task_state_manager.is_cancelled(self.task_id):
+                await self._cleanup_resources()
+                return TaskStatus.COMPLETED
+            
             return self._handle_execution_result(result_content, "agent streaming execution")
 
         except Exception as e:
@@ -767,12 +810,23 @@ class AgnoAgent(Agent):
                 markdown=True,
                 **ext_config
             ):
+                # Checkpoint: Check cancellation during streaming
+                if self.task_state_manager.is_cancelled(self.task_id):
+                    logger.info(f"Task {self.task_id} cancelled during team streaming")
+                    await self._cleanup_resources()
+                    return TaskStatus.COMPLETED
+                
                 result_content, reasoning = await self._handle_team_streaming_event(
                     run_response_event, result_content
                 )
                 # Thinking steps are already handled in _handle_team_streaming_event
                 # Here we only need to report progress, no need to add thinking again
 
+            # Check if task was cancelled
+            if self.task_state_manager.is_cancelled(self.task_id):
+                await self._cleanup_resources()
+                return TaskStatus.COMPLETED
+            
             return self._handle_execution_result(result_content, "team streaming execution")
 
         except Exception as e:
@@ -803,7 +857,7 @@ class AgnoAgent(Agent):
                 confidence_value = reasoning.confidence if reasoning.confidence is not None else 0.5
                 next_action_value = reasoning.next_action if reasoning.next_action is not None else "continue"
                 
-                # 构建推理步骤详情，符合目标格式
+                # Build reasoning step details in target format
                 reasoning_details = {
                     "type": "assistant",
                     "message": {
@@ -837,6 +891,10 @@ class AgnoAgent(Agent):
         ]:
             logger.info(f"\n🎯 TEAM EVENT: {run_response_event.event}")
             if run_response_event.event == TeamRunEvent.run_started:
+                # Store run_id for cancel_run functionality
+                if hasattr(run_response_event, 'run_id'):
+                    self.current_run_id = run_response_event.run_id
+                    logger.info(f"Stored run_id: {self.current_run_id}")
                 self.report_progress(
                     75, TaskStatus.RUNNING.value, "${{thinking.team_execution_started}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
                 )
@@ -846,7 +904,7 @@ class AgnoAgent(Agent):
             logger.info(f"\n🔧 TEAM TOOL STARTED: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
             
-            # 构建团队工具调用详情，符合目标格式
+            # Build team tool call details in target format
             team_tool_details = {
                 "type": "assistant",
                 "message": {
@@ -874,7 +932,7 @@ class AgnoAgent(Agent):
         if run_response_event.event in [TeamRunEvent.tool_call_completed]:
             logger.info(f"\n✅ TEAM TOOL COMPLETED: {run_response_event.tool.tool_name}")
             
-            # 构建团队工具结果详情，符合目标格式
+            # Build team tool result details in target format
             team_tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -903,7 +961,7 @@ class AgnoAgent(Agent):
             logger.info(f"   Tool: {run_response_event.tool.tool_name}")
             logger.info(f"   Args: {run_response_event.tool.tool_args}")
             
-            # 构建成员工具调用详情，符合目标格式
+            # Build member tool call details in target format
             member_tool_details = {
                 "type": "assistant",
                 "message": {
@@ -932,7 +990,7 @@ class AgnoAgent(Agent):
                 f"   Result: {run_response_event.tool.result[:100] if run_response_event.tool.result else 'None'}..."
             )
             
-            # 构建成员工具结果详情，符合目标格式
+            # Build member tool result details in target format
             member_tool_result_details = {
                 "type": "assistant",
                 "message": {
@@ -966,11 +1024,24 @@ class AgnoAgent(Agent):
     async def close_client(cls, session_id: str) -> TaskStatus:
         try:
             if session_id in cls._clients:
-                team = cls._clients[session_id]
-                # Clean up team resources if needed
-                team.cancel_run(session_id)
+                client = cls._clients[session_id]
+                # Try to cancel the current run if run_id is available
+                # Note: We need the agent instance to get the run_id
+                # For now, we'll attempt to call cancel_run with session_id as run_id
+                # This may need refinement based on actual usage
+                try:
+                    if isinstance(client, Team) or isinstance(client, AgnoSDKAgent):
+                        # Attempt to cancel any running tasks
+                        # The actual run_id should be tracked at the agent instance level
+                        logger.info(f"Attempting to cancel run for session_id: {session_id}")
+                        # We cannot directly access run_id here, so we skip cancellation
+                        # Cancellation should be done through the agent instance's cancel_run method
+                except Exception as e:
+                    logger.warning(f"Could not cancel run for session_id {session_id}: {str(e)}")
+
+                # Clean up client resources
                 del cls._clients[session_id]
-                logger.info(f"Closed Agno team for session_id: {session_id}")
+                logger.info(f"Closed Agno client for session_id: {session_id}")
                 return TaskStatus.SUCCESS
             return TaskStatus.FAILED
         except Exception as e:
@@ -984,17 +1055,79 @@ class AgnoAgent(Agent):
         """
         Close all client connections
         """
-        for session_id, team in list(cls._clients.items()):
+        for session_id, client in list(cls._clients.items()):
             try:
-                # Clean up team resources if needed
-                team.cancel_run(session_id)
-                logger.info(f"Closed Agno team for session_id: {session_id}")
+                # Attempt to cancel any running tasks
+                # Note: We don't have access to run_id here
+                # Cancellation should ideally be done at the agent instance level
+                logger.info(f"Closing Agno client for session_id: {session_id}")
             except Exception as e:
                 logger.exception(
                     f"Error closing client for session_id {session_id}: {str(e)}"
                 )
         cls._clients.clear()
-    
+
+    def cancel_run(self) -> bool:
+        """
+        Cancel the current running task for this agent instance
+
+        Supports cancellation at any stage of the task lifecycle:
+        1. Immediately mark state as CANCELLED (not CANCELLING)
+        2. If task is executing (has run_id), call SDK's cancel_run()
+        3. No longer send callback here, it will be sent asynchronously by background task to avoid blocking
+
+        Returns:
+            bool: True if cancellation was successful, False otherwise
+        """
+        try:
+            # Layer 1: Immediately mark state as CANCELLED
+            # This ensures execution loops will immediately detect cancellation
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            logger.info(f"Marked task {self.task_id} as CANCELLED immediately")
+
+            # Layer 2: If run_id exists, call SDK's cancel_run()
+            cancelled = False
+            if self.current_run_id is not None:
+                if self.team is not None:
+                    logger.info(f"Cancelling team run with run_id: {self.current_run_id}")
+                    cancelled = self.team.cancel_run(self.current_run_id)
+                elif self.single_agent is not None:
+                    logger.info(f"Cancelling agent run with run_id: {self.current_run_id}")
+                    cancelled = self.single_agent.cancel_run(self.current_run_id)
+
+                if cancelled:
+                    logger.info(f"Successfully cancelled run_id: {self.current_run_id}")
+                    self.current_run_id = None
+                else:
+                    logger.warning(f"Failed to cancel run_id: {self.current_run_id}")
+            else:
+                # Task hasn't started executing yet, no run_id
+                # State is already marked as CANCELLED, execution will exit immediately
+                logger.info(f"Task {self.task_id} has no run_id yet, cancelled before execution")
+                cancelled = True  # Consider cancellation successful
+
+            # Note: No longer send callback here
+            # Callback will be sent asynchronously by background task in main.py to avoid blocking executor_manager's cancel request
+            logger.info(f"Task {self.task_id} cancellation completed, callback will be sent asynchronously")
+
+            return cancelled
+
+        except Exception as e:
+            logger.exception(f"Error cancelling task {self.task_id}: {str(e)}")
+            # Ensure cancelled state even on error
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            return False
+
+    async def _cleanup_resources(self) -> None:
+        """
+        Clean up resources when task is cancelled
+        """
+        try:
+            logger.info(f"Cleaning up resources for task {self.task_id}")
+            await self.resource_manager.cleanup_task_resources(self.task_id)
+        except Exception as e:
+            logger.exception(f"Error cleaning up resources for task {self.task_id}: {str(e)}")
+
     async def cleanup(self) -> None:
         """
         Clean up resources used by the agent

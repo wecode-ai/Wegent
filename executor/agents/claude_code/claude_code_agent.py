@@ -14,6 +14,7 @@ import random
 import string
 import subprocess
 import re
+import time
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime
@@ -31,6 +32,8 @@ from shared.utils.crypto import is_token_encrypted, decrypt_git_token
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 from executor.utils.mcp_utils import extract_mcp_servers_config
+from executor.tasks.task_state_manager import TaskStateManager, TaskState
+from executor.tasks.resource_manager import ResourceManager
 
 logger = setup_logger("claude_code_agent")
 
@@ -118,6 +121,13 @@ class ClaudeCodeAgent(Agent):
         
         # Initialize progress state manager - will be fully initialized when task starts
         self.state_manager: Optional[ProgressStateManager] = None
+        
+        # Initialize task state manager and resource manager
+        self.task_state_manager = TaskStateManager()
+        self.resource_manager = ResourceManager()
+        
+        # Set initial task state to RUNNING
+        self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
@@ -382,6 +392,11 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Initialization status
         """
         try:
+            # Check if task was cancelled before initialization
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} was cancelled before initialization")
+                return TaskStatus.COMPLETED
+            
             self.add_thinking_step_by_key(
                 title_key="thinking.initialize_agent",
                 report_immediately=False
@@ -655,23 +670,57 @@ class ClaudeCodeAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            # Check if task was cancelled before execution
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} was cancelled before execution")
+                await self._cleanup_resources()
+                return TaskStatus.COMPLETED
+            
             progress = 65
             # Update current progress
             self._update_progress(progress)
 
             # Check if a client connection already exists for the corresponding task_id
             if self.session_id in self._clients:
-                logger.info(
-                    f"Reusing existing Claude client for session_id: {self.session_id}"
-                )
-                self.add_thinking_step(
-                    title="Reuse Existing Client",
-                    report_immediately=False,
-                    use_i18n_keys=False,
-                    details={"session_id": self.session_id}
-                )
-                self.client = self._clients[self.session_id]
-            else:
+                cached_client = self._clients[self.session_id]
+
+                # Verify the cached client is still valid
+                # Check if client process is still running
+                try:
+                    if hasattr(cached_client, '_process') and cached_client._process:
+                        if cached_client._process.poll() is not None:
+                            # Process has terminated, remove from cache
+                            logger.warning(
+                                f"Cached client process terminated for session_id: {self.session_id}, creating new client"
+                            )
+                            del self._clients[self.session_id]
+                            # Proceed to create new client
+                        else:
+                            # Process is still running, reuse client
+                            logger.info(
+                                f"Reusing existing Claude client for session_id: {self.session_id}"
+                            )
+                            self.add_thinking_step(
+                                title="Reuse Existing Client",
+                                report_immediately=False,
+                                use_i18n_keys=False,
+                                details={"session_id": self.session_id}
+                            )
+                            self.client = cached_client
+                    else:
+                        # No process info available, assume client is valid
+                        logger.info(
+                            f"Reusing existing Claude client for session_id: {self.session_id}"
+                        )
+                        self.client = cached_client
+                except Exception as e:
+                    logger.warning(f"Error checking client validity: {e}, creating new client")
+                    # Remove potentially invalid client from cache
+                    if self.session_id in self._clients:
+                        del self._clients[self.session_id]
+
+            # Create new client if not reusing
+            if self.client is None:
                 # Create new client connection
                 logger.info(
                     f"Creating new Claude client for session_id: {self.session_id}"
@@ -694,6 +743,20 @@ class ClaudeCodeAgent(Agent):
 
                 # Store client connection for reuse
                 self._clients[self.session_id] = self.client
+                
+                # Register client as a resource for cleanup
+                self.resource_manager.register_resource(
+                    task_id=self.task_id,
+                    resource_id=f"claude_client_{self.session_id}",
+                    cleanup_func=self._cleanup_client,
+                    is_async=True
+                )
+
+            # Check cancellation again before proceeding
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} cancelled during client setup")
+                await self._cleanup_resources()
+                return TaskStatus.COMPLETED
 
             # Prepare prompt
             prompt = self.prompt
@@ -703,6 +766,13 @@ class ClaudeCodeAgent(Agent):
             progress = 75
             # Update current progress
             self._update_progress(progress)
+            
+            # Check cancellation before sending query
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} cancelled before sending query")
+                await self._cleanup_resources()
+                return TaskStatus.COMPLETED
+            
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
             logger.info(
@@ -713,10 +783,21 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Waiting for response for prompt: {prompt}")
             # Process and handle the response using the external processor
-            return await process_response(self.client, self.state_manager, self.thinking_manager)
+            result = await process_response(self.client, self.state_manager, self.thinking_manager, self.task_state_manager)
+            
+            # Update task state based on result
+            if result == TaskStatus.COMPLETED:
+                self.task_state_manager.set_state(self.task_id, TaskState.COMPLETED)
+            elif result == TaskStatus.FAILED:
+                self.task_state_manager.set_state(self.task_id, TaskState.FAILED)
+            
+            return result
 
         except Exception as e:
             return self._handle_execution_error(e, "async execution")
+        finally:
+            # Ensure resources are cleaned up
+            await self.resource_manager.cleanup_task_resources(self.task_id)
 
     def _handle_execution_result(self, result_content: str, execution_type: str = "execution") -> TaskStatus:
         """
@@ -828,3 +909,112 @@ class ClaudeCodeAgent(Agent):
                     f"Error closing client for session_id {session_id}: {str(e)}"
                 )
         cls._clients.clear()
+
+    def cancel_run(self) -> bool:
+        """
+        Cancel the current running task using multi-level cancellation strategy:
+        1. Set cancellation state to CANCELLED immediately (not CANCELLING)
+        2. Try SDK interrupt
+        3. No longer send callback here, it will be sent asynchronously by background task to avoid blocking
+        4. Wait briefly for cleanup
+
+        Returns:
+            bool: True if cancellation was successful, False otherwise
+        """
+        try:
+            # Step 1: Immediately set to CANCELLED state (skip CANCELLING)
+            # This ensures response_processor checks will immediately detect cancellation
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            logger.info(f"Task {self.task_id} marked as cancelled immediately")
+
+            # Step 2: Try SDK interrupt if client is available
+            if self.client and hasattr(self.client, 'interrupt'):
+                self._sync_cancel_run()
+                logger.info(f"Sent interrupt signal to task {self.task_id}")
+            else:
+                logger.warning(f"No client or interrupt method available for task {self.task_id}")
+
+            # Step 3: Wait briefly (2 seconds max) for graceful cleanup
+            max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
+            waited = 0
+            while waited < max_wait:
+                # Check if cleanup completed (task state is None means cleaned up)
+                if self.task_state_manager.get_state(self.task_id) is None:
+                    logger.info(f"Task {self.task_id} cleaned up gracefully")
+                    return True
+                time.sleep(0.1)  # Check more frequently (100ms)
+                waited += 0.1
+
+            # Note: No longer send callback here
+            # Callback will be sent asynchronously by background task in main.py to avoid blocking executor_manager's cancel request
+            logger.info(f"Task {self.task_id} cancelled (cleanup may continue in background), callback will be sent asynchronously")
+            return True
+
+        except Exception as e:
+            logger.exception(f"Error cancelling task {self.task_id}: {e}")
+            # Ensure cancelled state even on error
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            return False
+
+    def _sync_cancel_run(self) -> None:
+        """
+        Synchronous helper method to cancel the current run
+        """
+        try:
+            if self.client is not None:
+                # Check if we're in an async context
+                try:
+                    loop = asyncio.get_running_loop()
+                    # If we're in an async context, create a task
+                    asyncio.create_task(self._async_cancel_run())
+                except RuntimeError:
+                    # No running event loop, run the async method in a new loop
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        loop.run_until_complete(self._async_cancel_run())
+                    finally:
+                        loop.close()
+        except Exception as e:
+            logger.exception(f"Error during sync interrupt for session_id {self.session_id}: {str(e)}")
+
+    async def _async_cancel_run(self) -> None:
+        """
+        Asynchronous helper method to cancel the current run
+        No longer send callback, handled by background task
+        """
+        try:
+            if self.client is not None:
+                await self.client.interrupt()
+                # Note: No longer send callback here
+                # Callback will be sent asynchronously by background task in main.py
+                logger.info(f"Successfully sent interrupt to client for session_id: {self.session_id}")
+        except Exception as e:
+            logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")
+    
+    async def _cleanup_client(self) -> None:
+        """Clean up client connection and remove from cache"""
+        try:
+            if self.client and hasattr(self.client, 'close'):
+                await self.client.close()
+                logger.info(f"Closed client for task {self.task_id}")
+
+            # Remove client from cache to prevent reuse of terminated client
+            if self.session_id in self._clients:
+                del self._clients[self.session_id]
+                logger.info(f"Removed client from cache for session_id: {self.session_id}")
+        except Exception as e:
+            logger.exception(f"Error closing client for task {self.task_id}: {e}")
+    
+    async def _cleanup_resources(self) -> None:
+        """Clean up all task resources"""
+        try:
+            # Use resource manager to clean up all registered resources
+            await self.resource_manager.cleanup_task_resources(self.task_id)
+            
+            # Clean up task state
+            self.task_state_manager.cleanup(self.task_id)
+            
+            logger.info(f"Completed resource cleanup for task {self.task_id}")
+        except Exception as e:
+            logger.exception(f"Error in resource cleanup for task {self.task_id}: {e}")

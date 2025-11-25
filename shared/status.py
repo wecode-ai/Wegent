@@ -14,5 +14,5 @@ class TaskStatus(str, enum.Enum):
     # New status
     INITIALIZED = "INITIALIZED"  # Initialization completed
     PRE_EXECUTED = "PRE_EXECUTED"  # Pre-execution completed
-    CANCELED = "CANCELED"  # Task canceled
+    CANCELLED = "CANCELLED"  # Task cancelled
     TIMEOUT = "TIMEOUT"  # Task execution timeout

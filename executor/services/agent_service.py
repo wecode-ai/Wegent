@@ -17,6 +17,7 @@ from shared.status import TaskStatus
 from executor.agents import Agent, AgentFactory
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.agno.agno_agent import AgnoAgent
+from executor.callback.callback_handler import send_status_callback
 
 logger = setup_logger("agent_service")
 
@@ -54,7 +55,9 @@ class AgentService:
         task_id = task_data.get("task_id", -1)
         subtask_id = task_data.get("subtask_id", -1)
 
-        if (existing_agent := self.get_agent(self._generate_agent_session_id(task_id, subtask_id))):
+        logger.info(f"task_id: [{task_id}] Creating agent")
+
+        if (existing_agent := self.get_agent(f"{task_id}")):
             logger.info(f"[{_format_task_log(task_id, subtask_id)}] Reusing existing agent")
             return existing_agent
 
@@ -78,6 +81,7 @@ class AgentService:
                 return None
 
             self._agent_sessions[task_id] = AgentSession(agent=agent, created_at=time.time())
+            logger.info(f"task_id: [{task_id}] Agent created")
             return agent
 
         except Exception as e:
@@ -96,8 +100,8 @@ class AgentService:
         task_id = task_data.get("task_id", -1)
         subtask_id = task_data.get("subtask_id", -1)
         try:
-            agent = self.get_agent(self._generate_agent_session_id(task_id, subtask_id))
-            
+            agent = self.get_agent(f"{task_id}")
+
             # If agent exists, update prompt
             if agent and hasattr(agent, 'update_prompt') and "prompt" in task_data:
                 new_prompt = task_data.get("prompt", "")
@@ -157,6 +161,83 @@ class AgentService:
         except Exception as e:
             logger.exception(f"[{task_id}] Unexpected error deleting session: {e}")
             return TaskStatus.FAILED, str(e)
+
+    def cancel_task(self, task_id: int) -> Tuple[TaskStatus, Optional[str]]:
+        """
+        Cancel the currently running task for a given task_id
+
+        Args:
+            task_id: The task ID to cancel
+
+        Returns:
+            Tuple of (TaskStatus, error message or None)
+        """
+        logger.info(f"task_id: [{task_id}] Cancelling task")
+        session = self._agent_sessions.get(task_id)
+        if not session:
+            return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] No session found"
+
+        try:
+            agent = session.agent
+            agent_name = agent.get_name()
+
+            if hasattr(agent, 'cancel_run'):
+                success = agent.cancel_run()
+                if success:
+                    logger.info(f"[{_format_task_log(task_id, -1)}] Successfully cancelled {agent_name} task")
+                    return TaskStatus.SUCCESS, f"[{_format_task_log(task_id, -1)}] Task cancelled"
+                else:
+                    logger.warning(f"[{_format_task_log(task_id, -1)}] Failed to cancel {agent_name} task")
+                    return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] Cancel failed"
+            else:
+                return TaskStatus.FAILED, f"[{_format_task_log(task_id, -1)}] {agent_name} agent does not support cancellation"
+
+        except Exception as e:
+            logger.exception(f"[{task_id}] Error cancelling task: {e}")
+            return TaskStatus.FAILED, str(e)
+
+    async def send_cancel_callback_async(self, task_id: int) -> None:
+        """
+        Asynchronously send cancel task callback
+        This method is called in a background task and will not block the cancel API response
+        
+        Args:
+            task_id: Task ID
+        """
+        try:
+            session = self._agent_sessions.get(task_id)
+            if not session:
+                logger.warning(f"[{_format_task_log(task_id, -1)}] No session found for sending cancel callback")
+                return
+            
+            agent = session.agent
+            task_data = getattr(agent, 'task_data', {})
+            
+            # Get task information
+            subtask_id = task_data.get("subtask_id", -1)
+            task_title = task_data.get("task_title", "")
+            subtask_title = task_data.get("subtask_title", "")
+            
+            logger.info(f"[{_format_task_log(task_id, subtask_id)}] Sending cancel callback asynchronously")
+            
+            # Send CANCELLED status callback (not COMPLETED)
+            result = send_status_callback(
+                task_id=task_id,
+                subtask_id=subtask_id,
+                task_title=task_title,
+                subtask_title=subtask_title,
+                status=TaskStatus.CANCELLED.value,
+                message="${{tasks.cancel_task}}",
+                progress=100
+            )
+            
+            if result and result.get("status") == TaskStatus.SUCCESS.value:
+                logger.info(f"[{_format_task_log(task_id, subtask_id)}] Cancel callback sent successfully")
+            else:
+                logger.error(f"[{_format_task_log(task_id, subtask_id)}] Failed to send cancel callback: {result}")
+                
+        except Exception as e:
+            logger.exception(f"[{task_id}] Error sending cancel callback: {e}")
 
     def list_sessions(self) -> List[Dict[str, Any]]:
         return [

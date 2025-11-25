@@ -61,7 +61,14 @@ export interface TeamBot {
 
 /** TaskDetail structure (adapted to latest backend response) */
 // Task Types
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'DELETE';
+export type TaskStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'CANCELLING'
+  | 'DELETE';
 export type TaskType = 'chat' | 'code';
 
 // Git commit statistics

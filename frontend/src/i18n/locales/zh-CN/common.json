@@ -252,6 +252,7 @@
     "search_results": "搜索结果",
     "no_search_results": "没有匹配的任务",
     "copy_task_id": "复制任务ID",
+    "cancel_task": "取消任务",
     "delete_task": "删除任务",
     "searching": "搜索中...",
     "mark_all_read": "全部标记为已读",
