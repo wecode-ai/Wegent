@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import McpConfigImportModal from './McpConfigImportModal';
+import DifyBotConfig from './DifyBotConfig';
 
 import { Bot } from '@/types/api';
 import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
@@ -76,6 +77,9 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [mcpConfigError, setMcpConfigError] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false);
+
+  // Check if current agent is Dify
+  const isDifyAgent = useMemo(() => agentName === 'Dify', [agentName]);
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -319,7 +323,6 @@ const BotEdit: React.FC<BotEditProps> = ({
   }, [handleBack]);
 
   // Save logic
-  // Save logic
   const handleSave = async () => {
     if (!botName.trim() || !agentName.trim()) {
       toast({
@@ -328,8 +331,33 @@ const BotEdit: React.FC<BotEditProps> = ({
       });
       return;
     }
+
     let parsedAgentConfig: unknown = undefined;
-    if (isCustomModel) {
+
+    // For Dify agent, always use custom model configuration
+    if (isDifyAgent) {
+      const trimmedConfig = agentConfig.trim();
+      if (!trimmedConfig) {
+        setAgentConfigError(true);
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.agent_config_json'),
+        });
+        return;
+      }
+      try {
+        parsedAgentConfig = JSON.parse(trimmedConfig);
+        setAgentConfigError(false);
+      } catch {
+        setAgentConfigError(true);
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.agent_config_json'),
+        });
+        return;
+      }
+    } else if (isCustomModel) {
+      // Non-Dify custom model configuration
       const trimmedConfig = agentConfig.trim();
       if (!trimmedConfig) {
         setAgentConfigError(true);
@@ -355,7 +383,9 @@ const BotEdit: React.FC<BotEditProps> = ({
     }
 
     let parsedMcpConfig: Record<string, unknown> | null = null;
-    if (mcpConfig.trim()) {
+
+    // Skip MCP config for Dify agent
+    if (!isDifyAgent && mcpConfig.trim()) {
       try {
         parsedMcpConfig = JSON.parse(mcpConfig);
         // Adapt MCP config types based on selected agent
@@ -378,13 +408,14 @@ const BotEdit: React.FC<BotEditProps> = ({
     } else {
       setMcpConfigError(false);
     }
+
     setBotSaving(true);
     try {
       const botReq: CreateBotRequest = {
         name: botName.trim(),
         agent_name: agentName.trim(),
         agent_config: parsedAgentConfig as Record<string, unknown>,
-        system_prompt: prompt.trim() || '',
+        system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
         mcp_servers: parsedMcpConfig ?? {},
       };
       if (editingBotId && editingBotId > 0) {
@@ -526,109 +557,120 @@ const BotEdit: React.FC<BotEditProps> = ({
             </Select>
           </div>
 
-          {/* Agent Config */}
-          <div className="flex flex-col">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <label className="block text-base font-medium text-text-primary">
-                  {t('bot.agent_config')} <span className="text-red-400">*</span>
-                </label>
-                {/* Help Icon */}
-                <button
-                  type="button"
-                  onClick={() => handleOpenModelDocs()}
-                  className="text-text-muted hover:text-primary transition-colors"
-                  title={t('bot.view_model_config_guide')}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          {/* Conditional rendering based on agent type */}
+          {isDifyAgent ? (
+            /* Dify Mode: Show specialized Dify configuration */
+            <DifyBotConfig
+              agentConfig={agentConfig}
+              onAgentConfigChange={setAgentConfig}
+              toast={toast}
+            />
+          ) : (
+            /* Normal Mode: Show standard configuration options */
+            <>
+              {/* Agent Config */}
+              <div className="flex flex-col">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <label className="block text-base font-medium text-text-primary">
+                      {t('bot.agent_config')} <span className="text-red-400">*</span>
+                    </label>
+                    {/* Help Icon */}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenModelDocs()}
+                      className="text-text-muted hover:text-primary transition-colors"
+                      title={t('bot.view_model_config_guide')}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
+                      </svg>
+                    </button>
+                    {/* Template Button - Only show when Custom Model is enabled */}
+                    {isCustomModel && (
+                      <button
+                        type="button"
+                        onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
+                        className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+                        title={t('bot.quick_templates')}
+                      >
+                        <span className="text-sm">📋</span>
+                        <span>{t('bot.template')}</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
+                    <Switch
+                      checked={isCustomModel}
+                      onCheckedChange={(checked: boolean) => {
+                        setIsCustomModel(checked);
+                        if (checked) {
+                          setAgentConfig('');
+                          setAgentConfigError(false);
+                        }
+                        if (!checked) {
+                          setAgentConfigError(false);
+                          setTemplateSectionExpanded(false);
+                        }
+                      }}
                     />
-                  </svg>
-                </button>
-                {/* Template Button - Only show when Custom Model is enabled */}
-                {isCustomModel && (
-                  <button
-                    type="button"
-                    onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
-                    className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
-                    title={t('bot.quick_templates')}
-                  >
-                    <span className="text-sm">📋</span>
-                    <span>{t('bot.template')}</span>
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center">
-                <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
-                <Switch
-                  checked={isCustomModel}
-                  onCheckedChange={(checked: boolean) => {
-                    setIsCustomModel(checked);
-                    if (checked) {
-                      setAgentConfig('');
-                      setAgentConfigError(false);
-                    }
-                    if (!checked) {
-                      setAgentConfigError(false);
-                      setTemplateSectionExpanded(false);
-                    }
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Template Expanded Content - Only show when expanded */}
-            {isCustomModel && templateSectionExpanded && (
-              <div className="mb-3 bg-base-secondary rounded-md p-3">
-                <div className="flex gap-2 flex-wrap mb-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleApplyClaudeSonnetTemplate()}
-                    className="text-xs"
-                    type="button"
-                  >
-                    Claude Sonnet 4 {t('bot.template')}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleApplyOpenAIGPT4Template()}
-                    className="text-xs"
-                    type="button"
-                  >
-                    OpenAI GPT-4 {t('bot.template')}
-                  </Button>
+                  </div>
                 </div>
-                <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
-              </div>
-            )}
 
-            {isCustomModel ? (
-              <textarea
-                value={agentConfig}
-                onChange={e => {
-                  const value = e.target.value;
-                  setAgentConfig(value);
-                  if (!value.trim()) {
-                    setAgentConfigError(false);
-                  }
-                }}
-                onBlur={prettifyAgentConfig}
-                rows={4}
-                placeholder={
-                  agentName === 'ClaudeCode'
-                    ? `{
+                {/* Template Expanded Content - Only show when expanded */}
+                {isCustomModel && templateSectionExpanded && (
+                  <div className="mb-3 bg-base-secondary rounded-md p-3">
+                    <div className="flex gap-2 flex-wrap mb-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleApplyClaudeSonnetTemplate()}
+                        className="text-xs"
+                        type="button"
+                      >
+                        Claude Sonnet 4 {t('bot.template')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleApplyOpenAIGPT4Template()}
+                        className="text-xs"
+                        type="button"
+                      >
+                        OpenAI GPT-4 {t('bot.template')}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
+                  </div>
+                )}
+
+                {isCustomModel ? (
+                  <textarea
+                    value={agentConfig}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setAgentConfig(value);
+                      if (!value.trim()) {
+                        setAgentConfigError(false);
+                      }
+                    }}
+                    onBlur={prettifyAgentConfig}
+                    rows={4}
+                    placeholder={
+                      agentName === 'ClaudeCode'
+                        ? `{
   "env": {
     "model": "claude",
     "model_id": "xxxxx",
@@ -636,8 +678,8 @@ const BotEdit: React.FC<BotEditProps> = ({
     "base_url": "xxxxxx"
   }
 }`
-                    : agentName === 'Agno'
-                      ? `{
+                        : agentName === 'Agno'
+                          ? `{
   "env": {
     "model": "openai",
     "model_id": "xxxxxx",
@@ -645,56 +687,56 @@ const BotEdit: React.FC<BotEditProps> = ({
     "base_url": "xxxxxx"
   }
 }`
-                      : ''
-                }
-                className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
-              />
-            ) : (
-              <Select
-                value={selectedModel}
-                onValueChange={value => {
-                  setSelectedModel(value);
-                }}
-                disabled={loadingModels}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map(model => (
-                    <SelectItem key={model.name} value={model.name}>
-                      {model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          {/* MCP Config */}
-          <div className="flex flex-col flex-grow">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center">
-                <label className="block text-base font-medium text-text-primary">
-                  {t('bot.mcp_config')}
-                </label>
+                          : ''
+                    }
+                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
+                  />
+                ) : (
+                  <Select
+                    value={selectedModel}
+                    onValueChange={value => {
+                      setSelectedModel(value);
+                    }}
+                    disabled={loadingModels}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a model" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.map(model => (
+                        <SelectItem key={model.name} value={model.name}>
+                          {model.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
               </div>
-              <Button size="sm" onClick={() => handleImportMcpConfig()} className="text-xs">
-                {t('bot.import_mcp_button')}
-              </Button>
-            </div>
-            <textarea
-              value={mcpConfig}
-              onChange={e => {
-                const value = e.target.value;
-                setMcpConfig(value);
-                if (!value.trim()) {
-                  setMcpConfigError(false);
-                }
-              }}
-              onBlur={prettifyMcpConfig}
-              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
-              placeholder={`{
+
+              {/* MCP Config */}
+              <div className="flex flex-col flex-grow">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center">
+                    <label className="block text-base font-medium text-text-primary">
+                      {t('bot.mcp_config')}
+                    </label>
+                  </div>
+                  <Button size="sm" onClick={() => handleImportMcpConfig()} className="text-xs">
+                    {t('bot.import_mcp_button')}
+                  </Button>
+                </div>
+                <textarea
+                  value={mcpConfig}
+                  onChange={e => {
+                    const value = e.target.value;
+                    setMcpConfig(value);
+                    if (!value.trim()) {
+                      setMcpConfigError(false);
+                    }
+                  }}
+                  onBlur={prettifyMcpConfig}
+                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
+                  placeholder={`{
   "github": {
     "command": "docker",
     "args": [
@@ -716,29 +758,33 @@ const BotEdit: React.FC<BotEditProps> = ({
     }
   }
 }`}
-            />
-          </div>
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Right Prompt area - responsive layout */}
-        <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col min-h-0">
-          <div className="mb-1 flex-shrink-0">
-            <div className="flex items-center">
-              <label className="block text-base font-medium text-text-primary">
-                {t('bot.prompt')}
-              </label>
-              <span className="text-xs text-text-muted ml-2">AI prompt</span>
+        {!isDifyAgent && (
+          <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col min-h-0">
+            <div className="mb-1 flex-shrink-0">
+              <div className="flex items-center">
+                <label className="block text-base font-medium text-text-primary">
+                  {t('bot.prompt')}
+                </label>
+                <span className="text-xs text-text-muted ml-2">AI prompt</span>
+              </div>
             </div>
-          </div>
 
-          {/* textarea occupies all space in the second row */}
-          <textarea
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            placeholder={t('bot.prompt_placeholder')}
-            className="w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow"
-          />
-        </div>
+            {/* textarea occupies all space in the second row */}
+            <textarea
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              placeholder={t('bot.prompt_placeholder')}
+              className="w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow"
+            />
+          </div>
+        )}
       </div>
 
       {/* MCP Configuration Import Modal */}
