@@ -5,6 +5,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 import json
+import copy
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -17,12 +18,43 @@ from app.models.public_shell import PublicShell
 from app.schemas.bot import BotCreate, BotUpdate, BotInDB, BotDetail
 from app.schemas.kind import Ghost, Bot, Shell, Model, Team
 from app.services.base import BaseService
+from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
 class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     """
     Bot service class using kinds table
     """
+
+    # List of sensitive keys that should be encrypted in agent_config
+    SENSITIVE_CONFIG_KEYS = [
+        "DIFY_API_KEY",
+        # Add more sensitive keys here as needed
+    ]
+
+    def _encrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Encrypt sensitive data in agent_config before storing
+
+        Args:
+            agent_config: Original agent config dictionary
+
+        Returns:
+            Agent config with encrypted sensitive fields
+        """
+        # Create a deep copy to avoid modifying the original
+        encrypted_config = copy.deepcopy(agent_config)
+
+        # Encrypt sensitive keys in env section
+        if "env" in encrypted_config:
+            for key in self.SENSITIVE_CONFIG_KEYS:
+                if key in encrypted_config["env"]:
+                    value = encrypted_config["env"][key]
+                    # Only encrypt if not already encrypted
+                    if value and not is_data_encrypted(str(value)):
+                        encrypted_config["env"][key] = encrypt_sensitive_data(str(value))
+
+        return encrypted_config
 
     def create_with_user(
         self, db: Session, *, obj_in: BotCreate, user_id: int
@@ -43,6 +75,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 status_code=400,
                 detail="Bot name already exists, please modify the name"
             )
+
+        # Encrypt sensitive data in agent_config before storing
+        encrypted_agent_config = self._encrypt_agent_config(obj_in.agent_config)
 
         # Create Ghost
         ghost_json = {
@@ -75,7 +110,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         model_json = {
             "kind": "Model",
             "spec": {
-                "modelConfig": obj_in.agent_config
+                "modelConfig": encrypted_agent_config
             },
             "status": {
                 "state": "Available"
@@ -318,7 +353,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         if "agent_config" in update_data and model:
             model_crd = Model.model_validate(model.json)
-            model_crd.spec.modelConfig = update_data["agent_config"]
+            # Encrypt sensitive data before updating
+            encrypted_agent_config = self._encrypt_agent_config(update_data["agent_config"])
+            model_crd.spec.modelConfig = encrypted_agent_config
             model.json = model_crd.model_dump()
             flag_modified(model, "json")  # Mark JSON field as modified
 

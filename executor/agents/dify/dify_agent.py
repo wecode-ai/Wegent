@@ -14,6 +14,7 @@ from executor.agents.base import Agent
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.models.task import ExecutionResult
+from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 logger = setup_logger("dify_agent")
 
@@ -110,7 +111,12 @@ class DifyAgent(Agent):
             # agent_config structure: {"env": {"DIFY_API_KEY": "xxx", "DIFY_BASE_URL": "xxx"}}
             env = agent_config.get("env", {})
 
-            config["api_key"] = env.get("DIFY_API_KEY", "")
+            # Extract and decrypt API key
+            api_key = env.get("DIFY_API_KEY", "")
+            if api_key and is_data_encrypted(api_key):
+                api_key = decrypt_sensitive_data(api_key) or ""
+
+            config["api_key"] = api_key
             config["base_url"] = env.get("DIFY_BASE_URL", "https://api.dify.ai")  # Default base URL
             config["app_id"] = env.get("DIFY_APP_ID", "")
 

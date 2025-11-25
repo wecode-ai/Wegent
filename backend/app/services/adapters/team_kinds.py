@@ -5,6 +5,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 import json
+import copy
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -17,11 +18,44 @@ from app.models.shared_team import SharedTeam
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInDB, TeamDetail, BotInfo
 from app.schemas.kind import Team, Bot, Ghost, Shell, Model, Task
 from app.services.base import BaseService
+from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     """
     Team service class using kinds table
     """
+
+    # List of sensitive keys that should be decrypted when reading
+    SENSITIVE_CONFIG_KEYS = [
+        "DIFY_API_KEY",
+        # Add more sensitive keys here as needed
+    ]
+
+    def _decrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Decrypt sensitive data in agent_config when reading
+
+        Args:
+            agent_config: Agent config with potentially encrypted fields
+
+        Returns:
+            Agent config with decrypted sensitive fields
+        """
+        # Create a deep copy to avoid modifying the original
+        decrypted_config = copy.deepcopy(agent_config)
+
+        # Decrypt sensitive keys in env section
+        if "env" in decrypted_config:
+            for key in self.SENSITIVE_CONFIG_KEYS:
+                if key in decrypted_config["env"]:
+                    value = decrypted_config["env"][key]
+                    # Only decrypt if it appears to be encrypted
+                    if value and is_data_encrypted(str(value)):
+                        decrypted_value = decrypt_sensitive_data(str(value))
+                        if decrypted_value:
+                            decrypted_config["env"][key] = decrypted_value
+
+        return decrypted_config
 
     def create_with_user(
         self, db: Session, *, obj_in: TeamCreate, user_id: int
@@ -877,7 +911,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get bot's agent config to extract API credentials
         bot_spec = external_api_bot.spec
         agent_config = bot_spec.agentConfig or {}
-        env = agent_config.get("env", {})
+
+        # Decrypt sensitive data before using
+        decrypted_agent_config = self._decrypt_agent_config(agent_config)
+        env = decrypted_agent_config.get("env", {})
 
         # For Dify bots, we need to call Dify API to get parameters
         # But we do this server-side, not exposing Dify-specific logic to frontend
