@@ -17,7 +17,8 @@ class Settings(BaseSettings):
 
     # Executor configuration
     EXECUTOR_DELETE_TASK_URL: str = "http://localhost:8001/executor-manager/executor/delete"
-    
+    EXECUTOR_CANCEL_TASK_URL: str = "http://localhost:8001/executor-manager/tasks/cancel"
+
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"

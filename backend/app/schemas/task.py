@@ -18,6 +18,7 @@ class TaskStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    CANCELLING = "CANCELLING"
     DELETE = "DELETE"
 
 class TaskBase(BaseModel):

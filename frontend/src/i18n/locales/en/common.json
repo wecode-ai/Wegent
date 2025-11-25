@@ -251,6 +251,7 @@
     "search_results": "Search Results",
     "no_search_results": "No matching tasks",
     "copy_task_id": "Copy TaskId",
+    "cancel_task": "Cancel Task",
     "delete_task": "Delete Task",
     "searching": "Searching...",
     "mark_all_read": "Mark all as read",

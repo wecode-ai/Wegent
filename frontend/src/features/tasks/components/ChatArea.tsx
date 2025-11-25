@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef } from 'react';
-import { Send } from 'lucide-react';
+import { Send, CircleStop } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -21,6 +21,7 @@ import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
 import { useToast } from '@/hooks/use-toast';
+import { taskApis } from '@/apis/tasks';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -241,6 +242,65 @@ export default function ChatArea({
     setIsLoading(false);
   };
 
+  const [isCancelling, setIsCancelling] = useState(false);
+
+  const handleCancelTask = async () => {
+    if (!selectedTaskDetail?.id || isCancelling) return;
+
+    setIsCancelling(true);
+
+    try {
+      // Create a 60-second timeout promise
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('Cancel operation timed out')), 60000);
+      });
+
+      // Race between cancel API call and timeout
+      await Promise.race([taskApis.cancelTask(selectedTaskDetail.id), timeoutPromise]);
+
+      toast({
+        title: 'Task cancelled successfully',
+        description: 'The task has been cancelled.',
+      });
+
+      // Refresh to update status
+      refreshTasks();
+      refreshSelectedTaskDetail(false);
+    } catch (err: unknown) {
+      const errorMessage =
+        err instanceof Error && err.message === 'Cancel operation timed out'
+          ? 'Cancel operation timed out, please check task status later'
+          : 'Failed to cancel task';
+
+      toast({
+        variant: 'destructive',
+        title: errorMessage,
+        action: (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setIsCancelling(false);
+              handleCancelTask();
+            }}
+          >
+            Retry
+          </Button>
+        ),
+      });
+
+      console.error('Cancel task failed:', err);
+
+      // Still refresh status even on timeout
+      if (err instanceof Error && err.message === 'Cancel operation timed out') {
+        refreshTasks();
+        refreshSelectedTaskDetail(false);
+      }
+    } finally {
+      setIsCancelling(false);
+    }
+  };
+
   const scrollToBottom = (force = false) => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -404,25 +464,52 @@ export default function ChatArea({
                     </div>
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                       {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={handleSendMessage}
-                        disabled={
-                          isLoading ||
-                          selectedTaskDetail?.status === 'PENDING' ||
-                          selectedTaskDetail?.status === 'RUNNING'
-                        }
-                        className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
-                      >
-                        {isLoading ||
-                        selectedTaskDetail?.status === 'PENDING' ||
-                        selectedTaskDetail?.status === 'RUNNING' ? (
+                      {selectedTaskDetail?.status === 'PENDING' ? (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          disabled
+                          className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
+                        >
                           <LoadingDots />
+                        </Button>
+                      ) : selectedTaskDetail?.status === 'RUNNING' ? (
+                        isCancelling ? (
+                          <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                            <CircleStop className="h-5 w-5 text-orange-500" />
+                          </div>
                         ) : (
-                          <Send className="h-5 w-5 text-text-muted" />
-                        )}
-                      </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={handleCancelTask}
+                            className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
+                            title="Cancel task"
+                          >
+                            <CircleStop className="h-5 w-5 text-orange-500" />
+                          </Button>
+                        )
+                      ) : selectedTaskDetail?.status === 'CANCELLING' ? (
+                        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                          <CircleStop className="h-5 w-5 text-orange-500" />
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={handleSendMessage}
+                          disabled={isLoading || !taskInputMessage.trim()}
+                          className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                        >
+                          {isLoading ? (
+                            <LoadingDots />
+                          ) : (
+                            <Send className="h-5 w-5 text-text-muted" />
+                          )}
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -490,25 +577,48 @@ export default function ChatArea({
                   </div>
                   <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                     {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={handleSendMessage}
-                      disabled={
-                        isLoading ||
-                        selectedTaskDetail?.status === 'PENDING' ||
-                        selectedTaskDetail?.status === 'RUNNING'
-                      }
-                      className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
-                    >
-                      {isLoading ||
-                      selectedTaskDetail?.status === 'PENDING' ||
-                      selectedTaskDetail?.status === 'RUNNING' ? (
+                    {selectedTaskDetail?.status === 'PENDING' ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        disabled
+                        className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
+                      >
                         <LoadingDots />
+                      </Button>
+                    ) : selectedTaskDetail?.status === 'RUNNING' ? (
+                      isCancelling ? (
+                        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                          <CircleStop className="h-5 w-5 text-orange-500" />
+                        </div>
                       ) : (
-                        <Send className="h-5 w-5 text-text-muted" />
-                      )}
-                    </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={handleCancelTask}
+                          className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
+                          title="Cancel task"
+                        >
+                          <CircleStop className="h-5 w-5 text-orange-500" />
+                        </Button>
+                      )
+                    ) : selectedTaskDetail?.status === 'CANCELLING' ? (
+                      <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                        <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                        <CircleStop className="h-5 w-5 text-orange-500" />
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={handleSendMessage}
+                        disabled={isLoading || !taskInputMessage.trim()}
+                        className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                      >
+                        {isLoading ? <LoadingDots /> : <Send className="h-5 w-5 text-text-muted" />}
+                      </Button>
+                    )}
                   </div>
                 </div>
               </div>
