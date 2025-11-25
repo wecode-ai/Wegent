@@ -94,14 +94,18 @@ export default function TaskSidebar({
   const groupTasksByDate = React.useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+
+    // Calculate the start of this week (Monday 00:00:00)
+    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
+    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday, 6 days back; otherwise (dayOfWeek - 1)
+    const thisMonday = new Date(today.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
 
     const todayTasks = tasks.filter(task => new Date(task.created_at) >= today);
     const thisWeekTasks = tasks.filter(task => {
       const taskDate = new Date(task.created_at);
-      return taskDate >= weekAgo && taskDate < today;
+      return taskDate >= thisMonday && taskDate < today;
     });
-    const earlierTasks = tasks.filter(task => new Date(task.created_at) < weekAgo);
+    const earlierTasks = tasks.filter(task => new Date(task.created_at) < thisMonday);
 
     return {
       today: todayTasks,
