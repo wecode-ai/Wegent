@@ -162,6 +162,8 @@ class Agent:
         branch_name = self.task_data.get("branch_name")
         repo_name = git_util.get_repo_name_from_url(git_url)
         logger.info(f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}")
+        logger.info("username: {username} git token: {git_token}")
+        logger.info(user_config)
 
         project_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id),repo_name)
         if self.project_path is None:

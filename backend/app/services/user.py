@@ -25,16 +25,18 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         from app.repository.github_provider import GitHubProvider
         from app.repository.gitlab_provider import GitLabProvider
         from app.repository.gitee_provider import GiteeProvider
+        from app.repository.gerrit_provider import GerritProvider
 
         # Provider mapping
         providers = {
             "github": GitHubProvider(),
             "gitlab": GitLabProvider(),
-            "gitee": GiteeProvider()
+            "gitee": GiteeProvider(),
+            "gerrit": GerritProvider()
         }
-        
+
         validated_git_info = []
-        
+
         for git_item in git_info:
             # Validate required fields
             if not git_item.get("git_token"):
@@ -43,11 +45,15 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 raise ValidationException("git_domain is required")
             if not git_item.get("type"):
                 raise ValidationException("type is required")
-            
+
             provider_type = git_item.get("type")
             if provider_type not in providers:
                 raise ValidationException(f"Unsupported provider type: {provider_type}")
-            
+
+            # Gerrit requires username
+            if provider_type == "gerrit" and not git_item.get("user_name"):
+                raise ValidationException("username is required for Gerrit")
+
             provider = providers[provider_type]
 
             # Get the plain token for validation
@@ -56,7 +62,17 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             try:
                 # Use specific provider's validate_token method with custom domain
                 git_domain = git_item.get("git_domain")
-                validation_result = provider.validate_token(plain_token, git_domain=git_domain)
+
+                # Gerrit requires username parameter for validation
+                if provider_type == "gerrit":
+                    username = git_item.get("user_name")
+                    validation_result = provider.validate_token(
+                        plain_token,
+                        git_domain=git_domain,
+                        user_name=username
+                    )
+                else:
+                    validation_result = provider.validate_token(plain_token, git_domain=git_domain)
 
                 if not validation_result.get("valid", False):
                     raise ValidationException(
@@ -156,13 +172,26 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             user.email = obj_in.email
 
         if obj_in.git_info is not None:
-            # Validate git_info only if validation is enabled
-            git_info = [git_item.model_dump() for git_item in obj_in.git_info]
+            # Get existing git_info
+            existing_git_info = user.git_info or []
+            existing_domains = {item.get("git_domain"): item for item in existing_git_info}
+            
+            # Convert incoming git_info to dict
+            incoming_git_info = [git_item.model_dump() for git_item in obj_in.git_info]
+            
+            # Validate only the incoming git_info items
             if validate_git_info:
-                git_info = self._validate_git_info(git_info)
+                incoming_git_info = self._validate_git_info(incoming_git_info)
                 if user.email is None or user.email == '':
-                    user.email = git_info[0]["git_email"]
-            user.git_info = git_info
+                    user.email = incoming_git_info[0]["git_email"]
+            
+            # Merge: update existing items or add new ones
+            for git_item in incoming_git_info:
+                domain = git_item.get("git_domain")
+                existing_domains[domain] = git_item
+            
+            # Convert back to list
+            user.git_info = list(existing_domains.values())
         
         if obj_in.password:
             user.password_hash = security.get_password_hash(obj_in.password)

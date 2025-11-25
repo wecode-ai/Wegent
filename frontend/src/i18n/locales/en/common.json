@@ -319,7 +319,8 @@
     "error": {
       "required": "Please fill in all required fields",
       "save_failed": "Save failed",
-      "invalid_domain": "Please enter a valid domain (e.g. gitlab.example.com) without protocol or trailing slash"
+      "invalid_domain": "Please enter a valid domain (e.g. gitlab.example.com or http://gitlab.internal.com)",
+      "gerrit_username_required": "Username is required for Gerrit"
     },
     "modal": {
       "title_edit": "Edit Token",
@@ -328,11 +329,16 @@
     "platform": "Platform",
     "platform_github": "GitHub",
     "platform_gitlab": "GitLab",
+    "platform_gerrit": "Gerrit",
     "domain": "Platform Domain",
+    "username": "Username",
+    "username_placeholder": "Gerrit username",
     "token": {
       "title": "Personal Access Token",
+      "title_gerrit": "HTTP password",
       "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
-      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx"
+      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gerrit": "HTTP password from Gerrit Settings"
     },
     "howto": {
       "step1_visit": "1. Visit",
@@ -345,6 +351,11 @@
         "title": "How to get your GitLab token:",
         "step2": "2. Click \"Add new token\"",
         "step3": "3. Select appropriate scopes and copy the generated token"
+      },
+      "gerrit": {
+        "title": "How to get Gerrit HTTP password:",
+        "step2": "2. Generate a new HTTP password under \"HTTP Credentials\"",
+        "step3": "3. Copy the username and password, and paste them here"
       }
     },
     "saving": "Saving...",

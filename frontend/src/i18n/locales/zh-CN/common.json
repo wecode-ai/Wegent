@@ -320,7 +320,8 @@
     "error": {
       "required": "请填写所有必填项",
       "save_failed": "保存失败",
-      "invalid_domain": "请输入有效的域名（如 gitlab.example.com），不要包含协议或结尾斜杠"
+      "invalid_domain": "请输入有效的域名(如 gitlab.example.com 或 http://gitlab.internal.com)",
+      "gerrit_username_required": "Gerrit 需要填写用户名"
     },
     "modal": {
       "title_edit": "编辑令牌",
@@ -329,23 +330,33 @@
     "platform": "平台",
     "platform_github": "GitHub",
     "platform_gitlab": "GitLab",
+    "platform_gerrit": "Gerrit",
     "domain": "平台域名",
+    "username": "用户名",
+    "username_placeholder": "Gerrit 用户名",
     "token": {
       "title": "个人访问令牌",
+      "title_gerrit": "HTTP password",
       "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
-      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx"
+      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gerrit": "从 Gerrit 设置中获取的 HTTP password"
     },
     "howto": {
       "step1_visit": "1. 访问",
       "github": {
         "title": "如何获取 GitHub 令牌：",
-        "step2": "2. 点击“Generate new token (classic)”",
+        "step2": "2. 点击 \"Generate new token (classic)\"",
         "step3": "3. 选择合适的权限范围并复制生成的令牌"
       },
       "gitlab": {
         "title": "如何获取 GitLab 令牌：",
-        "step2": "2. 点击“Add new token”",
+        "step2": "2. 点击 \"Add new token\"",
         "step3": "3. 选择合适的权限范围并复制生成的令牌"
+      },
+      "gerrit": {
+        "title": "如何获取 Gerrit HTTP password：",
+        "step2": "2. 在 \"HTTP Credentials\" 下生成新的 HTTP password",
+        "step3": "3. 复制用户名和password,并粘贴到此处"
       }
     },
     "saving": "保存中...",
