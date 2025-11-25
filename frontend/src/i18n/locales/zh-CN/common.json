@@ -46,7 +46,9 @@
   "sidebar": {
     "recent_visits": "最近访问",
     "light_mode": "浅色模式",
-    "dark_mode": "深色模式"
+    "dark_mode": "深色模式",
+    "collapse": "缩起侧边栏",
+    "expand": "展开侧边栏"
   },
   "user": {
     "default_name": "用户",

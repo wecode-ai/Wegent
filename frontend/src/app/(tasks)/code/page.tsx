@@ -48,6 +48,9 @@ export default function CodePage() {
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
+  // Collapsed sidebar state
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
   // Selected team state for sharing
   const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null);
 
@@ -59,6 +62,14 @@ export default function CodePage() {
 
   // Check if user has git token
   const hasGitToken = !!(user?.git_info && user.git_info.length > 0);
+
+  // Load collapsed state from localStorage
+  useEffect(() => {
+    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed');
+    if (savedCollapsed === 'true') {
+      setIsCollapsed(true);
+    }
+  }, []);
 
   // Auto-open workbench when taskId is present
   useEffect(() => {
@@ -111,6 +122,14 @@ export default function CodePage() {
     return await refreshTeams();
   };
 
+  const handleToggleCollapsed = () => {
+    setIsCollapsed(prev => {
+      const newValue = !prev;
+      localStorage.setItem('task-sidebar-collapsed', String(newValue));
+      return newValue;
+    });
+  };
+
   return (
     <>
       {/* Handle OIDC token from URL parameters */}
@@ -135,11 +154,13 @@ export default function CodePage() {
       />
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Responsive resizable sidebar - fixed, not affected by right panel */}
-        <ResizableSidebar>
+        <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
           <TaskSidebar
             isMobileSidebarOpen={isMobileSidebarOpen}
             setIsMobileSidebarOpen={setIsMobileSidebarOpen}
             pageType="code"
+            isCollapsed={isCollapsed}
+            onToggleCollapsed={handleToggleCollapsed}
           />
         </ResizableSidebar>
         {/* Main content area with right panel*/}

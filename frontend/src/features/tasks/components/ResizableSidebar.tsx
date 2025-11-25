@@ -12,24 +12,44 @@ interface ResizableSidebarProps {
   maxWidth?: number;
   defaultWidth?: number;
   storageKey?: string;
+  isCollapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 export default function ResizableSidebar({
   children,
   minWidth = 200,
   maxWidth = 500,
-  defaultWidth = 224, // 56 * 4 = 224px (w-56 equivalent)
+  defaultWidth = 244, // 增加 20px，原来是 224px
   storageKey = 'task-sidebar-width',
+  isCollapsed = false,
+  onToggleCollapsed,
 }: ResizableSidebarProps) {
+  const COLLAPSED_WIDTH = 60;
+  const AUTO_COLLAPSE_THRESHOLD = 80;
+
   const [sidebarWidth, setSidebarWidth] = useState(defaultWidth);
   const [isResizing, setIsResizing] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
   const widthRef = useRef(defaultWidth);
+  const lastExpandedWidthRef = useRef(defaultWidth);
 
   // Keep widthRef in sync with sidebarWidth
   useEffect(() => {
     widthRef.current = sidebarWidth;
-  }, [sidebarWidth]);
+    if (!isCollapsed && sidebarWidth > AUTO_COLLAPSE_THRESHOLD) {
+      lastExpandedWidthRef.current = sidebarWidth;
+    }
+  }, [sidebarWidth, isCollapsed]);
+
+  // Update sidebar width when collapsed state changes
+  useEffect(() => {
+    if (isCollapsed) {
+      setSidebarWidth(COLLAPSED_WIDTH);
+    } else {
+      setSidebarWidth(lastExpandedWidthRef.current);
+    }
+  }, [isCollapsed]);
 
   // Load saved width from localStorage
   useEffect(() => {
@@ -69,6 +89,13 @@ export default function ResizableSidebar({
 
       if (newWidth >= minWidth && newWidth <= maxWidth) {
         setSidebarWidth(newWidth);
+        // Auto-expand if dragged beyond threshold
+        if (newWidth > AUTO_COLLAPSE_THRESHOLD && isCollapsed && onToggleCollapsed) {
+          onToggleCollapsed();
+        }
+      } else if (newWidth <= AUTO_COLLAPSE_THRESHOLD && !isCollapsed && onToggleCollapsed) {
+        // Auto-collapse if dragged below threshold
+        onToggleCollapsed();
       }
     };
 
@@ -89,11 +116,11 @@ export default function ResizableSidebar({
       document.body.style.userSelect = '';
       document.body.style.cursor = '';
     };
-  }, [isResizing, minWidth, maxWidth, saveWidth]);
+  }, [isResizing, minWidth, maxWidth, saveWidth, isCollapsed, onToggleCollapsed]);
 
   return (
     <div
-      className="hidden lg:flex relative border-r border-border"
+      className="hidden lg:flex relative border-r border-border transition-all duration-200"
       style={{ width: `${sidebarWidth}px` }}
     >
       {/* Sidebar content container */}
@@ -101,17 +128,19 @@ export default function ResizableSidebar({
         {children}
       </div>
 
-      {/* Resizer handle */}
-      <div
-        className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 transition-colors group"
-        onMouseDown={handleMouseDown}
-        style={{
-          zIndex: 10,
-        }}
-      >
-        {/* Visual indicator on hover */}
-        <div className="absolute inset-y-0 -left-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
-      </div>
+      {/* Resizer handle - disabled when collapsed */}
+      {!isCollapsed && (
+        <div
+          className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 transition-colors group"
+          onMouseDown={handleMouseDown}
+          style={{
+            zIndex: 10,
+          }}
+        >
+          {/* Visual indicator on hover */}
+          <div className="absolute inset-y-0 -left-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+        </div>
+      )}
 
       {/* Overlay while resizing to prevent interference */}
       {isResizing && (
