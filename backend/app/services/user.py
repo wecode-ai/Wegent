@@ -25,16 +25,18 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         from app.repository.github_provider import GitHubProvider
         from app.repository.gitlab_provider import GitLabProvider
         from app.repository.gitee_provider import GiteeProvider
+        from app.repository.gerrit_provider import GerritProvider
 
         # Provider mapping
         providers = {
             "github": GitHubProvider(),
             "gitlab": GitLabProvider(),
-            "gitee": GiteeProvider()
+            "gitee": GiteeProvider(),
+            "gerrit": GerritProvider()
         }
-        
+
         validated_git_info = []
-        
+
         for git_item in git_info:
             # Validate required fields
             if not git_item.get("git_token"):
@@ -43,11 +45,15 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 raise ValidationException("git_domain is required")
             if not git_item.get("type"):
                 raise ValidationException("type is required")
-            
+
             provider_type = git_item.get("type")
             if provider_type not in providers:
                 raise ValidationException(f"Unsupported provider type: {provider_type}")
-            
+
+            # Gerrit requires username
+            if provider_type == "gerrit" and not git_item.get("username"):
+                raise ValidationException("username is required for Gerrit")
+
             provider = providers[provider_type]
 
             # Get the plain token for validation
@@ -56,7 +62,17 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             try:
                 # Use specific provider's validate_token method with custom domain
                 git_domain = git_item.get("git_domain")
-                validation_result = provider.validate_token(plain_token, git_domain=git_domain)
+
+                # Gerrit requires username parameter for validation
+                if provider_type == "gerrit":
+                    username = git_item.get("username")
+                    validation_result = provider.validate_token(
+                        plain_token,
+                        git_domain=git_domain,
+                        username=username
+                    )
+                else:
+                    validation_result = provider.validate_token(plain_token, git_domain=git_domain)
 
                 if not validation_result.get("valid", False):
                     raise ValidationException(
