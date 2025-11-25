@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useEffect, useState, useMemo } from 'react';
-import { Team, DifyBotPrompt } from '@/types/api';
+import { Team } from '@/types/api';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -20,8 +20,8 @@ import { AdjustmentsHorizontalIcon } from '@heroicons/react/24/outline';
 interface DifyParamsFormProps {
   selectedTeam: Team | null;
   selectedAppId: string | null;
-  params: Record<string, any>;
-  onParamsChange: (params: Record<string, any>) => void;
+  params: Record<string, unknown>;
+  onParamsChange: (params: Record<string, unknown>) => void;
   disabled?: boolean;
 }
 
@@ -29,7 +29,7 @@ const STORAGE_PREFIX = 'dify_params_team_';
 
 export default function DifyParamsForm({
   selectedTeam,
-  selectedAppId,
+  selectedAppId: _selectedAppId,
   params,
   onParamsChange,
   disabled = false,
@@ -78,7 +78,7 @@ export default function DifyParamsForm({
     if (Object.keys(params).length > 0) {
       localStorage.setItem(storageKey, JSON.stringify(params));
     }
-  }, [params, selectedTeam?.id, isDifyTeam]);
+  }, [params, selectedTeam, isDifyTeam]);
 
   const handleParamChange = (key: string, value: string) => {
     onParamsChange({
@@ -115,9 +115,7 @@ export default function DifyParamsForm({
               <AdjustmentsHorizontalIcon className="w-3.5 h-3.5" />
               <span>Dify Parameters</span>
               {Object.keys(params).length > 0 && (
-                <span className="ml-1 text-xs text-primary">
-                  ({Object.keys(params).length})
-                </span>
+                <span className="ml-1 text-xs text-primary">({Object.keys(params).length})</span>
               )}
             </div>
           </AccordionTrigger>
@@ -136,7 +134,8 @@ export default function DifyParamsForm({
               />
               <p className="text-xs text-text-muted">
                 Enter parameters as JSON. Example: {'{'}
-                "customer_name": "John", "language": "en-US"{'}'}
+                &quot;customer_name&quot;: &quot;John&quot;, &quot;language&quot;: &quot;en-US&quot;
+                {'}'}
               </p>
             </div>
 

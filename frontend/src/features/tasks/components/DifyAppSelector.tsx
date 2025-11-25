@@ -24,7 +24,7 @@ export default function DifyAppSelector({
   onAppChange,
   disabled = false,
 }: DifyAppSelectorProps) {
-  const { t } = useTranslation('common');
+  const _t = useTranslation('common');
   const [apps, setApps] = useState<DifyApp[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,9 +67,10 @@ export default function DifyAppSelector({
         if (!selectedAppId && response.length > 0) {
           onAppChange(response[0].id);
         }
-      } catch (err: any) {
-        console.error('Failed to fetch Dify apps:', err);
-        setError(err.message || 'Failed to load Dify applications');
+      } catch (err: unknown) {
+        const error = err as Error;
+        console.error('Failed to fetch Dify apps:', error);
+        setError(error.message || 'Failed to load Dify applications');
         setApps([]);
       } finally {
         setIsLoading(false);
@@ -85,34 +86,32 @@ export default function DifyAppSelector({
   }
 
   // Convert apps to SearchableSelectItem format
-  const selectItems: SearchableSelectItem[] = useMemo(() => {
-    return apps.map(app => ({
-      value: app.id,
-      label: app.name,
-      searchText: app.name,
-      content: (
-        <div className="flex items-center gap-2 min-w-0">
-          {app.icon ? (
-            <div
-              className="w-6 h-6 flex-shrink-0 rounded flex items-center justify-center text-sm"
-              style={{ backgroundColor: app.icon_background }}
-            >
-              {app.icon}
-            </div>
-          ) : (
-            <RocketLaunchIcon className="w-4 h-4 flex-shrink-0 text-text-muted" />
-          )}
-          <span
-            className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
-            title={app.name}
+  const selectItems: SearchableSelectItem[] = apps.map(app => ({
+    value: app.id,
+    label: app.name,
+    searchText: app.name,
+    content: (
+      <div className="flex items-center gap-2 min-w-0">
+        {app.icon ? (
+          <div
+            className="w-6 h-6 flex-shrink-0 rounded flex items-center justify-center text-sm"
+            style={{ backgroundColor: app.icon_background }}
           >
-            {app.name}
-          </span>
-          <span className="text-xs text-text-muted flex-shrink-0 capitalize">{app.mode}</span>
-        </div>
-      ),
-    }));
-  }, [apps]);
+            {app.icon}
+          </div>
+        ) : (
+          <RocketLaunchIcon className="w-4 h-4 flex-shrink-0 text-text-muted" />
+        )}
+        <span
+          className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
+          title={app.name}
+        >
+          {app.name}
+        </span>
+        <span className="text-xs text-text-muted flex-shrink-0 capitalize">{app.mode}</span>
+      </div>
+    ),
+  }));
 
   if (error) {
     return (
