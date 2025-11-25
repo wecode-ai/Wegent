@@ -12,7 +12,7 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
-from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskListResponse
+from app.schemas.task import TaskCreate, TaskUpdate, TaskInDB, TaskDetail, TaskListResponse, TaskLiteListResponse
 from app.services.adapters.task_kinds import task_kinds_service
 
 router = APIRouter()
@@ -73,6 +73,23 @@ def get_tasks(
     """Get current user's task list (paginated), excluding DELETE status tasks"""
     skip = (page - 1) * limit
     items, total = task_kinds_service.get_user_tasks_with_pagination(
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit
+    )
+    return {"total": total, "items": items}
+
+@router.get("/lite", response_model=TaskLiteListResponse)
+def get_tasks_lite(
+    page: int = Query(1, ge=1, description="Page number"),
+    limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get current user's lightweight task list (paginated) for fast loading, excluding DELETE status tasks"""
+    skip = (page - 1) * limit
+    items, total = task_kinds_service.get_user_tasks_lite(
         db=db,
         user_id=current_user.id,
         skip=skip,

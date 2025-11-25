@@ -77,7 +77,7 @@ export default function ChatInput({
               placeholder={t(placeholderKey)}
               className={`w-full px-3 py-2 bg-transparent custom-scrollbar text-text-primary text-base placeholder:text-text-muted placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
               disabled={disabled}
-              minRows={1}
+              minRows={isMobile ? 2 : 1}
               maxRows={isMobile ? 6 : 8}
               style={{ resize: 'none', overflow: 'auto' }}
             />

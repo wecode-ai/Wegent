@@ -100,7 +100,7 @@ export function SearchableSelect({
             aria-expanded={isOpen}
             disabled={disabled}
             className={cn(
-              'flex h-9 w-full items-center justify-between rounded-lg border',
+              'flex h-9 w-full min-w-0 items-center justify-between rounded-lg border text-left',
               'border-border bg-base px-3 text-xs text-text-muted',
               'shadow-sm hover:bg-hover transition-colors',
               'focus:outline-none focus:ring-2 focus:ring-primary/20',
@@ -108,13 +108,15 @@ export function SearchableSelect({
               triggerClassName
             )}
           >
-            <span className="truncate">
-              {selectedItem && renderTriggerValue
-                ? renderTriggerValue(selectedItem)
-                : selectedItem
-                  ? selectedItem.label
-                  : placeholder}
-            </span>
+            <div className="flex-1 min-w-0">
+              {selectedItem && renderTriggerValue ? (
+                renderTriggerValue(selectedItem)
+              ) : (
+                <span className="truncate block">
+                  {selectedItem ? selectedItem.label : placeholder}
+                </span>
+              )}
+            </div>
             {showChevron && <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />}
           </button>
         </PopoverTrigger>
@@ -175,12 +177,16 @@ export function SearchableSelect({
                               : 'opacity-0 text-text-muted'
                           )}
                         />
-                        <span
-                          className="flex-1 break-all whitespace-pre-wrap"
-                          style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
-                        >
-                          {item.content || item.label}
-                        </span>
+                        {item.content ? (
+                          <div className="flex-1 min-w-0">{item.content}</div>
+                        ) : (
+                          <span
+                            className="flex-1 break-all whitespace-pre-wrap"
+                            style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
+                          >
+                            {item.label}
+                          </span>
+                        )}
                       </CommandItem>
                     ))}
                   </CommandGroup>

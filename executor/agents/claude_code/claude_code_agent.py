@@ -573,6 +573,26 @@ class ClaudeCodeAgent(Agent):
                     self.options["cwd"] = self.project_path
                     logger.info(f"Set cwd to {self.project_path}")
 
+            # Setup Claude Code custom instructions
+            if self.project_path:
+                try:
+                    custom_rules = self._load_custom_instructions(self.project_path)
+                    if custom_rules:
+                        # Setup .claudecode directory for Claude Code compatibility
+                        self._setup_claudecode_dir(self.project_path, custom_rules)
+
+                        # Update .git/info/exclude to ignore .claudecode
+                        self._update_git_exclude(self.project_path)
+
+                        logger.info(f"Setup Claude Code custom instructions with {len(custom_rules)} files")
+
+                    # Setup Claude.md symlink from Agents.md if exists
+                    self._setup_claude_md_symlink(self.project_path)
+
+                except Exception as e:
+                    logger.warning(f"Failed to process custom instructions: {e}")
+                    # Continue execution with original systemPrompt
+
             return TaskStatus.SUCCESS
         except Exception as e:
             logger.error(f"Pre-execution failed: {str(e)}")
@@ -1018,3 +1038,122 @@ class ClaudeCodeAgent(Agent):
             logger.info(f"Completed resource cleanup for task {self.task_id}")
         except Exception as e:
             logger.exception(f"Error in resource cleanup for task {self.task_id}: {e}")
+    def _setup_claudecode_dir(self, project_path: str, custom_rules: Dict[str, str]) -> None:
+        """
+        Setup .claudecode directory with custom instruction files for Claude Code compatibility
+
+        Args:
+            project_path: Project root directory
+            custom_rules: Dictionary of {file_path: content} for custom instruction files
+        """
+        try:
+            import shutil
+            
+            claudecode_dir = os.path.join(project_path, ".claudecode")
+            
+            # Create .claudecode directory if it doesn't exist
+            os.makedirs(claudecode_dir, exist_ok=True)
+            logger.debug(f"Created .claudecode directory at {claudecode_dir}")
+            
+            # Copy custom instruction files to .claudecode directory
+            for file_path, content in custom_rules.items():
+                # Get just the filename (not the full path)
+                filename = os.path.basename(file_path)
+                target_path = os.path.join(claudecode_dir, filename)
+                
+                try:
+                    with open(target_path, 'w', encoding='utf-8') as f:
+                        f.write(content)
+                    logger.info(f"Copied custom instruction file to .claudecode: {filename}")
+                except Exception as e:
+                    logger.warning(f"Failed to copy {filename} to .claudecode: {e}")
+            
+            logger.info(f"Setup .claudecode directory with {len(custom_rules)} custom instruction files")
+            
+        except Exception as e:
+            logger.warning(f"Failed to setup .claudecode directory: {e}")
+
+    def _setup_claude_md_symlink(self, project_path: str) -> None:
+        """
+        Setup CLAUDE.md symlink from Agents.md or AGENTS.md if it exists
+        Also adds CLAUDE.md to .git/info/exclude to prevent it from appearing in git diff
+
+        Args:
+            project_path: Project root directory
+        """
+        try:
+            # Try to find agents file with case-insensitive search
+            agents_filename = None
+            for filename in ["AGENTS.md", "Agents.md", "agents.md"]:
+                agents_path = os.path.join(project_path, filename)
+                if os.path.exists(agents_path):
+                    agents_filename = filename
+                    break
+            
+            if not agents_filename:
+                logger.debug("No agents.md file found (tried AGENTS.md, Agents.md, agents.md), skipping CLAUDE.md symlink creation")
+                return
+
+            claude_md = os.path.join(project_path, "CLAUDE.md")
+
+            # Remove existing CLAUDE.md if it exists
+            if os.path.exists(claude_md):
+                if os.path.islink(claude_md):
+                    os.unlink(claude_md)
+                    logger.debug("Removed existing CLAUDE.md symlink")
+                else:
+                    logger.debug("CLAUDE.md already exists as a regular file, skipping symlink creation")
+                    return
+
+            # Create symlink using the found filename
+            os.symlink(agents_filename, claude_md)
+            logger.info(f"Created CLAUDE.md symlink to {agents_filename}")
+            
+            # Add CLAUDE.md to .git/info/exclude to prevent it from appearing in git diff
+            self._add_to_git_exclude(project_path, "CLAUDE.md")
+
+        except Exception as e:
+            logger.warning(f"Failed to create CLAUDE.md symlink: {e}")
+    
+    def _add_to_git_exclude(self, project_path: str, pattern: str) -> None:
+        """
+        Add a pattern to .git/info/exclude file
+        
+        Args:
+            project_path: Project root directory
+            pattern: Pattern to exclude (e.g., "CLAUDE.md")
+        """
+        try:
+            exclude_file = os.path.join(project_path, ".git", "info", "exclude")
+            
+            # Check if .git directory exists
+            git_dir = os.path.join(project_path, ".git")
+            if not os.path.exists(git_dir):
+                logger.debug(".git directory does not exist, skipping git exclude update")
+                return
+            
+            # Ensure .git/info directory exists
+            info_dir = os.path.join(git_dir, "info")
+            os.makedirs(info_dir, exist_ok=True)
+            
+            # Check if file exists and read content
+            content = ""
+            if os.path.exists(exclude_file):
+                with open(exclude_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+            
+            # Check if pattern already exists
+            if pattern in content:
+                logger.debug(f"Pattern '{pattern}' already in {exclude_file}")
+                return
+            
+            # Append pattern
+            with open(exclude_file, 'a', encoding='utf-8') as f:
+                if content and not content.endswith('\n'):
+                    f.write('\n')
+                f.write(f"{pattern}\n")
+            logger.info(f"Added '{pattern}' to .git/info/exclude")
+            
+        except Exception as e:
+            logger.warning(f"Failed to add '{pattern}' to .git/info/exclude: {e}")
+
