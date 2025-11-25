@@ -40,6 +40,26 @@ async def update_current_user_endpoint(
             detail=str(e)
         )
 
+@router.delete("/me/git-token/{git_domain:path}", response_model=UserInDB)
+async def delete_git_token(
+    git_domain: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user)
+):
+    """Delete a specific git token by domain"""
+    try:
+        user = user_service.delete_git_token(
+            db=db,
+            user=current_user,
+            git_domain=git_domain
+        )
+        return user
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+
 @router.post("", response_model=UserInDB, status_code=status.HTTP_201_CREATED)
 def create_user(
     user_create: UserCreate,

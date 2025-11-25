@@ -92,6 +92,7 @@ export default function GitHubIntegration() {
           variant: 'destructive',
           title: t('integrations.delete'),
         });
+        return;
       }
       await refresh();
     } catch {

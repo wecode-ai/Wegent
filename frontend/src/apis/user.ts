@@ -7,70 +7,69 @@
  * All types and logic are self-contained for cohesion.
  */
 
-import type { GitInfo, User } from '@/types/api'
+import type { GitInfo, User } from '@/types/api';
 
 // Type definitions
 export interface LoginRequest {
-  user_name: string
-  password: string
+  user_name: string;
+  password: string;
 }
 
 export interface LoginResponse {
-  access_token: string
-  token_type: string
+  access_token: string;
+  token_type: string;
 }
 
 export interface UpdateUserRequest {
-  user_name?: string
-  email?: string
-  is_active?: boolean
-  git_info?: GitInfo[]
+  user_name?: string;
+  email?: string;
+  is_active?: boolean;
+  git_info?: GitInfo[];
 }
 
-
-const TOKEN_KEY = 'auth_token'
-const TOKEN_EXPIRE_KEY = 'auth_token_expire'
+const TOKEN_KEY = 'auth_token';
+const TOKEN_EXPIRE_KEY = 'auth_token_expire';
 
 function getJwtExp(token: string): number | null {
   try {
-    const payload = JSON.parse(atob(token.split('.')[1]))
-    return typeof payload.exp === 'number' ? payload.exp * 1000 : null // convert to milliseconds
+    const payload = JSON.parse(atob(token.split('.')[1]));
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null; // convert to milliseconds
   } catch {
-    return null
+    return null;
   }
 }
 
 export function setToken(token: string) {
   if (typeof window !== 'undefined') {
-    localStorage.setItem(TOKEN_KEY, token)
-    const exp = getJwtExp(token)
+    localStorage.setItem(TOKEN_KEY, token);
+    const exp = getJwtExp(token);
     if (exp) {
-      localStorage.setItem(TOKEN_EXPIRE_KEY, String(exp))
+      localStorage.setItem(TOKEN_EXPIRE_KEY, String(exp));
     } else {
-      localStorage.removeItem(TOKEN_EXPIRE_KEY)
+      localStorage.removeItem(TOKEN_EXPIRE_KEY);
     }
   }
 }
 
 export function getToken(): string | null {
   if (typeof window !== 'undefined') {
-    return localStorage.getItem(TOKEN_KEY)
+    return localStorage.getItem(TOKEN_KEY);
   }
-  return null
+  return null;
 }
 
 export function getTokenExpire(): number | null {
   if (typeof window !== 'undefined') {
-    const exp = localStorage.getItem(TOKEN_EXPIRE_KEY)
-    return exp ? Number(exp) : null
+    const exp = localStorage.getItem(TOKEN_EXPIRE_KEY);
+    return exp ? Number(exp) : null;
   }
-  return null
+  return null;
 }
 
 export function removeToken() {
   if (typeof window !== 'undefined') {
-    localStorage.removeItem(TOKEN_KEY)
-    localStorage.removeItem(TOKEN_EXPIRE_KEY)
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_EXPIRE_KEY);
   }
 }
 
@@ -78,44 +77,48 @@ export function removeToken() {
  * Check if token exists and is not expired
  */
 function isAuthenticated(): boolean {
-  const token = getToken()
-  const exp = getTokenExpire()
-  if (!token || !exp) return false
-  return Date.now() < exp
+  const token = getToken();
+  const exp = getTokenExpire();
+  if (!token || !exp) return false;
+  return Date.now() < exp;
 }
 
 // API Client
-import { apiClient } from './client'
-import { paths } from '@/config/paths'
+import { apiClient } from './client';
+import { paths } from '@/config/paths';
 
 export const userApis = {
   async login(data: LoginRequest): Promise<User> {
-    const res: LoginResponse = await apiClient.post("/auth/login", data)
-    setToken(res.access_token)
+    const res: LoginResponse = await apiClient.post('/auth/login', data);
+    setToken(res.access_token);
     // Get user information after login
-    return await apiClient.get('/users/me')
+    return await apiClient.get('/users/me');
   },
 
   logout() {
-    removeToken()
+    removeToken();
     if (typeof window !== 'undefined') {
-      window.location.href = paths.home.getHref()
+      window.location.href = paths.home.getHref();
     }
   },
 
   async getCurrentUser(): Promise<User> {
-    return apiClient.get('/users/me')
+    return apiClient.get('/users/me');
   },
 
   async updateUser(data: UpdateUserRequest): Promise<User> {
-    return apiClient.put('/users/me', data)
+    return apiClient.put('/users/me', data);
+  },
+
+  async deleteGitToken(gitDomain: string): Promise<User> {
+    return apiClient.delete(`/users/me/git-token/${encodeURIComponent(gitDomain)}`);
   },
 
   isAuthenticated(): boolean {
-    return isAuthenticated()
-  }
-}
+    return isAuthenticated();
+  },
+};
 
 export async function loginWithOidcToken(accessToken: string): Promise<void> {
-  setToken(accessToken)
+  setToken(accessToken);
 }
