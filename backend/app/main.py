@@ -96,20 +96,61 @@ def create_app():
     # Create database tables and start background worker
     @app.on_event("startup")
     def startup():
-        # Auto-create database tables if enabled
-        if settings.DB_AUTO_CREATE_TABLES:
-            logger.info("Auto-creating database tables...")
+        # Run Alembic migrations
+        if settings.ENVIRONMENT == "development" and settings.ALEMBIC_AUTO_UPGRADE:
+            logger.info("Running Alembic migrations automatically (development mode)...")
             try:
-                Base.metadata.create_all(bind=engine, checkfirst=True)
+                from alembic import command
+                from alembic.config import Config as AlembicConfig
+                import os
+
+                # Get the alembic.ini path
+                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                alembic_ini_path = os.path.join(backend_dir, "alembic.ini")
+
+                # Run migrations
+                alembic_cfg = AlembicConfig(alembic_ini_path)
+                command.upgrade(alembic_cfg, "head")
+                logger.info("Alembic migrations completed successfully")
             except Exception as e:
-                # Log the error but don't fail startup if tables already exist
-                if "already exists" in str(e).lower():
-                    logger.warning(f"Some tables already exist, continuing: {e}")
-                else:
-                    logger.error(f"Error creating database tables: {e}")
-                    raise
+                logger.error(f"Error running Alembic migrations: {e}")
+                raise
+        elif settings.ENVIRONMENT == "production":
+            logger.warning(
+                "Running in production mode. Database migrations must be run manually. "
+                "Please execute 'alembic upgrade head' to apply pending migrations."
+            )
+            # Check migration status
+            try:
+                from alembic import command
+                from alembic.config import Config as AlembicConfig
+                from alembic.script import ScriptDirectory
+                from alembic.runtime.migration import MigrationContext
+                import os
+
+                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                alembic_ini_path = os.path.join(backend_dir, "alembic.ini")
+
+                alembic_cfg = AlembicConfig(alembic_ini_path)
+                script = ScriptDirectory.from_config(alembic_cfg)
+
+                # Get current revision from database
+                with engine.connect() as connection:
+                    context = MigrationContext.configure(connection)
+                    current_rev = context.get_current_revision()
+                    head_rev = script.get_current_head()
+
+                    if current_rev != head_rev:
+                        logger.warning(
+                            f"Database migration pending: current={current_rev}, latest={head_rev}. "
+                            "Run 'alembic upgrade head' manually in production."
+                        )
+                    else:
+                        logger.info("Database schema is up to date")
+            except Exception as e:
+                logger.warning(f"Could not check migration status: {e}")
         else:
-            logger.info("Database auto-create tables is disabled")
+            logger.info("Alembic auto-upgrade is disabled")
 
         # Initialize database with YAML configuration
         db = SessionLocal()
