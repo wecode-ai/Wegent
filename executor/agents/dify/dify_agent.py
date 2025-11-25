@@ -60,12 +60,15 @@ class DifyAgent(Agent):
         if not self.dify_app_id:
             self.dify_app_id = self.dify_config.get("app_id", "")
 
-        # Get or create conversation ID for this task
-        self.conversation_id = self._get_conversation_id()
+        # Get application info to determine the app mode
+        self.app_mode = self._get_app_mode()
+
+        # Get or create conversation ID for this task (only for chat/chatflow)
+        self.conversation_id = self._get_conversation_id() if self.app_mode in ["chat", "chatflow", "agent-chat"] else None
 
         logger.info(
             f"DifyAgent initialized for task {self.task_id}, "
-            f"app_id={self.dify_app_id}, conversation_id={self.conversation_id}"
+            f"app_mode={self.app_mode}, conversation_id={self.conversation_id}"
         )
 
     def _extract_dify_config(self, task_data: Dict[str, Any]) -> Dict[str, str]:
@@ -121,9 +124,38 @@ class DifyAgent(Agent):
         except json.JSONDecodeError as e:
             logger.warning(f"Failed to parse bot_prompt as JSON: {e}, using empty params")
             return None, {}
+
+    def _get_app_mode(self) -> str:
+        """
+        Get Dify application mode by calling /v1/info endpoint
+
+        Returns:
+            Application mode: "chat", "chatflow", "workflow", "agent-chat", "completion"
+            Returns "chat" as default if unable to determine
+        """
+        if not self.dify_config.get("api_key") or not self.dify_config.get("base_url"):
+            logger.warning("Cannot get app mode: API key or base URL not configured")
+            return "chat"  # Default to chat mode
+
+        try:
+            api_url = f"{self.dify_config['base_url']}/v1/info"
+            headers = {
+                "Authorization": f"Bearer {self.dify_config['api_key']}",
+                "Content-Type": "application/json"
+            }
+
+            logger.info(f"Fetching app info from: {api_url}")
+            response = requests.get(api_url, headers=headers, timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+            app_mode = data.get("mode", "chat")
+            logger.info(f"Detected Dify app mode: {app_mode}")
+            return app_mode
+
         except Exception as e:
-            logger.warning(f"Error parsing bot_prompt: {e}, using empty params")
-            return None, {}
+            logger.warning(f"Failed to get app mode from Dify API, defaulting to 'chat': {e}")
+            return "chat"
 
     def _get_conversation_id(self) -> str:
         """
@@ -173,7 +205,7 @@ class DifyAgent(Agent):
 
     def _call_dify_api(self, query: str) -> Dict[str, Any]:
         """
-        Call Dify API to send a message
+        Call Dify API - automatically selects endpoint based on app mode
 
         Args:
             query: The user message to send
@@ -184,6 +216,23 @@ class DifyAgent(Agent):
         Raises:
             Exception: If API call fails
         """
+        # Route to appropriate API based on app mode
+        if self.app_mode == "workflow":
+            return self._call_workflow_api(query)
+        else:
+            # chat, chatflow, agent-chat, completion all use chat-messages endpoint
+            return self._call_chat_api(query)
+
+    def _call_chat_api(self, query: str) -> Dict[str, Any]:
+        """
+        Call Dify Chat/Chatflow API (for chat, chatflow, agent-chat modes)
+
+        Args:
+            query: The user message to send
+
+        Returns:
+            API response data with answer and conversation_id
+        """
         api_url = f"{self.dify_config['base_url']}/v1/chat-messages"
 
         headers = {
@@ -192,17 +241,18 @@ class DifyAgent(Agent):
         }
 
         payload = {
-            "inputs": self.params,
+            "inputs": self.params,  # For chatflow, inputs are workflow variables
             "query": query,
             "response_mode": "streaming",
-            "user": f"task-{self.task_id}"
+            "user": f"task-{self.task_id}",
+            "auto_generate_name": True
         }
 
-        # Add conversation_id if exists
+        # Add conversation_id if exists (for multi-turn conversations)
         if self.conversation_id:
             payload["conversation_id"] = self.conversation_id
 
-        logger.info(f"Calling Dify API: {api_url}")
+        logger.info(f"Calling Dify Chat API ({self.app_mode}): {api_url}")
         logger.debug(f"Payload: {json.dumps(payload, ensure_ascii=False)}")
 
         try:
@@ -257,17 +307,116 @@ class DifyAgent(Agent):
             }
 
         except requests.exceptions.HTTPError as e:
-            error_msg = f"Dify API HTTP error: {e}"
+            error_msg = f"Dify Chat API HTTP error: {e}"
             if e.response is not None:
                 try:
                     error_data = e.response.json()
-                    error_msg = f"Dify API error: {error_data.get('message', str(e))}"
+                    error_msg = f"Dify Chat API error: {error_data.get('message', str(e))}"
                 except:
                     pass
             logger.error(error_msg)
             raise Exception(error_msg)
+
         except requests.exceptions.RequestException as e:
-            error_msg = f"Dify API request failed: {e}"
+            error_msg = f"Failed to connect to Dify Chat API: {str(e)}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+
+    def _call_workflow_api(self, query: str) -> Dict[str, Any]:
+        """
+        Call Dify Workflow API (for workflow mode)
+
+        Args:
+            query: The user message (will be added to inputs)
+
+        Returns:
+            API response data with outputs
+        """
+        api_url = f"{self.dify_config['base_url']}/v1/workflows/run"
+
+        headers = {
+            "Authorization": f"Bearer {self.dify_config['api_key']}",
+            "Content-Type": "application/json"
+        }
+
+        # For workflow, combine query with params as inputs
+        inputs = dict(self.params)
+        # Add query as a common input variable if not already present
+        if "query" not in inputs and "user_query" not in inputs:
+            inputs["query"] = query
+
+        payload = {
+            "inputs": inputs,
+            "response_mode": "streaming",  # Can also be "blocking"
+            "user": f"task-{self.task_id}"
+        }
+
+        logger.info(f"Calling Dify Workflow API: {api_url}")
+        logger.debug(f"Payload: {json.dumps(payload, ensure_ascii=False)}")
+
+        try:
+            response = requests.post(
+                api_url,
+                headers=headers,
+                json=payload,
+                stream=True,
+                timeout=300  # 5 minutes timeout
+            )
+
+            response.raise_for_status()
+
+            # Process streaming response
+            result_outputs = {}
+            workflow_run_id = ""
+
+            for line in response.iter_lines():
+                if line:
+                    line_str = line.decode('utf-8')
+                    if line_str.startswith('data: '):
+                        data_str = line_str[6:]  # Remove 'data: ' prefix
+                        try:
+                            data = json.loads(data_str)
+
+                            # Extract workflow_run_id
+                            if "workflow_run_id" in data and not workflow_run_id:
+                                workflow_run_id = data["workflow_run_id"]
+
+                            # Extract outputs from workflow events
+                            if data.get("event") == "workflow_finished":
+                                result_outputs = data.get("data", {}).get("outputs", {})
+                            elif data.get("event") == "node_finished":
+                                # Optionally log node completion
+                                node_title = data.get("data", {}).get("title", "")
+                                logger.debug(f"Workflow node finished: {node_title}")
+                            elif data.get("event") == "error":
+                                error_msg = data.get("message", "Unknown error")
+                                raise Exception(f"Dify Workflow error: {error_msg}")
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse streaming data: {data_str}")
+                            continue
+
+            # Format workflow output as answer text
+            answer_text = json.dumps(result_outputs, ensure_ascii=False, indent=2)
+
+            return {
+                "answer": answer_text,
+                "workflow_run_id": workflow_run_id,
+                "outputs": result_outputs
+            }
+
+        except requests.exceptions.HTTPError as e:
+            error_msg = f"Dify Workflow API HTTP error: {e}"
+            if e.response is not None:
+                try:
+                    error_data = e.response.json()
+                    error_msg = f"Dify Workflow API error: {error_data.get('message', str(e))}"
+                except:
+                    pass
+            logger.error(error_msg)
+            raise Exception(error_msg)
+
+        except requests.exceptions.RequestException as e:
+            error_msg = f"Failed to connect to Dify Workflow API: {str(e)}"
             logger.error(error_msg)
             raise Exception(error_msg)
 
