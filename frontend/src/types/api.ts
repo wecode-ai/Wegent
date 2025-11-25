@@ -19,8 +19,10 @@ export interface User {
 export interface GitInfo {
   git_domain: string;
   git_token: string;
-  /** Type: "github" | "gitlab" | "gitee" */
-  type: 'github' | 'gitlab' | 'gitee';
+  /** Type: "github" | "gitlab" | "gitee" | "gerrit" */
+  type: 'github' | 'gitlab' | 'gitee' | 'gerrit';
+  /** Username (required for Gerrit) */
+  user_name?: string;
 }
 
 // Bot Types
@@ -61,7 +63,14 @@ export interface TeamBot {
 
 /** TaskDetail structure (adapted to latest backend response) */
 // Task Types
-export type TaskStatus = 'PENDING' | 'RUNNING' | 'COMPLETED' | 'FAILED' | 'CANCELLED' | 'DELETE';
+export type TaskStatus =
+  | 'PENDING'
+  | 'RUNNING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'CANCELLING'
+  | 'DELETE';
 export type TaskType = 'chat' | 'code';
 
 // Git commit statistics

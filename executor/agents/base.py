@@ -8,6 +8,8 @@
 
 import os
 from typing import Dict, Any, Optional, Tuple
+from datetime import datetime
+from collections import OrderedDict
 
 
 from shared.utils import git_util
@@ -160,6 +162,8 @@ class Agent:
         branch_name = self.task_data.get("branch_name")
         repo_name = git_util.get_repo_name_from_url(git_url)
         logger.info(f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}")
+        logger.info("username: {username} git token: {git_token}")
+        logger.info(user_config)
 
         project_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id),repo_name)
         if self.project_path is None:
@@ -239,3 +243,131 @@ class Agent:
         except Exception as e:
             logger.error(f"Failed to record error thinking: {str(e)}")
 
+    def _validate_file_path(self, file_path: str) -> bool:
+        """
+        Validate file path security
+
+        Args:
+            file_path: File path to validate
+
+        Returns:
+            bool - Whether the path is safe
+        """
+        # Reject absolute paths
+        if os.path.isabs(file_path):
+            logger.warning(f"Absolute path not allowed: {file_path}")
+            return False
+
+        # Reject paths containing '..'
+        if '..' in file_path.split(os.sep):
+            logger.warning(f"Path traversal detected: {file_path}")
+            return False
+
+        # Normalize path and check if it points outside the project
+        normalized = os.path.normpath(file_path)
+        if normalized.startswith('..'):
+            logger.warning(f"Path points outside project: {file_path}")
+            return False
+
+        return True
+
+    def _load_custom_instructions(self, project_path: str) -> Dict[str, str]:
+        """
+        Load custom instruction files from project root directory
+
+        Args:
+            project_path: Project root directory path
+
+        Returns:
+            Dict[file_relative_path, file_content] - Ordered dictionary of successfully loaded files
+        """
+        custom_rules = OrderedDict()
+
+        # Get file list from config
+        file_list = config.CUSTOM_INSTRUCTION_FILES
+        logger.info(f"Loading custom instruction files from config: {file_list}")
+
+        for file_path in file_list:
+            # Strip whitespace
+            file_path = file_path.strip()
+            if not file_path:
+                continue
+
+            # Validate path security
+            if not self._validate_file_path(file_path):
+                continue
+
+            # Construct full file path
+            full_path = os.path.join(project_path, file_path)
+            logger.debug(f"Checking custom instruction file: {file_path}")
+
+            # Check if file exists
+            if not os.path.exists(full_path):
+                logger.debug(f"File not found, skipping: {file_path}")
+                continue
+
+            # Try to read file
+            try:
+                with open(full_path, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    file_size = len(content.encode('utf-8'))
+                    custom_rules[file_path] = content
+                    logger.info(f"Successfully loaded custom instruction file: {file_path} ({file_size} bytes)")
+            except Exception as e:
+                logger.warning(f"Failed to read custom instruction file {file_path}: {e}")
+                continue
+
+        return custom_rules
+
+    def _update_git_exclude(self, project_path: str, exclude_claude_md: bool = True) -> None:
+        """
+        Update .git/info/exclude file to exclude .claudecode directory
+
+        Args:
+            project_path: Project root directory
+            exclude_claude_md: Whether to also exclude Claude.md (default True for ClaudeCode, False for Agno)
+        """
+        try:
+            exclude_file = os.path.join(project_path, ".git", "info", "exclude")
+
+            # Check if .git directory exists
+            git_dir = os.path.join(project_path, ".git")
+            if not os.path.exists(git_dir):
+                logger.debug(".git directory does not exist, skipping git exclude update")
+                return
+
+            # Ensure .git/info directory exists
+            info_dir = os.path.join(git_dir, "info")
+            os.makedirs(info_dir, exist_ok=True)
+
+            exclude_patterns = [".claudecode/"]
+            if exclude_claude_md:
+                exclude_patterns.append("Claude.md")
+
+            # Check if file exists and read content
+            content = ""
+            if os.path.exists(exclude_file):
+                with open(exclude_file, 'r', encoding='utf-8') as f:
+                    content = f.read()
+
+            # Check which patterns need to be added
+            patterns_to_add = []
+            for pattern in exclude_patterns:
+                if pattern not in content:
+                    patterns_to_add.append(pattern)
+
+            if patterns_to_add:
+                # Append patterns
+                with open(exclude_file, 'a', encoding='utf-8') as f:
+                    if content and not content.endswith('\n'):
+                        f.write('\n')
+                    for pattern in patterns_to_add:
+                        f.write(f"{pattern}\n")
+                logger.info(f"Updated .git/info/exclude to ignore: {', '.join(patterns_to_add)}")
+            else:
+                logger.debug(f"All patterns already in {exclude_file}")
+
+        except Exception as e:
+            logger.warning(f"Failed to update .git/info/exclude: {e}")
+
+ 

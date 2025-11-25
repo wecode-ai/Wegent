@@ -54,6 +54,7 @@ services:
       - ./backend/init_data:/app/init_data:ro
     environment:
       DATABASE_URL: mysql+pymysql://task_user:task_password@mysql:3306/task_manager
+      EXECUTOR_CANCEL_TASK_URL: http://executor_manager:8001/executor-manager/tasks/cancel
       EXECUTOR_DELETE_TASK_URL: http://executor_manager:8001/executor-manager/executor/delete
       SECRET_KEY: your-secret-key-here
       ALGORITHM: HS256

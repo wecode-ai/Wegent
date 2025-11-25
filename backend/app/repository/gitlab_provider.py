@@ -16,6 +16,7 @@ from app.models.user import User
 from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
+from shared.utils.url_util import build_url
 
 
 class GitLabProvider(RepositoryProvider):
@@ -89,8 +90,8 @@ class GitLabProvider(RepositoryProvider):
         if git_domain == "gitlab.com":
             return "https://gitlab.com/api/v4"
         else:
-            # Custom GitLab domain
-            return f"https://{git_domain}/api/v4"
+            # Custom GitLab domain (may include http:// protocol)
+            return build_url(git_domain, "/api/v4")
 
     def _make_request_with_auth_retry(
         self,

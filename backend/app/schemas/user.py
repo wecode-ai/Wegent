@@ -21,6 +21,7 @@ class GitInfo(BaseModel):
     git_domain: str
     git_token: str
     type: str
+    user_name: Optional[str] = None
     git_id: Optional[str] = None
     git_login: Optional[str] = None
     git_email: Optional[str] = None

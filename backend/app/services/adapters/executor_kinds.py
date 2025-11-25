@@ -409,7 +409,8 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     "git_token": git_info.get("git_token") if git_info else None,
                     "git_id": git_info.get("git_id") if git_info else None,
                     "git_login": git_info.get("git_login") if git_info else None,
-                    "git_email": git_info.get("git_email") if git_info else None
+                    "git_email": git_info.get("git_email") if git_info else None,
+                    "user_name": git_info.get("user_name") if git_info else None
                 },
                 "bot": bots,
                 "team_id": team.id,
@@ -505,7 +506,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             return
         
         subtasks = db.query(Subtask).filter(
-            Subtask.task_id == task_id, 
+            Subtask.task_id == task_id,
             Subtask.role == SubtaskRole.ASSISTANT
         ).order_by(Subtask.message_id.asc()).all()
         if not subtasks:
@@ -514,8 +515,10 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         total_subtasks = len(subtasks)
         completed_subtasks = len([s for s in subtasks if s.status == SubtaskStatus.COMPLETED])
         failed_subtasks = len([s for s in subtasks if s.status == SubtaskStatus.FAILED])
+        cancelled_subtasks = len([s for s in subtasks if s.status == SubtaskStatus.CANCELLED])
         
         task_crd = Task.model_validate(task.json)
+        current_task_status = task_crd.status.status if task_crd.status else "PENDING"
         
         # Calculate task progress
         progress = int((completed_subtasks / total_subtasks) * 100)
@@ -529,15 +532,41 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 last_non_pending_subtask = subtask
                 break
 
-        # Check if the last non-pending subtask is failed
-        if last_non_pending_subtask and last_non_pending_subtask.status == SubtaskStatus.FAILED:
+        # Priority 1: Handle CANCELLED status
+        # If task is in CANCELLING state and any subtask is CANCELLED, update task to CANCELLED
+        if current_task_status == "CANCELLING" and cancelled_subtasks > 0:
+            if task_crd.status:
+                task_crd.status.status = "CANCELLED"
+                task_crd.status.progress = 100
+                task_crd.status.completedAt = datetime.now()
+                if last_non_pending_subtask:
+                    task_crd.status.result = last_non_pending_subtask.result
+                    task_crd.status.errorMessage = last_non_pending_subtask.error_message or "Task was cancelled by user"
+                else:
+                    task_crd.status.errorMessage = "Task was cancelled by user"
+                logger.info(f"Task {task_id} status updated from CANCELLING to CANCELLED (cancelled_subtasks={cancelled_subtasks})")
+        # Priority 2: Check if the last non-pending subtask is cancelled
+        elif last_non_pending_subtask and last_non_pending_subtask.status == SubtaskStatus.CANCELLED:
+            if task_crd.status:
+                task_crd.status.status = "CANCELLED"
+                task_crd.status.progress = 100
+                task_crd.status.completedAt = datetime.now()
+                if last_non_pending_subtask.error_message:
+                    task_crd.status.errorMessage = last_non_pending_subtask.error_message
+                else:
+                    task_crd.status.errorMessage = "Task was cancelled by user"
+                if last_non_pending_subtask.result:
+                    task_crd.status.result = last_non_pending_subtask.result
+                logger.info(f"Task {task_id} status updated to CANCELLED based on last subtask")
+        # Priority 3: Check if the last non-pending subtask is failed
+        elif last_non_pending_subtask and last_non_pending_subtask.status == SubtaskStatus.FAILED:
             if task_crd.status:
                 task_crd.status.status = "FAILED"
                 if last_non_pending_subtask.error_message:
                     task_crd.status.errorMessage = last_non_pending_subtask.error_message
                 if last_non_pending_subtask.result:
                     task_crd.status.result = last_non_pending_subtask.result
-        # Check if the last subtask is completed
+        # Priority 4: Check if the last subtask is completed
         elif subtasks and subtasks[-1].status == SubtaskStatus.COMPLETED:
             # Get last completed subtask
             last_subtask = subtasks[-1] if subtasks else None
@@ -548,8 +577,8 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 task_crd.status.progress = 100
                 task_crd.status.completedAt = datetime.now()
         else:
-            # Update to running status
-            if task_crd.status:
+            # Update to running status (only if not in a final state)
+            if task_crd.status and current_task_status not in ["CANCELLED", "COMPLETED", "FAILED"]:
                 task_crd.status.status = "RUNNING"
                 # If there is only one subtask, use the subtask's progress
                 if total_subtasks == 1:

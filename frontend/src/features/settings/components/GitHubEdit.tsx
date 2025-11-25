@@ -24,14 +24,30 @@ const sanitizeDomainInput = (value: string) => {
   if (!value) return '';
   const trimmed = value.trim();
   if (!trimmed) return '';
-  const withoutProtocol = trimmed.replace(/^[a-zA-Z]+:\/\//, '');
+
+  // Check if it starts with http:// or https://
+  const httpMatch = trimmed.match(/^(https?:\/\/)/i);
+  const protocol = httpMatch ? httpMatch[1].toLowerCase() : '';
+
+  // Remove protocol for processing
+  const withoutProtocol = trimmed.replace(/^https?:\/\//i, '');
+
+  // Get domain only (remove path)
   const domainOnly = withoutProtocol.split('/')[0];
-  return domainOnly.trim().toLowerCase();
+
+  // Return with protocol if it was http://, otherwise return domain only
+  return protocol === 'http://'
+    ? `http://${domainOnly.trim().toLowerCase()}`
+    : domainOnly.trim().toLowerCase();
 };
 
 const isValidDomain = (value: string) => {
   if (!value) return false;
-  const [host, port] = value.split(':');
+
+  // Extract domain without protocol
+  const domainWithoutProtocol = value.replace(/^https?:\/\//i, '');
+  const [host, port] = domainWithoutProtocol.split(':');
+
   if (!host) return false;
   if (port !== undefined) {
     if (!/^\d{1,5}$/.test(port)) return false;
@@ -50,14 +66,16 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
   const [platforms, setPlatforms] = useState<GitInfo[]>([]);
   const [domain, setDomain] = useState('');
   const [token, setToken] = useState('');
+  const [username, setUsername] = useState('');
   const [type, setType] = useState<GitInfo['type']>('github');
   const [tokenSaving, setTokenSaving] = useState(false);
   const isGitlabLike = type === 'gitlab' || type === 'gitee';
+  const isGerrit = type === 'gerrit';
 
   const isGitlabDomainInvalid = useMemo(() => {
-    if (!isGitlabLike || !domain) return false;
+    if ((!isGitlabLike && !isGerrit) || !domain) return false;
     return !isValidDomain(domain);
-  }, [isGitlabLike, domain]);
+  }, [isGitlabLike, isGerrit, domain]);
 
   const hasGithubPlatform = useMemo(
     () => platforms.some(info => sanitizeDomainInput(info.git_domain) === 'github.com'),
@@ -72,10 +90,12 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         const sanitizedDomain = sanitizeDomainInput(editInfo.git_domain);
         setDomain(sanitizedDomain);
         setToken(editInfo.git_token);
+        setUsername(editInfo.user_name || '');
         setType(editInfo.type);
       } else {
         setDomain('');
         setToken('');
+        setUsername('');
         setType('github');
       }
     }
@@ -87,6 +107,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     const sanitizedDomain = type === 'github' ? 'github.com' : sanitizeDomainInput(domain);
     const domainToSave = type === 'github' ? 'github.com' : sanitizedDomain;
     const tokenToSave = token.trim();
+    const usernameToSave = username.trim();
+
     if (!domainToSave || !tokenToSave) {
       toast({
         variant: 'destructive',
@@ -94,7 +116,17 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       });
       return;
     }
-    if (isGitlabLike && !isValidDomain(domainToSave)) {
+
+    // Gerrit requires username
+    if (isGerrit && !usernameToSave) {
+      toast({
+        variant: 'destructive',
+        title: t('github.error.gerrit_username_required') || 'Gerrit username is required',
+      });
+      return;
+    }
+
+    if ((isGitlabLike || isGerrit) && !isValidDomain(domainToSave)) {
       toast({
         variant: 'destructive',
         title: t('github.error.invalid_domain'),
@@ -104,7 +136,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     }
     setTokenSaving(true);
     try {
-      await saveGitToken(user, domainToSave, tokenToSave);
+      await saveGitToken(user, domainToSave, tokenToSave, usernameToSave, type);
       onClose();
       await refresh();
     } catch (error) {
@@ -159,6 +191,21 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               />
               {t('github.platform_gitlab')}
             </label>
+            <label
+              className="flex items-center gap-1 text-sm text-text-primary"
+              title={t('github.platform_gerrit') || 'Gerrit'}
+            >
+              <input
+                type="radio"
+                value="gerrit"
+                checked={isGerrit}
+                onChange={() => {
+                  setType('gerrit');
+                  setDomain('');
+                }}
+              />
+              {t('github.platform_gerrit') || 'Gerrit'}
+            </label>
           </div>
         </div>
         {/* Domain input */}
@@ -170,11 +217,22 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             type="text"
             value={type === 'github' ? 'github.com' : domain}
             onChange={e => {
-              if (isGitlabLike) {
+              if (isGitlabLike || isGerrit) {
+                setDomain(e.target.value);
+              }
+            }}
+            onBlur={e => {
+              if (isGitlabLike || isGerrit) {
                 setDomain(sanitizeDomainInput(e.target.value));
               }
             }}
-            placeholder={type === 'github' ? 'github.com' : 'e.g. gitlab.example.com'}
+            placeholder={
+              type === 'github'
+                ? 'github.com'
+                : isGerrit
+                  ? 'e.g. http://gerrit.company.com or gerrit.company.com'
+                  : 'e.g. http://gitlab.example.com or gitlab.example.com'
+            }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             disabled={type === 'github'}
           />
@@ -182,10 +240,25 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             <p className="mt-1 text-xs text-red-500">{t('github.error.invalid_domain')}</p>
           )}
         </div>
+        {/* Username input (Gerrit only) */}
+        {isGerrit && (
+          <div>
+            <label className="block text-sm font-medium text-text-secondary mb-2">
+              {t('github.username') || 'Username'}
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={e => setUsername(e.target.value)}
+              placeholder={t('github.username_placeholder') || 'Gerrit username'}
+              className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
+            />
+          </div>
+        )}
         {/* Token input */}
         <div>
           <label className="block text-sm font-medium text-text-secondary mb-2">
-            {t('github.token.title')}
+            {isGerrit ? t('github.token.title_gerrit') || 'HTTP password' : t('github.token.title')}
           </label>
           <input
             type="password"
@@ -194,7 +267,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             placeholder={
               type === 'github'
                 ? t('github.token.placeholder_github')
-                : t('github.token.placeholder_gitlab')
+                : isGerrit
+                  ? t('github.token.placeholder_gerrit') || 'HTTP password from Gerrit Settings'
+                  : t('github.token.placeholder_gitlab')
             }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
@@ -203,7 +278,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         <div className="bg-surface border border-border rounded-md p-3">
           <p className="text-xs text-text-muted mb-2">
             <strong>
-              {type === 'github' ? t('github.howto.github.title') : t('github.howto.gitlab.title')}
+              {type === 'github'
+                ? t('github.howto.github.title')
+                : isGerrit
+                  ? t('github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
+                  : t('github.howto.gitlab.title')}
             </strong>
           </p>
           {type === 'github' ? (
@@ -222,6 +301,35 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               </p>
               <p className="text-xs text-text-muted mb-2">{t('github.howto.github.step2')}</p>
               <p className="text-xs text-text-muted">{t('github.howto.github.step3')}</p>
+            </>
+          ) : isGerrit ? (
+            <>
+              <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
+                {t('github.howto.step1_visit') || 'Visit: '}
+                <a
+                  href={isGerrit && domain ? `https://${domain}/settings/#HTTPCredentials` : '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
+                  title={
+                    isGerrit && domain
+                      ? `https://${domain}/settings/#HTTPCredentials`
+                      : 'your-gerrit-domain/settings/#HTTPCredentials'
+                  }
+                >
+                  {isGerrit && domain
+                    ? `https://${domain}/settings/#HTTPCredentials`
+                    : 'your-gerrit-domain/settings/#HTTPCredentials'}
+                </a>
+              </p>
+              <p className="text-xs text-text-muted mb-2">
+                {t('github.howto.gerrit.step2') ||
+                  'Generate a new HTTP password under "HTTP Credentials"'}
+              </p>
+              <p className="text-xs text-text-muted">
+                {t('github.howto.gerrit.step3') ||
+                  'Copy the username and password, and paste them here'}
+              </p>
             </>
           ) : (
             <>
@@ -261,7 +369,10 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         <Button
           onClick={handleSave}
           disabled={
-            (isGitlabLike && (!domain || isGitlabDomainInvalid)) || !token.trim() || tokenSaving
+            ((isGitlabLike || isGerrit) && (!domain || isGitlabDomainInvalid)) ||
+            (isGerrit && !username.trim()) ||
+            !token.trim() ||
+            tokenSaving
           }
           variant="default"
           size="sm"

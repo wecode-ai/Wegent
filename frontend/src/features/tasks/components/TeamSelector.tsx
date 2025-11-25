@@ -89,9 +89,12 @@ export default function TeamSelector({
         label: team.name,
         searchText: team.name,
         content: (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
-            <span className="font-medium text-xs text-text-secondary truncate" title={team.name}>
+            <span
+              className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
+              title={team.name}
+            >
               {team.name}
             </span>
             {isSharedTeam && (
@@ -116,7 +119,7 @@ export default function TeamSelector({
       <FaUsers
         className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}
       />
-      <div className="relative" style={{ width: isMobile ? 150 : 200 }}>
+      <div className="relative min-w-0" style={{ width: isMobile ? 200 : 260 }}>
         <SearchableSelect
           value={selectedTeam?.id.toString()}
           onValueChange={handleChange}
@@ -128,14 +131,14 @@ export default function TeamSelector({
           emptyText={t('teams.no_match')}
           noMatchText={t('teams.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
-          contentClassName="max-w-[280px]"
+          contentClassName="max-w-[320px]"
           renderTriggerValue={item => {
             if (!item) return null;
             const team = teams.find(t => t.id.toString() === item.value);
             const isSharedTeam = team?.share_status === 2 && team?.user?.user_name;
             return (
-              <div className="flex items-center gap-2">
-                <span className="truncate" title={item.label}>
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="truncate max-w-full flex-1 min-w-0" title={item.label}>
                   {item.label}
                 </span>
                 {isSharedTeam && (
