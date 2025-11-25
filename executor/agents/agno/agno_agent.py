@@ -231,7 +231,7 @@ class AgnoAgent(Agent):
                 )
                 self.download_code()
 
-            # Setup Claude Code custom instructions
+            # Setup Claude Code custom instructions (for compatibility only)
             if self.project_path:
                 try:
                     custom_rules = self._load_custom_instructions(self.project_path)
@@ -244,12 +244,9 @@ class AgnoAgent(Agent):
                         self._setup_claudecode_dir(self.project_path, merged_prompt)
 
                         # Update .git/info/exclude to ignore .claudecode
-                        self._update_git_exclude(self.project_path)
+                        self._update_git_exclude(self.project_path, exclude_claude_md=False)
 
                         logger.info(f"Setup Claude Code custom instructions with {len(custom_rules)} files")
-
-                    # Setup Claude.md symlink from Agents.md if exists
-                    self._setup_claude_md_symlink(self.project_path)
 
                 except Exception as e:
                     logger.warning(f"Failed to process custom instructions: {e}")

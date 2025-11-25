@@ -375,12 +375,13 @@ class Agent:
         except Exception as e:
             logger.warning(f"Failed to create .claudecode directory: {e}")
 
-    def _update_git_exclude(self, project_path: str) -> None:
+    def _update_git_exclude(self, project_path: str, exclude_claude_md: bool = True) -> None:
         """
         Update .git/info/exclude file to exclude .claudecode directory
 
         Args:
             project_path: Project root directory
+            exclude_claude_md: Whether to also exclude Claude.md (default True for ClaudeCode, False for Agno)
         """
         try:
             exclude_file = os.path.join(project_path, ".git", "info", "exclude")
@@ -395,7 +396,9 @@ class Agent:
             info_dir = os.path.join(git_dir, "info")
             os.makedirs(info_dir, exist_ok=True)
 
-            exclude_patterns = [".claudecode/", "Claude.md"]
+            exclude_patterns = [".claudecode/"]
+            if exclude_claude_md:
+                exclude_patterns.append("Claude.md")
 
             # Check if file exists and read content
             content = ""
