@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Transfer } from '@/components/ui/transfer';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -73,6 +73,8 @@ export default function TeamEdit(props: TeamEditProps) {
   const [editingBotId, setEditingBotId] = useState<number | null>(null);
   const [drawerMode, setDrawerMode] = useState<'edit' | 'prompt'>('edit');
   const [cloningBot, setCloningBot] = useState<Bot | null>(null);
+  const lastDrawerClosedAtRef = useRef<number | null>(null);
+  const wasDrawerOpenRef = useRef(false);
 
   // Store unsaved team prompts
   const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({});
@@ -139,7 +141,15 @@ export default function TeamEdit(props: TeamEditProps) {
   useEffect(() => {
     const handleEsc = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
+
+      const target = event.target as HTMLElement | null;
       if (editingBotDrawerVisible) return;
+
+      // Ignore escape events that originate from or immediately after closing the bot drawer
+      if (target?.closest('[data-team-edit-drawer="true"]')) return;
+      if (lastDrawerClosedAtRef.current && Date.now() - lastDrawerClosedAtRef.current < 200) {
+        return;
+      }
 
       handleBack();
     };
@@ -147,6 +157,13 @@ export default function TeamEdit(props: TeamEditProps) {
     window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
   }, [handleBack, editingBotDrawerVisible]);
+
+  useEffect(() => {
+    if (wasDrawerOpenRef.current && !editingBotDrawerVisible) {
+      lastDrawerClosedAtRef.current = Date.now();
+    }
+    wasDrawerOpenRef.current = editingBotDrawerVisible;
+  }, [editingBotDrawerVisible]);
 
   useEffect(() => {
     if (editingTeamId === 0 && initialTeam) {

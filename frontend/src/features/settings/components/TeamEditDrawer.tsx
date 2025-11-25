@@ -338,7 +338,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
 
   return (
     <Drawer open={visible} onOpenChange={open => !open && handleClose()}>
-      <DrawerContent className="h-[100vh] max-w-[860px] ml-auto">
+      <DrawerContent className="h-[100vh] max-w-[860px] ml-auto" data-team-edit-drawer="true">
         <DrawerTitle className="sr-only">
           {mode === 'edit' ? 'Edit Bot' : 'Edit Prompts'}
         </DrawerTitle>
