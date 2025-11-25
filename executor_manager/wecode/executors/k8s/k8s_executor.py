@@ -383,3 +383,77 @@ class K8sExecutor(Executor):
                     K8sExecutor._user_task_limit_cache = {}
         
         return K8sExecutor._user_task_limit_cache.get(user_name, MAX_USER_TASKS)
+    
+    def cancel_task(self, task_id: int) -> Dict[str, Any]:
+        """
+        Cancel a running task by calling the executor's cancel API.
+
+        Args:
+            task_id (int): Task ID to cancel.
+
+        Returns:
+            Dict[str, Any]: Cancellation result with unified structure.
+        """
+        try:
+            # Find the pod running this task
+            core_v1 = client.CoreV1Api(self.api_client)
+            
+            # Search for pods with the specific task_id label
+            label_selector = f"aigc.weibo.com/executor=wegent,aigc.weibo.com/executor-task-id={task_id}"
+            pods = core_v1.list_namespaced_pod(
+                namespace=K8S_NAMESPACE,
+                label_selector=label_selector
+            )
+            
+            if not pods.items:
+                logger.warning(f"No pod found for task {task_id}")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Task {task_id} is not currently running"
+                }
+            
+            # Get the first matching pod (there should only be one)
+            pod = pods.items[0]
+            pod_name = pod.metadata.name
+            pod_ip = pod.status.pod_ip
+            
+            if not pod_ip:
+                logger.error(f"Pod {pod_name} has no IP address")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Pod for task {task_id} has no IP address"
+                }
+            
+            # Call the executor's cancel API
+            cancel_url = f"http://{pod_ip}:8080/api/tasks/cancel?task_id={task_id}"
+            logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
+            
+            try:
+                response = requests.post(cancel_url, timeout=10)
+                response.raise_for_status()
+                
+                logger.info(f"Successfully cancelled task {task_id}")
+                return {
+                    "status": "success",
+                    "pod_name": pod_name,
+                    "message": f"Task {task_id} cancellation requested successfully"
+                }
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Failed to call cancel API for task {task_id}: {e}")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Failed to communicate with executor: {str(e)}"
+                }
+                
+        except ApiException as e:
+            logger.error(f"Kubernetes API error while cancelling task {task_id}: {e}")
+            return {
+                "status": "failed",
+                "error_msg": f"Kubernetes API error: {str(e)}"
+            }
+        except Exception as e:
+            logger.error(f"Error cancelling task {task_id}: {e}")
+            return {
+                "status": "failed",
+                "error_msg": f"Error cancelling task: {str(e)}"
+            }
