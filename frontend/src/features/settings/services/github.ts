@@ -55,17 +55,12 @@ export async function saveGitToken(
 
 /**
  * Delete git token
- */
-/**
- * Delete git token
  * @param user Current user (from UserContext)
+ * @param git_domain Git domain to delete
  */
 export async function deleteGitToken(user: User, git_domain: string): Promise<boolean> {
   try {
-    const newGitInfo = Array.isArray(user.git_info)
-      ? user.git_info.filter(info => info.git_domain !== git_domain)
-      : [];
-    await userApis.updateUser({ git_info: newGitInfo });
+    await userApis.deleteGitToken(git_domain);
     return true;
   } catch {
     return false;

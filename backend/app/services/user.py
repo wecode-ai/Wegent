@@ -201,6 +201,34 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.refresh(user)
         return user
     
+    def delete_git_token(
+        self, db: Session, *, user: User, git_domain: str
+    ) -> User:
+        """
+        Delete a specific git token by domain
+        
+        Args:
+            db: Database session
+            user: Current user object
+            git_domain: Git domain to delete
+            
+        Returns:
+            Updated user object
+        """
+        if user.git_info is None:
+            user.git_info = []
+        
+        # Filter out the git_info item with the specified domain
+        user.git_info = [
+            item for item in user.git_info
+            if item.get("git_domain") != git_domain
+        ]
+        
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+    
     def get_user_by_id(self, db: Session, user_id: int) -> User:
         """
         Get user object by user ID
