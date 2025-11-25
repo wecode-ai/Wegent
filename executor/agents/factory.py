@@ -20,6 +20,10 @@ logger = setup_logger("agent_factory")
 class AgentFactory:
     """
     Factory class for creating agent instances based on agent_type
+
+    Agents are classified into two types:
+    - local_engine: Agents that execute code locally (ClaudeCode, Agno)
+    - external_api: Agents that delegate execution to external services (Dify)
     """
 
     _agents = {"claudecode": ClaudeCodeAgent, "agno": AgnoAgent, "dify": DifyAgent}
@@ -42,3 +46,37 @@ class AgentFactory:
         else:
             logger.error(f"Unsupported agent type: {agent_type}")
             return None
+
+    @classmethod
+    def is_external_api_agent(cls, agent_type: str) -> bool:
+        """
+        Check if an agent type is an external API type
+
+        Args:
+            agent_type: The type of agent to check
+
+        Returns:
+            True if the agent is an external API type, False otherwise
+        """
+        agent_class = cls._agents.get(agent_type.lower())
+        if agent_class and hasattr(agent_class, 'AGENT_TYPE'):
+            return agent_class.AGENT_TYPE == "external_api"
+        return False
+
+    @classmethod
+    def get_agent_type(cls, agent_type: str) -> Optional[str]:
+        """
+        Get the agent type classification (local_engine or external_api)
+
+        Args:
+            agent_type: The type of agent to check
+
+        Returns:
+            "local_engine", "external_api", or None if agent type not found
+        """
+        agent_class = cls._agents.get(agent_type.lower())
+        if agent_class:
+            if hasattr(agent_class, 'AGENT_TYPE'):
+                return agent_class.AGENT_TYPE
+            return "local_engine"  # Default for older agents without AGENT_TYPE
+        return None

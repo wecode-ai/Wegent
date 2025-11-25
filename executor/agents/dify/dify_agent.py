@@ -20,9 +20,17 @@ logger = setup_logger("dify_agent")
 
 class DifyAgent(Agent):
     """
-    Dify Agent that integrates with Dify API
-    Supports Dify chatbot, workflow, agent, and chatflow applications
+    Dify Agent - External API Reference Type
+
+    Unlike local execution engines (ClaudeCode, Agno), this agent acts as
+    a lightweight proxy to Dify's external API service. It doesn't execute
+    code locally but delegates all computation to Dify's cloud service.
+
+    Supports Dify chatbot, workflow, agent, and chatflow applications.
     """
+
+    # Agent type classification
+    AGENT_TYPE = "external_api"
 
     # Static dictionary for storing conversation IDs per task
     _conversations: Dict[str, str] = {}
@@ -257,6 +265,21 @@ class DifyAgent(Agent):
             error_msg = f"Dify API request failed: {e}"
             logger.error(error_msg)
             raise Exception(error_msg)
+
+    def pre_execute(self) -> TaskStatus:
+        """
+        For external API agents, pre_execute is minimal.
+        No need to download code or setup local environment since
+        all execution happens on Dify's cloud service.
+
+        Returns:
+            TaskStatus: Pre-execution status
+        """
+        logger.info(
+            f"DifyAgent[{self.task_id}] is an external API type, "
+            "skipping code download and environment setup"
+        )
+        return TaskStatus.SUCCESS
 
     def execute(self) -> TaskStatus:
         """

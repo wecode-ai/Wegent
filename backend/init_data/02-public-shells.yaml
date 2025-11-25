@@ -11,6 +11,7 @@ metadata:
   namespace: default
 spec:
   runtime: ClaudeCode
+  shellType: local_engine
   supportModel: []
 status:
   state: Available
@@ -22,6 +23,7 @@ metadata:
   namespace: default
 spec:
   runtime: Agno
+  shellType: local_engine
   supportModel: []
 status:
   state: Available
@@ -33,6 +35,7 @@ metadata:
   namespace: default
 spec:
   runtime: Dify
+  shellType: external_api
   supportModel: []
 status:
   state: Available

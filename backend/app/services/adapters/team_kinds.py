@@ -555,11 +555,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 detail=f"Invalid or inactive bot_ids: {', '.join(map(str, missing_bot_ids))}"
             )
 
-        # Validate Dify runtime constraint: must have exactly one bot
+        # Validate external API shell constraint: must have exactly one bot
         for bot in bots_in_db:
             bot_crd = Bot.model_validate(bot.json)
 
-            # Get shell to check runtime
+            # Get shell to check shell type
             shell = db.query(Kind).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Shell",
@@ -570,12 +570,15 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
             if shell:
                 shell_crd = Shell.model_validate(shell.json)
-                if shell_crd.spec.runtime == "Dify":
-                    # Dify runtime found, validate bot count
+                # Check if shell is external API type
+                shell_type = shell_crd.spec.shellType if hasattr(shell_crd.spec, 'shellType') else shell_crd.spec.get("shellType", "local_engine")
+
+                if shell_type == "external_api":
+                    # External API shells (like Dify) can only have one bot per team
                     if len(bots) > 1:
                         raise HTTPException(
                             status_code=400,
-                            detail=f"Teams using Dify runtime must have exactly one bot. Found {len(bots)} bots."
+                            detail=f"Teams using external API shells ({shell_crd.spec.runtime}) must have exactly one bot. Found {len(bots)} bots."
                         )
 
     def get_team_by_id(self, db: Session, *, team_id: int, user_id: int) -> Optional[Kind]:

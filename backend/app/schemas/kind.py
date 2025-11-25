@@ -90,6 +90,7 @@ class ModelRef(BaseModel):
 class ShellSpec(BaseModel):
     """Shell specification"""
     runtime: str
+    shellType: Optional[str] = "local_engine"  # local_engine | external_api
     supportModel: Optional[List[str]] = None
 
 

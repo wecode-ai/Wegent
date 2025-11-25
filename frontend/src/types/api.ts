@@ -36,6 +36,18 @@ export interface Bot {
   updated_at: string;
 }
 
+// Shell Types
+export interface Shell {
+  id: number;
+  name: string;
+  runtime: string;
+  shell_type?: 'local_engine' | 'external_api';
+  support_model?: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Team {
   id: number;
   name: string;
