@@ -84,15 +84,18 @@ class DifyAgent(Agent):
             "app_id": ""
         }
 
-        # Try to extract from team_members -> agent_config -> env
-        team_members = task_data.get("team_members", [])
-        if team_members and len(team_members) > 0:
-            member = team_members[0]
-            agent_config = member.get("agent_config", {})
+        # Try to extract from bot -> agent_config -> env
+        # Note: task_data uses "bot" key, not "team_members"
+        bots = task_data.get("bot", [])
+        if bots and len(bots) > 0:
+            bot = bots[0]
+            agent_config = bot.get("agent_config", {})
+
+            # agent_config structure: {"env": {"DIFY_API_KEY": "xxx", "DIFY_BASE_URL": "xxx"}}
             env = agent_config.get("env", {})
 
             config["api_key"] = env.get("DIFY_API_KEY", "")
-            config["base_url"] = env.get("DIFY_BASE_URL", "")
+            config["base_url"] = env.get("DIFY_BASE_URL", "https://api.dify.ai")  # Default base URL
             config["app_id"] = env.get("DIFY_APP_ID", "")
 
         return config
@@ -160,9 +163,11 @@ class DifyAgent(Agent):
             logger.error("DIFY_BASE_URL is not configured")
             return False
 
-        if not self.dify_app_id:
-            logger.error("DIFY_APP_ID is not configured (neither in Model env nor in bot_prompt)")
-            return False
+        # DIFY_APP_ID is no longer required since each API key corresponds to one app
+        # Keeping the check for backward compatibility with bot_prompt
+        # if not self.dify_app_id:
+        #     logger.error("DIFY_APP_ID is not configured (neither in Model env nor in bot_prompt)")
+        #     return False
 
         return True
 
