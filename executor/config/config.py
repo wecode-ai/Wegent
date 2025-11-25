@@ -18,6 +18,13 @@ CALLBACK_URL = os.environ.get("CALLBACK_URL", "")
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 DEBUG_RUN = os.environ.get("DEBUG_RUN", "")
 
+# Claude Code error retry configuration
+CLAUDE_ERROR_MAX_RETRIES = int(os.environ.get("CLAUDE_ERROR_MAX_RETRIES", "3"))
+CLAUDE_RETRY_ERROR_PATTERNS = os.environ.get(
+    "CLAUDE_RETRY_ERROR_PATTERNS",
+    "Cannot read properties of undefined|ReferenceError|TypeError: Cannot read"
+).split("|")
+
 # Task cancellation configuration
 CANCEL_TIMEOUT_SECONDS = int(os.environ.get("CANCEL_TIMEOUT_SECONDS", "30"))
 CANCEL_RETRY_ATTEMPTS = int(os.environ.get("CANCEL_RETRY_ATTEMPTS", "3"))

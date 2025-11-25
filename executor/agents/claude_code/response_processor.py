@@ -30,7 +30,7 @@ logger = setup_logger("claude_response_processor")
 
 
 async def process_response(
-    client: ClaudeSDKClient, state_manager, thinking_manager=None, task_state_manager=None
+    client: ClaudeSDKClient, state_manager, thinking_manager=None, task_state_manager=None, session_id: str = None
 ) -> TaskStatus:
     """
     Process the response messages from Claude
@@ -40,10 +40,18 @@ async def process_response(
         state_manager: ProgressStateManager instance for managing state and reporting progress
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
         task_state_manager: Optional TaskStateManager instance for checking cancellation
+        session_id: Session ID for sending retry messages
 
     Returns:
         TaskStatus: Processing status
     """
+    from executor.config import config
+    
+    # Initialize retry counter
+    retry_count = 0
+    max_retries = config.CLAUDE_ERROR_MAX_RETRIES
+    retry_patterns = config.CLAUDE_RETRY_ERROR_PATTERNS
+    
     index = 0
     try:
         async for msg in client.receive_response():
@@ -76,6 +84,56 @@ async def process_response(
                 # Use specialized function to handle ResultMessage
                 result_status = _process_result_message(msg, state_manager, thinking_manager)
                 if result_status:
+                    # Check if this is a retryable error
+                    if result_status == TaskStatus.FAILED and msg.is_error:
+                        error_message = str(msg.result) if msg.result else ""
+                        
+                        # Check if error matches any retry pattern
+                        should_retry = any(pattern in error_message for pattern in retry_patterns)
+                        
+                        if should_retry and retry_count < max_retries and session_id:
+                            retry_count += 1
+                            logger.warning(
+                                f"Detected retryable error (retry {retry_count}/{max_retries}): {error_message}"
+                            )
+                            
+                            # Add thinking step for retry
+                            if thinking_manager:
+                                thinking_manager.add_thinking_step(
+                                    title="thinking.auto_retry_attempt",
+                                    report_immediately=True,
+                                    use_i18n_keys=True,
+                                    details={
+                                        "retry_count": retry_count,
+                                        "max_retries": max_retries,
+                                        "error_message": error_message
+                                    }
+                                )
+                            
+                            # Send continue message to Claude
+                            try:
+                                logger.info(f"Sending '继续' message to Claude for retry {retry_count}")
+                                await client.query("继续", session_id=session_id)
+                                # Continue processing responses after retry
+                                continue
+                            except Exception as retry_error:
+                                logger.error(f"Failed to send retry message: {retry_error}")
+                                return TaskStatus.FAILED
+                        elif should_retry and retry_count >= max_retries:
+                            logger.error(
+                                f"Max retry limit ({max_retries}) reached for error: {error_message}"
+                            )
+                            if thinking_manager:
+                                thinking_manager.add_thinking_step(
+                                    title="thinking.max_retry_limit_reached",
+                                    report_immediately=True,
+                                    use_i18n_keys=True,
+                                    details={
+                                        "retry_count": retry_count,
+                                        "max_retries": max_retries,
+                                        "error_message": error_message
+                                    }
+                                )
                     return result_status
 
             elif isinstance(msg, dict):
