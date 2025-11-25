@@ -82,7 +82,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
     }
   }, [agentConfig]);
 
-  // Validate Dify API key by fetching app info
+  // Validate Dify API key by fetching app info and parameters
   const validateApiKey = useCallback(async () => {
     if (!difyApiKey || !difyBaseUrl) {
       toast({
@@ -97,17 +97,30 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
     setAppInfo(null);
 
     try {
-      const response = await apiClient.post<DifyAppInfo>('/dify/app/info', {
-        api_key: difyApiKey,
-        base_url: difyBaseUrl,
-      });
+      // Fetch app info and parameters in parallel
+      const [infoResponse, paramsResponse] = await Promise.all([
+        apiClient.post<DifyAppInfo>('/dify/app/info', {
+          api_key: difyApiKey,
+          base_url: difyBaseUrl,
+        }),
+        apiClient.post<{ user_input_form?: DifyAppInfo['user_input_form'] }>('/dify/app/parameters', {
+          api_key: difyApiKey,
+          base_url: difyBaseUrl,
+        }).catch(() => ({ user_input_form: [] })), // Fallback if parameters endpoint fails
+      ]);
 
-      setAppInfo(response);
+      // Merge info and parameters
+      const completeAppInfo: DifyAppInfo = {
+        ...infoResponse,
+        user_input_form: paramsResponse.user_input_form || infoResponse.user_input_form || [],
+      };
+
+      setAppInfo(completeAppInfo);
       setIsValidated(true);
 
       toast({
         title: t('bot.dify_validation_success') || 'API Key validated successfully',
-        description: `Application: ${response.name}`,
+        description: `Application: ${completeAppInfo.name}`,
       });
     } catch (error) {
       console.error('Failed to validate Dify API key:', error);
