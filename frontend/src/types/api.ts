@@ -217,6 +217,7 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at: string;
+  last_interaction_at: string;
 }
 
 /** GitHub repository new structure */

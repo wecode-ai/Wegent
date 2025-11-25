@@ -112,6 +112,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 task_crd.status.progress = 0
             existing_task.json = task_crd.model_dump(mode='json', exclude_none=True)
             existing_task.updated_at = datetime.now()
+            existing_task.last_interaction_at = datetime.now()
 
             task = existing_task
         else:
@@ -225,7 +226,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 name=f"task-{task_id}",
                 namespace="default",
                 json=task_json,
-                is_active=True
+                is_active=True,
+                last_interaction_at=datetime.now()
             )
             db.add(task)
 
@@ -253,7 +255,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         )
 
         total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        tasks = query.order_by(Kind.last_interaction_at.desc()).offset(skip).limit(limit).all()
 
         if not tasks:
             return [], total
@@ -284,7 +286,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         )
 
         total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        tasks = query.order_by(Kind.last_interaction_at.desc()).offset(skip).limit(limit).all()
 
         if not tasks:
             return [], total
@@ -378,6 +380,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "updated_at": updated_at,
                 "team_id": team_id,
                 "git_repo": git_repo,
+                "last_interaction_at": task.last_interaction_at or created_at,
             })
 
         return result, total
@@ -397,7 +400,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         ).params(title=f"%{title}%")
 
         total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        tasks = query.order_by(Kind.last_interaction_at.desc()).offset(skip).limit(limit).all()
 
         if not tasks:
             return [], total
@@ -943,6 +946,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "created_at": created_at or task.created_at,
             "updated_at": updated_at or task.updated_at,
             "completed_at": completed_at,
+            "last_interaction_at": task.last_interaction_at or task.created_at,
         }
 
     def _convert_team_to_dict(self, team: Kind, db: Session, user_id: int) -> Dict[str, Any]:
@@ -1342,6 +1346,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "created_at": related_data.get("created_at", task.created_at),
             "updated_at": related_data.get("updated_at", task.updated_at),
             "completed_at": related_data.get("completed_at"),
+            "last_interaction_at": task.last_interaction_at or task.created_at,
         }
 
 

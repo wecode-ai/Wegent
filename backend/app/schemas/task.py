@@ -87,6 +87,7 @@ class TaskInDB(TaskBase):
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
+    last_interaction_at: Optional[datetime] = None
 
     class Config:
         from_attributes = True
@@ -130,6 +131,7 @@ class TaskLite(BaseModel):
     type: str
     created_at: datetime
     updated_at: datetime
+    last_interaction_at: Optional[datetime] = None
     team_id: Optional[int] = None
     git_repo: Optional[str] = None
 

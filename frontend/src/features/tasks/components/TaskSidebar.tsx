@@ -96,12 +96,12 @@ export default function TaskSidebar({
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const todayTasks = tasks.filter(task => new Date(task.created_at) >= today);
+    const todayTasks = tasks.filter(task => new Date(task.last_interaction_at) >= today);
     const thisWeekTasks = tasks.filter(task => {
-      const taskDate = new Date(task.created_at);
+      const taskDate = new Date(task.last_interaction_at);
       return taskDate >= weekAgo && taskDate < today;
     });
-    const earlierTasks = tasks.filter(task => new Date(task.created_at) < weekAgo);
+    const earlierTasks = tasks.filter(task => new Date(task.last_interaction_at) < weekAgo);
 
     return {
       today: todayTasks,

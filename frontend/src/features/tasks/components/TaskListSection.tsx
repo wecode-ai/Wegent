@@ -343,7 +343,7 @@ export default function TaskListSection({
                     {getTaskTypeTag(task)}
                   </div>
                   <p className="text-xs text-text-secondary m-0">
-                    {formatTimeAgo(task.created_at)}
+                    {formatTimeAgo(task.last_interaction_at)}
                   </p>
                 </div>
               </div>
