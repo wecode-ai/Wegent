@@ -245,28 +245,6 @@ class AgnoAgent(Agent):
                     details={"git_url": git_url}
                 )
                 self.download_code()
-
-            # Setup Claude Code custom instructions (for compatibility only)
-            if self.project_path:
-                try:
-                    custom_rules = self._load_custom_instructions(self.project_path)
-                    if custom_rules:
-                        # Merge instructions for .claudecode directory only (not for system_prompt)
-                        base_prompt = self.options.get("system_prompt", "")
-                        merged_prompt = self._merge_instructions(base_prompt, custom_rules)
-
-                        # Setup .claudecode directory for Claude Code compatibility
-                        self._setup_claudecode_dir(self.project_path, merged_prompt)
-
-                        # Update .git/info/exclude to ignore .claudecode
-                        self._update_git_exclude(self.project_path, exclude_claude_md=False)
-
-                        logger.info(f"Setup Claude Code custom instructions with {len(custom_rules)} files")
-
-                except Exception as e:
-                    logger.warning(f"Failed to process custom instructions: {e}")
-                    # Continue execution with original systemPrompt
-
         except Exception as e:
             logger.error(f"Pre-execution failed: {str(e)}")
             self.add_thinking_step_by_key(

@@ -317,64 +317,6 @@ class Agent:
 
         return custom_rules
 
-    def _merge_instructions(self, base_prompt: str, custom_rules: Dict[str, str]) -> str:
-        """
-        Merge systemPrompt and custom instruction rules
-
-        Args:
-            base_prompt: systemPrompt from YAML config
-            custom_rules: Custom instruction file content dictionary (ordered)
-
-        Returns:
-            Merged complete instruction text
-        """
-        if not custom_rules:
-            return base_prompt
-
-        # Start with base prompt
-        merged_parts = [base_prompt] if base_prompt else []
-
-        # Add each custom rule file with separator
-        for file_path, content in custom_rules.items():
-            merged_parts.append(f"\n# ===== Custom Instructions from {file_path} =====\n{content}")
-
-        merged = "\n".join(merged_parts)
-        logger.debug(f"Merged instructions preview: {merged[:200]}...")
-
-        return merged
-
-    def _setup_claudecode_dir(self, project_path: str, merged_instructions: str) -> None:
-        """
-        Setup .claudecode directory and custom_instructions file
-
-        Args:
-            project_path: Project root directory
-            merged_instructions: Merged instruction content
-        """
-        try:
-            claudecode_dir = os.path.join(project_path, ".claudecode")
-
-            # Check if .claudecode directory exists
-            if os.path.exists(claudecode_dir):
-                # Backup existing directory
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_dir = os.path.join(project_path, f".claudecode.backup.{timestamp}")
-                os.rename(claudecode_dir, backup_dir)
-                logger.info(f"Backed up existing .claudecode to {backup_dir}")
-
-            # Create new .claudecode directory
-            os.makedirs(claudecode_dir, exist_ok=True)
-
-            # Write custom_instructions file
-            custom_instructions_file = os.path.join(claudecode_dir, "custom_instructions")
-            with open(custom_instructions_file, 'w', encoding='utf-8') as f:
-                f.write(merged_instructions)
-
-            logger.info(f"Created .claudecode directory at {claudecode_dir}")
-
-        except Exception as e:
-            logger.warning(f"Failed to create .claudecode directory: {e}")
-
     def _update_git_exclude(self, project_path: str, exclude_claude_md: bool = True) -> None:
         """
         Update .git/info/exclude file to exclude .claudecode directory
@@ -426,35 +368,4 @@ class Agent:
         except Exception as e:
             logger.warning(f"Failed to update .git/info/exclude: {e}")
 
-    def _setup_claude_md_symlink(self, project_path: str) -> None:
-        """
-        Setup Claude.md symlink from Agents.md if it exists
-
-        Args:
-            project_path: Project root directory
-        """
-        try:
-            agents_md = os.path.join(project_path, "Agents.md")
-            claude_md = os.path.join(project_path, "Claude.md")
-
-            # Check if Agents.md exists
-            if not os.path.exists(agents_md):
-                logger.debug("Agents.md not found, skipping Claude.md symlink creation")
-                return
-
-            # Remove existing Claude.md if it exists
-            if os.path.exists(claude_md):
-                if os.path.islink(claude_md):
-                    os.unlink(claude_md)
-                    logger.debug("Removed existing Claude.md symlink")
-                else:
-                    logger.debug("Claude.md already exists as a regular file, skipping symlink creation")
-                    return
-
-            # Create symlink
-            os.symlink("Agents.md", claude_md)
-            logger.info(f"Created Claude.md symlink to Agents.md")
-
-        except Exception as e:
-            logger.warning(f"Failed to create Claude.md symlink: {e}")
-
+ 

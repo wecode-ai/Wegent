@@ -578,12 +578,8 @@ class ClaudeCodeAgent(Agent):
                 try:
                     custom_rules = self._load_custom_instructions(self.project_path)
                     if custom_rules:
-                        # Merge instructions for .claudecode directory only (not for system_prompt)
-                        base_prompt = self.options.get("system_prompt", "")
-                        merged_prompt = self._merge_instructions(base_prompt, custom_rules)
-
                         # Setup .claudecode directory for Claude Code compatibility
-                        self._setup_claudecode_dir(self.project_path, merged_prompt)
+                        self._setup_claudecode_dir(self.project_path, custom_rules)
 
                         # Update .git/info/exclude to ignore .claudecode
                         self._update_git_exclude(self.project_path)
@@ -1042,3 +1038,41 @@ class ClaudeCodeAgent(Agent):
             logger.info(f"Completed resource cleanup for task {self.task_id}")
         except Exception as e:
             logger.exception(f"Error in resource cleanup for task {self.task_id}: {e}")
+   def _setup_claude_md_symlink(self, project_path: str) -> None:
+        """
+        Setup Claude.md symlink from Agents.md or AGENTS.md if it exists
+
+        Args:
+            project_path: Project root directory
+        """
+        try:
+            # Try to find agents file with case-insensitive search
+            agents_filename = None
+            for filename in ["AGENTS.md", "Agents.md", "agents.md"]:
+                agents_path = os.path.join(project_path, filename)
+                if os.path.exists(agents_path):
+                    agents_filename = filename
+                    break
+            
+            if not agents_filename:
+                logger.debug("No agents.md file found (tried AGENTS.md, Agents.md, agents.md), skipping Claude.md symlink creation")
+                return
+
+            claude_md = os.path.join(project_path, "Claude.md")
+
+            # Remove existing Claude.md if it exists
+            if os.path.exists(claude_md):
+                if os.path.islink(claude_md):
+                    os.unlink(claude_md)
+                    logger.debug("Removed existing Claude.md symlink")
+                else:
+                    logger.debug("Claude.md already exists as a regular file, skipping symlink creation")
+                    return
+
+            # Create symlink using the found filename
+            os.symlink(agents_filename, claude_md)
+            logger.info(f"Created Claude.md symlink to {agents_filename}")
+
+        except Exception as e:
+            logger.warning(f"Failed to create Claude.md symlink: {e}")
+
