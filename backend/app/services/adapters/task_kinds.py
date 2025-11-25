@@ -67,12 +67,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     status_code=400,
                     detail="Task is still running, please wait for it to complete"
                 )
-            elif task_status in ["DELETE", "CANCELLED"]:
+            elif task_status in ["DELETE"]:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Task has {task_status.lower()}, please create a new task"
                 )
-            elif task_status not in ["COMPLETED", "FAILED"]:
+            elif task_status not in ["COMPLETED", "FAILED", "CANCELLED"]:
                 raise HTTPException(
                     status_code=400,
                     detail="Task is in progress, please wait for it to complete"
@@ -209,9 +209,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "name": f"task-{task_id}",
                     "namespace": "default",
                     "labels": {
-                        "type": obj_in.type, # default：online、offline"
-                        "taskType": obj_in.task_type, # defalut：chat、code
-                        "autoDeleteExecutor": obj_in.auto_delete_executor, #default: false 、true
+                        "type": obj_in.type, # default: online, offline
+                        "taskType": obj_in.task_type, # default: chat, code
+                        "autoDeleteExecutor": obj_in.auto_delete_executor, # default: false, true
                         "source": obj_in.source,
                     }
                 },
@@ -260,12 +260,125 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         # Get all related data in batch to avoid N+1 queries
         related_data_batch = self._get_tasks_related_data_batch(db, tasks, user_id)
-        
+
         result = []
         for task in tasks:
             task_crd = Task.model_validate(task.json)
             task_related_data = related_data_batch.get(str(task.id), {})
             result.append(self._convert_to_task_dict_optimized(task, task_related_data, task_crd))
+
+        return result, total
+
+    def get_user_tasks_lite(
+        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """
+        Get user's Task list with pagination (lightweight version for list display)
+        Only returns essential fields without JOIN queries for better performance
+        """
+        query = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'")
+        )
+
+        total = query.with_entities(func.count(Kind.id)).scalar()
+        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+
+        if not tasks:
+            return [], total
+
+        # Build lightweight result without expensive JOIN operations
+        result = []
+        for task in tasks:
+            task_crd = Task.model_validate(task.json)
+
+            # Extract basic fields from task JSON
+            task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
+            type_value = task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+            status = task_crd.status.status if task_crd.status else "PENDING"
+
+            # Parse timestamps
+            created_at = task.created_at
+            updated_at = task.updated_at
+            if task_crd.status:
+                try:
+                    if task_crd.status.createdAt:
+                        created_at = task_crd.status.createdAt
+                    if task_crd.status.updatedAt:
+                        updated_at = task_crd.status.updatedAt
+                except:
+                    pass
+
+            # Get team_id using direct SQL query (more efficient than ORM)
+            team_name = task_crd.spec.teamRef.name
+            team_namespace = task_crd.spec.teamRef.namespace
+            team_result = db.execute(
+                text("""
+                    SELECT id FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Team'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """),
+                {"user_id": user_id, "name": team_name, "namespace": team_namespace}
+            ).fetchone()
+
+            # If not found in user's teams, check shared teams
+            team_id = team_result[0] if team_result else None
+            if not team_id:
+                shared_team_result = db.execute(
+                    text("""
+                        SELECT k.id FROM kinds k
+                        INNER JOIN shared_teams st ON k.user_id = st.original_user_id
+                        WHERE st.user_id = :user_id
+                        AND st.is_active = true
+                        AND k.kind = 'Team'
+                        AND k.name = :name
+                        AND k.namespace = :namespace
+                        AND k.is_active = true
+                        LIMIT 1
+                    """),
+                    {"user_id": user_id, "name": team_name, "namespace": team_namespace}
+                ).fetchone()
+                team_id = shared_team_result[0] if shared_team_result else None
+
+            # Get git_repo from workspace using direct SQL query
+            workspace_name = task_crd.spec.workspaceRef.name
+            workspace_namespace = task_crd.spec.workspaceRef.namespace
+            workspace_result = db.execute(
+                text("""
+                    SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
+                    FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Workspace'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """),
+                {"user_id": user_id, "name": workspace_name, "namespace": workspace_namespace}
+            ).fetchone()
+
+            git_repo = None
+            if workspace_result and workspace_result[0]:
+                # Remove JSON quotes from extracted value
+                git_repo = workspace_result[0].strip('"') if isinstance(workspace_result[0], str) else workspace_result[0]
+
+            result.append({
+                "id": task.id,
+                "title": task_crd.spec.title,
+                "status": status,
+                "task_type": task_type,
+                "type": type_value,
+                "created_at": created_at,
+                "updated_at": updated_at,
+                "team_id": team_id,
+                "git_repo": git_repo,
+            })
 
         return result, total
 
@@ -505,9 +618,37 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             task_crd.spec.prompt = update_data["prompt"]
 
         # Update task status fields
+        # Update task status fields
         if task_crd.status:
             if "status" in update_data:
-                task_crd.status.status = update_data["status"].value if hasattr(update_data["status"], 'value') else update_data["status"]
+                new_status = update_data["status"].value if hasattr(update_data["status"], 'value') else update_data["status"]
+                current_status = task_crd.status.status
+                
+                # State transition protection: prevent final states from being overwritten by non-final states
+                # Define final states and non-final states
+                final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
+                non_final_states = ["PENDING", "RUNNING", "CANCELLING"]
+                
+                # If current status is CANCELLING, only allow transition to CANCELLED or FAILED
+                if current_status == "CANCELLING":
+                    if new_status not in ["CANCELLED", "FAILED"]:
+                        logger.warning(
+                            f"Task {task_id}: Ignoring status update from CANCELLING to {new_status}. "
+                            f"CANCELLING can only transition to CANCELLED or FAILED."
+                        )
+                        # Do not update status, but allow updating other fields (e.g., progress)
+                    else:
+                        task_crd.status.status = new_status
+                        logger.info(f"Task {task_id}: Status updated from CANCELLING to {new_status}")
+                # If current status is already a final state, do not allow it to be overwritten by non-final states
+                elif current_status in final_states and new_status in non_final_states:
+                    logger.warning(
+                        f"Task {task_id}: Ignoring status update from final state {current_status} to non-final state {new_status}"
+                    )
+                    # Do not update status, but allow updating other fields
+                else:
+                    # Normal state transition
+                    task_crd.status.status = new_status
             if "progress" in update_data:
                 task_crd.status.progress = update_data["progress"]
             if "result" in update_data:
@@ -548,7 +689,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             if "status" in update_data and update_data["status"] in ["COMPLETED", "FAILED", "CANCELLED"]:
                 task_crd.status.completedAt = datetime.now()
 
-        task.json = task_crd.model_dump()
+        task.json = task_crd.model_dump(mode='json', exclude_none=True)
         task.updated_at = datetime.now()
         flag_modified(task, "json")
 
@@ -728,7 +869,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             git_domain = workspace_crd.spec.repository.gitDomain
             branch_name = workspace_crd.spec.repository.branchName
 
-        # Get team data
+        # Get team data (including shared teams)
         team = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Team",
@@ -736,6 +877,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             Kind.namespace == task_crd.spec.teamRef.namespace,
             Kind.is_active == True
         ).first()
+
+        # If not found in user's own teams, check shared teams
+        if not team:
+            shared_teams = db.query(SharedTeam).filter(
+                SharedTeam.user_id == user_id,
+                SharedTeam.is_active == True
+            ).all()
+
+            original_user_ids = [st.original_user_id for st in shared_teams]
+            if original_user_ids:
+                team = db.query(Kind).filter(
+                    Kind.user_id.in_(original_user_ids),
+                    Kind.kind == "Team",
+                    Kind.name == task_crd.spec.teamRef.name,
+                    Kind.namespace == task_crd.spec.teamRef.namespace,
+                    Kind.is_active == True
+                ).first()
 
         team_id = team.id if team else None
 
@@ -938,7 +1096,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     progress=0,
                     message_id=next_message_id,
                     parent_id=parent_id,
-                    # If executor_infos is not empty, take the i-th one, otherwise empty string
+                    # If executor_infos is not empty, take the i-th one, otherwise use empty string
                     executor_name=executor_infos[i].get('executor_name') if len(executor_infos) > i else "",
                     executor_namespace=executor_infos[i].get('executor_namespace') if len(executor_infos) > i else "",
                     error_message="",
@@ -956,7 +1114,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             executor_name = ""
             executor_namespace = ""
             if existing_subtasks:
-                # Take executor_name and executor_namespace from the last existing_subtasks
+                # Take executor_name and executor_namespace from the last existing subtask
                 executor_name = existing_subtasks[0].executor_name
                 executor_namespace = existing_subtasks[0].executor_namespace
                 
@@ -1054,10 +1212,11 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         "branch_name": "",
                     }
         
-        # Batch query teams
+        # Batch query teams (including shared teams)
         team_data = {}
         if team_refs:
             team_names, team_namespaces = zip(*team_refs)
+            # First query user's own teams
             teams = db.query(Kind).filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Team",
@@ -1065,10 +1224,37 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 Kind.namespace.in_(team_namespaces),
                 Kind.is_active == True
             ).all()
-            
+
             for team in teams:
                 key = f"{team.name}:{team.namespace}"
                 team_data[key] = team
+
+            # Then query shared teams for missing team refs
+            missing_team_refs = [ref for ref in team_refs if f"{ref[0]}:{ref[1]}" not in team_data]
+            if missing_team_refs:
+                # Get all shared teams for this user
+                shared_teams = db.query(SharedTeam).filter(
+                    SharedTeam.user_id == user_id,
+                    SharedTeam.is_active == True
+                ).all()
+
+                # Get original user IDs from shared teams
+                original_user_ids = [st.original_user_id for st in shared_teams]
+
+                if original_user_ids:
+                    # Query teams from shared team owners
+                    missing_team_names, missing_team_namespaces = zip(*missing_team_refs)
+                    shared_team_kinds = db.query(Kind).filter(
+                        Kind.user_id.in_(original_user_ids),
+                        Kind.kind == "Team",
+                        Kind.name.in_(missing_team_names),
+                        Kind.namespace.in_(missing_team_namespaces),
+                        Kind.is_active == True
+                    ).all()
+
+                    for team in shared_team_kinds:
+                        key = f"{team.name}:{team.namespace}"
+                        team_data[key] = team
         
         # Get user info once
         user = db.query(User).filter(User.id == user_id).first()

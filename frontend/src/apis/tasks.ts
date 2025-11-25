@@ -93,6 +93,16 @@ export const taskApis = {
     return apiClient.get(`/tasks?${query}`);
   },
 
+  getTasksLite: async (
+    params?: PaginationParams & { status?: TaskStatus }
+  ): Promise<TaskListResponse> => {
+    const query = new URLSearchParams();
+    if (params?.limit) query.append('limit', params.limit.toString());
+    if (params?.page) query.append('page', params.page.toString());
+    if (params?.status) query.append('status', params.status);
+    return apiClient.get(`/tasks/lite?${query}`);
+  },
+
   searchTasks: async (title: string, params?: PaginationParams): Promise<TaskListResponse> => {
     const query = new URLSearchParams();
     query.append('title', title);
@@ -140,6 +150,11 @@ export const taskApis = {
 
   deleteTask: async (id: number): Promise<SuccessMessage> => {
     return apiClient.delete(`/tasks/${id}`);
+  },
+
+  // Cancel a running task
+  cancelTask: async (id: number): Promise<SuccessMessage> => {
+    return apiClient.post(`/tasks/${id}/cancel`, {});
   },
 
   // Get branch diff

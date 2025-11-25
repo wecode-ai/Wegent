@@ -18,6 +18,7 @@ class TaskStatus(str, Enum):
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+    CANCELLING = "CANCELLING"
     DELETE = "DELETE"
 
 class TaskBase(BaseModel):
@@ -119,3 +120,23 @@ class TaskListResponse(BaseModel):
     """Task paginated response model"""
     total: int
     items: list[TaskInDB]
+
+class TaskLite(BaseModel):
+    """Lightweight task model for list display"""
+    id: int
+    title: str
+    status: TaskStatus
+    task_type: str
+    type: str
+    created_at: datetime
+    updated_at: datetime
+    team_id: Optional[int] = None
+    git_repo: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+class TaskLiteListResponse(BaseModel):
+    """Lightweight task paginated response model"""
+    total: int
+    items: list[TaskLite]

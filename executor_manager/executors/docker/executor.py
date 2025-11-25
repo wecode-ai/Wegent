@@ -327,6 +327,97 @@ class DockerExecutor(Executor):
                 "error_msg": f"Error deleting container: {str(e)}"
             }
 
+    def cancel_task(self, task_id: int) -> Dict[str, Any]:
+        """
+        Cancel a running task by calling the executor's cancel API.
+
+        Args:
+            task_id (int): Task ID to cancel.
+
+        Returns:
+            Dict[str, Any]: Cancellation result with unified structure.
+        """
+        try:
+            # Find the container running this task
+            result = get_running_task_details()
+
+            logger.info(f"Running task details for cancellation: {result}")
+
+            if result.get("status") != "success":
+                logger.warning(f"Failed to find container for task {task_id}: {result.get('error_msg', 'Unknown error')}")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Failed to find running container for task {task_id}"
+                }
+
+            task_ids = result.get("task_ids", [])
+            if str(task_id) not in task_ids:
+                logger.warning(f"Task {task_id} is not currently running")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Task {task_id} is not currently running"
+                }
+
+            # Get container details
+            containers = result.get("containers", [])
+            container_detail = next((d for d in containers if str(d.get("task_id")) == str(task_id)), None)
+
+            if not container_detail:
+                logger.error(f"Could not find container details for task {task_id}")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Could not find container details for task {task_id}"
+                }
+
+            container_name = container_detail.get("container_name")
+            if not container_name:
+                logger.error(f"Could not find executor name for task {task_id}")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Could not find executor name for task {task_id}"
+                }
+
+            # Get container port
+            port = self._get_container_port(container_name)
+            if not port:
+                logger.error(f"Could not find port for container {container_name}")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Could not find port for container {container_name}"
+                }
+
+            
+            # Call the executor's cancel API
+            cancel_url = f"http://{DEFAULT_DOCKER_HOST}:{port}/api/tasks/cancel?task_id={task_id}"
+
+            # Call the executor's cancel API
+            logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
+
+            try:
+                response = self.requests.post(cancel_url, timeout=10)
+                response.raise_for_status()
+
+                logger.info(f"Successfully cancelled task {task_id}")
+                return {
+                    "status": "success",
+                    "task_ids": task_ids,
+                    "containers": containers,
+                    "message": f"Task {task_id} cancellation requested successfully"
+                }
+            except self.requests.exceptions.RequestException as e:
+                logger.info(f"Failed to call cancel API for task {task_id}: {e}")
+                return {
+                    "status": "failed",
+                    "error_msg": f"Failed to communicate with executor: {str(e)}"
+                }
+
+        except Exception as e:
+            logger.info(f"Error cancelling task {task_id}: {e}")
+            return {
+                "status": "failed",
+                "error_msg": f"Error cancelling task: {str(e)}"
+            }
+
     def get_executor_count(
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:
