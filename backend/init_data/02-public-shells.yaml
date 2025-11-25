@@ -25,3 +25,14 @@ spec:
   supportModel: []
 status:
   state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: Dify
+  namespace: default
+spec:
+  runtime: Dify
+  supportModel: []
+status:
+  state: Available

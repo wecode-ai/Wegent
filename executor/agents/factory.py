@@ -12,6 +12,7 @@ from shared.logger import setup_logger
 from executor.agents.base import Agent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.agno.agno_agent import AgnoAgent
+from executor.agents.dify.dify_agent import DifyAgent
 
 logger = setup_logger("agent_factory")
 
@@ -21,7 +22,7 @@ class AgentFactory:
     Factory class for creating agent instances based on agent_type
     """
 
-    _agents = {"claudecode": ClaudeCodeAgent, "agno": AgnoAgent}
+    _agents = {"claudecode": ClaudeCodeAgent, "agno": AgnoAgent, "dify": DifyAgent}
 
     @classmethod
     def get_agent(cls, agent_type: str, task_data: Dict[str, Any]) -> Optional[Agent]:

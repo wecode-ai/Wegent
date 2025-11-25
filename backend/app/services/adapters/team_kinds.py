@@ -518,13 +518,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """
         Validate bots and check if bots belong to user and are active
+        Also validates Dify runtime constraint: Dify Teams must have exactly one bot
         """
         if not bots:
             raise HTTPException(
                 status_code=400,
                 detail="bots cannot be empty"
             )
-        
+
         bot_id_list = []
         for bot in bots:
             if hasattr(bot, 'bot_id'):
@@ -536,7 +537,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     status_code=400,
                     detail="Invalid bot format: missing bot_id"
                 )
-        
+
         # Check if all bots exist, belong to user, and are active in kinds table
         bots_in_db = db.query(Kind).filter(
             Kind.id.in_(bot_id_list),
@@ -544,16 +545,39 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.kind == "Bot",
             Kind.is_active == True
         ).all()
-        
+
         found_bot_ids = {bot.id for bot in bots_in_db}
         missing_bot_ids = set(bot_id_list) - found_bot_ids
-        
+
         if missing_bot_ids:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid or inactive bot_ids: {', '.join(map(str, missing_bot_ids))}"
             )
-        
+
+        # Validate Dify runtime constraint: must have exactly one bot
+        for bot in bots_in_db:
+            bot_crd = Bot.model_validate(bot.json)
+
+            # Get shell to check runtime
+            shell = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Shell",
+                Kind.name == bot_crd.spec.shellRef.name,
+                Kind.namespace == bot_crd.spec.shellRef.namespace,
+                Kind.is_active == True
+            ).first()
+
+            if shell:
+                shell_crd = Shell.model_validate(shell.json)
+                if shell_crd.spec.runtime == "Dify":
+                    # Dify runtime found, validate bot count
+                    if len(bots) > 1:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Teams using Dify runtime must have exactly one bot. Found {len(bots)} bots."
+                        )
+
     def get_team_by_id(self, db: Session, *, team_id: int, user_id: int) -> Optional[Kind]:
         """
         Get team by id, checking both user's own teams and shared teams
