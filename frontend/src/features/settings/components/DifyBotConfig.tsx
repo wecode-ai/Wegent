@@ -20,11 +20,6 @@ interface DifyBotConfigProps {
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
 }
 
-interface DifyBotPromptData {
-  difyAppId?: string;
-  params?: Record<string, unknown>;
-}
-
 const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
   agentConfig,
   onAgentConfigChange,
@@ -34,7 +29,6 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
   const [apps, setApps] = useState<DifyApp[]>([]);
   const [isLoadingApps, setIsLoadingApps] = useState(false);
   const [selectedAppId, setSelectedAppId] = useState<string>('');
-  const [difyParams, setDifyParams] = useState<Record<string, unknown>>({});
   const [difyApiKey, setDifyApiKey] = useState<string>('');
   const [difyBaseUrl, setDifyBaseUrl] = useState<string>('https://api.dify.ai');
 
