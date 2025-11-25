@@ -297,5 +297,32 @@ export interface ClarificationAnswerPayload {
 
 export interface FinalPromptData {
   type: 'final_prompt';
-  prompt: string;
+  final_prompt: string;
+}
+
+// Dify Types
+export interface DifyApp {
+  id: string;
+  name: string;
+  mode: 'chat' | 'workflow' | 'agent' | 'chatflow';
+  icon: string;
+  icon_background: string;
+}
+
+export interface DifyBotPrompt {
+  difyAppId?: string;
+  params?: Record<string, any>;
+}
+
+export interface DifyParameterField {
+  variable: string;
+  label: string;
+  type: 'text-input' | 'select' | 'paragraph';
+  required?: boolean;
+  default?: string;
+  options?: Array<{ label: string; value: string }>;
+}
+
+export interface DifyParametersSchema {
+  user_input_form: DifyParameterField[];
 }
