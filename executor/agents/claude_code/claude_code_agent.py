@@ -803,7 +803,10 @@ class ClaudeCodeAgent(Agent):
 
             logger.info(f"Waiting for response for prompt: {prompt}")
             # Process and handle the response using the external processor
-            result = await process_response(self.client, self.state_manager, self.thinking_manager, self.task_state_manager)
+            result = await process_response(
+                self.client, self.state_manager, self.thinking_manager, 
+                self.task_state_manager, session_id=self.session_id
+            )
             
             # Update task state based on result
             if result == TaskStatus.COMPLETED:

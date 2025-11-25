@@ -29,8 +29,16 @@ from claude_agent_sdk.types import (
 logger = setup_logger("claude_response_processor")
 
 
+# Maximum retry count for API errors per session
+MAX_API_ERROR_RETRIES = 3
+
+# Error pattern to detect API errors that need retry
+API_ERROR_PATTERN = "API Error: Cannot read properties of undefined"
+
+
 async def process_response(
-    client: ClaudeSDKClient, state_manager, thinking_manager=None, task_state_manager=None
+    client: ClaudeSDKClient, state_manager, thinking_manager=None, task_state_manager=None,
+    session_id: str = None
 ) -> TaskStatus:
     """
     Process the response messages from Claude
@@ -40,11 +48,13 @@ async def process_response(
         state_manager: ProgressStateManager instance for managing state and reporting progress
         thinking_manager: Optional ThinkingStepManager instance for adding thinking steps
         task_state_manager: Optional TaskStateManager instance for checking cancellation
+        session_id: Optional session ID for retry operations
 
     Returns:
         TaskStatus: Processing status
     """
     index = 0
+    api_error_retry_count = 0  # Track retry count for this session
     try:
         async for msg in client.receive_response():
             index += 1
@@ -70,7 +80,50 @@ async def process_response(
                 _handle_user_message(msg, thinking_manager)
 
             elif isinstance(msg, AssistantMessage):
-                _handle_assistant_message(msg, state_manager, thinking_manager)
+                # Check if this message contains an API error that needs retry
+                needs_retry = _handle_assistant_message(msg, state_manager, thinking_manager)
+                
+                if needs_retry and session_id and api_error_retry_count < MAX_API_ERROR_RETRIES:
+                    api_error_retry_count += 1
+                    logger.warning(
+                        f"Detected API error in session {session_id}, "
+                        f"retry {api_error_retry_count}/{MAX_API_ERROR_RETRIES}"
+                    )
+                    
+                    if thinking_manager:
+                        thinking_manager.add_thinking_step(
+                            title="thinking.api_error_retry",
+                            report_immediately=True,
+                            use_i18n_keys=True,
+                            details={
+                                "retry_count": api_error_retry_count,
+                                "max_retries": MAX_API_ERROR_RETRIES,
+                                "session_id": session_id
+                            }
+                        )
+                    
+                    # Send "Retry to proceed" message to retry
+                    try:
+                        await client.query("Retry to proceed", session_id=session_id)
+                        logger.info(f"Sent retry message for session {session_id}")
+                    except Exception as retry_error:
+                        logger.error(f"Failed to send retry message: {retry_error}")
+                
+                elif needs_retry and api_error_retry_count >= MAX_API_ERROR_RETRIES:
+                    logger.error(
+                        f"Max API error retries ({MAX_API_ERROR_RETRIES}) reached for session {session_id}"
+                    )
+                    if thinking_manager:
+                        thinking_manager.add_thinking_step(
+                            title="thinking.api_error_max_retries",
+                            report_immediately=True,
+                            use_i18n_keys=True,
+                            details={
+                                "retry_count": api_error_retry_count,
+                                "max_retries": MAX_API_ERROR_RETRIES,
+                                "session_id": session_id
+                            }
+                        )
 
             elif isinstance(msg, ResultMessage):
                 # Use specialized function to handle ResultMessage
@@ -230,8 +283,17 @@ def _handle_user_message(msg: UserMessage, thinking_manager=None):
         )
 
 
-def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_manager=None):
-    """处理助手消息，提取详细信息"""
+def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_manager=None) -> bool:
+    """处理助手消息，提取详细信息
+    
+    Args:
+        msg: AssistantMessage to process
+        state_manager: ProgressStateManager instance
+        thinking_manager: Optional ThinkingStepManager instance
+        
+    Returns:
+        bool: True if API error detected and retry is needed, False otherwise
+    """
     
     # 收集所有内容块的详细信息，符合目标格式
     message_details = {
@@ -251,6 +313,12 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
     for block in msg.content:
         content_dicts.append(asdict(block))
     msg_dict = {"content": content_dicts, "model": msg.model, "parent_tool_use_id": msg.parent_tool_use_id}
+    
+    # Check if the message contains API error that needs retry
+    msg_json_str = json.dumps(msg_dict, ensure_ascii=False)
+    needs_retry = API_ERROR_PATTERN in msg_json_str
+    if needs_retry:
+        logger.warning(f"Detected API error in AssistantMessage: {msg_json_str}")
 
     # Mask sensitive data in message for logging
     masked_msg_dict = mask_sensitive_data(msg_dict)
@@ -321,6 +389,9 @@ def _handle_assistant_message(msg: AssistantMessage, state_manager, thinking_man
             use_i18n_keys=True,
             details=masked_message_details
         )
+    
+    return needs_retry
+
 
 def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
     msg_type = msg.get("type", "unknown")
