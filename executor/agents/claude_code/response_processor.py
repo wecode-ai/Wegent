@@ -104,7 +104,7 @@ async def process_response(
                     
                     # Send "继续" (continue) message to retry
                     try:
-                        await client.query("继续", session_id=session_id)
+                        await client.query("Retry to proceed", session_id=session_id)
                         logger.info(f"Sent retry message for session {session_id}")
                     except Exception as retry_error:
                         logger.error(f"Failed to send retry message: {retry_error}")
