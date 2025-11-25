@@ -38,6 +38,18 @@ export interface TeamShareJoinRequest {
   share_token: string;
 }
 
+// Team Input Parameters Response Type
+export interface TeamInputParametersResponse {
+  has_parameters: boolean;
+  parameters: Array<{
+    variable: string;
+    label: Record<string, string>;
+    required: boolean;
+    type: string;
+    options?: string[];
+  }>;
+}
+
 export const teamApis = {
   async getTeams(params?: PaginationParams): Promise<TeamListResponse> {
     const p = params ? params : { page: 1, limit: 100 };
@@ -61,5 +73,8 @@ export const teamApis = {
   },
   async joinSharedTeam(data: TeamShareJoinRequest): Promise<void> {
     return apiClient.post('/teams/share/join', data);
+  },
+  async getTeamInputParameters(teamId: number): Promise<TeamInputParametersResponse> {
+    return apiClient.get(`/teams/${teamId}/input-parameters`);
   },
 };

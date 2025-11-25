@@ -12,6 +12,7 @@ import TeamSelector from './TeamSelector';
 import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
+import ExternalApiParamsInput from './ExternalApiParamsInput';
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { sendMessage } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -59,6 +60,9 @@ export default function ChatArea({
   const [isLoading, setIsLoading] = useState(false);
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
+
+  // External API parameters state
+  const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
 
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -185,8 +189,18 @@ export default function ChatArea({
   const handleSendMessage = async () => {
     setIsLoading(true);
     setError('');
+
+    // Prepare message with embedded external API parameters if applicable
+    let finalMessage = taskInputMessage;
+    if (Object.keys(externalApiParams).length > 0) {
+      // Embed parameters using special marker format
+      // Backend will extract these parameters for external API calls
+      const paramsJson = JSON.stringify(externalApiParams);
+      finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${taskInputMessage}`;
+    }
+
     const { error, newTask } = await sendMessage({
-      message: taskInputMessage,
+      message: finalMessage,
       team: selectedTeam,
       repo: showRepositorySelector ? selectedRepo : null,
       branch: showRepositorySelector ? selectedBranch : null,
@@ -440,6 +454,17 @@ export default function ChatArea({
             {/* Floating Input Area */}
             <div ref={floatingInputRef} className="w-full max-w-4xl px-4 sm:px-6">
               <div className="w-full">
+                {/* External API Parameters Input (only for new tasks) */}
+                {selectedTeam && !hasMessages && (
+                  <div className="mb-4">
+                    <ExternalApiParamsInput
+                      teamId={selectedTeam.id}
+                      onParamsChange={setExternalApiParams}
+                      initialParams={externalApiParams}
+                    />
+                  </div>
+                )}
+
                 {/* Chat Input Card */}
                 <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
                   <ChatInput

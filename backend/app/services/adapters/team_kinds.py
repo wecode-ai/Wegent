@@ -794,5 +794,135 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
 
+    def get_team_input_parameters(
+        self, db: Session, *, team_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get input parameters required by the team's external API bots
+        Returns parameter schema if team has external API bots, otherwise empty
+        """
+        # Get team details
+        team = db.query(Kind).filter(
+            Kind.id == team_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).first()
+
+        if not team:
+            raise HTTPException(
+                status_code=404,
+                detail="Team not found"
+            )
+
+        # Check if user has access to this team
+        is_author = team.user_id == user_id
+        shared_team = None
+
+        if not is_author:
+            shared_team = db.query(SharedTeam).filter(
+                SharedTeam.user_id == user_id,
+                SharedTeam.team_id == team_id,
+                SharedTeam.is_active == True
+            ).first()
+            if not shared_team:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied to this team"
+                )
+
+        # Get original user context
+        original_user_id = team.user_id if is_author else shared_team.original_user_id
+        team_dict = self._convert_to_team_dict(team, db, original_user_id)
+
+        # Check if team has any external API bots (like Dify)
+        has_external_api_bot = False
+        external_api_bot = None
+
+        for bot_info in team_dict["bots"]:
+            bot_id = bot_info["bot_id"]
+            bot = db.query(Kind).filter(
+                Kind.id == bot_id,
+                Kind.user_id == original_user_id,
+                Kind.kind == "Bot",
+                Kind.is_active == True
+            ).first()
+
+            if bot:
+                bot_crd = Bot.model_validate(bot.json)
+                # Check if bot uses external API shell (not AgnoShell or ClaudeCodeShell)
+                shell_name = bot_crd.spec.shellRef.name
+                shell = db.query(Kind).filter(
+                    Kind.name == shell_name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.user_id == original_user_id,
+                    Kind.kind == "Shell",
+                    Kind.is_active == True
+                ).first()
+
+                if shell:
+                    shell_crd = Shell.model_validate(shell.json)
+                    # Check shell type label
+                    shell_type = shell_crd.metadata.labels.get("type", "local_engine")
+                    if shell_type == "external_api":
+                        has_external_api_bot = True
+                        external_api_bot = bot_crd
+                        break
+
+        if not has_external_api_bot:
+            return {
+                "has_parameters": False,
+                "parameters": []
+            }
+
+        # Get bot's agent config to extract API credentials
+        bot_spec = external_api_bot.spec
+        agent_config = bot_spec.agentConfig or {}
+        env = agent_config.get("env", {})
+
+        # For Dify bots, we need to call Dify API to get parameters
+        # But we do this server-side, not exposing Dify-specific logic to frontend
+        api_key = env.get("DIFY_API_KEY", "")
+        base_url = env.get("DIFY_BASE_URL", "https://api.dify.ai")
+
+        if not api_key:
+            return {
+                "has_parameters": False,
+                "parameters": []
+            }
+
+        # Call external API to get parameter schema
+        try:
+            import requests
+
+            # Get app parameters
+            response = requests.get(
+                f"{base_url}/v1/parameters",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                timeout=10
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                user_input_form = data.get("user_input_form", [])
+
+                return {
+                    "has_parameters": len(user_input_form) > 0,
+                    "parameters": user_input_form
+                }
+            else:
+                return {
+                    "has_parameters": False,
+                    "parameters": []
+                }
+        except Exception as e:
+            print(f"Failed to fetch parameters from external API: {e}")
+            return {
+                "has_parameters": False,
+                "parameters": []
+            }
+
 
 team_kinds_service = TeamKindsService(Kind)

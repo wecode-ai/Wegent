@@ -53,6 +53,9 @@ class DifyAgent(Agent):
         # Extract Dify configuration from Model environment variables
         self.dify_config = self._extract_dify_config(task_data)
 
+        # Extract params from prompt (highest priority - task-specific parameters)
+        self.prompt, prompt_params = self._extract_params_from_prompt(self.prompt)
+
         # Parse bot_prompt to get difyAppId and params
         self.dify_app_id, self.params = self._parse_bot_prompt(self.bot_prompt)
 
@@ -60,6 +63,10 @@ class DifyAgent(Agent):
         config_params = self.dify_config.get("params", {})
         if config_params:
             self.params.update(config_params)
+
+        # Merge params from prompt (highest priority - overwrites all previous)
+        if prompt_params:
+            self.params.update(prompt_params)
 
         # If no app_id from bot_prompt, use default from config
         if not self.dify_app_id:
@@ -117,6 +124,43 @@ class DifyAgent(Agent):
                     config["params"] = {}
 
         return config
+
+    def _extract_params_from_prompt(self, prompt: str) -> tuple[str, Dict[str, Any]]:
+        """
+        Extract external API parameters from prompt using special markers
+
+        Format: [EXTERNAL_API_PARAMS]{"param1": "value1"}[/EXTERNAL_API_PARAMS]
+        The actual user prompt follows after the marker
+
+        Args:
+            prompt: The full prompt text
+
+        Returns:
+            Tuple of (cleaned_prompt, params_dict)
+        """
+        import re
+
+        # Pattern to match [EXTERNAL_API_PARAMS]...json...[/EXTERNAL_API_PARAMS]
+        pattern = r'\[EXTERNAL_API_PARAMS\](.*?)\[/EXTERNAL_API_PARAMS\]'
+        match = re.search(pattern, prompt, re.DOTALL)
+
+        if not match:
+            return prompt, {}
+
+        try:
+            # Extract JSON string
+            params_json = match.group(1).strip()
+            params = json.loads(params_json)
+
+            # Remove the marker block from prompt
+            cleaned_prompt = re.sub(pattern, '', prompt, flags=re.DOTALL).strip()
+
+            logger.info(f"Extracted external API params from prompt: {params}")
+            return cleaned_prompt, params
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse external API params from prompt: {e}")
+            # Return original prompt if parsing fails
+            return prompt, {}
 
     def _parse_bot_prompt(self, bot_prompt: str) -> tuple[Optional[str], Dict[str, Any]]:
         """
