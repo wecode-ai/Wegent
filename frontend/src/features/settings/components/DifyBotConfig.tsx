@@ -9,8 +9,14 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { apiClient } from '@/apis/client';
-import { InformationCircleIcon, CheckCircleIcon } from '@heroicons/react/24/outline';
+import { InformationCircleIcon, CheckCircleIcon, ChevronDownIcon, ChevronUpIcon } from '@heroicons/react/24/outline';
 import { useTranslation } from 'react-i18next';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 
 interface DifyBotConfigProps {
   agentConfig: string;
@@ -24,6 +30,13 @@ interface DifyAppInfo {
   mode?: string;
   icon?: string;
   icon_background?: string;
+  user_input_form?: Array<{
+    variable: string;
+    label: Record<string, string>;
+    required: boolean;
+    type: string;
+    options?: string[];
+  }>;
 }
 
 const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
@@ -37,6 +50,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
   const [isValidating, setIsValidating] = useState(false);
   const [appInfo, setAppInfo] = useState<DifyAppInfo | null>(null);
   const [isValidated, setIsValidated] = useState(false);
+  const [difyParams, setDifyParams] = useState<Record<string, string>>({});
 
   // Parse existing agent_config to extract Dify settings
   useEffect(() => {
@@ -51,6 +65,18 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
       // Extract Dify API credentials
       setDifyApiKey(env.DIFY_API_KEY || '');
       setDifyBaseUrl(env.DIFY_BASE_URL || 'https://api.dify.ai');
+
+      // Extract Dify parameters if exists
+      if (env.DIFY_PARAMS) {
+        try {
+          const params = typeof env.DIFY_PARAMS === 'string'
+            ? JSON.parse(env.DIFY_PARAMS)
+            : env.DIFY_PARAMS;
+          setDifyParams(params);
+        } catch (e) {
+          console.error('Failed to parse DIFY_PARAMS:', e);
+        }
+      }
     } catch (error) {
       console.error('Failed to parse agent config:', error);
     }
@@ -104,11 +130,13 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
       env: {
         DIFY_API_KEY: difyApiKey,
         DIFY_BASE_URL: difyBaseUrl,
+        ...(appInfo?.mode && { DIFY_APP_MODE: appInfo.mode }),
+        ...(Object.keys(difyParams).length > 0 && { DIFY_PARAMS: JSON.stringify(difyParams) }),
       },
     };
 
     onAgentConfigChange(JSON.stringify(config, null, 2));
-  }, [difyApiKey, difyBaseUrl, onAgentConfigChange]);
+  }, [difyApiKey, difyBaseUrl, appInfo, difyParams, onAgentConfigChange]);
 
   useEffect(() => {
     updateAgentConfig();
@@ -236,6 +264,76 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
           </div>
         )}
       </div>
+
+      {/* Dify Parameters Form (for apps with user_input_form) */}
+      {isValidated && appInfo && appInfo.user_input_form && appInfo.user_input_form.length > 0 && (
+        <div className="flex flex-col">
+          <Accordion type="single" collapsible defaultValue="params">
+            <AccordionItem value="params" className="border rounded-lg">
+              <AccordionTrigger className="px-4 py-3 hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-text-primary">
+                    {t('bot.dify_app_parameters') || 'Application Parameters'}
+                  </span>
+                  <span className="text-xs text-text-muted">
+                    ({appInfo.user_input_form.length} {t('bot.dify_parameters_count') || 'parameters'})
+                  </span>
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="px-4 pb-4">
+                <div className="space-y-4">
+                  <p className="text-xs text-text-muted mb-3">
+                    {t('bot.dify_parameters_hint') ||
+                      'Configure the input parameters for this Dify application. These values will be used when executing tasks.'}
+                  </p>
+                  {appInfo.user_input_form.map((field) => (
+                    <div key={field.variable} className="flex flex-col">
+                      <Label htmlFor={`param-${field.variable}`} className="text-sm font-medium text-text-primary mb-1">
+                        {field.label?.en || field.label?.['en-US'] || field.variable}
+                        {field.required && <span className="text-red-400 ml-1">*</span>}
+                      </Label>
+
+                      {field.type === 'select' && field.options ? (
+                        <select
+                          id={`param-${field.variable}`}
+                          value={difyParams[field.variable] || ''}
+                          onChange={(e) => setDifyParams({ ...difyParams, [field.variable]: e.target.value })}
+                          className="w-full px-3 py-2 bg-base rounded-md text-text-primary border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm"
+                        >
+                          <option value="">Select...</option>
+                          {field.options.map((option) => (
+                            <option key={option} value={option}>
+                              {option}
+                            </option>
+                          ))}
+                        </select>
+                      ) : field.type === 'text-input' || field.type === 'paragraph' ? (
+                        <textarea
+                          id={`param-${field.variable}`}
+                          value={difyParams[field.variable] || ''}
+                          onChange={(e) => setDifyParams({ ...difyParams, [field.variable]: e.target.value })}
+                          placeholder={field.label?.en || field.label?.['en-US'] || ''}
+                          rows={field.type === 'paragraph' ? 4 : 2}
+                          className="w-full px-3 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm resize-none"
+                        />
+                      ) : (
+                        <input
+                          id={`param-${field.variable}`}
+                          type="text"
+                          value={difyParams[field.variable] || ''}
+                          onChange={(e) => setDifyParams({ ...difyParams, [field.variable]: e.target.value })}
+                          placeholder={field.label?.en || field.label?.['en-US'] || ''}
+                          className="w-full px-3 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm"
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      )}
 
       {/* Preview Configuration */}
       <div className="flex flex-col">

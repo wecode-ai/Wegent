@@ -106,7 +106,10 @@
     "validating": "Validating...",
     "validation_success": "API Key Validated Successfully",
     "config_preview": "Configuration Preview",
-    "loading": "Loading..."
+    "loading": "Loading...",
+    "dify_app_parameters": "Application Parameters",
+    "dify_parameters_count": "parameters",
+    "dify_parameters_hint": "Configure the input parameters for this Dify application. These values will be used when executing tasks."
   },
   "bots": {
     "title": "AI Assistant",

@@ -56,6 +56,11 @@ class DifyAgent(Agent):
         # Parse bot_prompt to get difyAppId and params
         self.dify_app_id, self.params = self._parse_bot_prompt(self.bot_prompt)
 
+        # Merge params from agent_config (takes priority over bot_prompt)
+        config_params = self.dify_config.get("params", {})
+        if config_params:
+            self.params.update(config_params)
+
         # If no app_id from bot_prompt, use default from config
         if not self.dify_app_id:
             self.dify_app_id = self.dify_config.get("app_id", "")
@@ -79,12 +84,13 @@ class DifyAgent(Agent):
             task_data: The task data dictionary
 
         Returns:
-            Dict containing Dify configuration (api_key, base_url, app_id)
+            Dict containing Dify configuration (api_key, base_url, app_id, params)
         """
         config = {
             "api_key": "",
             "base_url": "",
-            "app_id": ""
+            "app_id": "",
+            "params": {}
         }
 
         # Try to extract from bot -> agent_config -> env
@@ -100,6 +106,15 @@ class DifyAgent(Agent):
             config["api_key"] = env.get("DIFY_API_KEY", "")
             config["base_url"] = env.get("DIFY_BASE_URL", "https://api.dify.ai")  # Default base URL
             config["app_id"] = env.get("DIFY_APP_ID", "")
+
+            # Extract params if exists
+            if env.get("DIFY_PARAMS"):
+                try:
+                    params_str = env.get("DIFY_PARAMS", "{}")
+                    config["params"] = json.loads(params_str) if isinstance(params_str, str) else params_str
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Failed to parse DIFY_PARAMS: {e}, using empty params")
+                    config["params"] = {}
 
         return config
 

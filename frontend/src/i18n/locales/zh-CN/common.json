@@ -120,7 +120,10 @@
     "validating": "验证中...",
     "validation_success": "API 密钥验证成功",
     "config_preview": "配置预览",
-    "loading": "加载中..."
+    "loading": "加载中...",
+    "dify_app_parameters": "应用参数",
+    "dify_parameters_count": "个参数",
+    "dify_parameters_hint": "配置此 Dify 应用的输入参数。这些值将在执行任务时使用。"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
