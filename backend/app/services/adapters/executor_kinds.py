@@ -409,7 +409,8 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     "git_token": git_info.get("git_token") if git_info else None,
                     "git_id": git_info.get("git_id") if git_info else None,
                     "git_login": git_info.get("git_login") if git_info else None,
-                    "git_email": git_info.get("git_email") if git_info else None
+                    "git_email": git_info.get("git_email") if git_info else None,
+                    "user_name": git_info.get("user_name") if git_info else None
                 },
                 "bot": bots,
                 "team_id": team.id,

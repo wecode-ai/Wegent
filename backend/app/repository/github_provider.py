@@ -18,6 +18,7 @@ from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
 from shared.utils.sensitive_data_masker import mask_string
+from shared.utils.url_util import build_url
 
 
 class GitHubProvider(RepositoryProvider):
@@ -92,8 +93,8 @@ class GitHubProvider(RepositoryProvider):
         if git_domain == "github.com":
             return "https://api.github.com"
         else:
-            # Custom GitHub Enterprise domain
-            return f"https://{git_domain}/api/v3"
+            # Custom GitHub Enterprise domain (may include http:// protocol)
+            return build_url(git_domain, "/api/v3")
 
     async def get_repositories(
         self,

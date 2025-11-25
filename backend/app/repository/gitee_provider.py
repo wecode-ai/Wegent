@@ -18,6 +18,7 @@ from app.schemas.github import Repository, Branch
 from app.core.cache import cache_manager
 from app.core.config import settings
 from shared.utils.sensitive_data_masker import mask_string
+from shared.utils.url_util import build_url
 
 
 class GiteeProvider(RepositoryProvider):
@@ -91,8 +92,8 @@ class GiteeProvider(RepositoryProvider):
         if git_domain == "gitee.com":
             return "https://gitee.com/api/v5"
         else:
-            # Custom Gitee Enterprise domain (if exists)
-            return f"https://{git_domain}/api/v5"
+            # Custom Gitee Enterprise domain (may include http:// protocol)
+            return build_url(git_domain, "/api/v5")
 
     async def get_repositories(
         self,

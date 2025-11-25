@@ -74,12 +74,13 @@ def get_domain_from_url(url):
 
 def clone_repo_with_token(project_url, branch, project_path, username, token):
 
-    if project_url.startswith("https://"):
-        username = "token"
+    if project_url.startswith("https://") or project_url.startswith("http://"):
         protocol, rest = project_url.split("://", 1)
         auth_url = f"{protocol}://{username}:{token}@{rest}"
     else:
         auth_url = project_url
+
+    logger.info(f"Git clone {auth_url} to {project_path}")
 
     # Build basic command
     cmd = ["git", "clone"]

@@ -6,7 +6,8 @@
 
 # -*- coding: utf-8 -*-
 
-from .task_processor import read_task_data, execute_task, process, run_task
+# Avoid circular import by not importing task_processor at module level
+# Import TaskReader which doesn't have circular dependencies
 from .reader import TaskReader
 
 __all__ = [
@@ -16,3 +17,10 @@ __all__ = [
     'process',
     'run_task'
 ]
+
+# Lazy imports to avoid circular dependencies
+def __getattr__(name):
+    if name in ['read_task_data', 'execute_task', 'process', 'run_task']:
+        from .task_processor import read_task_data, execute_task, process, run_task
+        return locals()[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
