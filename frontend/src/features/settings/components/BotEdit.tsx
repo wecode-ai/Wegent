@@ -5,7 +5,7 @@
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Loader2 } from 'lucide-react';
+import { Loader2, XIcon } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -20,6 +20,7 @@ import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
 import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
 import { agentApis, Agent } from '@/apis/agents';
 import { modelApis, Model } from '@/apis/models';
+import { fetchSkillsList } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
@@ -72,6 +73,9 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [mcpConfig, setMcpConfig] = useState(
     baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : ''
   );
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(baseBot?.skills || []);
+  const [availableSkills, setAvailableSkills] = useState<string[]>([]);
+  const [loadingSkills, setLoadingSkills] = useState(false);
   const [agentConfigError, setAgentConfigError] = useState(false);
   const [mcpConfigError, setMcpConfigError] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
@@ -234,6 +238,25 @@ const BotEdit: React.FC<BotEditProps> = ({
     fetchAgents();
   }, [toast, t]);
 
+  // Get skills list
+  useEffect(() => {
+    const fetchSkills = async () => {
+      setLoadingSkills(true);
+      try {
+        const skillsData = await fetchSkillsList();
+        setAvailableSkills(skillsData.map(skill => skill.metadata.name));
+      } catch {
+        toast({
+          variant: 'destructive',
+          title: t('skills.loading_failed'),
+        });
+      } finally {
+        setLoadingSkills(false);
+      }
+    };
+    fetchSkills();
+  }, [toast, t]);
+
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
     if (!agentName) {
@@ -274,6 +297,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     setAgentName(baseBot?.agent_name || '');
     setPrompt(baseBot?.system_prompt || '');
     setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '');
+    setSelectedSkills(baseBot?.skills || []);
     setAgentConfigError(false);
     setMcpConfigError(false);
 
@@ -386,6 +410,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         agent_config: parsedAgentConfig as Record<string, unknown>,
         system_prompt: prompt.trim() || '',
         mcp_servers: parsedMcpConfig ?? {},
+        skills: selectedSkills.length > 0 ? selectedSkills : undefined,
       };
       if (editingBotId && editingBotId > 0) {
         // Edit existing bot
@@ -669,6 +694,66 @@ const BotEdit: React.FC<BotEditProps> = ({
                 </SelectContent>
               </Select>
             )}
+          </div>
+
+          {/* Skills Selection */}
+          <div className="flex flex-col">
+            <div className="flex items-center mb-1">
+              <label className="block text-base font-medium text-text-primary">Skills</label>
+              <span className="text-xs text-text-muted ml-2">(Optional)</span>
+            </div>
+            <div className="bg-base rounded-md p-2 min-h-[80px]">
+              {loadingSkills ? (
+                <div className="text-sm text-text-muted">Loading skills...</div>
+              ) : availableSkills.length === 0 ? (
+                <div className="text-sm text-text-muted">
+                  No skills available. Upload skills in the Skills tab.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  <Select
+                    value=""
+                    onValueChange={(value) => {
+                      if (value && !selectedSkills.includes(value)) {
+                        setSelectedSkills([...selectedSkills, value]);
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder="Select a skill to add..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableSkills
+                        .filter(skill => !selectedSkills.includes(skill))
+                        .map(skill => (
+                          <SelectItem key={skill} value={skill}>
+                            {skill}
+                          </SelectItem>
+                        ))}
+                    </SelectContent>
+                  </Select>
+
+                  {selectedSkills.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {selectedSkills.map(skill => (
+                        <div
+                          key={skill}
+                          className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
+                        >
+                          <span>{skill}</span>
+                          <button
+                            onClick={() => setSelectedSkills(selectedSkills.filter(s => s !== skill))}
+                            className="text-text-muted hover:text-text-primary"
+                          >
+                            <XIcon className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
 
           {/* MCP Config */}

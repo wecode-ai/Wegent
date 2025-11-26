@@ -11,10 +11,12 @@ import UserMenu from '@/features/layout/UserMenu';
 import { Tab } from '@headlessui/react';
 import { PuzzlePieceIcon, UsersIcon, BellIcon } from '@heroicons/react/24/outline';
 import { RiRobot2Line } from 'react-icons/ri';
+import { PackageIcon } from 'lucide-react';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
 import BotList from '@/features/settings/components/BotList';
 import TeamList from '@/features/settings/components/TeamList';
 import NotificationSettings from '@/features/settings/components/NotificationSettings';
+import SkillList from '@/features/settings/components/skills/SkillList';
 import { UserProvider } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -29,8 +31,9 @@ function DashboardContent() {
     (): Record<number, string> => ({
       0: 'integrations',
       1: 'bots',
-      2: 'team',
-      3: 'notifications',
+      2: 'skills',
+      3: 'team',
+      4: 'notifications',
     }),
     []
   );
@@ -40,8 +43,9 @@ function DashboardContent() {
     (): Record<string, number> => ({
       integrations: 0,
       bots: 1,
-      team: 2,
-      notifications: 3,
+      skills: 2,
+      team: 3,
+      notifications: 4,
     }),
     []
   );
@@ -138,6 +142,19 @@ function DashboardContent() {
                         }`
                       }
                     >
+                      <PackageIcon className="w-4 h-4" />
+                      <span>Skills</span>
+                    </Tab>
+
+                    <Tab
+                      className={({ selected }) =>
+                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                          selected
+                            ? 'bg-muted text-text-primary'
+                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                        }`
+                      }
+                    >
                       <UsersIcon className="w-4 h-4" />
                       <span>{t('settings.team')}</span>
                     </Tab>
@@ -163,6 +180,9 @@ function DashboardContent() {
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <BotList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <SkillList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
@@ -213,6 +233,19 @@ function DashboardContent() {
                           }`
                         }
                       >
+                        <PackageIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">Skills</span>
+                      </Tab>
+
+                      <Tab
+                        className={({ selected }) =>
+                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
+                            selected
+                              ? 'bg-muted text-text-primary'
+                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                          }`
+                        }
+                      >
                         <UsersIcon className="w-3 h-3" />
                         <span className="hidden xs:inline">{t('settings.team')}</span>
                       </Tab>
@@ -239,6 +272,9 @@ function DashboardContent() {
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <BotList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <SkillList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />

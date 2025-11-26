@@ -12,6 +12,7 @@ export interface CreateBotRequest {
   agent_config: Record<string, unknown>;
   system_prompt: string;
   mcp_servers: Record<string, unknown>;
+  skills?: string[];
 }
 
 export interface UpdateBotRequest {
@@ -20,6 +21,7 @@ export interface UpdateBotRequest {
   agent_config?: Record<string, unknown>;
   system_prompt?: string;
   mcp_servers?: Record<string, unknown>;
+  skills?: string[];
   is_active?: boolean;
 }
 
