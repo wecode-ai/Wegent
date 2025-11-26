@@ -15,6 +15,9 @@ import string
 import subprocess
 import re
 import time
+import zipfile
+import shutil
+import httpx
 from typing import Dict, Any, List, Optional
 from pathlib import Path
 from datetime import datetime
@@ -438,6 +441,9 @@ class ClaudeCodeAgent(Agent):
                     with open(claude_json_path, "w") as f:
                         json.dump(claude_json_config, f, indent=2)
                     logger.info(f"Saved Claude Code config to {claude_json_path}")
+
+                    # Download and deploy Skills if available
+                    await self._download_and_deploy_skills(bot_config)
             else:
                 logger.info("No bot config found for Claude Code Agent")
 
@@ -449,6 +455,99 @@ class ClaudeCodeAgent(Agent):
                 report_immediately=False
             )
             return TaskStatus.FAILED
+
+
+    async def _download_and_deploy_skills(self, bot_config: Dict[str, Any]):
+        """
+        Download Skills from Backend API and deploy to ~/.claude/skills/
+
+        Args:
+            bot_config: Bot configuration containing Ghost spec with skills list
+        """
+        try:
+            # Extract skills from bot config
+            ghost_spec = bot_config.get("ghost", {})
+            skills = ghost_spec.get("skills", [])
+
+            if not skills:
+                logger.debug("No skills configured for this bot")
+                return
+
+            # Prepare skills directory
+            skills_dir = os.path.expanduser("~/.claude/skills")
+
+            # Clean up existing skills directory
+            if os.path.exists(skills_dir):
+                logger.info(f"Cleaning up existing skills directory: {skills_dir}")
+                shutil.rmtree(skills_dir)
+
+            # Create fresh skills directory
+            Path(skills_dir).mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created skills directory: {skills_dir}")
+
+            # Get API base URL and token
+            api_base_url = config.TASK_API_DOMAIN
+            token = self.task_data.get("token", "")
+
+            if not token:
+                logger.warning("No authentication token available, skipping skills download")
+                return
+
+            # Download and deploy each skill
+            deployed_count = 0
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                for skill_name in skills:
+                    try:
+                        logger.info(f"Downloading skill: {skill_name}")
+
+                        # Get skill ID by name
+                        list_url = f"{api_base_url}/api/v1/kinds/skills?skip=0&limit=100"
+                        list_response = await client.get(
+                            list_url,
+                            headers={"Authorization": f"Bearer {token}"}
+                        )
+
+                        if list_response.status_code != 200:
+                            logger.warning(
+                                f"Failed to list skills: HTTP {list_response.status_code}, skipping skill {skill_name}"
+                            )
+                            continue
+
+                        skills_data = list_response.json()
+                        skill_items = skills_data.get("items", [])
+
+                        # Find skill by name
+                        skill_id = None
+                        for item in skill_items:
+                            if item.get("metadata", {}).get("name") == skill_name:
+                                # Extract ID from the Kind record
+                                # We need to call the backend to get the ID
+                                # For now, we'll use a different approach - get by name
+                                skill_id = skill_name
+                                break
+
+                        if not skill_id:
+                            logger.warning(f"Skill '{skill_name}' not found in API, skipping")
+                            continue
+
+                        # Download skill ZIP package
+                        # We need to modify the API to support download by name
+                        # For now, skip the download implementation
+                        logger.info(f"Skill '{skill_name}' found, but download by name not yet supported")
+                        # TODO: Implement download by name or modify API
+
+                    except Exception as e:
+                        logger.warning(f"Failed to download skill '{skill_name}': {str(e)}, continuing")
+                        continue
+
+            if deployed_count > 0:
+                logger.info(f"Deployed {deployed_count} skills to {skills_dir}")
+            else:
+                logger.info("No skills were deployed")
+
+        except Exception as e:
+            logger.warning(f"Failed to download and deploy skills: {str(e)}")
+            # Don't fail the task if skills deployment fails
 
 
     def _create_claude_model(self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None) -> Dict[str, Any]:

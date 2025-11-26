@@ -17,6 +17,7 @@ from app.models.public_shell import PublicShell
 from app.schemas.bot import BotCreate, BotUpdate, BotInDB, BotDetail
 from app.schemas.kind import Ghost, Bot, Shell, Model, Team
 from app.services.base import BaseService
+from app.services.skill_service import SkillService
 
 
 class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
@@ -44,12 +45,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 detail="Bot name already exists, please modify the name"
             )
 
+        # Validate skill references if provided
+        if obj_in.skills:
+            SkillService.validate_skill_references(
+                db=db,
+                user_id=user_id,
+                skill_names=obj_in.skills
+            )
+
         # Create Ghost
         ghost_json = {
             "kind": "Ghost",
             "spec": {
                 "systemPrompt": obj_in.system_prompt or "",
-                "mcpServers": obj_in.mcp_servers or {}
+                "mcpServers": obj_in.mcp_servers or {},
+                "skills": obj_in.skills or []
             },
             "status": {
                 "state": "Available"
@@ -335,6 +345,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             flag_modified(ghost, "json")  # Mark JSON field as modified
             db.add(ghost)  # Add to session
 
+        if "skills" in update_data and ghost:
+            # Validate skill references if provided
+            skills = update_data["skills"] or []
+            if skills:
+                SkillService.validate_skill_references(
+                    db=db,
+                    user_id=user_id,
+                    skill_names=skills
+                )
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.skills = skills
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")  # Mark JSON field as modified
+            db.add(ghost)  # Add to session
+
         # Update timestamps
         bot.updated_at = datetime.now()
         if ghost:
@@ -513,22 +538,24 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Extract data from components
         system_prompt = ""
         mcp_servers = {}
+        skills = []
         agent_name = ""
         agent_config = {}
-        
+
         if ghost and ghost.json:
             ghost_crd = Ghost.model_validate(ghost.json)
             system_prompt = ghost_crd.spec.systemPrompt
             mcp_servers = ghost_crd.spec.mcpServers or {}
-        
+            skills = ghost_crd.spec.skills or []
+
         if shell and shell.json:
             shell_crd = Shell.model_validate(shell.json)
             agent_name = shell_crd.spec.runtime
-        
+
         if model and model.json:
             model_crd = Model.model_validate(model.json)
             agent_config = model_crd.spec.modelConfig
-        
+
         return {
             "id": bot.id,
             "user_id": bot.user_id,
@@ -537,6 +564,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "agent_config": agent_config,
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
+            "skills": skills,
             "is_active": bot.is_active,
             "created_at": bot.created_at,
             "updated_at": bot.updated_at,
