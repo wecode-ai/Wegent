@@ -31,6 +31,7 @@ Guides for Wegent platform users:
 
 - [Creating Ghosts](./guides/user/creating-ghosts.md) - Define the "soul" of your agents
 - [Creating Bots](./guides/user/creating-bots.md) - Assemble complete agent instances
+- [Managing Skills](./guides/user/managing-skills.md) - Upload and use Claude Code Skills
 - [Creating Teams](./guides/user/creating-teams.md) - Build collaborative agent teams
 - [Managing Tasks](./guides/user/managing-tasks.md) - Create and manage work tasks
 - [PM Battle Mode](./guides/user/pm-battle-guide.md) - Interactive requirement clarification guide
