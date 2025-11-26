@@ -7,18 +7,28 @@
 import { useState, useEffect } from 'react';
 import { Task, TaskType } from '@/types/api';
 import TaskMenu from './TaskMenu';
-import { CheckCircle2, XCircle, StopCircle, PauseCircle, RotateCw } from 'lucide-react';
+import {
+  CheckCircle2,
+  XCircle,
+  StopCircle,
+  PauseCircle,
+  RotateCw,
+  Code2,
+  MessageSquare,
+} from 'lucide-react';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { taskApis } from '@/apis/tasks';
 import { isTaskUnread } from '@/utils/taskViewStatus';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface TaskListSectionProps {
   tasks: Task[];
   title: string;
   unreadCount?: number;
   onTaskClick?: () => void;
+  isCollapsed?: boolean;
 }
 
 import { useRouter } from 'next/navigation';
@@ -29,6 +39,7 @@ export default function TaskListSection({
   title,
   unreadCount = 0,
   onTaskClick,
+  isCollapsed = false,
 }: TaskListSectionProps) {
   const router = useRouter();
   const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
@@ -240,35 +251,6 @@ export default function TaskListSection({
     }
   };
 
-  const getTaskTypeTag = (task: Task) => {
-    let taskType: TaskType | undefined = task.task_type;
-
-    // For backward compatibility: infer type from git information if not set
-    if (!taskType) {
-      if (task.git_repo && task.git_repo.trim() !== '') {
-        taskType = 'code';
-      } else {
-        taskType = 'chat';
-      }
-    }
-
-    const typeConfig = {
-      chat: { label: t('navigation.chat'), color: 'bg-blue-100 text-blue-800' },
-      code: { label: t('navigation.code'), color: 'bg-green-100 text-green-800' },
-    };
-
-    const config = typeConfig[taskType];
-    if (!config) return null;
-
-    return (
-      <span
-        className={`inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium ${config.color}`}
-      >
-        {config.label}
-      </span>
-    );
-  };
-
   const formatTimeAgo = (dateString: string) => {
     const now = new Date();
     const date = new Date(dateString);
@@ -304,66 +286,164 @@ export default function TaskListSection({
     }
   };
 
+  const getTaskTypeIcon = (task: Task) => {
+    let taskType: TaskType | undefined = task.task_type;
+    if (!taskType) {
+      if (task.git_repo && task.git_repo.trim() !== '') {
+        taskType = 'code';
+      } else {
+        taskType = 'chat';
+      }
+    }
+
+    if (taskType === 'code') {
+      return <Code2 className="w-3.5 h-3.5 text-text-muted" />;
+    } else {
+      return <MessageSquare className="w-3.5 h-3.5 text-text-muted" />;
+    }
+  };
+
   return (
-    <div className="mb-2">
-      <h3 className="text-sm text-text-primary tracking-wide mb-1 px-2">
-        {title}
-        {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
-      </h3>
+    <div className={`mb-2 w-full ${isCollapsed ? 'px-2' : ''}`}>
+      {/* Section title with divider in collapsed mode */}
+      {isCollapsed ? (
+        <div className="border-t border-border my-2" />
+      ) : (
+        <h3 className="text-sm text-text-primary tracking-wide mb-1 px-2">
+          {title}
+          {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
+        </h3>
+      )}
       <div className="space-y-0">
         {tasks.map(task => {
           const showMenu = hoveredTaskId === task.id || longPressTaskId === task.id;
 
-          return (
-            <div
-              key={task.id}
-              className={`flex items-center justify-between py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
-              onClick={() => handleTaskClick(task)}
-              onTouchStart={handleTouchStart(task)}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd(task)}
-              onMouseEnter={() => setHoveredTaskId(task.id)}
-              onMouseLeave={() => setHoveredTaskId(null)}
-              style={{
-                touchAction: 'pan-y',
-                WebkitTapHighlightColor: 'transparent',
-                minHeight: '44px',
-                userSelect: 'none',
-              }}
-            >
-              <div className="flex items-center space-x-2 flex-1 min-w-0">
-                <div className="flex-shrink-0 w-4 h-4 flex items-center justify-center">
-                  {getStatusIcon(task.status)}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-1">
-                    <p className="text-sm text-text-primary leading-tight truncate m-0 flex-1">
-                      {task.title}
-                    </p>
-                    {getTaskTypeTag(task)}
-                  </div>
-                  <p className="text-xs text-text-secondary m-0">
-                    {formatTimeAgo(task.created_at)}
-                  </p>
-                </div>
-              </div>
+          // Collapsed mode: Show only status icon with tooltip
+          if (isCollapsed) {
+            const taskTypeLabel = (() => {
+              let taskType: TaskType | undefined = task.task_type;
+              if (!taskType) {
+                if (task.git_repo && task.git_repo.trim() !== '') {
+                  taskType = 'code';
+                } else {
+                  taskType = 'chat';
+                }
+              }
+              return taskType === 'code' ? t('navigation.code') : t('navigation.chat');
+            })();
 
-              <div className="flex-shrink-0 flex items-center gap-2">
-                {isTaskUnread(task) && (
-                  <span
-                    className={`w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
-                    style={{ flexShrink: 0 }}
-                  />
-                )}
-                {showMenu && (
-                  <TaskMenu
-                    taskId={task.id}
-                    handleCopyTaskId={handleCopyTaskId}
-                    handleDeleteTask={handleDeleteTask}
-                  />
-                )}
-              </div>
-            </div>
+            const truncatedTitle =
+              task.title.length > 30 ? task.title.slice(0, 30) + '...' : task.title;
+
+            return (
+              <TooltipProvider key={task.id}>
+                <Tooltip delayDuration={0}>
+                  <TooltipTrigger asChild>
+                    <div
+                      className={`flex items-center justify-center py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
+                      onClick={() => handleTaskClick(task)}
+                      style={{
+                        minHeight: '40px',
+                      }}
+                    >
+                      <div className="relative flex items-center justify-center">
+                        <div className="w-4 h-4 flex items-center justify-center">
+                          {getStatusIcon(task.status)}
+                        </div>
+                        {isTaskUnread(task) && (
+                          <span
+                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-xs">
+                    <p className="font-medium">{truncatedTitle}</p>
+                    <p className="text-xs text-text-muted">
+                      {taskTypeLabel} · {formatTimeAgo(task.created_at)}
+                    </p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            );
+          }
+
+          // Expanded mode: Show full task item with tooltip
+          const taskTypeLabel = (() => {
+            let taskType: TaskType | undefined = task.task_type;
+            if (!taskType) {
+              if (task.git_repo && task.git_repo.trim() !== '') {
+                taskType = 'code';
+              } else {
+                taskType = 'chat';
+              }
+            }
+            return taskType === 'code' ? t('navigation.code') : t('navigation.chat');
+          })();
+
+          return (
+            <TooltipProvider key={task.id}>
+              <Tooltip delayDuration={500}>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`flex items-center gap-2.5 py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
+                    onClick={() => handleTaskClick(task)}
+                    onTouchStart={handleTouchStart(task)}
+                    onTouchMove={handleTouchMove}
+                    onTouchEnd={handleTouchEnd(task)}
+                    onMouseEnter={() => setHoveredTaskId(task.id)}
+                    onMouseLeave={() => setHoveredTaskId(null)}
+                    style={{
+                      touchAction: 'pan-y',
+                      WebkitTapHighlightColor: 'transparent',
+                      minHeight: '48px',
+                      userSelect: 'none',
+                    }}
+                  >
+                    <div className="flex-shrink-0 relative">
+                      <div className="w-4 h-4 flex items-center justify-center">
+                        {getStatusIcon(task.status)}
+                      </div>
+                      {isTaskUnread(task) && (
+                        <span
+                          className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                        />
+                      )}
+                    </div>
+
+                    <div className="flex-1 min-w-0 flex flex-col gap-1">
+                      <p className="text-sm text-text-primary leading-tight truncate m-0">
+                        {task.title}
+                      </p>
+
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs text-text-muted">
+                          {formatTimeAgo(task.created_at)}
+                        </span>
+                        {getTaskTypeIcon(task)}
+                      </div>
+                    </div>
+
+                    {showMenu && (
+                      <div className="flex-shrink-0">
+                        <TaskMenu
+                          taskId={task.id}
+                          handleCopyTaskId={handleCopyTaskId}
+                          handleDeleteTask={handleDeleteTask}
+                        />
+                      </div>
+                    )}
+                  </div>
+                </TooltipTrigger>
+                <TooltipContent side="left" className="max-w-xs">
+                  <p className="font-medium">{task.title}</p>
+                  <p className="text-xs text-text-muted">
+                    {taskTypeLabel} · {formatTimeAgo(task.created_at)}
+                  </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           );
         })}
       </div>

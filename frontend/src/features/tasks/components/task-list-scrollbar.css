@@ -1,0 +1,20 @@
+/*
+ * Task list specific scrollbar styles - hide scrollbar but keep functionality
+ * SPDX-FileCopyrightText: 2025 Weibo, Inc.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Hide scrollbar for all browsers but keep scroll functionality */
+.task-list-scrollbar {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch; /* Smooth scrolling on iOS */
+
+  /* Hide scrollbar for IE, Edge and Firefox */
+  -ms-overflow-style: none; /* IE and Edge */
+  scrollbar-width: none; /* Firefox */
+}
+
+/* Hide scrollbar for Chrome, Safari and Opera */
+.task-list-scrollbar::-webkit-scrollbar {
+  display: none;
+}
