@@ -1,0 +1,48 @@
+# Alembic Database Migrations
+
+This directory contains database migration scripts for the Wegent Backend application.
+
+## Quick Reference
+
+For detailed documentation, see: [`docs/en/guides/developer/database-migrations.md`](../../docs/en/guides/developer/database-migrations.md)
+
+### Common Commands
+
+```bash
+# View current status
+alembic current
+alembic history --verbose
+
+# Apply migrations
+alembic upgrade head
+
+# Rollback migrations
+alembic downgrade -1
+
+# Create new migration
+alembic revision --autogenerate -m "description"
+```
+
+### Important Notes
+
+- **Development**: Migrations auto-run on startup when `ENVIRONMENT=development` and `DB_AUTO_MIGRATE=True`
+- **Production**: Run migrations manually before deployment
+- **Always review** auto-generated migrations before applying
+- **Never edit** applied migrations - create a new one instead
+
+## Migration File Structure
+
+```
+alembic/
+├── versions/           # Migration scripts (never edit after applying)
+├── env.py             # Alembic runtime environment
+├── script.py.mako     # Template for new migrations
+└── README             # This file
+```
+
+## For More Information
+
+- [Database Migrations Guide (English)](../../docs/en/guides/developer/database-migrations.md)
+- [数据库迁移指南（中文）](../../docs/zh/guides/developer/database-migrations.md)
+- [Alembic Documentation](https://alembic.sqlalchemy.org/)
+- [SQLAlchemy Documentation](https://docs.sqlalchemy.org/)

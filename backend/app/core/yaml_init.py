@@ -270,6 +270,8 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
     Returns:
         Summary of operations
     """
+    logger.info(f"[scan_and_apply_yaml_directory] Starting with directory: {directory}")
+    
     if not directory.exists():
         logger.warning(f"Initialization directory does not exist: {directory}")
         return {"status": "skipped", "reason": "directory not found"}
@@ -279,13 +281,14 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
         return {"status": "error", "reason": "not a directory"}
 
     # Collect all YAML files
+    logger.info(f"[scan_and_apply_yaml_directory] Collecting YAML files...")
     yaml_files = sorted(directory.glob("*.yaml")) + sorted(directory.glob("*.yml"))
 
     if not yaml_files:
         logger.info(f"No YAML files found in {directory}")
         return {"status": "skipped", "reason": "no yaml files"}
 
-    logger.info(f"Found {len(yaml_files)} YAML files in {directory}")
+    logger.info(f"Found {len(yaml_files)} YAML files in {directory}: {[f.name for f in yaml_files]}")
 
     user_resources = []  # Resources for kinds table (user-owned)
     public_shell_resources = []  # Resources for public_shells table
@@ -293,8 +296,9 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
 
     # Load all resources from all YAML files
     for yaml_file in yaml_files:
-        logger.info(f"Processing {yaml_file.name}")
+        logger.info(f"Processing {yaml_file.name}...")
         documents = load_yaml_documents(yaml_file)
+        logger.info(f"Loaded {len(documents)} documents from {yaml_file.name}")
 
         # Filter and categorize valid resource documents
         for doc in documents:
@@ -307,24 +311,30 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
             # Check if this is a public shell (no user_id in metadata)
             if kind == 'Shell' and 'user_id' not in metadata:
                 public_shell_resources.append(doc)
+                logger.info(f"  Added public shell: {metadata.get('name')}")
             else:
                 # User-owned resource
                 user_resources.append(doc)
+                logger.info(f"  Added user resource: {kind}/{metadata.get('name')}")
 
         if documents:
             files_processed.append(yaml_file.name)
 
+    logger.info(f"[scan_and_apply_yaml_directory] Total resources: {len(user_resources)} user, {len(public_shell_resources)} public shells")
+
     # Apply user resources (goes to kinds table)
     user_results = []
     if user_resources:
-        logger.info(f"Applying {len(user_resources)} user resources for user_id={user_id}")
+        logger.info(f"Applying {len(user_resources)} user resources for user_id={user_id}...")
         user_results = apply_yaml_resources(user_id, user_resources)
+        logger.info(f"User resources applied: {len(user_results)} results")
 
     # Apply public shells (goes to public_shells table)
     public_shell_results = []
     if public_shell_resources:
-        logger.info(f"Applying {len(public_shell_resources)} public shell resources")
+        logger.info(f"Applying {len(public_shell_resources)} public shell resources...")
         public_shell_results = apply_public_shells(db, public_shell_resources)
+        logger.info(f"Public shells applied: {len(public_shell_results)} results")
 
     # Combine results
     user_success = sum(1 for r in user_results if r.get('success'))
@@ -363,25 +373,34 @@ def run_yaml_initialization(db: Session) -> Dict[str, Any]:
 
     # Ensure default admin user exists
     try:
+        logger.info("Ensuring default admin user exists...")
         user_id = ensure_default_user(db)
+        logger.info(f"Default admin user ready with ID: {user_id}")
     except Exception as e:
         logger.error(f"Failed to create default user: {e}", exc_info=True)
         return {"status": "error", "reason": "failed to create default user"}
 
     # Scan and apply YAML resources
     init_dir = Path(settings.INIT_DATA_DIR)
+    logger.info(f"Initial INIT_DATA_DIR: {init_dir}")
 
     # If path doesn't exist and is an absolute path, try relative to backend directory
     if not init_dir.exists() and init_dir.is_absolute():
         # Try relative path for local development
         relative_dir = Path(__file__).parent.parent.parent / "init_data"
+        logger.info(f"Checking relative path: {relative_dir}")
         if relative_dir.exists():
             init_dir = relative_dir
             logger.info(f"Using relative path for local development: {init_dir}")
+        else:
+            logger.warning(f"Relative path does not exist: {relative_dir}")
 
     logger.info(f"Scanning initialization directory: {init_dir}")
 
-    summary = scan_and_apply_yaml_directory(user_id, init_dir, db)
-
-    logger.info(f"YAML initialization completed: {summary}")
-    return summary
+    try:
+        summary = scan_and_apply_yaml_directory(user_id, init_dir, db)
+        logger.info(f"YAML initialization completed: {summary}")
+        return summary
+    except Exception as e:
+        logger.error(f"Error during YAML initialization: {e}", exc_info=True)
+        return {"status": "error", "reason": str(e)}

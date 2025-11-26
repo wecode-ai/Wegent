@@ -11,9 +11,15 @@ class Settings(BaseSettings):
     API_PREFIX: str = "/api"
     # API docs toggle (from env ENABLE_API_DOCS, default True)
     ENABLE_API_DOCS: bool = True
-    
+
+    # Environment configuration
+    ENVIRONMENT: str = "development"  # development or production
+
     # Database configuration
     DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"
+
+    # Database auto-migration configuration (only in development)
+    DB_AUTO_MIGRATE: bool = True
 
     # Executor configuration
     EXECUTOR_DELETE_TASK_URL: str = "http://localhost:8001/executor-manager/executor/delete"
@@ -79,9 +85,6 @@ class Settings(BaseSettings):
     # YAML initialization configuration
     INIT_DATA_DIR: str = "/app/init_data"
     INIT_DATA_ENABLED: bool = True
-
-    # Database auto-create tables configuration
-    DB_AUTO_CREATE_TABLES: bool = True
 
     class Config:
         env_file = ".env"
