@@ -9,14 +9,7 @@ Models package
 # All models should import Base directly from app.db.base
 from app.models.user import User
 from app.models.kind import (
-    Kind,
-    KGhost,
-    KModel,
-    KShell,
-    KBot,
-    KTeam,
-    KWorkspace,
-    KTask
+    Kind
 )
 from app.models.subtask import Subtask
 from app.models.shared_team import SharedTeam
@@ -24,13 +17,6 @@ from app.models.shared_team import SharedTeam
 __all__ = [
     "User",
     "Kind",
-    "KGhost",
-    "KModel",
-    "KShell",
-    "KBot",
-    "KTeam",
-    "KWorkspace",
-    "KTask",
     "Subtask",
-    "SharedTeam",
+    "SharedTeam"
 ]
