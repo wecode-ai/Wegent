@@ -7,7 +7,7 @@ from dataclasses import asdict
 
 # -*- coding: utf-8 -*-
 
-from typing import Dict, Any, List, Union
+from typing import Dict, Any, List, Union, Optional
 from datetime import datetime
 
 from claude_agent_sdk import ClaudeSDKClient
@@ -56,85 +56,71 @@ async def process_response(
     index = 0
     api_error_retry_count = 0  # Track retry count for this session
     try:
-        async for msg in client.receive_response():
-            index += 1
-            
-            # Check for cancellation before processing each message
-            if task_state_manager:
-                task_id = state_manager.task_data.get("task_id") if state_manager else None
-                if task_id and task_state_manager.is_cancelled(task_id):
-                    logger.info(f"Task {task_id} cancelled during response processing")
-                    if state_manager:
-                        state_manager.update_workbench_status("completed")
-                    return TaskStatus.COMPLETED
-            
-            # Log the number of messages received
-            logger.info(f"claude message index: {index}, received: {msg}")
+        while True:
+            retry_requested = False
 
-            if isinstance(msg, SystemMessage):
-                # Handle SystemMessage
-                _handle_system_message(msg, state_manager, thinking_manager)
-
-            elif isinstance(msg, UserMessage):
-                # Handle UserMessage
-                _handle_user_message(msg, thinking_manager)
-
-            elif isinstance(msg, AssistantMessage):
-                # Check if this message contains an API error that needs retry
-                needs_retry = _handle_assistant_message(msg, state_manager, thinking_manager)
+            async for msg in client.receive_response():
+                index += 1
                 
-                if needs_retry and session_id and api_error_retry_count < MAX_API_ERROR_RETRIES:
-                    api_error_retry_count += 1
-                    logger.warning(
-                        f"Detected API error in session {session_id}, "
-                        f"retry {api_error_retry_count}/{MAX_API_ERROR_RETRIES}"
-                    )
-                    
-                    if thinking_manager:
-                        thinking_manager.add_thinking_step(
-                            title="thinking.api_error_retry",
-                            report_immediately=True,
-                            use_i18n_keys=True,
-                            details={
-                                "retry_count": api_error_retry_count,
-                                "max_retries": MAX_API_ERROR_RETRIES,
-                                "session_id": session_id
-                            }
-                        )
-                    
-                    # Send "Retry to proceed" message to retry
-                    try:
-                        await client.query("Retry to proceed", session_id=session_id)
-                        logger.info(f"Sent retry message for session {session_id}")
-                    except Exception as retry_error:
-                        logger.error(f"Failed to send retry message: {retry_error}")
+                # Check for cancellation before processing each message
+                if task_state_manager:
+                    task_id = state_manager.task_data.get("task_id") if state_manager else None
+                    if task_id and task_state_manager.is_cancelled(task_id):
+                        logger.info(f"Task {task_id} cancelled during response processing")
+                        if state_manager:
+                            state_manager.update_workbench_status("completed")
+                        return TaskStatus.COMPLETED
                 
-                elif needs_retry and api_error_retry_count >= MAX_API_ERROR_RETRIES:
-                    logger.error(
-                        f"Max API error retries ({MAX_API_ERROR_RETRIES}) reached for session {session_id}"
+                # Log the number of messages received
+                logger.info(f"claude message index: {index}, received: {msg}")
+
+                if isinstance(msg, SystemMessage):
+                    # Handle SystemMessage
+                    _handle_system_message(msg, state_manager, thinking_manager)
+
+                elif isinstance(msg, UserMessage):
+                    # Handle UserMessage
+                    _handle_user_message(msg, thinking_manager)
+
+                elif isinstance(msg, AssistantMessage):
+                    # Handle assistant message and detect API errors
+                    # Note: Retry logic is handled in ResultMessage processing to avoid duplicate retries
+                    _handle_assistant_message(msg, state_manager, thinking_manager)
+
+                elif isinstance(msg, ResultMessage):
+                    # Use specialized function to handle ResultMessage
+                    current_session_id = msg.session_id or session_id
+                    if msg.session_id:
+                        session_id = msg.session_id
+
+                    result_status = await _process_result_message(
+                        msg,
+                        state_manager,
+                        thinking_manager,
+                        client,
+                        current_session_id,
+                        api_error_retry_count,
+                        MAX_API_ERROR_RETRIES,
                     )
-                    if thinking_manager:
-                        thinking_manager.add_thinking_step(
-                            title="thinking.api_error_max_retries",
-                            report_immediately=True,
-                            use_i18n_keys=True,
-                            details={
-                                "retry_count": api_error_retry_count,
-                                "max_retries": MAX_API_ERROR_RETRIES,
-                                "session_id": session_id
-                            }
+                    if result_status == "RETRY":
+                        # Increment retry count and restart response stream for retry
+                        api_error_retry_count += 1
+                        retry_requested = True
+                        logger.info(
+                            f"Retry initiated, restarting response stream for session {session_id}"
                         )
+                        break
+                    elif result_status:
+                        return result_status
 
-            elif isinstance(msg, ResultMessage):
-                # Use specialized function to handle ResultMessage
-                result_status = _process_result_message(msg, state_manager, thinking_manager)
-                if result_status:
-                    return result_status
+                elif isinstance(msg, dict):
+                    _handle_legacy_message(msg, thinking_manager)
 
-            elif isinstance(msg, dict):
-                _handle_legacy_message(msg, thinking_manager)
+            if retry_requested:
+                # Continue outer loop to start listening for the retry response stream
+                continue
 
-        return TaskStatus.RUNNING
+            return TaskStatus.RUNNING
     except Exception as e:
         logger.exception(f"Error processing response: {str(e)}")
         
@@ -430,7 +416,10 @@ def _handle_legacy_message(msg: Dict[str, Any], thinking_manager=None):
             )
 
 
-def _process_result_message(msg: ResultMessage, state_manager, thinking_manager=None) -> TaskStatus:
+async def _process_result_message(
+    msg: ResultMessage, state_manager, thinking_manager=None, client=None,
+    session_id: str = None, api_error_retry_count: int = 0, max_retries: int = 3
+) -> Union[TaskStatus, str, None]:
     """
     Process a ResultMessage from Claude
 
@@ -438,9 +427,14 @@ def _process_result_message(msg: ResultMessage, state_manager, thinking_manager=
         msg: The ResultMessage to process
         state_manager: ProgressStateManager instance for managing state and reporting progress
         thinking_manager: Optional ThinkingStepManager instance
+        client: ClaudeSDKClient for sending retry messages
+        session_id: Session ID for retry operations
+        api_error_retry_count: Current retry count
+        max_retries: Maximum retry attempts
 
     Returns:
         TaskStatus: Processing status (COMPLETED if successful, otherwise None)
+        str: "RETRY" if retry was initiated
     """
     
     # 构建详细的结果信息，符合目标格式
@@ -534,6 +528,51 @@ def _process_result_message(msg: ResultMessage, state_manager, thinking_manager=
     if msg.is_error:
         logger.error(f"Received error from Claude SDK: {msg.result}")
         result_str = str(msg.result) if msg.result is not None else "No result"
+        
+        # Check if this is an API error that can be retried
+        if API_ERROR_PATTERN in result_str and client and session_id and api_error_retry_count < max_retries:
+            logger.warning(
+                f"Detected retryable API error in ResultMessage for session {session_id}, "
+                f"retry {api_error_retry_count + 1}/{max_retries}"
+            )
+            
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.api_error_retry",
+                    report_immediately=True,
+                    use_i18n_keys=True,
+                    details={
+                        "retry_count": api_error_retry_count + 1,
+                        "max_retries": max_retries,
+                        "session_id": session_id,
+                        "error": result_str
+                    }
+                )
+            
+            # Send retry message to continue the session
+            try:
+                await client.query("Retry to proceed", session_id=session_id)
+                logger.info(f"Sent retry message for session {session_id} from ResultMessage handler")
+                return "RETRY"  # Signal to continue processing
+            except Exception as retry_error:
+                logger.error(f"Failed to send retry message: {retry_error}")
+                # Fall through to fail the task
+        
+        elif API_ERROR_PATTERN in result_str and api_error_retry_count >= max_retries:
+            logger.error(
+                f"Max API error retries ({max_retries}) reached for session {session_id}"
+            )
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.api_error_max_retries",
+                    report_immediately=True,
+                    use_i18n_keys=True,
+                    details={
+                        "retry_count": api_error_retry_count,
+                        "max_retries": max_retries,
+                        "session_id": session_id
+                    }
+                )
         
         # Add thinking step for error result
         if thinking_manager:
