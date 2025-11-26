@@ -646,7 +646,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
         # Only send notification when task status is COMPLETED or FAILED
         if not task_crd.status or task_crd.status.status not in ["COMPLETED", "FAILED"]:
             return
-        
+
         try:
             user_message = task_crd.spec.title
             task_start_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -656,6 +656,12 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
             subtasks = db.query(Subtask).filter(
                 Subtask.task_id == task_id
             ).order_by(Subtask.message_id.asc()).all()
+
+            # Check if any subtask is still in RUNNING status
+            running_subtasks = [s for s in subtasks if s.status == SubtaskStatus.RUNNING]
+            if running_subtasks:
+                logger.info(f"Skip notification for task {task_id}: {len(running_subtasks)} subtask(s) still running")
+                return
 
             for subtask in subtasks:
                 user_id = subtask.user_id
