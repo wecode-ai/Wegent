@@ -1171,8 +1171,8 @@ class ClaudeCodeAgent(Agent):
             bot_config: Bot configuration containing skills list in spec
         """
         try:
-            # Extract skills list from bot_config
-            skills = bot_config.get("skills", [])
+            # Extract skills list from bot_config spec
+            skills = bot_config.get("spec", {}).get("skills", [])
             if not skills:
                 logger.debug("No skills configured for this bot")
                 return
