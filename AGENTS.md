@@ -391,13 +391,60 @@ wegent/
 
 ### Backend
 
-**Tech:** FastAPI, SQLAlchemy, Pydantic, MySQL, Redis
+**Tech:** FastAPI, SQLAlchemy, Pydantic, MySQL, Redis, Alembic
 
 **Common tasks:**
 - Add endpoint: Create in `app/api/`, schema in `app/schemas/`, logic in `app/services/`
-- Add model: Create in `app/models/`, restart (auto-creates table)
+- Add model: Create in `app/models/`, generate migration with Alembic
 
 **Environment variables:** `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`
+
+#### Database Migrations (Alembic)
+
+**Migration workflow:**
+```bash
+cd backend
+
+# Create migration after model changes
+alembic revision --autogenerate -m "description of changes"
+
+# Review generated migration in alembic/versions/
+# Always verify auto-generated migrations before applying
+
+# Apply migrations
+alembic upgrade head
+
+# Check current status
+alembic current
+```
+
+**Development vs Production:**
+- **Development**: Migrations auto-run on startup when `ENVIRONMENT=development` and `DB_AUTO_MIGRATE=True`
+- **Production**: Run migrations manually before deployment
+
+**Common commands:**
+```bash
+# View migration history
+alembic history --verbose
+
+# Rollback one version
+alembic downgrade -1
+
+# Rollback to specific revision
+alembic downgrade <revision_id>
+
+# Preview SQL without applying
+alembic upgrade head --sql
+```
+
+**Best practices:**
+- Always review auto-generated migrations before applying
+- Test migrations on copy of production data
+- Backup database before production migrations
+- Never edit applied migrations - create new one instead
+- Keep migrations small and focused
+
+**For detailed migration guide, see:** [`docs/en/guides/developer/database-migrations.md`](docs/en/guides/developer/database-migrations.md)
 
 ### Frontend
 

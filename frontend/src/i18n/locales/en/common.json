@@ -46,7 +46,9 @@
   "sidebar": {
     "recent_visits": "Recent Visits",
     "light_mode": "Light Mode",
-    "dark_mode": "Dark Mode"
+    "dark_mode": "Dark Mode",
+    "collapse": "Collapse sidebar",
+    "expand": "Expand sidebar"
   },
   "user": {
     "default_name": "User",

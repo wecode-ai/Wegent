@@ -18,8 +18,8 @@ class Settings(BaseSettings):
     # Database configuration
     DATABASE_URL: str = "mysql+asyncmy://user:password@localhost/task_manager"
 
-    # Alembic auto-upgrade configuration (only in development)
-    ALEMBIC_AUTO_UPGRADE: bool = True
+    # Database auto-migration configuration (only in development)
+    DB_AUTO_MIGRATE: bool = True
 
     # Executor configuration
     EXECUTOR_DELETE_TASK_URL: str = "http://localhost:8001/executor-manager/executor/delete"

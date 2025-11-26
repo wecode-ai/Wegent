@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 import time
 import logging
 import uuid
+import sys
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.api import api_router
@@ -96,24 +97,33 @@ def create_app():
     # Create database tables and start background worker
     @app.on_event("startup")
     def startup():
-        # Run Alembic migrations
-        if settings.ENVIRONMENT == "development" and settings.ALEMBIC_AUTO_UPGRADE:
-            logger.info("Running Alembic migrations automatically (development mode)...")
+        # Run database migrations
+        if settings.ENVIRONMENT == "development" and settings.DB_AUTO_MIGRATE:
+            logger.info("Running database migrations automatically (development mode)...")
             try:
-                from alembic import command
-                from alembic.config import Config as AlembicConfig
+                import subprocess
                 import os
 
                 # Get the alembic.ini path
                 backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                alembic_ini_path = os.path.join(backend_dir, "alembic.ini")
-
-                # Run migrations
-                alembic_cfg = AlembicConfig(alembic_ini_path)
-                command.upgrade(alembic_cfg, "head")
-                logger.info("Alembic migrations completed successfully")
+                
+                logger.info("Executing Alembic upgrade to head...")
+                
+                # Run Alembic as subprocess to avoid output buffering issues
+                result = subprocess.run(
+                    ["alembic", "upgrade", "head"],
+                    cwd=backend_dir,
+                    capture_output=False,  # Let output go directly to stdout/stderr
+                    text=True,
+                    check=True
+                )
+                
+                logger.info("✓ Alembic migrations completed successfully")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"✗ Error running Alembic migrations: {e}")
+                raise
             except Exception as e:
-                logger.error(f"Error running Alembic migrations: {e}")
+                logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
                 raise
         elif settings.ENVIRONMENT == "production":
             logger.warning(
@@ -151,23 +161,32 @@ def create_app():
                 logger.warning(f"Could not check migration status: {e}")
         else:
             logger.info("Alembic auto-upgrade is disabled")
-
         # Initialize database with YAML configuration
+        logger.info("Starting YAML data initialization...")
         db = SessionLocal()
         try:
             run_yaml_initialization(db)
+            logger.info("✓ YAML data initialization completed")
         except Exception as e:
-            logger.error(f"Failed to initialize database from YAML: {e}")
+            logger.error(f"✗ Failed to initialize database from YAML: {e}")
         finally:
             db.close()
 
         # Start background jobs
+        logger.info("Starting background jobs...")
         start_background_jobs(app)
+        logger.info("✓ Background jobs started")
+        
+        logger.info("=" * 60)
+        logger.info("Application startup completed successfully!")
+        logger.info("=" * 60)
 
     @app.on_event("shutdown")
     def shutdown():
+        logger.info("Shutting down application...")
         # Stop background jobs
         stop_background_jobs(app)
+        logger.info("✓ Application shutdown completed")
 
     return app
 
