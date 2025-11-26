@@ -818,9 +818,6 @@ class ClaudeCodeAgent(Agent):
 
         except Exception as e:
             return self._handle_execution_error(e, "async execution")
-        finally:
-            # Ensure resources are cleaned up
-            await self.resource_manager.cleanup_task_resources(self.task_id)
 
     def _handle_execution_result(self, result_content: str, execution_type: str = "execution") -> TaskStatus:
         """
