@@ -7,6 +7,7 @@ This document provides detailed explanations of the YAML configuration formats f
 ## Table of Contents
 
 - [👻 Ghost](#-ghost)
+- [✨ Skill](#-skill)
 - [🧠 Model](#-model)
 - [🐚 Shell](#-shell)
 - [🤖 Bot](#-bot)
@@ -58,8 +59,88 @@ spec:
 | `metadata.namespace` | string | Yes | Namespace, typically `default` |
 | `spec.systemPrompt` | string | Yes | System prompt defining agent personality and capabilities |
 | `spec.mcpServers` | object | No | MCP server configuration defining agent's tool capabilities |
+| `spec.skills` | array | No | List of Skill names to associate with this Ghost, e.g., `["skill-1", "skill-2"]` |
 
 ---
+
+## ✨ Skill
+
+Skill is a Claude Code capability extension package containing executable code and configuration. Skills are uploaded as ZIP packages and deployed to `~/.claude/skills/` when tasks start.
+
+### Complete Configuration Example
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Skill
+metadata:
+  name: python-debugger
+  namespace: default
+spec:
+  description: "Python debugging tool with breakpoint and variable inspection support"
+  version: "1.0.0"
+  author: "WeCode Team"
+  tags: ["python", "debugging", "development"]
+status:
+  state: "Available"
+  fileSize: 2048576
+  fileHash: "abc123def456..."
+```
+
+### Field Description
+
+| Field | Type | Required | Description |
+|------|------|----------|-------------|
+| `metadata.name` | string | Yes | Unique identifier for the Skill (used in Ghost `spec.skills` field) |
+| `metadata.namespace` | string | Yes | Namespace, typically `default` |
+| `spec.description` | string | Yes | Skill功能描述 (extracted from SKILL.md frontmatter) |
+| `spec.version` | string | No | Version number (semantic versioning recommended) |
+| `spec.author` | string | No | Author name or organization |
+| `spec.tags` | array | No | Tags for categorization, e.g., `["python", "debugging"]` |
+| `status.state` | string | Yes | Skill status: `Available` or `Unavailable` |
+| `status.fileSize` | integer | No | ZIP package size in bytes |
+| `status.fileHash` | string | No | SHA256 hash of the ZIP package |
+
+### ZIP Package Requirements
+
+Skills must be uploaded as ZIP packages containing:
+1. **SKILL.md** (required): Skill documentation with YAML frontmatter
+2. Other files: Scripts, configurations, assets, etc.
+
+**SKILL.md Format:**
+```markdown
+---
+description: "Your skill description here"
+version: "1.0.0"
+author: "Your Name"
+tags: ["tag1", "tag2"]
+---
+
+# Skill Documentation
+
+Detailed description of what this skill does...
+```
+
+### Using Skills in Ghosts
+
+Associate skills with a Ghost by adding them to the `spec.skills` array:
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: developer-ghost
+  namespace: default
+spec:
+  systemPrompt: "You are a senior developer..."
+  mcpServers: {...}
+  skills:
+    - python-debugger
+    - code-formatter
+```
+
+When a task starts with this Ghost, the Executor automatically downloads and deploys these skills to `~/.claude/skills/`.
+
+
 
 ## 🧠 Model
 
