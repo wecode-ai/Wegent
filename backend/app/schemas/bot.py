@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, Optional, List
 
 from pydantic import BaseModel
 
@@ -16,6 +16,7 @@ class BotBase(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    skills: Optional[List[str]] = None
     is_active: bool = True
 
 class BotCreate(BotBase):
@@ -29,6 +30,7 @@ class BotUpdate(BaseModel):
     agent_config: Optional[dict[str, Any]] = None
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    skills: Optional[List[str]] = None
     is_active: Optional[bool] = None
 
 class BotInDB(BotBase):
@@ -50,6 +52,7 @@ class BotDetail(BaseModel):
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
+    skills: Optional[List[str]] = None
     is_active: bool = True
     created_at: datetime
     updated_at: datetime
