@@ -4,27 +4,33 @@
 
 'use client';
 
+import './task-list-scrollbar.css';
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { Search, Plus, Settings, X } from 'lucide-react';
+import { Search, Plus, Settings, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import TaskListSection from './TaskListSection';
 import { useTranslation } from '@/hooks/useTranslation';
 import MobileSidebar from '@/features/layout/MobileSidebar';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
   setIsMobileSidebarOpen: (open: boolean) => void;
   pageType?: 'chat' | 'code';
+  isCollapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }
 
 export default function TaskSidebar({
   isMobileSidebarOpen,
   setIsMobileSidebarOpen,
   pageType = 'chat',
+  isCollapsed = false,
+  onToggleCollapsed,
 }: TaskSidebarProps) {
   const { t } = useTranslation('common');
   const router = useRouter();
@@ -161,57 +167,127 @@ export default function TaskSidebar({
   const sidebarContent = (
     <>
       {/* Logo */}
-      <div className="px-3 pt-2 pb-3">
-        <div className="flex items-center justify-start pl-2 gap-2">
-          <Image
-            src="/weibo-logo.png"
-            alt="Weibo Logo"
-            width={20}
-            height={20}
-            className="object-container"
-          />
-          <span className="text-sm text-text-primary">Wegent</span>
-        </div>
-      </div>
-
-      {/* New Task Button */}
-      <div className="px-3 mb-0">
-        <Button
-          variant="ghost"
-          onClick={handleNewAgentClick}
-          className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover"
-          size="sm"
+      <div className="px-1 pt-2 pb-3">
+        <div
+          className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between pl-2'} gap-2`}
         >
-          <Plus className="h-4 w-4 mr-0.5" />
-          {t('tasks.new_task')}
-        </Button>
-      </div>
-
-      {/* Search */}
-      <div className="px-3 mb-0">
-        <div className="relative group">
-          <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
-          <input
-            type="text"
-            value={localSearchTerm}
-            onChange={handleSearchChange}
-            placeholder={t('tasks.search_placeholder')}
-            className="w-full pl-8 pr-8 py-1.5 bg-transparent group-hover:bg-hover border border-transparent group-hover:border-border rounded text-sm text-text-primary placeholder:text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent focus:bg-hover cursor-text"
-          />
-          {localSearchTerm && (
-            <button
-              onClick={handleClearSearch}
-              className="absolute right-2 top-1/2 transform -translate-y-1/2"
-            >
-              <X className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
-            </button>
+          {!isCollapsed && (
+            <div className="flex items-center gap-2">
+              <Image
+                src="/weibo-logo.png"
+                alt="Weibo Logo"
+                width={20}
+                height={20}
+                className="object-container"
+              />
+              <span className="text-sm text-text-primary">Wegent</span>
+            </div>
+          )}
+          {onToggleCollapsed && (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={onToggleCollapsed}
+                    className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover"
+                    aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
+                  >
+                    {isCollapsed ? (
+                      <PanelLeftOpen className="h-4 w-4" />
+                    ) : (
+                      <PanelLeftClose className="h-4 w-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>{isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           )}
         </div>
       </div>
 
-      {/* Mark All As Read Button */}
-      {totalUnreadCount > 0 && (
-        <div className="px-3 mb-2">
+      {/* New Task Button */}
+      <div className="px-1 mb-0">
+        {isCollapsed ? (
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  onClick={handleNewAgentClick}
+                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded"
+                  aria-label={t('tasks.new_task')}
+                >
+                  <Plus className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>{t('tasks.new_task')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <Button
+            variant="ghost"
+            onClick={handleNewAgentClick}
+            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover"
+            size="sm"
+          >
+            <Plus className="h-4 w-4 mr-0.5" />
+            {t('tasks.new_task')}
+          </Button>
+        )}
+      </div>
+
+      {/* Search */}
+      <div className="px-1 mb-0">
+        {isCollapsed ? (
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  onClick={onToggleCollapsed}
+                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded"
+                  aria-label={t('tasks.search_placeholder')}
+                >
+                  <Search className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>{t('tasks.search_placeholder')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <div className="relative group">
+            <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+            <input
+              type="text"
+              value={localSearchTerm}
+              onChange={handleSearchChange}
+              placeholder={t('tasks.search_placeholder')}
+              className="w-full pl-8 pr-8 py-1.5 bg-transparent group-hover:bg-hover border border-transparent group-hover:border-border rounded text-sm text-text-primary placeholder:text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent focus:bg-hover cursor-text"
+            />
+            {localSearchTerm && (
+              <button
+                onClick={handleClearSearch}
+                className="absolute right-2 top-1/2 transform -translate-y-1/2"
+              >
+                <X className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Mark All As Read Button - hide in collapsed mode */}
+      {!isCollapsed && totalUnreadCount > 0 && (
+        <div className="px-1 mb-2">
           <button
             onClick={handleMarkAllAsViewed}
             className="w-full text-xs text-text-primary hover:text-text-primary py-1 px-2 rounded hover:bg-hover transition-colors text-center"
@@ -222,7 +298,10 @@ export default function TaskSidebar({
       )}
 
       {/* Tasks Section */}
-      <div className="flex-1 px-3 pt-2 overflow-y-auto custom-scrollbar" ref={scrollRef}>
+      <div
+        className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar`}
+        ref={scrollRef}
+      >
         {isSearching ? (
           <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
         ) : tasks.length === 0 ? (
@@ -235,6 +314,7 @@ export default function TaskSidebar({
             title={t('tasks.search_results')}
             unreadCount={getUnreadCount(tasks)}
             onTaskClick={() => setIsMobileSidebarOpen(false)}
+            isCollapsed={isCollapsed}
             key={`search-${viewStatusVersion}`}
           />
         ) : (
@@ -244,6 +324,7 @@ export default function TaskSidebar({
               title={t('tasks.today')}
               unreadCount={groupTasksByDate.todayUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
+              isCollapsed={isCollapsed}
               key={`today-${viewStatusVersion}`}
             />
             <TaskListSection
@@ -251,6 +332,7 @@ export default function TaskSidebar({
               title={t('tasks.this_week')}
               unreadCount={groupTasksByDate.thisWeekUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
+              isCollapsed={isCollapsed}
               key={`week-${viewStatusVersion}`}
             />
             <TaskListSection
@@ -258,6 +340,7 @@ export default function TaskSidebar({
               title={t('tasks.earlier')}
               unreadCount={groupTasksByDate.earlierUnread}
               onTaskClick={() => setIsMobileSidebarOpen(false)}
+              isCollapsed={isCollapsed}
               key={`earlier-${viewStatusVersion}`}
             />
           </>
@@ -272,19 +355,43 @@ export default function TaskSidebar({
 
       {/* Settings */}
       <div className="p-3 border-t border-border">
-        <Button
-          variant="ghost"
-          size="sm"
-          onClick={() => {
-            router.push(paths.settings.root.getHref());
-            setIsMobileSidebarOpen(false);
-          }}
-          className="text-text-primary hover:text-text-primary hover:bg-hover"
-          data-tour="settings-link"
-        >
-          <Settings className="h-3.5 w-3.5 mr-2" />
-          {t('tasks.settings')}
-        </Button>
+        {isCollapsed ? (
+          <TooltipProvider>
+            <Tooltip delayDuration={300}>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    router.push(paths.settings.root.getHref());
+                    setIsMobileSidebarOpen(false);
+                  }}
+                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:text-text-primary hover:bg-hover rounded"
+                  data-tour="settings-link"
+                  aria-label={t('tasks.settings')}
+                >
+                  <Settings className="h-3.5 w-3.5" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>{t('tasks.settings')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ) : (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => {
+              router.push(paths.settings.root.getHref());
+              setIsMobileSidebarOpen(false);
+            }}
+            className="text-text-primary hover:text-text-primary hover:bg-hover"
+            data-tour="settings-link"
+          >
+            <Settings className="h-3.5 w-3.5 mr-2" />
+            {t('tasks.settings')}
+          </Button>
+        )}
       </div>
     </>
   );

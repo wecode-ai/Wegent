@@ -26,15 +26,52 @@ cp .env.example .env
 
 4. Initialize database
 ```bash
-# Create database (schema will be created automatically by SQLAlchemy on first startup)
+# Create database
 mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS task_manager CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+
+# Run database migrations (development mode - automatic on startup)
+# Or manually run:
+alembic upgrade head
 ```
 
-**Note on Initialization:**
-- Database tables are created automatically by SQLAlchemy on first startup
+**Database Migration System:**
+- Wegent uses Alembic for database schema version control
+- In development mode (`ENVIRONMENT=development`), migrations run automatically on startup
+- In production mode, migrations must be run manually for safety
+- See `alembic/README` for detailed migration commands
+
+**Initial Data Loading:**
 - Initial data (admin user, default resources) is loaded from YAML files in `init_data/`
 - See `init_data/README.md` for details on YAML-based initialization
 - User modifications are preserved across restarts (create-only mode)
+
+## Database Migrations
+
+Wegent uses Alembic for database schema management. This provides:
+- Version control for database schema changes
+- Safe upgrade and rollback capabilities
+- Automatic migration in development, manual control in production
+
+### Common Migration Commands
+
+```bash
+# View current migration status
+alembic current
+
+# View migration history
+alembic history
+
+# Apply all pending migrations
+alembic upgrade head
+
+# Rollback one migration
+alembic downgrade -1
+
+# Create a new migration after model changes
+alembic revision --autogenerate -m "description"
+```
+
+For detailed migration documentation, see `alembic/README`.
 
 5. Run development server
 ```bash

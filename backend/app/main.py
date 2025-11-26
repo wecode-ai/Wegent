@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request
 import time
 import logging
 import uuid
+import sys
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.api import api_router
@@ -96,37 +97,96 @@ def create_app():
     # Create database tables and start background worker
     @app.on_event("startup")
     def startup():
-        # Auto-create database tables if enabled
-        if settings.DB_AUTO_CREATE_TABLES:
-            logger.info("Auto-creating database tables...")
+        # Run database migrations
+        if settings.ENVIRONMENT == "development" and settings.DB_AUTO_MIGRATE:
+            logger.info("Running database migrations automatically (development mode)...")
             try:
-                Base.metadata.create_all(bind=engine, checkfirst=True)
-            except Exception as e:
-                # Log the error but don't fail startup if tables already exist
-                if "already exists" in str(e).lower():
-                    logger.warning(f"Some tables already exist, continuing: {e}")
-                else:
-                    logger.error(f"Error creating database tables: {e}")
-                    raise
-        else:
-            logger.info("Database auto-create tables is disabled")
+                import subprocess
+                import os
 
+                # Get the alembic.ini path
+                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                
+                logger.info("Executing Alembic upgrade to head...")
+                
+                # Run Alembic as subprocess to avoid output buffering issues
+                result = subprocess.run(
+                    ["alembic", "upgrade", "head"],
+                    cwd=backend_dir,
+                    capture_output=False,  # Let output go directly to stdout/stderr
+                    text=True,
+                    check=True
+                )
+                
+                logger.info("✓ Alembic migrations completed successfully")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"✗ Error running Alembic migrations: {e}")
+                raise
+            except Exception as e:
+                logger.error(f"✗ Unexpected error running Alembic migrations: {e}")
+                raise
+        elif settings.ENVIRONMENT == "production":
+            logger.warning(
+                "Running in production mode. Database migrations must be run manually. "
+                "Please execute 'alembic upgrade head' to apply pending migrations."
+            )
+            # Check migration status
+            try:
+                from alembic import command
+                from alembic.config import Config as AlembicConfig
+                from alembic.script import ScriptDirectory
+                from alembic.runtime.migration import MigrationContext
+                import os
+
+                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                alembic_ini_path = os.path.join(backend_dir, "alembic.ini")
+
+                alembic_cfg = AlembicConfig(alembic_ini_path)
+                script = ScriptDirectory.from_config(alembic_cfg)
+
+                # Get current revision from database
+                with engine.connect() as connection:
+                    context = MigrationContext.configure(connection)
+                    current_rev = context.get_current_revision()
+                    head_rev = script.get_current_head()
+
+                    if current_rev != head_rev:
+                        logger.warning(
+                            f"Database migration pending: current={current_rev}, latest={head_rev}. "
+                            "Run 'alembic upgrade head' manually in production."
+                        )
+                    else:
+                        logger.info("Database schema is up to date")
+            except Exception as e:
+                logger.warning(f"Could not check migration status: {e}")
+        else:
+            logger.info("Alembic auto-upgrade is disabled")
         # Initialize database with YAML configuration
+        logger.info("Starting YAML data initialization...")
         db = SessionLocal()
         try:
             run_yaml_initialization(db)
+            logger.info("✓ YAML data initialization completed")
         except Exception as e:
-            logger.error(f"Failed to initialize database from YAML: {e}")
+            logger.error(f"✗ Failed to initialize database from YAML: {e}")
         finally:
             db.close()
 
         # Start background jobs
+        logger.info("Starting background jobs...")
         start_background_jobs(app)
+        logger.info("✓ Background jobs started")
+        
+        logger.info("=" * 60)
+        logger.info("Application startup completed successfully!")
+        logger.info("=" * 60)
 
     @app.on_event("shutdown")
     def shutdown():
+        logger.info("Shutting down application...")
         # Stop background jobs
         stop_background_jobs(app)
+        logger.info("✓ Application shutdown completed")
 
     return app
 

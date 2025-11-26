@@ -41,6 +41,7 @@ Technical documentation for Wegent developers:
 
 - [Development Setup](./guides/developer/setup.md) - Local development environment configuration
 - [Testing](./guides/developer/testing.md) - Unit and integration testing
+- [Database Migrations](./guides/developer/database-migrations.md) - Alembic database migration management
 
 ### 📋 Reference
 
