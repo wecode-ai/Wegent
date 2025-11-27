@@ -9,12 +9,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { PencilIcon, TrashIcon, DownloadIcon, PackageIcon } from 'lucide-react';
 import LoadingState from '@/features/common/LoadingState';
 import { Skill } from '@/types/api';
-import {
-  fetchSkillsList,
-  deleteSkill,
-  downloadSkill,
-  formatFileSize,
-} from '@/apis/skills';
+import { fetchSkillsList, deleteSkill, downloadSkill, formatFileSize } from '@/apis/skills';
 import SkillUploadModal from './SkillUploadModal';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -49,8 +44,8 @@ export default function SkillList() {
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: 'Failed to load skills',
-        description: error instanceof Error ? error.message : 'Unknown error',
+        title: t('skills.failed_load'),
+        description: error instanceof Error ? error.message : t('common.unknown_error'),
       });
     } finally {
       setIsLoading(false);
@@ -83,15 +78,15 @@ export default function SkillList() {
       const skillId = parseInt(skillToDelete.metadata.labels?.id || '0');
       await deleteSkill(skillId);
       toast({
-        title: 'Success',
-        description: `Skill "${skillToDelete.metadata.name}" deleted successfully`,
+        title: t('common.success'),
+        description: t('skills.success_delete', { skillName: skillToDelete.metadata.name }),
       });
       await loadSkills();
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: 'Failed to delete skill',
-        description: error instanceof Error ? error.message : 'Unknown error',
+        title: t('skills.failed_delete'),
+        description: error instanceof Error ? error.message : t('common.unknown_error'),
       });
     } finally {
       setDeleteConfirmVisible(false);
@@ -104,14 +99,14 @@ export default function SkillList() {
       const skillId = parseInt(skill.metadata.labels?.id || '0');
       await downloadSkill(skillId, skill.metadata.name);
       toast({
-        title: 'Success',
-        description: `Downloading skill "${skill.metadata.name}"`,
+        title: t('common.success'),
+        description: t('skills.success_download', { skillName: skill.metadata.name }),
       });
     } catch (error) {
       toast({
         variant: 'destructive',
-        title: 'Failed to download skill',
-        description: error instanceof Error ? error.message : 'Unknown error',
+        title: t('skills.failed_download'),
+        description: error instanceof Error ? error.message : t('common.unknown_error'),
       });
     }
   };
@@ -133,27 +128,23 @@ export default function SkillList() {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold text-text-primary">Skills</h2>
-          <p className="text-sm text-text-muted mt-1">
-            Manage Claude Code Skills to extend your bot capabilities
-          </p>
+          <h2 className="text-xl font-semibold text-text-primary">{t('skills.title')}</h2>
+          <p className="text-sm text-text-muted mt-1">{t('skills.description')}</p>
         </div>
-        <UnifiedAddButton onClick={handleCreateSkill} label="Upload Skill" />
+        <UnifiedAddButton onClick={handleCreateSkill}>{t('skills.upload_skill')}</UnifiedAddButton>
       </div>
 
       {/* Skills List */}
       {skills.length === 0 ? (
         <Card className="p-8 text-center">
           <PackageIcon className="w-12 h-12 mx-auto text-text-muted mb-3" />
-          <h3 className="text-base font-medium text-text-primary mb-2">No skills yet</h3>
-          <p className="text-sm text-text-muted mb-4">
-            Upload a Claude Code Skill ZIP package to get started
-          </p>
-          <Button onClick={handleCreateSkill}>Upload Your First Skill</Button>
+          <h3 className="text-base font-medium text-text-primary mb-2">{t('skills.no_skills')}</h3>
+          <p className="text-sm text-text-muted mb-4">{t('skills.no_skills_description')}</p>
+          <Button onClick={handleCreateSkill}>{t('skills.upload_first_skill')}</Button>
         </Card>
       ) : (
         <div className="space-y-3 p-1">
-          {skills.map((skill) => (
+          {skills.map(skill => (
             <Card
               key={skill.metadata.labels?.id || skill.metadata.name}
               className="p-4 hover:shadow-md transition-shadow"
@@ -173,17 +164,17 @@ export default function SkillList() {
                     {/* Tags and Metadata */}
                     <div className="flex flex-wrap gap-1.5 mt-2">
                       {skill.spec.version && (
-                        <Tag variant="secondary" size="sm">
-                          v{skill.spec.version}
+                        <Tag variant="default">
+                          {t('skills.version', { version: skill.spec.version })}
                         </Tag>
                       )}
                       {skill.spec.author && (
-                        <Tag variant="secondary" size="sm">
-                          {skill.spec.author}
+                        <Tag variant="default">
+                          {t('skills.author', { author: skill.spec.author })}
                         </Tag>
                       )}
-                      {skill.spec.tags?.map((tag) => (
-                        <Tag key={tag} variant="default" size="sm">
+                      {skill.spec.tags?.map(tag => (
+                        <Tag key={tag} variant="info">
                           {tag}
                         </Tag>
                       ))}
@@ -197,12 +188,12 @@ export default function SkillList() {
                       {skill.status?.state && (
                         <span
                           className={
-                            skill.status.state === 'Available'
-                              ? 'text-success'
-                              : 'text-error'
+                            skill.status.state === 'Available' ? 'text-success' : 'text-error'
                           }
                         >
-                          {skill.status.state}
+                          {skill.status.state === 'Available'
+                            ? t('skills.state_available')
+                            : t('skills.state_unavailable')}
                         </span>
                       )}
                     </div>
@@ -216,7 +207,7 @@ export default function SkillList() {
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => handleDownloadSkill(skill)}
-                    title="Download"
+                    title={t('skills.download_skill')}
                   >
                     <DownloadIcon className="w-4 h-4" />
                   </Button>
@@ -225,7 +216,7 @@ export default function SkillList() {
                     size="icon"
                     className="h-8 w-8"
                     onClick={() => handleEditSkill(skill)}
-                    title="Update"
+                    title={t('skills.update_skill')}
                   >
                     <PencilIcon className="w-4 h-4" />
                   </Button>
@@ -234,7 +225,7 @@ export default function SkillList() {
                     size="icon"
                     className="h-8 w-8 text-error hover:text-error hover:bg-error/10"
                     onClick={() => handleDeleteSkill(skill)}
-                    title="Delete"
+                    title={t('skills.delete_skill')}
                   >
                     <TrashIcon className="w-4 h-4" />
                   </Button>
@@ -247,35 +238,29 @@ export default function SkillList() {
 
       {/* Upload/Edit Modal */}
       {uploadModalOpen && (
-        <SkillUploadModal
-          open={uploadModalOpen}
-          onClose={handleModalClose}
-          skill={editingSkill}
-        />
+        <SkillUploadModal open={uploadModalOpen} onClose={handleModalClose} skill={editingSkill} />
       )}
 
       {/* Delete Confirmation Dialog */}
       <Dialog open={deleteConfirmVisible} onOpenChange={setDeleteConfirmVisible}>
-        <DialogContent>
+        <DialogContent className="bg-surface">
           <DialogHeader>
-            <DialogTitle>Delete Skill</DialogTitle>
+            <DialogTitle>{t('skills.delete_confirm_title')}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete the skill &quot;{skillToDelete?.metadata.name}
-              &quot;? This action cannot be undone.
+              {t('skills.delete_confirm_message', { skillName: skillToDelete?.metadata.name })}
               {skillToDelete && (
                 <div className="mt-3 p-3 bg-muted rounded-md text-sm">
-                  <strong>Note:</strong> If this skill is referenced by any Ghost, the
-                  deletion will fail. Please remove the skill from all Ghosts first.
+                  <strong>{t('skills.delete_note')}</strong>
                 </div>
               )}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteConfirmVisible(false)}>
-              Cancel
+              {t('actions.cancel')}
             </Button>
             <Button variant="destructive" onClick={handleConfirmDelete}>
-              Delete
+              {t('actions.delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

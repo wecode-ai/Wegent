@@ -38,6 +38,7 @@ version: "1.0.0"
 author: "Test Author"
 tags: ["debug", "test"]
 ---
+
 """
         zip_content = self.create_test_zip(skill_md)
 
@@ -63,7 +64,7 @@ tags: ["debug", "test"]
     def test_create_skill_duplicate_name(self, test_db: Session, test_user: User):
         """Test creating skill with duplicate name fails"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Test skill\n---"
+        skill_md = "---\ndescription: Test skill\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         # Create first skill
@@ -93,7 +94,7 @@ tags: ["debug", "test"]
     def test_create_skill_different_users_same_name(self, test_db: Session, test_user: User, test_admin_user: User):
         """Test different users can create skills with the same name"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Shared name skill\n---"
+        skill_md = "---\ndescription: Shared name skill\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         # User 1 creates skill
@@ -122,7 +123,7 @@ tags: ["debug", "test"]
     def test_get_skill_by_id(self, test_db: Session, test_user: User):
         """Test retrieving skill by ID"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Get by ID test\n---"
+        skill_md = "---\ndescription: Get by ID test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         created_skill = service.create_skill(
@@ -148,7 +149,7 @@ tags: ["debug", "test"]
     def test_get_skill_by_id_wrong_user(self, test_db: Session, test_user: User, test_admin_user: User):
         """Test user cannot access another user's skill"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Private skill\n---"
+        skill_md = "---\ndescription: Private skill\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         created_skill = service.create_skill(
@@ -174,7 +175,7 @@ tags: ["debug", "test"]
     def test_get_skill_by_name(self, test_db: Session, test_user: User):
         """Test retrieving skill by name"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Get by name test\n---"
+        skill_md = "---\ndescription: Get by name test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         service.create_skill(
@@ -199,7 +200,7 @@ tags: ["debug", "test"]
     def test_list_skills(self, test_db: Session, test_user: User):
         """Test listing all skills for a user"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: List test\n---"
+        skill_md = "---\ndescription: List test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         # Create 3 skills
@@ -230,7 +231,7 @@ tags: ["debug", "test"]
     def test_list_skills_pagination(self, test_db: Session, test_user: User):
         """Test skill list pagination"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Pagination test\n---"
+        skill_md = "---\ndescription: Pagination test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         # Create 5 skills
@@ -277,7 +278,9 @@ tags: ["debug", "test"]
         original_md = """---
 description: "Original description"
 version: "1.0.0"
----"""
+---
+
+"""
         original_zip = self.create_test_zip(original_md)
 
         created_skill = service.create_skill(
@@ -296,7 +299,9 @@ version: "1.0.0"
 description: "Updated description"
 version: "2.0.0"
 author: "New Author"
----"""
+---
+
+"""
         updated_zip = self.create_test_zip(updated_md)
 
         updated_skill = service.update_skill(
@@ -316,7 +321,7 @@ author: "New Author"
     def test_update_skill_not_found(self, test_db: Session, test_user: User):
         """Test updating non-existent skill fails"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Test\n---"
+        skill_md = "---\ndescription: Test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         with pytest.raises(HTTPException) as exc_info:
@@ -333,7 +338,7 @@ author: "New Author"
     def test_delete_skill(self, test_db: Session, test_user: User):
         """Test deleting skill (soft delete)"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Delete test\n---"
+        skill_md = "---\ndescription: Delete test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         created_skill = service.create_skill(
@@ -366,7 +371,7 @@ author: "New Author"
     def test_delete_skill_referenced_by_ghost(self, test_db: Session, test_user: User):
         """Test deleting skill fails when referenced by Ghost"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Referenced skill\n---"
+        skill_md = "---\ndescription: Referenced skill\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         # Create skill
@@ -418,7 +423,7 @@ author: "New Author"
     def test_get_skill_binary(self, test_db: Session, test_user: User):
         """Test retrieving skill binary data"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Binary test\n---"
+        skill_md = "---\ndescription: Binary test\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         created_skill = service.create_skill(
@@ -444,7 +449,7 @@ author: "New Author"
     def test_get_skill_binary_wrong_user(self, test_db: Session, test_user: User, test_admin_user: User):
         """Test user cannot access another user's skill binary"""
         service = SkillKindsService()
-        skill_md = "---\ndescription: Private binary\n---"
+        skill_md = "---\ndescription: Private binary\n---\n"
         zip_content = self.create_test_zip(skill_md)
 
         created_skill = service.create_skill(

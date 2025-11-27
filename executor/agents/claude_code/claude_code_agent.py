@@ -1243,21 +1243,28 @@ class ClaudeCodeAgent(Agent):
                         logger.error(f"Failed to download skill '{skill_name}': HTTP {response.status_code}")
                         continue
 
-                    # Extract ZIP to ~/.claude/skills/{skill_name}/
-                    skill_target_dir = os.path.join(skills_dir, skill_name)
-                    Path(skill_target_dir).mkdir(parents=True, exist_ok=True)
-
+                    # Extract ZIP to ~/.claude/skills/
+                    # The ZIP structure is: skill-name.zip -> skill-name/SKILL.md
+                    # We extract to skills_dir, which will create skills_dir/skill-name/
+                    import zipfile
                     with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
-                        # Security check: prevent Zip Slip
+                        # Security check: prevent Zip Slip attacks
                         for file_info in zip_file.filelist:
                             if file_info.filename.startswith('/') or '..' in file_info.filename:
                                 logger.error(f"Unsafe file path in skill ZIP: {file_info.filename}")
-                                shutil.rmtree(skill_target_dir)
                                 break
                         else:
-                            zip_file.extractall(skill_target_dir)
-                            logger.info(f"Deployed skill '{skill_name}' to {skill_target_dir}")
-                            success_count += 1
+                            # Extract all files to skills_dir
+                            # This will create skills_dir/skill-name/ automatically
+                            zip_file.extractall(skills_dir)
+                            skill_target_dir = os.path.join(skills_dir, skill_name)
+                            
+                            # Verify the skill folder was created
+                            if os.path.exists(skill_target_dir) and os.path.isdir(skill_target_dir):
+                                logger.info(f"Deployed skill '{skill_name}' to {skill_target_dir}")
+                                success_count += 1
+                            else:
+                                logger.error(f"Skill folder '{skill_name}' not found after extraction")
 
                 except Exception as e:
                     logger.warning(f"Failed to download skill '{skill_name}': {str(e)}")

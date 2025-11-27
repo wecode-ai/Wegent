@@ -5,7 +5,7 @@
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, XIcon } from 'lucide-react';
+import { Loader2, XIcon, SettingsIcon } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -14,6 +14,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import McpConfigImportModal from './McpConfigImportModal';
+import SkillManagementModal from './skills/SkillManagementModal';
 
 import { Bot } from '@/types/api';
 import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
@@ -80,6 +81,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [mcpConfigError, setMcpConfigError] = useState(false);
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false);
+  const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false);
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -410,7 +412,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         agent_config: parsedAgentConfig as Record<string, unknown>,
         system_prompt: prompt.trim() || '',
         mcp_servers: parsedMcpConfig ?? {},
-        skills: selectedSkills.length > 0 ? selectedSkills : undefined,
+        skills: selectedSkills.length > 0 ? selectedSkills : [],
       };
       if (editingBotId && editingBotId > 0) {
         // Edit existing bot
@@ -539,7 +541,7 @@ const BotEdit: React.FC<BotEditProps> = ({
               disabled={loadingAgents}
             >
               <SelectTrigger className="w-full">
-                <SelectValue placeholder="choose an agent" />
+                <SelectValue placeholder={t('bot.agent_select')} />
               </SelectTrigger>
               <SelectContent>
                 {agents.map(agent => (
@@ -683,7 +685,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                 disabled={loadingModels}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Select a model" />
+                  <SelectValue placeholder={t('bot.agent_select')} />
                 </SelectTrigger>
                 <SelectContent>
                   {models.map(model => (
@@ -696,65 +698,82 @@ const BotEdit: React.FC<BotEditProps> = ({
             )}
           </div>
 
-          {/* Skills Selection */}
-          <div className="flex flex-col">
-            <div className="flex items-center mb-1">
-              <label className="block text-base font-medium text-text-primary">Skills</label>
-              <span className="text-xs text-text-muted ml-2">(Optional)</span>
-            </div>
-            <div className="bg-base rounded-md p-2 min-h-[80px]">
-              {loadingSkills ? (
-                <div className="text-sm text-text-muted">Loading skills...</div>
-              ) : availableSkills.length === 0 ? (
-                <div className="text-sm text-text-muted">
-                  No skills available. Upload skills in the Skills tab.
+          {/* Skills Selection - Only show for ClaudeCode agent */}
+          {agentName === 'ClaudeCode' && (
+            <div className="flex flex-col">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center">
+                  <label className="block text-base font-medium text-text-primary">
+                    {t('skills.skills_section')}
+                  </label>
+                  <span className="text-xs text-text-muted ml-2">
+                    {t('skills.skills_optional')}
+                  </span>
                 </div>
-              ) : (
-                <div className="space-y-2">
-                  <Select
-                    value=""
-                    onValueChange={(value) => {
-                      if (value && !selectedSkills.includes(value)) {
-                        setSelectedSkills([...selectedSkills, value]);
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue placeholder="Select a skill to add..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableSkills
-                        .filter(skill => !selectedSkills.includes(skill))
-                        .map(skill => (
-                          <SelectItem key={skill} value={skill}>
-                            {skill}
-                          </SelectItem>
-                        ))}
-                    </SelectContent>
-                  </Select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setSkillManagementModalOpen(true)}
+                  className="text-xs"
+                >
+                  <SettingsIcon className="w-3 h-3 mr-1" />
+                  {t('skills.manage_skills_button')}
+                </Button>
+              </div>
+              <div className="bg-base rounded-md p-2 min-h-[80px]">
+                {loadingSkills ? (
+                  <div className="text-sm text-text-muted">{t('skills.loading_skills')}</div>
+                ) : availableSkills.length === 0 ? (
+                  <div className="text-sm text-text-muted">{t('skills.no_skills_available')}</div>
+                ) : (
+                  <div className="space-y-2">
+                    <Select
+                      value=""
+                      onValueChange={value => {
+                        if (value && !selectedSkills.includes(value)) {
+                          setSelectedSkills([...selectedSkills, value]);
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder={t('skills.select_skill_to_add')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableSkills
+                          .filter(skill => !selectedSkills.includes(skill))
+                          .map(skill => (
+                            <SelectItem key={skill} value={skill}>
+                              {skill}
+                            </SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
 
-                  {selectedSkills.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5">
-                      {selectedSkills.map(skill => (
-                        <div
-                          key={skill}
-                          className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
-                        >
-                          <span>{skill}</span>
-                          <button
-                            onClick={() => setSelectedSkills(selectedSkills.filter(s => s !== skill))}
-                            className="text-text-muted hover:text-text-primary"
+                    {selectedSkills.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {selectedSkills.map(skill => (
+                          <div
+                            key={skill}
+                            className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
                           >
-                            <XIcon className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
+                            <span>{skill}</span>
+                            <button
+                              onClick={() =>
+                                setSelectedSkills(selectedSkills.filter(s => s !== skill))
+                              }
+                              className="text-text-muted hover:text-text-primary"
+                            >
+                              <XIcon className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
-          </div>
+          )}
 
           {/* MCP Config */}
           <div className="flex flex-col flex-grow">
@@ -833,6 +852,27 @@ const BotEdit: React.FC<BotEditProps> = ({
         onImport={handleImportConfirm}
         toast={toast}
         agentType={agentName as 'ClaudeCode' | 'Agno'}
+      />
+
+      {/* Skill Management Modal */}
+      <SkillManagementModal
+        open={skillManagementModalOpen}
+        onClose={() => setSkillManagementModalOpen(false)}
+        onSkillsChange={() => {
+          // Reload skills list when skills are changed
+          const fetchSkills = async () => {
+            try {
+              const skillsData = await fetchSkillsList();
+              setAvailableSkills(skillsData.map(skill => skill.metadata.name));
+            } catch {
+              toast({
+                variant: 'destructive',
+                title: t('skills.loading_failed'),
+              });
+            }
+          };
+          fetchSkills();
+        }}
       />
 
       {/* Mobile responsive styles */}

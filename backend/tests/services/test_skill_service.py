@@ -46,6 +46,7 @@ tags: ["test", "debug"]
 # Test Skill
 
 This is a test skill.
+
 """
         zip_content = self.create_test_zip({
             "SKILL.md": skill_md_content,
@@ -68,6 +69,7 @@ description: "Minimal skill"
 ---
 
 # Minimal Skill
+
 """
         zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
 
@@ -83,7 +85,7 @@ description: "Minimal skill"
         # Create a large file (>10MB)
         large_content = "x" * (11 * 1024 * 1024)  # 11MB
         zip_content = self.create_test_zip({
-            "SKILL.md": "---\ndescription: test\n---",
+            "SKILL.md": "---\ndescription: test\n---\n",
             "large_file.txt": large_content
         })
 
@@ -137,6 +139,7 @@ author: "Test"
 ---
 
 # Skill
+
 """
         zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
 
@@ -154,6 +157,7 @@ invalid yaml: [unclosed bracket
 ---
 
 # Skill
+
 """
         zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
 
@@ -169,7 +173,7 @@ invalid yaml: [unclosed bracket
         with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
             # Try to write to parent directory
             zip_file.writestr("../../../etc/passwd", "malicious content")
-            zip_file.writestr("SKILL.md", "---\ndescription: test\n---")
+            zip_file.writestr("SKILL.md", "---\ndescription: test\n---\n")
 
         zip_content = zip_buffer.getvalue()
 
@@ -184,7 +188,7 @@ invalid yaml: [unclosed bracket
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w') as zip_file:
             zip_file.writestr("/etc/passwd", "malicious")
-            zip_file.writestr("SKILL.md", "---\ndescription: test\n---")
+            zip_file.writestr("SKILL.md", "---\ndescription: test\n---\n")
 
         zip_content = zip_buffer.getvalue()
 
@@ -202,6 +206,7 @@ version: "2.0.0"
 ---
 
 # Subdirectory Skill
+
 """
         zip_content = self.create_test_zip({
             "my-skill/SKILL.md": skill_md_content,
@@ -219,11 +224,13 @@ version: "2.0.0"
 description: "First skill"
 version: "1.0.0"
 ---
+
 """
         skill_md_2 = """---
 description: "Second skill"
 version: "2.0.0"
 ---
+
 """
         zip_content = self.create_test_zip({
             "skill1/SKILL.md": skill_md_1,
@@ -247,6 +254,7 @@ tags: ["测试", "调试"]
 # Unicode Skill
 
 Support for 中文、日本語、한국어
+
 """
         zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
 

@@ -30,7 +30,15 @@ async def upload_skill(
     """
     Upload and create a new Skill.
 
-    The ZIP package must contain a SKILL.md file with YAML frontmatter:
+    The ZIP package must contain a skill folder as root directory with the following structure:
+    ```
+    my-skill.zip
+      └── my-skill/
+          ├── SKILL.md
+          └── resources/
+    ```
+
+    The SKILL.md file must contain YAML frontmatter:
     ```
     ---
     description: "Skill description"
@@ -39,6 +47,11 @@ async def upload_skill(
     tags: ["tag1", "tag2"]
     ---
     ```
+
+    Requirements:
+    - ZIP file must contain exactly one skill folder as root directory
+    - Skill folder name must match the ZIP file name (without .zip extension)
+    - SKILL.md must be located inside the skill folder
     """
     # Validate file type
     if not file.filename.endswith('.zip'):
@@ -163,6 +176,14 @@ async def update_skill(
 ):
     """
     Update Skill by uploading a new ZIP package.
+
+    The ZIP package must contain a skill folder as root directory with the following structure:
+    ```
+    my-skill.zip
+      └── my-skill/
+          ├── SKILL.md
+          └── resources/
+    ```
 
     The Skill name and namespace cannot be changed.
     """

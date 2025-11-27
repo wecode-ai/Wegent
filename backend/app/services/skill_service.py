@@ -58,7 +58,7 @@ class SkillValidator:
         # Calculate SHA256 hash
         file_hash = hashlib.sha256(file_content).hexdigest()
 
-        # Open ZIP and look for SKILL.md
+        # Open ZIP and validate structure
         try:
             with zipfile.ZipFile(io.BytesIO(file_content), 'r') as zip_file:
                 # Security check: prevent Zip Slip attacks
@@ -69,18 +69,39 @@ class SkillValidator:
                             detail=f"Unsafe file path detected in ZIP: {file_info.filename}"
                         )
 
-                # Find SKILL.md file
+                # Find SKILL.md file to determine the skill folder
+                skill_folder_name = None
                 skill_md_content = None
-                for file_info in zip_file.filelist:
-                    if file_info.filename.endswith('SKILL.md'):
-                        with zip_file.open(file_info) as f:
-                            skill_md_content = f.read().decode('utf-8', errors='ignore')
-                        break
 
-                if not skill_md_content:
+                for file_info in zip_file.filelist:
+                    # Skip directory entries
+                    if file_info.filename.endswith('/'):
+                        continue
+                    
+                    # Check if this is SKILL.md
+                    if file_info.filename.endswith('SKILL.md'):
+                        path_parts = file_info.filename.split('/')
+                        
+                        # SKILL.md must be in a subdirectory (skill-folder/SKILL.md)
+                        if len(path_parts) == 2:
+                            skill_folder_name = path_parts[0]
+                            with zip_file.open(file_info) as f:
+                                skill_md_content = f.read().decode('utf-8', errors='ignore')
+                            break  # Found the skill folder, stop searching
+
+                # Validate that SKILL.md was found
+                if not skill_md_content or not skill_folder_name:
                     raise HTTPException(
                         status_code=400,
-                        detail="SKILL.md not found in ZIP package"
+                        detail="SKILL.md not found in skill folder. Expected structure: skill-folder/SKILL.md"
+                    )
+
+                # Validate that the folder name matches the ZIP file name
+                expected_folder_name = file_name.replace('.zip', '')
+                if skill_folder_name != expected_folder_name:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Skill folder name '{skill_folder_name}' must match ZIP file name '{expected_folder_name}'"
                     )
 
                 # Parse YAML frontmatter from SKILL.md

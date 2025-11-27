@@ -105,7 +105,7 @@ export async function uploadSkill(
 
     // Progress tracking
     if (onProgress) {
-      xhr.upload.addEventListener('progress', (e) => {
+      xhr.upload.addEventListener('progress', e => {
         if (e.lengthComputable) {
           const progress = Math.round((e.loaded / e.total) * 100);
           onProgress(progress);
@@ -118,7 +118,7 @@ export async function uploadSkill(
         try {
           const data = JSON.parse(xhr.responseText);
           resolve(data);
-        } catch (e) {
+        } catch {
           reject(new Error('Invalid response format'));
         }
       } else {
@@ -161,7 +161,7 @@ export async function updateSkill(
     const xhr = new XMLHttpRequest();
 
     if (onProgress) {
-      xhr.upload.addEventListener('progress', (e) => {
+      xhr.upload.addEventListener('progress', e => {
         if (e.lengthComputable) {
           const progress = Math.round((e.loaded / e.total) * 100);
           onProgress(progress);
@@ -174,7 +174,7 @@ export async function updateSkill(
         try {
           const data = JSON.parse(xhr.responseText);
           resolve(data);
-        } catch (e) {
+        } catch {
           reject(new Error('Invalid response format'));
         }
       } else {
@@ -215,7 +215,7 @@ export async function deleteSkill(skillId: number): Promise<void> {
     try {
       const json = JSON.parse(error);
       throw new Error(json.detail || 'Failed to delete skill');
-    } catch (e) {
+    } catch {
       throw new Error(error || 'Failed to delete skill');
     }
   }

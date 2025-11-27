@@ -104,10 +104,12 @@ class SkillKindsService:
             file_hash=metadata["file_hash"]
         )
         db.add(skill_binary)
+        
+        # Build result before commit to avoid lazy loading issues
+        result = self._kind_to_skill(skill_kind)
         db.commit()
-        db.refresh(skill_kind)
 
-        return self._kind_to_skill(skill_kind)
+        return result
 
     def get_skill_by_id(self, db: Session, *, skill_id: int, user_id: int) -> Optional[Skill]:
         """Get Skill by ID"""
@@ -232,10 +234,11 @@ class SkillKindsService:
             )
             db.add(skill_binary)
 
+        # Build result before commit to avoid lazy loading issues
+        result = self._kind_to_skill(skill_kind)
         db.commit()
-        db.refresh(skill_kind)
 
-        return self._kind_to_skill(skill_kind)
+        return result
 
     def delete_skill(self, db: Session, *, skill_id: int, user_id: int) -> None:
         """
