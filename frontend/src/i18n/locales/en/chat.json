@@ -35,7 +35,9 @@
     "subtask_completed": "Subtask completed",
     "subtask_failed": "Subtask failed",
     "unknown_error": "Unknown error",
-    "bot": "Bot"
+    "bot": "Bot",
+    "tool_calls_summary": "Called {count} tool(s): {tools}",
+    "tool_call": "Tool Call"
   },
   "settings": {
     "model": "Model",

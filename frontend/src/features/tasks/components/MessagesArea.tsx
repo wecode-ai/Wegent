@@ -7,7 +7,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
 import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch } from '@/types/api';
-import { Bot, User, Copy, Check, Download } from 'lucide-react';
+import { Bot, User, Copy, Check, Download, ChevronDown, ChevronRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import MarkdownEditor from '@uiw/react-markdown-editor';
@@ -124,6 +124,57 @@ const BubbleTools = ({
   );
 };
 
+// Collapsible tool calls component
+const CollapsibleToolCalls = ({ toolCalls, t }: { toolCalls: string[]; t: (key: string) => string }) => {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  // Parse tool call to extract tool name
+  const parseToolName = (toolCall: string): string => {
+    const match = toolCall.match(/<tool_call>\s*(\w+)/);
+    return match ? match[1] : 'Unknown';
+  };
+
+  return (
+    <div className="border-l-2 border-primary/30 pl-3 my-2 bg-muted/30 rounded-r py-2">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="text-sm text-text-muted hover:text-text-primary flex items-center gap-2 transition-colors"
+      >
+        {isExpanded ? (
+          <ChevronDown className="w-4 h-4" />
+        ) : (
+          <ChevronRight className="w-4 h-4" />
+        )}
+        <span className="font-medium">
+          {t('messages.tool_calls_summary')
+            .replace('{count}', toolCalls.length.toString())
+            .replace(
+              '{tools}',
+              toolCalls.map(parseToolName).join(', ')
+            )}
+        </span>
+      </button>
+      {isExpanded && (
+        <div className="mt-2 space-y-2">
+          {toolCalls.map((call, idx) => {
+            const toolName = parseToolName(call);
+            return (
+              <div key={idx} className="text-xs bg-surface/50 p-2 rounded border border-border/50">
+                <div className="font-medium text-primary mb-1">
+                  {t('messages.tool_call')}: {toolName}
+                </div>
+                <pre className="text-text-muted overflow-x-auto whitespace-pre-wrap break-words">
+                  {call}
+                </pre>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
 interface MessagesAreaProps {
   selectedTeam?: Team | null;
   selectedRepo?: GitRepoInfo | null;
@@ -145,6 +196,29 @@ export default function MessagesArea({
   });
   const isUserNearBottomRef = useRef(true);
   const AUTO_SCROLL_THRESHOLD = 32;
+
+  // Helper function to detect and extract tool calls from content
+  const detectToolCalls = (
+    content: string
+  ): { hasToolCalls: boolean; toolCallsCount: number; toolCalls: string[]; cleanedContent: string } => {
+    const toolCallRegex = /<tool_call>[\s\S]*?<\/tool_call>/g;
+    const matches = content.match(toolCallRegex);
+
+    return {
+      hasToolCalls: matches !== null && matches.length > 0,
+      toolCallsCount: matches?.length || 0,
+      toolCalls: matches || [],
+      cleanedContent: matches ? content.replace(toolCallRegex, '').trim() : content,
+    };
+  };
+
+  // Helper function to remove metadata lines from content
+  const removeMetaInfo = (content: string): string => {
+    return content
+      .replace(/^Current working directory:.*$/m, '')
+      .replace(/^project url:.*$/m, '')
+      .trim();
+  };
 
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
@@ -632,7 +706,10 @@ export default function MessagesArea({
   };
 
   const renderAiMessage = (msg: Message, messageIndex: number) => {
-    const content = msg.content ?? '';
+    let content = msg.content ?? '';
+
+    // Remove metadata first
+    content = removeMetaInfo(content);
 
     // Try to parse as clarification or final_prompt data
     try {
@@ -675,14 +752,29 @@ export default function MessagesArea({
 
     // Default rendering for normal messages
     if (!content.includes('${$$}$')) {
-      return renderPlainMessage(msg);
+      // Check for tool calls in plain messages
+      const { hasToolCalls, toolCalls, cleanedContent } = detectToolCalls(content);
+      if (hasToolCalls) {
+        return (
+          <>
+            {cleanedContent && <div className="text-sm whitespace-pre-line mb-2">{cleanedContent}</div>}
+            <CollapsibleToolCalls toolCalls={toolCalls} t={t} />
+          </>
+        );
+      }
+      return renderPlainMessage({ ...msg, content: cleanedContent });
     }
 
     const [prompt, result] = content.split('${$$}$');
+
+    // Check for tool calls in result
+    const { hasToolCalls, toolCalls, cleanedContent } = detectToolCalls(result);
+
     return (
       <>
         {prompt && <div className="text-sm whitespace-pre-line mb-2">{prompt}</div>}
-        {result && renderMarkdownResult(result, prompt)}
+        {hasToolCalls && <CollapsibleToolCalls toolCalls={toolCalls} t={t} />}
+        {cleanedContent && renderMarkdownResult(cleanedContent, prompt)}
       </>
     );
   };
