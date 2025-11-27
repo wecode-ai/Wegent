@@ -59,7 +59,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
   // Left column: Team Name, Mode, Description
   const [name, setName] = useState('');
-  const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline');
+  const [mode, setMode] = useState<'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline');
 
   // Right column: LeaderBot (single select), Bots Transfer (multi-select)
   // Use string key for antd Transfer, stringify bot.id here
@@ -188,6 +188,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
     // Image mapping by mode
     const imageMap: Record<typeof mode, string> = {
+      solo: '/settings/solo.png',
       pipeline: '/settings/sequential.png',
       route: '/settings/router.png',
       coordinate: '/settings/network.png',
@@ -210,7 +211,7 @@ export default function TeamEdit(props: TeamEditProps) {
     if (formTeam) {
       setName(formTeam.name);
       const m =
-        (formTeam.workflow?.mode as 'pipeline' | 'route' | 'coordinate' | 'collaborate') ||
+        (formTeam.workflow?.mode as 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate') ||
         'pipeline';
       setMode(m);
       const ids = formTeam.bots.map(b => String(b.bot_id));
@@ -239,14 +240,17 @@ export default function TeamEdit(props: TeamEditProps) {
     }
   }, [bots, formTeam]);
   // Change Mode
-  const handleModeChange = (newMode: 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
+  const handleModeChange = (newMode: 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
     setMode(newMode);
-    setSelectedBotKeys([]);
+    // Only clear selectedBotKeys when switching to non-solo mode
+    if (newMode !== 'solo') {
+      setSelectedBotKeys([]);
+    }
   };
   // Get currently selected agent_name (from leader or selected bot)
   const selectedAgentName = useMemo(() => {
-    // No agent_name restriction in pipeline mode
-    if (mode === 'pipeline') return null;
+    // No agent_name restriction in solo or pipeline mode
+    if (mode === 'solo' || mode === 'pipeline') return null;
 
     // If leader exists, use leader's agent_name first
     if (leaderBotId !== null) {
@@ -286,7 +290,7 @@ export default function TeamEdit(props: TeamEditProps) {
   }, [bots, leaderBotId, selectedBotKeys, isClaudeCodeAgent]);
 
   useEffect(() => {
-    if (hasClaudeCodeBot && mode !== 'pipeline') {
+    if (hasClaudeCodeBot && mode !== 'solo' && mode !== 'pipeline') {
       setMode('pipeline');
     }
   }, [hasClaudeCodeBot, mode]);
@@ -298,8 +302,8 @@ export default function TeamEdit(props: TeamEditProps) {
       title: b.name,
       description: b.agent_name,
       disabled:
-        // In non-pipeline mode, disable options not matching agent_name if already selected
-        mode !== 'pipeline' && selectedAgentName !== null && b.agent_name !== selectedAgentName,
+        // In non-pipeline and non-solo mode, disable options not matching agent_name if already selected
+        mode !== 'solo' && mode !== 'pipeline' && selectedAgentName !== null && b.agent_name !== selectedAgentName,
     }));
   }, [bots, mode, selectedAgentName]);
 
@@ -324,8 +328,8 @@ export default function TeamEdit(props: TeamEditProps) {
 
     setLeaderBotId(botId);
 
-    // In non-pipeline mode, filter selected bots by new leader's agent_name
-    if (mode !== 'pipeline') {
+    // In non-pipeline and non-solo mode, filter selected bots by new leader's agent_name
+    if (mode !== 'solo' && mode !== 'pipeline') {
       const leaderBot = bots.find(b => b.id === botId);
       if (leaderBot) {
         // Filter out selected bots not matching agent_name
@@ -386,14 +390,16 @@ export default function TeamEdit(props: TeamEditProps) {
     if (leaderBotId == null) {
       toast({
         variant: 'destructive',
-        title: 'Leader bot is required',
+        title: mode === 'solo' ? 'Bot is required' : 'Leader bot is required',
       });
       return;
     }
-    const selectedIds = selectedBotKeys.map(k => Number(k));
 
-    // Non-pipeline mode requires agent_name consistency
-    if (mode !== 'pipeline') {
+    // For solo mode, only use leaderBotId
+    const selectedIds = mode === 'solo' ? [] : selectedBotKeys.map(k => Number(k));
+
+    // Non-pipeline and non-solo mode requires agent_name consistency
+    if (mode !== 'solo' && mode !== 'pipeline') {
       if (!validateAgentNameConsistency(selectedIds)) {
         toast({
           variant: 'destructive',
@@ -411,12 +417,15 @@ export default function TeamEdit(props: TeamEditProps) {
       allBotIds.push(leaderBotId);
     }
 
-    // Then add other bots, avoid duplicate leader bot
-    selectedIds.forEach(id => {
-      if (id !== leaderBotId) {
-        allBotIds.push(id);
-      }
-    });
+    // For solo mode, only include leaderBotId
+    if (mode !== 'solo') {
+      // Then add other bots, avoid duplicate leader bot
+      selectedIds.forEach(id => {
+        if (id !== leaderBotId) {
+          allBotIds.push(id);
+        }
+      });
+    }
 
     // Create botsData, keep allBotIds order, retain original bot_prompt or use unsaved prompts
     const botsData = allBotIds.map(id => {
@@ -466,12 +475,12 @@ export default function TeamEdit(props: TeamEditProps) {
     }
   };
 
-  // Leader dropdown options, filter by agent_name in non-pipeline mode
+  // Leader dropdown options, filter by agent_name in non-pipeline and non-solo mode
   const leaderOptions = useMemo(() => {
-    // Show all bots in pipeline mode
-    if (mode === 'pipeline') return bots;
+    // Show all bots in solo or pipeline mode
+    if (mode === 'solo' || mode === 'pipeline') return bots;
 
-    // If non-pipeline mode and selected bot exists
+    // If non-pipeline and non-solo mode and selected bot exists
     if (selectedBotKeys.length > 0) {
       // Find first selected bot
       const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
@@ -552,16 +561,16 @@ export default function TeamEdit(props: TeamEditProps) {
                 <RadioGroup
                   value={mode}
                   onValueChange={value =>
-                    handleModeChange(value as 'pipeline' | 'route' | 'coordinate' | 'collaborate')
+                    handleModeChange(value as 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate')
                   }
-                  className="w-full grid grid-cols-4 gap-2"
+                  className="w-full grid grid-cols-5 gap-2"
                 >
-                  {['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => (
+                  {['solo', 'pipeline', 'route', 'coordinate', 'collaborate'].map(opt => (
                     <div key={opt} className="flex items-center">
                       <RadioGroupItem
                         value={opt}
                         id={`mode-${opt}`}
-                        disabled={hasClaudeCodeBot && opt !== 'pipeline'}
+                        disabled={hasClaudeCodeBot && opt !== 'solo' && opt !== 'pipeline'}
                         className="peer sr-only"
                       />
                       <label
@@ -570,7 +579,7 @@ export default function TeamEdit(props: TeamEditProps) {
                           flex items-center justify-center w-full px-3 py-1.5 text-sm font-medium
                           rounded-md cursor-pointer transition-colors
                           border border-border
-                          ${hasClaudeCodeBot && opt !== 'pipeline' ? 'opacity-50 cursor-not-allowed' : ''}
+                          ${hasClaudeCodeBot && opt !== 'solo' && opt !== 'pipeline' ? 'opacity-50 cursor-not-allowed' : ''}
                           peer-data-[state=checked]:bg-primary peer-data-[state=checked]:text-primary-foreground peer-data-[state=checked]:border-primary
                           hover:bg-accent hover:text-accent-foreground
                         `}
@@ -614,11 +623,11 @@ export default function TeamEdit(props: TeamEditProps) {
         {/* Right column */}
         <div className="w-full lg:w-3/5 xl:w-2/3 min-w-0 flex flex-col space-y-5 min-h-0">
           <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
-            {/* LeaderBot single select */}
+            {/* Bot select - solo mode shows "Bot", other modes show "Leader" */}
             <div className="flex flex-col">
               <div className="flex items-center mb-1">
                 <label className="block text-lg font-semibold text-text-primary">
-                  {t('team.leader')} <span className="text-red-400">*</span>
+                  {mode === 'solo' ? t('team.bot') : t('team.leader')} <span className="text-red-400">*</span>
                 </label>
               </div>
               <Select
@@ -734,7 +743,8 @@ export default function TeamEdit(props: TeamEditProps) {
               </Select>
             </div>
 
-            {/* Bots Transfer - consolidated container */}
+            {/* Bots Transfer - hidden in solo mode */}
+            {mode !== 'solo' && (
             <div className="flex flex-col min-h-0 mt-1">
               <div className="flex items-center justify-between mb-1">
                 <label className="block text-lg font-semibold text-text-primary">
@@ -845,6 +855,7 @@ export default function TeamEdit(props: TeamEditProps) {
                 />
               </div>
             </div>
+            )}
           </div>
           {/* Mobile Transfer layout optimization styles */}
           <style

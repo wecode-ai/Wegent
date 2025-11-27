@@ -177,6 +177,7 @@
     "leader": "Leader",
     "model": "Model",
     "bots": "Bots",
+    "bot": "Bot",
     "select_leader": "Select leader",
     "candidates": "candidates",
     "in_team": "in team",
@@ -202,12 +203,14 @@
     "prompts_update_error": "Failed to update prompts."
   },
   "team_model": {
+    "solo": "Solo",
     "pipeline": "Pipeline",
     "route": "Route",
     "coordinate": "Coordinate",
     "collaborate": "Collaborate"
   },
   "team_model_desc": {
+    "solo": "A single bot handles the task independently, suitable for simple scenarios or single-responsibility workflows.",
     "pipeline": "Agents are chained one after another, where each agent refines or transforms the result in turn.",
     "route": "A central agent acts as a message router, directing communication between agents without them talking directiy.",
     "coordinate": "A network pattern is the structure that defines how agents connect, exchange information, and coordinate with each other.",

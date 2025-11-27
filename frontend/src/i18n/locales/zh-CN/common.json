@@ -178,6 +178,7 @@
     "leader": "领导者",
     "model": "模式",
     "bots": "候选人列表",
+    "bot": "机器人",
     "select_leader": "选择领导者",
     "candidates": "候选人",
     "in_team": "团队成员",
@@ -203,12 +204,14 @@
     "prompts_update_error": "更新提示词失败。"
   },
   "team_model": {
+    "solo": "独立",
     "pipeline": "顺序",
     "route": "路由",
     "coordinate": "协作",
     "collaborate": "并发"
   },
   "team_model_desc": {
+    "solo": "由单个机器人独立完成任务，适合简单场景或单一职责的工作流。",
     "pipeline": "多个智能体按顺序串联，每一步在上一结果上继续加工或改写。",
     "route": "由一个中枢智能体作为路由，根据上下文把消息分发给合适的智能体，彼此不直接通信。",
     "coordinate": "网络式协作结构，定义智能体之间如何连接、交换信息并进行协调。",
