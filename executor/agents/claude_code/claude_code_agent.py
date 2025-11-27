@@ -693,7 +693,6 @@ class ClaudeCodeAgent(Agent):
             # Check if task was cancelled before execution
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} was cancelled before execution")
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
             
             progress = 65
@@ -768,14 +767,12 @@ class ClaudeCodeAgent(Agent):
                 self.resource_manager.register_resource(
                     task_id=self.task_id,
                     resource_id=f"claude_client_{self.session_id}",
-                    cleanup_func=self._cleanup_client,
                     is_async=True
                 )
 
             # Check cancellation again before proceeding
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled during client setup")
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
 
             # Prepare prompt
@@ -790,7 +787,6 @@ class ClaudeCodeAgent(Agent):
             # Check cancellation before sending query
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
             
             # Use session_id to send messages, ensuring messages are in the same session
@@ -1012,32 +1008,7 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")
     
-    async def _cleanup_client(self) -> None:
-        """Clean up client connection and remove from cache"""
-        try:
-            if self.client and hasattr(self.client, 'close'):
-                await self.client.close()
-                logger.info(f"Closed client for task {self.task_id}")
 
-            # Remove client from cache to prevent reuse of terminated client
-            if self.session_id in self._clients:
-                del self._clients[self.session_id]
-                logger.info(f"Removed client from cache for session_id: {self.session_id}")
-        except Exception as e:
-            logger.exception(f"Error closing client for task {self.task_id}: {e}")
-    
-    async def _cleanup_resources(self) -> None:
-        """Clean up all task resources"""
-        try:
-            # Use resource manager to clean up all registered resources
-            await self.resource_manager.cleanup_task_resources(self.task_id)
-            
-            # Clean up task state
-            self.task_state_manager.cleanup(self.task_id)
-            
-            logger.info(f"Completed resource cleanup for task {self.task_id}")
-        except Exception as e:
-            logger.exception(f"Error in resource cleanup for task {self.task_id}: {e}")
     def _setup_claudecode_dir(self, project_path: str, custom_rules: Dict[str, str]) -> None:
         """
         Setup .claudecode directory with custom instruction files for Claude Code compatibility
