@@ -140,26 +140,24 @@ export default function GitHubIntegration() {
                         </div>
                       </div>
                     </div>
-                    <div className="flex items-center space-x-2">
+                    <div className="flex items-center gap-1">
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="icon"
                         onClick={() => handleEdit(info)}
                         title={t('integrations.edit_token')}
-                        style={{ padding: '4px' }}
-                        className="!text-text-muted hover:!text-text-primary"
+                        className="h-8 w-8"
                       >
-                        <PencilIcon className="w-4 h-4 text-text-muted" />
+                        <PencilIcon className="w-4 h-4" />
                       </Button>
                       <Button
                         variant="ghost"
-                        size="sm"
+                        size="icon"
                         onClick={() => handleDelete(info.git_domain)}
                         title={t('integrations.delete')}
-                        style={{ padding: '4px' }}
-                        className="!text-text-muted hover:!text-text-primary"
+                        className="h-8 w-8 hover:text-error"
                       >
-                        <TrashIcon className="w-4 h-4 text-text-muted" />
+                        <TrashIcon className="w-4 h-4" />
                       </Button>
                     </div>
                   </div>
