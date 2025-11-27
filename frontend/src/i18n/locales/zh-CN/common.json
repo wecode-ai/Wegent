@@ -267,6 +267,7 @@
     "integrations": "集成",
     "bot": "机器人",
     "team": "团队",
+    "models": "模型",
     "sections": {
       "general": "通用"
     }
@@ -427,5 +428,44 @@
     "loading_skills": "加载技能中...",
     "select_skill_to_add": "选择要添加的技能...",
     "manage_skills_button": "管理技能"
+  },
+  "models": {
+    "title": "模型管理",
+    "description": "管理您的 AI 模型配置",
+    "create": "创建模型",
+    "edit": "编辑模型",
+    "delete": "删除模型",
+    "test_connection": "测试连接",
+    "name": "模型名称",
+    "name_readonly_hint": "模型名称创建后不可修改",
+    "provider_type": "提供商类型",
+    "select_provider": "选择提供商",
+    "provider_hint": "Agno 使用 OpenAI 格式，Claude Code 使用 Anthropic 格式",
+    "api_key": "API Key",
+    "base_url": "Base URL",
+    "base_url_hint": "使用默认端点留空，使用代理或自定义端点时填写",
+    "model_id": "模型 ID",
+    "select_model_id": "选择模型 ID",
+    "custom_model_id_placeholder": "输入自定义模型 ID",
+    "no_models": "暂无模型",
+    "no_models_hint": "点击上方按钮创建第一个模型",
+    "loading": "加载中...",
+    "test_success": "连接测试成功",
+    "test_failed": "连接测试失败",
+    "create_success": "模型创建成功",
+    "update_success": "模型更新成功",
+    "delete_success": "模型删除成功",
+    "delete_confirm_title": "确认删除",
+    "delete_confirm_message": "确定要删除模型 \"{{name}}\" 吗？此操作无法撤销。",
+    "errors": {
+      "load_models_failed": "加载模型列表失败",
+      "create_failed": "创建模型失败",
+      "update_failed": "更新模型失败",
+      "delete_failed": "删除模型失败",
+      "name_required": "模型名称不能为空",
+      "name_invalid": "模型名称只能包含小写字母、数字和连字符",
+      "api_key_required": "API Key 不能为空",
+      "model_id_required": "模型 ID 不能为空"
+    }
   }
 }
