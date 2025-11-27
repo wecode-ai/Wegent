@@ -1168,11 +1168,11 @@ class ClaudeCodeAgent(Agent):
         Download Skills from Backend API and deploy to ~/.claude/skills/.
 
         Args:
-            bot_config: Bot configuration containing skills list in spec
+            bot_config: Bot configuration containing skills list
         """
         try:
-            # Extract skills list from bot_config spec
-            skills = bot_config.get("spec", {}).get("skills", [])
+            # Extract skills list from bot_config (skills is at top level, not in spec)
+            skills = bot_config.get("skills", [])
             if not skills:
                 logger.debug("No skills configured for this bot")
                 return
@@ -1197,6 +1197,8 @@ class ClaudeCodeAgent(Agent):
             if not auth_token:
                 logger.warning("No auth token available, cannot download skills")
                 return
+            
+            logger.info(f"Auth token available for skills download")
 
             # Download each skill
             import requests

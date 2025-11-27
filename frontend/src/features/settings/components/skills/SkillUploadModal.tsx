@@ -51,23 +51,26 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
     return null;
   };
 
-  const handleFileSelect = useCallback((file: File) => {
-    const validationError = validateFile(file);
-    if (validationError) {
-      setError(validationError);
-      setSelectedFile(null);
-      return;
-    }
+  const handleFileSelect = useCallback(
+    (file: File) => {
+      const validationError = validateFile(file);
+      if (validationError) {
+        setError(validationError);
+        setSelectedFile(null);
+        return;
+      }
 
-    setSelectedFile(file);
-    setError(null);
+      setSelectedFile(file);
+      setError(null);
 
-    // Auto-fill skill name from filename (without .zip extension)
-    if (!isEditMode && !skillName) {
-      const nameFromFile = file.name.replace(/\.zip$/i, '');
-      setSkillName(nameFromFile);
-    }
-  }, [isEditMode, skillName]);
+      // Auto-fill skill name from filename (without .zip extension)
+      if (!isEditMode && !skillName) {
+        const nameFromFile = file.name.replace(/\.zip$/i, '');
+        setSkillName(nameFromFile);
+      }
+    },
+    [isEditMode, skillName]
+  );
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -86,16 +89,19 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
     }
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setDragActive(false);
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setDragActive(false);
 
-    const file = e.dataTransfer.files?.[0];
-    if (file) {
-      handleFileSelect(file);
-    }
-  }, [handleFileSelect]);
+      const file = e.dataTransfer.files?.[0];
+      if (file) {
+        handleFileSelect(file);
+      }
+    },
+    [handleFileSelect]
+  );
 
   const handleSubmit = async () => {
     if (!selectedFile) {
@@ -134,8 +140,8 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
   };
 
   return (
-    <Dialog open={open} onOpenChange={(open) => !open && handleClose()}>
-      <DialogContent className="sm:max-w-[500px]">
+    <Dialog open={open} onOpenChange={open => !open && handleClose()}>
+      <DialogContent className="sm:max-w-[500px] bg-surface">
         <DialogHeader>
           <DialogTitle>{isEditMode ? 'Update Skill' : 'Upload Skill'}</DialogTitle>
           <DialogDescription>
@@ -154,7 +160,7 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
                 id="skill-name"
                 placeholder="e.g., python-debugger"
                 value={skillName}
-                onChange={(e) => setSkillName(e.target.value)}
+                onChange={e => setSkillName(e.target.value)}
                 disabled={uploading}
               />
               <p className="text-xs text-text-muted">
@@ -201,9 +207,7 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
                   <p className="text-sm text-text-primary mb-1">
                     Drop ZIP file here or click to browse
                   </p>
-                  <p className="text-xs text-text-muted">
-                    Maximum file size: 10MB
-                  </p>
+                  <p className="text-xs text-text-muted">Maximum file size: 10MB</p>
                 </div>
               )}
             </div>
@@ -233,9 +237,15 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
             <AlertDescription className="text-xs">
               <strong>Requirements:</strong>
               <ul className="list-disc list-inside mt-1 space-y-0.5">
-                <li>ZIP file must contain a <code>SKILL.md</code> file</li>
-                <li>SKILL.md must have YAML frontmatter with <code>description</code> field</li>
-                <li>Optional fields: <code>version</code>, <code>author</code>, <code>tags</code></li>
+                <li>
+                  ZIP file must contain a <code>SKILL.md</code> file
+                </li>
+                <li>
+                  SKILL.md must have YAML frontmatter with <code>description</code> field
+                </li>
+                <li>
+                  Optional fields: <code>version</code>, <code>author</code>, <code>tags</code>
+                </li>
                 <li>Maximum file size: 10MB</li>
               </ul>
             </AlertDescription>
