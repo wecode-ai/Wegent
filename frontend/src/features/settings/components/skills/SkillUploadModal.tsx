@@ -163,6 +163,16 @@ export default function SkillUploadModal({ open, onClose, skill }: SkillUploadMo
                 <br />
                 &nbsp;&nbsp;&nbsp;&nbsp;└── resources/
               </div>
+              <div className="mt-2">
+                <a
+                  href="https://support.claude.com/en/articles/12512198-how-to-create-custom-skills"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-link hover:underline"
+                >
+                  Learn how to create custom skills →
+                </a>
+              </div>
             </div>
           </DialogDescription>
         </DialogHeader>
