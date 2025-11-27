@@ -41,37 +41,62 @@ export default function TeamSelector({
   useEffect(() => {
     console.log('[TeamSelector] Effect triggered', {
       hasSelectedTaskDetail: !!selectedTaskDetail,
+      taskDetailTeamId: selectedTaskDetail?.team?.id || 'null',
+      taskDetailTeamName: selectedTaskDetail?.team?.name || 'null',
       selectedTeam: selectedTeam?.name || 'null',
       selectedTeamId: selectedTeam?.id || 'null',
       teamsLength: teams.length,
     });
 
+    // Wait for teams to load before syncing
+    if (teams.length === 0) {
+      console.log('[TeamSelector] Teams not loaded yet, skipping sync');
+      return;
+    }
+
     // Priority 1: Set team from task detail if viewing a task
-    if (
-      selectedTaskDetail &&
-      'team' in selectedTaskDetail &&
-      selectedTaskDetail.team &&
-      teams.length > 0
-    ) {
-      const foundTeam =
-        teams.find(t => t.id === (selectedTaskDetail.team as { id: number }).id) || null;
-      if (foundTeam && (!selectedTeam || selectedTeam.id !== foundTeam.id)) {
-        console.log('[TeamSelector] Setting team from task detail:', foundTeam.name, foundTeam.id);
-        setSelectedTeam(foundTeam);
+    if (selectedTaskDetail && 'team' in selectedTaskDetail) {
+      const taskTeam = selectedTaskDetail.team;
+
+      // Case 1: Task has a valid team
+      if (taskTeam && typeof taskTeam === 'object' && 'id' in taskTeam) {
+        const taskTeamId = (taskTeam as { id: number }).id;
+        const foundTeam = teams.find(t => t.id === taskTeamId) || null;
+
+        if (foundTeam) {
+          // Only update if team changed to avoid unnecessary re-renders
+          if (!selectedTeam || selectedTeam.id !== foundTeam.id) {
+            console.log('[TeamSelector] Setting team from task detail:', foundTeam.name, foundTeam.id);
+            setSelectedTeam(foundTeam);
+          }
+          return; // Team synced successfully, exit early
+        } else {
+          // Team exists in task detail but not in user's team list (deleted or no access)
+          console.log('[TeamSelector] Task team not found in user teams, keeping current selection');
+          // Keep current selectedTeam unchanged - don't clear it
+          return;
+        }
+      }
+
+      // Case 2: Task has no team (team was deleted or never set)
+      if (taskTeam === null) {
+        console.log('[TeamSelector] Task has no team, clearing team selection');
+        if (selectedTeam !== null) {
+          setSelectedTeam(null);
+        }
         return;
       }
     }
 
-    // Priority 2: Validate selected team still exists in list
-    if (selectedTeam && teams.length > 0) {
+    // Priority 2: Validate selected team still exists in list (only when not viewing a task detail)
+    if (!selectedTaskDetail && selectedTeam && teams.length > 0) {
       const exists = teams.some(team => team.id === selectedTeam.id);
       if (!exists) {
         console.log('[TeamSelector] Selected team not in list, clearing selection');
         setSelectedTeam(null);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail, teams]);
+  }, [selectedTaskDetail, teams, selectedTeam, setSelectedTeam]);
 
   const handleChange = (value: string) => {
     const team = teams.find(t => t.id === Number(value));
