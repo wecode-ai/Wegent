@@ -21,12 +21,13 @@ class TestSkillKindsService:
     """Test SkillKindsService class"""
 
     @staticmethod
-    def create_test_zip(skill_md_content: str) -> bytes:
-        """Create a test ZIP with SKILL.md"""
+    def create_test_zip(skill_md_content: str, zip_name: str = "test") -> bytes:
+        """Create a test ZIP with SKILL.md in proper structure"""
         zip_buffer = io.BytesIO()
+        folder_name = zip_name.replace('.zip', '')
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr("SKILL.md", skill_md_content)
-            zf.writestr("script.py", "print('test')")
+            zf.writestr(f"{folder_name}/SKILL.md", skill_md_content)
+            zf.writestr(f"{folder_name}/script.py", "print('test')")
         return zip_buffer.getvalue()
 
     def test_create_skill_success(self, test_db: Session, test_user: User):
@@ -281,7 +282,7 @@ version: "1.0.0"
 ---
 
 """
-        original_zip = self.create_test_zip(original_md)
+        original_zip = self.create_test_zip(original_md, "original.zip")
 
         created_skill = service.create_skill(
             db=test_db,
@@ -302,7 +303,7 @@ author: "New Author"
 ---
 
 """
-        updated_zip = self.create_test_zip(updated_md)
+        updated_zip = self.create_test_zip(updated_md, "updated.zip")
 
         updated_skill = service.update_skill(
             db=test_db,

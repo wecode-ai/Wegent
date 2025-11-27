@@ -18,20 +18,27 @@ class TestSkillValidator:
     """Test SkillValidator class"""
 
     @staticmethod
-    def create_test_zip(files: dict) -> bytes:
+    def create_test_zip(files: dict, zip_name: str = "test") -> bytes:
         """
         Helper function to create a ZIP file with specified files.
 
         Args:
             files: Dictionary mapping filename to content
+            zip_name: Name of the ZIP file (used for folder structure)
 
         Returns:
             ZIP file binary content
         """
         zip_buffer = io.BytesIO()
+        folder_name = zip_name.replace('.zip', '')
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
             for filename, content in files.items():
-                zip_file.writestr(filename, content)
+                # If filename already contains a path, use it as-is
+                # Otherwise, prepend the folder name
+                if '/' in filename:
+                    zip_file.writestr(filename, content)
+                else:
+                    zip_file.writestr(f"{folder_name}/{filename}", content)
         return zip_buffer.getvalue()
 
     def test_validate_zip_success(self):
@@ -51,7 +58,7 @@ This is a test skill.
         zip_content = self.create_test_zip({
             "SKILL.md": skill_md_content,
             "script.py": "print('hello')"
-        })
+        }, "test.zip")
 
         result = SkillValidator.validate_zip(zip_content, "test.zip")
 
@@ -71,7 +78,7 @@ description: "Minimal skill"
 # Minimal Skill
 
 """
-        zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
+        zip_content = self.create_test_zip({"SKILL.md": skill_md_content}, "test.zip")
 
         result = SkillValidator.validate_zip(zip_content, "test.zip")
 
@@ -82,12 +89,16 @@ description: "Minimal skill"
 
     def test_validate_zip_exceeds_size_limit(self):
         """Test validation fails when ZIP exceeds 10MB"""
-        # Create a large file (>10MB)
-        large_content = "x" * (11 * 1024 * 1024)  # 11MB
-        zip_content = self.create_test_zip({
-            "SKILL.md": "---\ndescription: test\n---\n",
-            "large_file.txt": large_content
-        })
+        # Create a file that will result in a ZIP > 10MB
+        # Use binary data that won't compress well
+        import os
+        large_content = os.urandom(11 * 1024 * 1024)  # 11MB of random bytes
+        
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_STORED) as zip_file:  # Use ZIP_STORED (no compression)
+            zip_file.writestr("test/SKILL.md", "---\ndescription: test\n---\n")
+            zip_file.writestr("test/large_file.bin", large_content)
+        zip_content = zip_buffer.getvalue()
 
         with pytest.raises(HTTPException) as exc_info:
             SkillValidator.validate_zip(zip_content, "test.zip")
@@ -109,7 +120,7 @@ description: "Minimal skill"
         """Test validation fails when SKILL.md is missing"""
         zip_content = self.create_test_zip({
             "README.md": "This has no SKILL.md"
-        })
+        }, "test.zip")
 
         with pytest.raises(HTTPException) as exc_info:
             SkillValidator.validate_zip(zip_content, "test.zip")
@@ -123,7 +134,7 @@ description: "Minimal skill"
 
 This SKILL.md has no YAML frontmatter.
 """
-        zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
+        zip_content = self.create_test_zip({"SKILL.md": skill_md_content}, "test.zip")
 
         with pytest.raises(HTTPException) as exc_info:
             SkillValidator.validate_zip(zip_content, "test.zip")
@@ -141,7 +152,7 @@ author: "Test"
 # Skill
 
 """
-        zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
+        zip_content = self.create_test_zip({"SKILL.md": skill_md_content}, "test.zip")
 
         with pytest.raises(HTTPException) as exc_info:
             SkillValidator.validate_zip(zip_content, "test.zip")
@@ -159,7 +170,7 @@ invalid yaml: [unclosed bracket
 # Skill
 
 """
-        zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
+        zip_content = self.create_test_zip({"SKILL.md": skill_md_content}, "test.zip")
 
         with pytest.raises(HTTPException) as exc_info:
             SkillValidator.validate_zip(zip_content, "test.zip")
@@ -211,9 +222,9 @@ version: "2.0.0"
         zip_content = self.create_test_zip({
             "my-skill/SKILL.md": skill_md_content,
             "my-skill/code.py": "# code"
-        })
+        }, "my-skill.zip")
 
-        result = SkillValidator.validate_zip(zip_content, "test.zip")
+        result = SkillValidator.validate_zip(zip_content, "my-skill.zip")
 
         assert result["description"] == "Skill in subdirectory"
         assert result["version"] == "2.0.0"
@@ -235,9 +246,9 @@ version: "2.0.0"
         zip_content = self.create_test_zip({
             "skill1/SKILL.md": skill_md_1,
             "skill2/SKILL.md": skill_md_2
-        })
+        }, "skill1.zip")
 
-        result = SkillValidator.validate_zip(zip_content, "test.zip")
+        result = SkillValidator.validate_zip(zip_content, "skill1.zip")
 
         # Should use the first SKILL.md found
         assert result["description"] in ["First skill", "Second skill"]
@@ -256,7 +267,7 @@ tags: ["测试", "调试"]
 Support for 中文、日本語、한국어
 
 """
-        zip_content = self.create_test_zip({"SKILL.md": skill_md_content})
+        zip_content = self.create_test_zip({"SKILL.md": skill_md_content}, "test.zip")
 
         result = SkillValidator.validate_zip(zip_content, "test.zip")
 
