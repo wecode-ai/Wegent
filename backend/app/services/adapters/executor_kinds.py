@@ -367,21 +367,80 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 bot_prompt = system_prompt
                 if team_member_info and team_member_info.prompt:
                     bot_prompt += f"\n{team_member_info.prompt}"
+
+                # 1. Get Task specified model information
+                task_model_name = None
+                force_override = False
+
+                if task_crd.metadata.labels:
+                    task_model_name = task_crd.metadata.labels.get("modelId")
+                    force_override = task_crd.metadata.labels.get("forceOverrideBotModel") == "true"
+
                 agent_config_data = agent_config
                 try:
                     if isinstance(agent_config, dict):
-                        private_model_name = agent_config.get("private_model")
-                        if isinstance(private_model_name, str) and private_model_name.strip():
-                            # Query public_models table for private model
-                            from app.models.public_model import PublicModel
-                            model_row = db.query(PublicModel).filter(PublicModel.name == private_model_name.strip()).first()
-                            if model_row and model_row.json:
-                                # Extract modelConfig from json.spec.modelConfig
-                                model_config = model_row.json.get("spec", {}).get("modelConfig", {})
-                                if isinstance(model_config, dict):
-                                    agent_config_data = model_config
-                except Exception:
-                    # On any error, fallback to original agent_config
+                        # 2. Determine which model name to use
+                        model_name_to_use = None
+
+                        if force_override and task_model_name:
+                            # Force override: use Task specified model
+                            model_name_to_use = task_model_name
+                            logger.info(f"Using task model (force override): {model_name_to_use}")
+                        else:
+                            # Priority: Bot bound model > Task specified model
+                            bind_model_name = agent_config.get("bind_model")
+                            private_model_name = agent_config.get("private_model")
+
+                            if isinstance(bind_model_name, str) and bind_model_name.strip():
+                                model_name_to_use = bind_model_name.strip()
+                                logger.info(f"Using bot bound model (bind_model): {model_name_to_use}")
+                            elif isinstance(private_model_name, str) and private_model_name.strip():
+                                model_name_to_use = private_model_name.strip()
+                                logger.info(f"Using bot bound model (private_model): {model_name_to_use}")
+                            elif task_model_name:
+                                # Bot not bound, use Task specified model
+                                model_name_to_use = task_model_name
+                                logger.info(f"Using task model (no bot binding): {model_name_to_use}")
+
+                        # 3. Query kinds table and replace model config
+                        if model_name_to_use:
+                            # Try kinds table first (new Model CRD approach)
+                            from app.models.kind import Kind as KindModel
+                            from app.schemas.kind import Model as ModelCRD
+
+                            model_kind = db.query(KindModel).filter(
+                                KindModel.kind == "Model",
+                                KindModel.name == model_name_to_use,
+                                KindModel.namespace == "default",
+                                KindModel.is_active == True
+                            ).first()
+
+                            if model_kind and model_kind.json:
+                                try:
+                                    model_crd = ModelCRD.model_validate(model_kind.json)
+                                    model_config = model_crd.spec.modelConfig
+                                    if isinstance(model_config, dict):
+                                        # Replace with complete modelConfig (including env)
+                                        agent_config_data = model_config
+                                        logger.info(f"Successfully loaded model config from kinds table: {model_name_to_use}")
+                                except Exception as e:
+                                    logger.warning(f"Failed to parse model CRD {model_name_to_use}: {e}")
+                            else:
+                                # Fallback to public_models table (backward compatibility)
+                                from app.models.public_model import PublicModel
+                                model_row = db.query(PublicModel).filter(
+                                    PublicModel.name == model_name_to_use
+                                ).first()
+                                if model_row and model_row.json:
+                                    model_config = model_row.json.get("spec", {}).get("modelConfig", {})
+                                    if isinstance(model_config, dict):
+                                        agent_config_data = model_config
+                                        logger.info(f"Successfully loaded model config from public_models table: {model_name_to_use}")
+                                else:
+                                    logger.warning(f"Model '{model_name_to_use}' not found in kinds or public_models table")
+
+                except Exception as e:
+                    logger.error(f"Failed to resolve model config: {e}")
                     agent_config_data = agent_config
 
                 bots.append({

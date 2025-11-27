@@ -92,6 +92,7 @@ export interface TeamBot {
   bot_id: number;
   bot_prompt: string;
   role?: string;
+  bot?: Bot; // Optional full bot details (included in some API responses)
 }
 
 /** TaskDetail structure (adapted to latest backend response) */

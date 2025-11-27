@@ -17,8 +17,19 @@ export async function sendMessage(params: {
   branch: GitBranch | null;
   task_id?: number;
   taskType?: 'chat' | 'code';
+  model_id?: string;
+  force_override_bot_model?: boolean;
 }) {
-  const { message, team, repo, branch, task_id, taskType = 'chat' } = params;
+  const {
+    message,
+    team,
+    repo,
+    branch,
+    task_id,
+    taskType = 'chat',
+    model_id,
+    force_override_bot_model,
+  } = params;
   const trimmed = message?.trim() ?? '';
 
   if (!trimmed) {
@@ -51,6 +62,8 @@ export async function sendMessage(params: {
     batch: 0,
     user_id: 0,
     user_name: '',
+    model_id,
+    force_override_bot_model,
   };
 
   try {

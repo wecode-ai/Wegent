@@ -9,11 +9,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import { Tab } from '@headlessui/react';
-import { PuzzlePieceIcon, UsersIcon, BellIcon } from '@heroicons/react/24/outline';
+import { PuzzlePieceIcon, UsersIcon, BellIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import { RiRobot2Line } from 'react-icons/ri';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
 import BotList from '@/features/settings/components/BotList';
 import TeamList from '@/features/settings/components/TeamList';
+import ModelList from '@/features/settings/components/ModelList';
 import NotificationSettings from '@/features/settings/components/NotificationSettings';
 import { UserProvider } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -29,8 +30,9 @@ function DashboardContent() {
     (): Record<number, string> => ({
       0: 'bots',
       1: 'team',
-      2: 'integrations',
-      3: 'notifications',
+      2: 'models',
+      3: 'integrations',
+      4: 'notifications',
     }),
     []
   );
@@ -40,8 +42,9 @@ function DashboardContent() {
     (): Record<string, number> => ({
       bots: 0,
       team: 1,
-      integrations: 2,
-      notifications: 3,
+      models: 2,
+      integrations: 3,
+      notifications: 4,
     }),
     []
   );
@@ -137,6 +140,19 @@ function DashboardContent() {
                         }`
                       }
                     >
+                      <CpuChipIcon className="w-4 h-4" />
+                      <span>{t('settings.models')}</span>
+                    </Tab>
+
+                    <Tab
+                      className={({ selected }) =>
+                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                          selected
+                            ? 'bg-muted text-text-primary'
+                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                        }`
+                      }
+                    >
                       <PuzzlePieceIcon className="w-4 h-4" />
                       <span>{t('settings.integrations')}</span>
                     </Tab>
@@ -162,6 +178,9 @@ function DashboardContent() {
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <ModelList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <GitHubIntegration />
@@ -212,6 +231,19 @@ function DashboardContent() {
                           }`
                         }
                       >
+                        <CpuChipIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('navigation.models')}</span>
+                      </Tab>
+
+                      <Tab
+                        className={({ selected }) =>
+                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
+                            selected
+                              ? 'bg-muted text-text-primary'
+                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                          }`
+                        }
+                      >
                         <PuzzlePieceIcon className="w-3 h-3" />
                         <span className="hidden xs:inline">{t('settings.integrations')}</span>
                       </Tab>
@@ -238,6 +270,9 @@ function DashboardContent() {
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <ModelList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <GitHubIntegration />

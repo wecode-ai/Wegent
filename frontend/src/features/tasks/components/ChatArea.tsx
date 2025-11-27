@@ -9,6 +9,7 @@ import { Send, CircleStop } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
+import ModelSelector from './ModelSelector';
 import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
@@ -22,6 +23,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
+import { ModelCRD } from '@/apis/models';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -52,6 +54,8 @@ export default function ChatArea({
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null);
   const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null);
+  const [selectedModel, setSelectedModel] = useState<ModelCRD | null>(null);
+  const [forceOverride, setForceOverride] = useState(false);
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
   const isMobile = useMediaQuery('(max-width: 640px)');
 
@@ -192,6 +196,8 @@ export default function ChatArea({
       branch: showRepositorySelector ? selectedBranch : null,
       task_id: selectedTaskDetail?.id,
       taskType: taskType,
+      model_id: selectedModel?.metadata.name,
+      force_override_bot_model: forceOverride,
     });
     if (error) {
       toast({
@@ -461,6 +467,17 @@ export default function ChatArea({
                           isLoading={isTeamsLoading}
                         />
                       )}
+                      {selectedTeam && (
+                        <ModelSelector
+                          selectedModel={selectedModel}
+                          setSelectedModel={setSelectedModel}
+                          forceOverride={forceOverride}
+                          setForceOverride={setForceOverride}
+                          selectedTeam={selectedTeam}
+                          disabled={hasMessages || isLoading}
+                          isLoading={isLoading}
+                        />
+                      )}
                     </div>
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
                       {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
@@ -572,6 +589,17 @@ export default function ChatArea({
                         teams={teams}
                         disabled={hasMessages}
                         isLoading={isTeamsLoading}
+                      />
+                    )}
+                    {selectedTeam && (
+                      <ModelSelector
+                        selectedModel={selectedModel}
+                        setSelectedModel={setSelectedModel}
+                        forceOverride={forceOverride}
+                        setForceOverride={setForceOverride}
+                        selectedTeam={selectedTeam}
+                        disabled={hasMessages || isLoading}
+                        isLoading={isLoading}
                       />
                     )}
                   </div>

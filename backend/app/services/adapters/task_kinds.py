@@ -218,6 +218,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "apiVersion": "agent.wecode.io/v1"
             }
 
+            # Add model information to labels if provided
+            if obj_in.model_id:
+                task_json["metadata"]["labels"]["modelId"] = obj_in.model_id
+            if obj_in.force_override_bot_model:
+                task_json["metadata"]["labels"]["forceOverrideBotModel"] = "true"
+
             task = Kind(
                 id=task_id,  # Use the provided task_id
                 user_id=user.id,

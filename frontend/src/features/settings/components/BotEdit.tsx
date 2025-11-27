@@ -5,7 +5,7 @@
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, XIcon, SettingsIcon } from 'lucide-react';
+import { Loader2, XIcon, SettingsIcon, CpuIcon } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -13,6 +13,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
+import Link from 'next/link';
 import McpConfigImportModal from './McpConfigImportModal';
 import SkillManagementModal from './skills/SkillManagementModal';
 
@@ -50,6 +52,12 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [loadingModels, setLoadingModels] = useState(false);
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
+
+  // Model binding support
+  const [useBindModel, setUseBindModel] = useState(false);
+  const [boundModel, setBoundModel] = useState<string>('');
+  const [availableModels, setAvailableModels] = useState<Array<{ name: string }>>([]);
+  const [loadingBindModels, setLoadingBindModels] = useState(false);
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null;
@@ -126,6 +134,32 @@ const BotEdit: React.FC<BotEditProps> = ({
       }
     });
   }, [toast, t]);
+
+  // Load available models for binding
+  const loadAvailableModels = useCallback(async () => {
+    if (!agentName) return;
+
+    setLoadingBindModels(true);
+    try {
+      const models = await modelApis.fetchCompatibleModels(agentName);
+      setAvailableModels(models);
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: t('bot.errors.load_models_failed'),
+        description: (error as Error).message,
+      });
+    } finally {
+      setLoadingBindModels(false);
+    }
+  }, [agentName, toast, t]);
+
+  // Load models when bind mode is enabled
+  useEffect(() => {
+    if (useBindModel && agentName) {
+      loadAvailableModels();
+    }
+  }, [useBindModel, agentName, loadAvailableModels]);
 
   // Handle MCP configuration import
   const handleImportMcpConfig = useCallback(() => {
@@ -303,9 +337,26 @@ const BotEdit: React.FC<BotEditProps> = ({
     setAgentConfigError(false);
     setMcpConfigError(false);
 
+    // Check if agent_config contains bind_model
     if (baseBot?.agent_config) {
-      setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2));
+      if (
+        typeof baseBot.agent_config === 'object' &&
+        'bind_model' in baseBot.agent_config &&
+        baseBot.agent_config.bind_model
+      ) {
+        // Bind model mode
+        setUseBindModel(true);
+        setBoundModel(baseBot.agent_config.bind_model as string);
+        setAgentConfig('');
+      } else {
+        // Advanced edit mode
+        setUseBindModel(false);
+        setBoundModel('');
+        setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2));
+      }
     } else {
+      setUseBindModel(false);
+      setBoundModel('');
       setAgentConfig('');
     }
   }, [editingBotId, baseBot]);
@@ -345,7 +396,6 @@ const BotEdit: React.FC<BotEditProps> = ({
   }, [handleBack]);
 
   // Save logic
-  // Save logic
   const handleSave = async () => {
     if (!botName.trim() || !agentName.trim()) {
       toast({
@@ -354,8 +404,23 @@ const BotEdit: React.FC<BotEditProps> = ({
       });
       return;
     }
+
     let parsedAgentConfig: unknown = undefined;
-    if (isCustomModel) {
+
+    // Handle bind model mode vs custom model mode
+    if (useBindModel) {
+      // Bind model mode: only store model reference
+      if (!boundModel) {
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.required'),
+          description: t('bot.select_model'),
+        });
+        return;
+      }
+      parsedAgentConfig = { bind_model: boundModel };
+    } else if (isCustomModel) {
+      // Advanced edit mode with custom config
       const trimmedConfig = agentConfig.trim();
       if (!trimmedConfig) {
         setAgentConfigError(true);
@@ -377,6 +442,7 @@ const BotEdit: React.FC<BotEditProps> = ({
         return;
       }
     } else {
+      // Using predefined model
       parsedAgentConfig = { private_model: selectedModel };
     }
 
@@ -557,9 +623,9 @@ const BotEdit: React.FC<BotEditProps> = ({
           <div className="flex flex-col">
             <div className="flex items-center justify-between mb-1">
               <div className="flex items-center gap-2">
-                <label className="block text-base font-medium text-text-primary">
+                <Label className="text-base font-medium">
                   {t('bot.agent_config')} <span className="text-red-400">*</span>
-                </label>
+                </Label>
                 {/* Help Icon */}
                 <button
                   type="button"
@@ -582,80 +648,156 @@ const BotEdit: React.FC<BotEditProps> = ({
                     />
                   </svg>
                 </button>
-                {/* Template Button - Only show when Custom Model is enabled */}
-                {isCustomModel && (
-                  <button
-                    type="button"
-                    onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
-                    className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
-                    title={t('bot.quick_templates')}
-                  >
-                    <span className="text-sm">📋</span>
-                    <span>{t('bot.template')}</span>
-                  </button>
-                )}
               </div>
-              <div className="flex items-center">
-                <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
+
+              {/* Toggle switch for Bind Model */}
+              <div className="flex items-center gap-2">
+                <Label htmlFor="bind-model-switch" className="text-sm text-text-secondary">
+                  {t('bot.bind_model')}
+                </Label>
                 <Switch
-                  checked={isCustomModel}
+                  id="bind-model-switch"
+                  checked={useBindModel}
                   onCheckedChange={(checked: boolean) => {
-                    setIsCustomModel(checked);
+                    setUseBindModel(checked);
                     if (checked) {
+                      // Switching to bind model mode
+                      setIsCustomModel(false);
                       setAgentConfig('');
                       setAgentConfigError(false);
-                    }
-                    if (!checked) {
-                      setAgentConfigError(false);
                       setTemplateSectionExpanded(false);
+                    } else {
+                      // Switching to advanced mode
+                      setBoundModel('');
+                      setAvailableModels([]);
                     }
                   }}
                 />
               </div>
             </div>
 
-            {/* Template Expanded Content - Only show when expanded */}
-            {isCustomModel && templateSectionExpanded && (
-              <div className="mb-3 bg-base-secondary rounded-md p-3">
-                <div className="flex gap-2 flex-wrap mb-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleApplyClaudeSonnetTemplate()}
-                    className="text-xs"
-                    type="button"
-                  >
-                    Claude Sonnet 4 {t('bot.template')}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleApplyOpenAIGPT4Template()}
-                    className="text-xs"
-                    type="button"
-                  >
-                    OpenAI GPT-4 {t('bot.template')}
-                  </Button>
-                </div>
-                <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
+            {/* Conditional rendering based on bind model mode */}
+            {useBindModel ? (
+              // Bind Model Mode
+              <div className="space-y-3">
+                <Label>{t('bot.select_model')}</Label>
+                <Select
+                  value={boundModel}
+                  onValueChange={setBoundModel}
+                  disabled={loadingBindModels || !agentName}
+                >
+                  <SelectTrigger>
+                    <SelectValue
+                      placeholder={
+                        loadingBindModels
+                          ? t('bot.loading_models')
+                          : availableModels.length === 0
+                            ? t('bot.no_models_available')
+                            : t('bot.select_a_model')
+                      }
+                    />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {availableModels.map(model => (
+                      <SelectItem key={model.name} value={model.name}>
+                        <div className="flex items-center gap-2">
+                          <CpuIcon className="w-4 h-4" />
+                          <span>{model.name}</span>
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {availableModels.length === 0 && !loadingBindModels && agentName && (
+                  <p className="text-sm text-text-muted">
+                    <span>{t('bot.no_models_hint')}</span>
+                    <Link href="/settings?tab=models" className="text-link hover:underline ml-1">
+                      {t('bot.create_model_now')}
+                    </Link>
+                  </p>
+                )}
               </div>
-            )}
+            ) : (
+              // Advanced Edit Mode
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    {/* Template Button - Only show when Custom Model is enabled */}
+                    {isCustomModel && (
+                      <button
+                        type="button"
+                        onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
+                        className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+                        title={t('bot.quick_templates')}
+                      >
+                        <span className="text-sm">📋</span>
+                        <span>{t('bot.template')}</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-xs text-text-muted mr-2">
+                      {t('bot.use_custom_model')}
+                    </span>
+                    <Switch
+                      checked={isCustomModel}
+                      onCheckedChange={(checked: boolean) => {
+                        setIsCustomModel(checked);
+                        if (checked) {
+                          setAgentConfig('');
+                          setAgentConfigError(false);
+                        }
+                        if (!checked) {
+                          setAgentConfigError(false);
+                          setTemplateSectionExpanded(false);
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
 
-            {isCustomModel ? (
-              <textarea
-                value={agentConfig}
-                onChange={e => {
-                  const value = e.target.value;
-                  setAgentConfig(value);
-                  if (!value.trim()) {
-                    setAgentConfigError(false);
-                  }
-                }}
-                onBlur={prettifyAgentConfig}
-                rows={4}
-                placeholder={
-                  agentName === 'ClaudeCode'
-                    ? `{
+                {/* Template Expanded Content - Only show when expanded */}
+                {isCustomModel && templateSectionExpanded && (
+                  <div className="mb-3 bg-base-secondary rounded-md p-3">
+                    <div className="flex gap-2 flex-wrap mb-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleApplyClaudeSonnetTemplate()}
+                        className="text-xs"
+                        type="button"
+                      >
+                        Claude Sonnet 4 {t('bot.template')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleApplyOpenAIGPT4Template()}
+                        className="text-xs"
+                        type="button"
+                      >
+                        OpenAI GPT-4 {t('bot.template')}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
+                  </div>
+                )}
+
+                {isCustomModel ? (
+                  <textarea
+                    value={agentConfig}
+                    onChange={e => {
+                      const value = e.target.value;
+                      setAgentConfig(value);
+                      if (!value.trim()) {
+                        setAgentConfigError(false);
+                      }
+                    }}
+                    onBlur={prettifyAgentConfig}
+                    rows={4}
+                    placeholder={
+                      agentName === 'ClaudeCode'
+                        ? `{
   "env": {
     "model": "claude",
     "model_id": "xxxxx",
@@ -663,8 +805,8 @@ const BotEdit: React.FC<BotEditProps> = ({
     "base_url": "xxxxxx"
   }
 }`
-                    : agentName === 'Agno'
-                      ? `{
+                        : agentName === 'Agno'
+                          ? `{
   "env": {
     "model": "openai",
     "model_id": "xxxxxx",
@@ -672,29 +814,31 @@ const BotEdit: React.FC<BotEditProps> = ({
     "base_url": "xxxxxx"
   }
 }`
-                      : ''
-                }
-                className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
-              />
-            ) : (
-              <Select
-                value={selectedModel}
-                onValueChange={value => {
-                  setSelectedModel(value);
-                }}
-                disabled={loadingModels}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder={t('bot.agent_select')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map(model => (
-                    <SelectItem key={model.name} value={model.name}>
-                      {model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                          : ''
+                    }
+                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
+                  />
+                ) : (
+                  <Select
+                    value={selectedModel}
+                    onValueChange={value => {
+                      setSelectedModel(value);
+                    }}
+                    disabled={loadingModels}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue placeholder={t('bot.agent_select')} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.map(model => (
+                        <SelectItem key={model.name} value={model.name}>
+                          {model.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
             )}
           </div>
 
