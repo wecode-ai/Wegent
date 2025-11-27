@@ -76,35 +76,35 @@ export const modelApis = {
    * Get all models as CRD resources
    */
   async getAllModels(): Promise<ModelListResponse> {
-    return apiClient.get('/kinds/namespaces/default/models')
+    return apiClient.get('/v1/namespaces/default/models')
   },
 
   /**
    * Get a single model by name
    */
   async getModel(name: string): Promise<ModelCRD> {
-    return apiClient.get(`/kinds/namespaces/default/models/${encodeURIComponent(name)}`)
+    return apiClient.get(`/v1/namespaces/default/models/${encodeURIComponent(name)}`)
   },
 
   /**
    * Create a new model
    */
   async createModel(model: ModelCRD): Promise<ModelCRD> {
-    return apiClient.post('/kinds/namespaces/default/models', model)
+    return apiClient.post('/v1/namespaces/default/models', model)
   },
 
   /**
    * Update an existing model
    */
   async updateModel(name: string, model: ModelCRD): Promise<ModelCRD> {
-    return apiClient.put(`/kinds/namespaces/default/models/${encodeURIComponent(name)}`, model)
+    return apiClient.put(`/v1/namespaces/default/models/${encodeURIComponent(name)}`, model)
   },
 
   /**
    * Delete a model
    */
   async deleteModel(name: string): Promise<void> {
-    return apiClient.delete(`/kinds/namespaces/default/models/${encodeURIComponent(name)}`)
+    return apiClient.delete(`/v1/namespaces/default/models/${encodeURIComponent(name)}`)
   },
 
   /**
