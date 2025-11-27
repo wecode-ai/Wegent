@@ -337,7 +337,6 @@ class AgnoAgent(Agent):
             # Checkpoint 1: Check cancellation before execution starts
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before execution")
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
             
             progress = 65
@@ -379,7 +378,6 @@ class AgnoAgent(Agent):
             # Checkpoint 2: Check cancellation after team/agent creation
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled after team/agent creation")
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
             
             # Prepare prompt
@@ -701,7 +699,6 @@ class AgnoAgent(Agent):
                 # Checkpoint: Check cancellation during streaming
                 if self.task_state_manager.is_cancelled(self.task_id):
                     logger.info(f"Task {self.task_id} cancelled during agent streaming")
-                    await self._cleanup_resources()
                     return TaskStatus.COMPLETED
                 
                 result_content = await self._handle_agent_streaming_event(
@@ -710,7 +707,6 @@ class AgnoAgent(Agent):
 
             # Check if task was cancelled
             if self.task_state_manager.is_cancelled(self.task_id):
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
             
             return self._handle_execution_result(result_content, "agent streaming execution")
@@ -813,7 +809,6 @@ class AgnoAgent(Agent):
                 # Checkpoint: Check cancellation during streaming
                 if self.task_state_manager.is_cancelled(self.task_id):
                     logger.info(f"Task {self.task_id} cancelled during team streaming")
-                    await self._cleanup_resources()
                     return TaskStatus.COMPLETED
                 
                 result_content, reasoning = await self._handle_team_streaming_event(
@@ -824,7 +819,6 @@ class AgnoAgent(Agent):
 
             # Check if task was cancelled
             if self.task_state_manager.is_cancelled(self.task_id):
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
             
             return self._handle_execution_result(result_content, "team streaming execution")
@@ -1117,16 +1111,6 @@ class AgnoAgent(Agent):
             # Ensure cancelled state even on error
             self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
             return False
-
-    async def _cleanup_resources(self) -> None:
-        """
-        Clean up resources when task is cancelled
-        """
-        try:
-            logger.info(f"Cleaning up resources for task {self.task_id}")
-            await self.resource_manager.cleanup_task_resources(self.task_id)
-        except Exception as e:
-            logger.exception(f"Error cleaning up resources for task {self.task_id}: {str(e)}")
 
     async def cleanup(self) -> None:
         """

@@ -30,6 +30,7 @@ class GhostSpec(BaseModel):
     """Ghost specification"""
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
+    skills: Optional[List[str]] = None  # Skill names list
 
 
 class GhostStatus(Status):
@@ -286,3 +287,35 @@ class BatchResponse(BaseModel):
     success: bool
     message: str
     results: List[Dict[str, Any]]
+
+
+# Skill CRD schemas
+class SkillSpec(BaseModel):
+    """Skill specification"""
+    description: str  # Extracted from SKILL.md YAML frontmatter
+    version: Optional[str] = None  # Skill version
+    author: Optional[str] = None  # Author
+    tags: Optional[List[str]] = None  # Tags
+
+
+class SkillStatus(Status):
+    """Skill status"""
+    state: str = "Available"  # Available, Unavailable
+    fileSize: Optional[int] = None  # ZIP package size in bytes
+    fileHash: Optional[str] = None  # SHA256 hash
+
+
+class Skill(BaseModel):
+    """Skill CRD"""
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "Skill"
+    metadata: ObjectMeta
+    spec: SkillSpec
+    status: Optional[SkillStatus] = None
+
+
+class SkillList(BaseModel):
+    """Skill list"""
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "SkillList"
+    items: List[Skill]

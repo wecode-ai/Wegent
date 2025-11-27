@@ -336,6 +336,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 # Extract data from components
                 system_prompt = ""
                 mcp_servers = {}
+                skills = []
                 agent_name = ""
                 agent_config = {}
                 
@@ -343,6 +344,8 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     ghost_crd = Ghost.model_validate(ghost.json)
                     system_prompt = ghost_crd.spec.systemPrompt
                     mcp_servers = ghost_crd.spec.mcpServers or {}
+                    skills = ghost_crd.spec.skills or []
+                    logger.info(f"Bot {bot.name} (ID: {bot.id}) - Ghost {ghost.name} skills: {skills}")
                 
                 if shell and shell.json:
                     shell_crd = Shell.model_validate(shell.json)
@@ -388,10 +391,29 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     "agent_config": agent_config_data,
                     "system_prompt": bot_prompt,
                     "mcp_servers": mcp_servers,
+                    "skills": skills,
                     "role": team_member_info.role if team_member_info else ''
                 })
 
             type = task_crd.metadata.labels and task_crd.metadata.labels.get("type") or "online"
+
+            # Generate auth token for skills download
+            # Use user's JWT token or generate a temporary one
+            auth_token = None
+            if user:
+                # Generate a JWT token for the user to access backend API
+                from app.core.config import settings
+                from app.core.security import create_access_token
+                
+                try:
+                    # Create a token valid for 24 hours (1440 minutes) for skills download
+                    auth_token = create_access_token(
+                        data={"sub": user.user_name, "user_id": user.id},
+                        expires_delta=1440  # 24 hours in minutes
+                    )
+                    logger.info(f"Successfully generated auth token for user {user.id} (username: {user.user_name})")
+                except Exception as e:
+                    logger.warning(f"Failed to generate auth token for user {user.id}: {e}")
 
             formatted_subtasks.append({
                 "subtask_id": subtask.id,
@@ -421,6 +443,7 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 "branch_name": branch_name,
                 "git_url": git_url,
                 "prompt": aggregated_prompt,
+                "auth_token": auth_token,
                 "status": subtask.status,
                 "progress": subtask.progress,
                 "created_at": subtask.created_at,

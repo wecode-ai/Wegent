@@ -12,10 +12,17 @@ from app.db.base import Base
 from app.core.config import Settings
 from app.core.security import get_password_hash, create_access_token
 from app.models.user import User
+# Import all models to ensure they are registered with Base
+from app.models.kind import Kind
+from app.models.subtask import Subtask
+from app.models.shared_team import SharedTeam
+from app.models.skill_binary import SkillBinary
+# Import all models to ensure they are registered with same Base instance
+from app.models import *
 
 
-# Test database URL (SQLite in-memory)
-TEST_DATABASE_URL = "sqlite:///:memory:"
+# Test database URL (SQLite in-memory with shared cache for thread safety)
+TEST_DATABASE_URL = "sqlite:///file:testdb?mode=memory&cache=shared&uri=true"
 
 
 @pytest.fixture(scope="function")
@@ -33,8 +40,8 @@ def test_db() -> Generator[Session, None, None]:
     # Create all tables
     Base.metadata.create_all(bind=engine)
 
-    # Create session factory
-    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    # Create session factory with expire_on_commit=False to avoid lazy loading issues in tests
+    TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
 
     # Create session
     db = TestingSessionLocal()
@@ -143,12 +150,15 @@ def test_client(test_db: Session) -> TestClient:
 
     app = create_app()
 
-    # Override database dependency
+    # Override database dependency to always return the same test_db session
     def override_get_db():
         try:
+            # Return the test_db session directly without yielding
+            # This ensures the same session is used across all requests
             yield test_db
-        finally:
-            pass
+        except Exception:
+            test_db.rollback()
+            raise
 
     app.dependency_overrides[get_db] = override_get_db
 

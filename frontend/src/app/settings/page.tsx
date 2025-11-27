@@ -45,7 +45,6 @@ function DashboardContent() {
     }),
     []
   );
-
   // Function to get initial tab index from URL
   const getInitialTabIndex = () => {
     const tabParam = searchParams.get('tab');

@@ -24,9 +24,6 @@ logger = setup_logger("resource_manager")
 class ResourceHandle:
     """Resource handle"""
     resource_id: str
-    cleanup_func: Callable
-    cleanup_args: tuple = field(default_factory=tuple)
-    cleanup_kwargs: dict = field(default_factory=dict)
     is_async: bool = False
 
 
@@ -53,9 +50,6 @@ class ResourceManager:
         self, 
         task_id: int, 
         resource_id: str,
-        cleanup_func: Callable,
-        cleanup_args: tuple = (),
-        cleanup_kwargs: Optional[dict] = None,
         is_async: bool = False
     ) -> None:
         """
@@ -64,13 +58,8 @@ class ResourceManager:
         Args:
             task_id: Task ID
             resource_id: Unique resource identifier
-            cleanup_func: Cleanup function
-            cleanup_args: Positional arguments for cleanup function
-            cleanup_kwargs: Keyword arguments for cleanup function
             is_async: Whether cleanup function is asynchronous
         """
-        if cleanup_kwargs is None:
-            cleanup_kwargs = {}
             
         with self._resource_lock:
             if task_id not in self._resources:
@@ -78,9 +67,6 @@ class ResourceManager:
             
             handle = ResourceHandle(
                 resource_id=resource_id,
-                cleanup_func=cleanup_func,
-                cleanup_args=cleanup_args,
-                cleanup_kwargs=cleanup_kwargs,
                 is_async=is_async
             )
             self._resources[task_id].append(handle)
@@ -103,55 +89,6 @@ class ResourceManager:
                 ]
                 if len(self._resources[task_id]) < original_count:
                     logger.debug(f"Unregistered resource '{resource_id}' for task {task_id}")
-    
-    async def cleanup_task_resources(self, task_id: int) -> None:
-        """
-        Clean up all resources for a task (async version)
-        
-        Args:
-            task_id: Task ID
-        """
-        resources = []
-        with self._resource_lock:
-            resources = self._resources.pop(task_id, [])
-        
-        if not resources:
-            logger.debug(f"No resources to cleanup for task {task_id}")
-            return
-        
-        logger.info(f"Cleaning up {len(resources)} resources for task {task_id}")
-        
-        # Cleanup in reverse order, last registered cleaned up first
-        for handle in reversed(resources):
-            try:
-                if handle.is_async:
-                    await handle.cleanup_func(*handle.cleanup_args, **handle.cleanup_kwargs)
-                else:
-                    handle.cleanup_func(*handle.cleanup_args, **handle.cleanup_kwargs)
-                logger.debug(f"Cleaned up resource '{handle.resource_id}' for task {task_id}")
-            except Exception as e:
-                logger.exception(f"Error cleaning up resource '{handle.resource_id}' for task {task_id}: {e}")
-    
-    def cleanup_task_resources_sync(self, task_id: int) -> None:
-        """
-        Clean up all resources for a task (sync version)
-        
-        Args:
-            task_id: Task ID
-        """
-        try:
-            # Try to get current event loop
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # If in async context, create task
-                asyncio.create_task(self.cleanup_task_resources(task_id))
-                logger.debug(f"Created async cleanup task for task {task_id}")
-            else:
-                # Otherwise run directly
-                loop.run_until_complete(self.cleanup_task_resources(task_id))
-        except RuntimeError:
-            # No event loop, create new one
-            asyncio.run(self.cleanup_task_resources(task_id))
     
     def get_resource_count(self, task_id: int) -> int:
         """

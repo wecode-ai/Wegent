@@ -7,6 +7,7 @@
 ## 目录
 
 - [👻 Ghost](#-ghost)
+- [✨ Skill](#-skill)
 - [🧠 Model](#-model)
 - [🐚 Shell](#-shell)
 - [🤖 Bot](#-bot)
@@ -57,9 +58,89 @@ spec:
 | `metadata.name` | string | 是 | Ghost 的唯一标识符 |
 | `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
 | `spec.systemPrompt` | string | 是 | 定义智能体个性和能力的系统提示词 |
-| `spec.mcpServers` | object | 否 | MCP 服务器配置，定义智能体的工具能力 |
+| `spec.mcpServers` | object | 否 | MCP 服务器配置,定义智能体的工具能力 |
+| `spec.skills` | array | 否 | 关联的 Skill 名称列表,例如 `["skill-1", "skill-2"]` |
 
 ---
+
+## ✨ Skill
+
+Skill 是 Claude Code 的能力扩展包,包含可执行代码和配置。Skills 以 ZIP 包形式上传,任务启动时自动部署到 `~/.claude/skills/` 目录。
+
+### 完整配置示例
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Skill
+metadata:
+  name: python-debugger
+  namespace: default
+spec:
+  description: "Python 调试工具,支持断点和变量检查"
+  version: "1.0.0"
+  author: "WeCode Team"
+  tags: ["python", "debugging", "development"]
+status:
+  state: "Available"
+  fileSize: 2048576
+  fileHash: "abc123def456..."
+```
+
+### 字段说明
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `metadata.name` | string | 是 | Skill 的唯一标识符(用于 Ghost 的 `spec.skills` 字段) |
+| `metadata.namespace` | string | 是 | 命名空间,通常为 `default` |
+| `spec.description` | string | 是 | Skill 功能描述(从 SKILL.md frontmatter 提取) |
+| `spec.version` | string | 否 | 版本号(建议使用语义化版本) |
+| `spec.author` | string | 否 | 作者名称或组织 |
+| `spec.tags` | array | 否 | 分类标签,例如 `["python", "debugging"]` |
+| `status.state` | string | 是 | Skill 状态: `Available` 或 `Unavailable` |
+| `status.fileSize` | integer | 否 | ZIP 包大小(字节) |
+| `status.fileHash` | string | 否 | ZIP 包的 SHA256 哈希值 |
+
+### ZIP 包要求
+
+Skills 必须以 ZIP 包形式上传,包含:
+1. **SKILL.md**(必需): Skill 文档,包含 YAML frontmatter
+2. 其他文件: 脚本、配置、资源等
+
+**SKILL.md 格式:**
+```markdown
+---
+description: "您的 Skill 描述"
+version: "1.0.0"
+author: "您的名字"
+tags: ["标签1", "标签2"]
+---
+
+# Skill 文档
+
+详细说明这个 Skill 的功能...
+```
+
+### 在 Ghost 中使用 Skills
+
+通过在 `spec.skills` 数组中添加 Skill 名称来关联:
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: developer-ghost
+  namespace: default
+spec:
+  systemPrompt: "你是一位资深开发工程师..."
+  mcpServers: {...}
+  skills:
+    - python-debugger
+    - code-formatter
+```
+
+当使用此 Ghost 启动任务时,Executor 会自动下载并部署这些 Skills 到 `~/.claude/skills/` 目录。
+
+
 
 ## 🧠 Model
 

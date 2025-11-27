@@ -438,6 +438,9 @@ class ClaudeCodeAgent(Agent):
                     with open(claude_json_path, "w") as f:
                         json.dump(claude_json_config, f, indent=2)
                     logger.info(f"Saved Claude Code config to {claude_json_path}")
+
+                    # Download and deploy Skills if configured
+                    self._download_and_deploy_skills(bot_config)
             else:
                 logger.info("No bot config found for Claude Code Agent")
 
@@ -693,7 +696,6 @@ class ClaudeCodeAgent(Agent):
             # Check if task was cancelled before execution
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} was cancelled before execution")
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
             
             progress = 65
@@ -768,14 +770,12 @@ class ClaudeCodeAgent(Agent):
                 self.resource_manager.register_resource(
                     task_id=self.task_id,
                     resource_id=f"claude_client_{self.session_id}",
-                    cleanup_func=self._cleanup_client,
                     is_async=True
                 )
 
             # Check cancellation again before proceeding
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled during client setup")
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
 
             # Prepare prompt
@@ -790,7 +790,6 @@ class ClaudeCodeAgent(Agent):
             # Check cancellation before sending query
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
-                await self._cleanup_resources()
                 return TaskStatus.COMPLETED
             
             # Use session_id to send messages, ensuring messages are in the same session
@@ -1012,32 +1011,7 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")
     
-    async def _cleanup_client(self) -> None:
-        """Clean up client connection and remove from cache"""
-        try:
-            if self.client and hasattr(self.client, 'close'):
-                await self.client.close()
-                logger.info(f"Closed client for task {self.task_id}")
 
-            # Remove client from cache to prevent reuse of terminated client
-            if self.session_id in self._clients:
-                del self._clients[self.session_id]
-                logger.info(f"Removed client from cache for session_id: {self.session_id}")
-        except Exception as e:
-            logger.exception(f"Error closing client for task {self.task_id}: {e}")
-    
-    async def _cleanup_resources(self) -> None:
-        """Clean up all task resources"""
-        try:
-            # Use resource manager to clean up all registered resources
-            await self.resource_manager.cleanup_task_resources(self.task_id)
-            
-            # Clean up task state
-            self.task_state_manager.cleanup(self.task_id)
-            
-            logger.info(f"Completed resource cleanup for task {self.task_id}")
-        except Exception as e:
-            logger.exception(f"Error in resource cleanup for task {self.task_id}: {e}")
     def _setup_claudecode_dir(self, project_path: str, custom_rules: Dict[str, str]) -> None:
         """
         Setup .claudecode directory with custom instruction files for Claude Code compatibility
@@ -1153,7 +1127,123 @@ class ClaudeCodeAgent(Agent):
                     f.write('\n')
                 f.write(f"{pattern}\n")
             logger.info(f"Added '{pattern}' to .git/info/exclude")
-            
+
         except Exception as e:
             logger.warning(f"Failed to add '{pattern}' to .git/info/exclude: {e}")
+
+    def _download_and_deploy_skills(self, bot_config: Dict[str, Any]) -> None:
+        """
+        Download Skills from Backend API and deploy to ~/.claude/skills/.
+
+        Args:
+            bot_config: Bot configuration containing skills list
+        """
+        try:
+            # Extract skills list from bot_config (skills is at top level, not in spec)
+            skills = bot_config.get("skills", [])
+            if not skills:
+                logger.debug("No skills configured for this bot")
+                return
+
+            logger.info(f"Found {len(skills)} skills to deploy: {skills}")
+
+            # Prepare skills directory
+            skills_dir = os.path.expanduser("~/.claude/skills")
+
+            # Clear existing skills directory
+            if os.path.exists(skills_dir):
+                import shutil
+                shutil.rmtree(skills_dir)
+                logger.info(f"Cleared existing skills directory: {skills_dir}")
+
+            Path(skills_dir).mkdir(parents=True, exist_ok=True)
+
+            # Get API base URL and auth token from task_data
+            api_base_url = os.getenv("TASK_API_DOMAIN", "http://wegent-backend:8000").rstrip("/")
+            auth_token = self.task_data.get("auth_token")
+
+            if not auth_token:
+                logger.warning("No auth token available, cannot download skills")
+                return
+            
+            logger.info(f"Auth token available for skills download")
+
+            # Download each skill
+            import requests
+            import zipfile
+            import io
+            import shutil
+
+            success_count = 0
+            for skill_name in skills:
+                try:
+                    logger.info(f"Downloading skill: {skill_name}")
+
+                    # Get skill by name
+                    list_url = f"{api_base_url}/api/v1/kinds/skills?name={skill_name}"
+                    headers = {"Authorization": f"Bearer {auth_token}"}
+
+                    response = requests.get(list_url, headers=headers, timeout=30)
+                    if response.status_code != 200:
+                        logger.error(f"Failed to query skill '{skill_name}': HTTP {response.status_code}")
+                        continue
+
+                    skills_data = response.json()
+                    skill_items = skills_data.get("items", [])
+
+                    if not skill_items:
+                        logger.error(f"Skill '{skill_name}' not found")
+                        continue
+
+                    # Extract skill ID from labels
+                    skill_item = skill_items[0]
+                    skill_id = skill_item.get("metadata", {}).get("labels", {}).get("id")
+
+                    if not skill_id:
+                        logger.error(f"Skill '{skill_name}' has no ID in metadata")
+                        continue
+
+                    # Download skill ZIP
+                    download_url = f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download"
+                    response = requests.get(download_url, headers=headers, timeout=60)
+
+                    if response.status_code != 200:
+                        logger.error(f"Failed to download skill '{skill_name}': HTTP {response.status_code}")
+                        continue
+
+                    # Extract ZIP to ~/.claude/skills/
+                    # The ZIP structure is: skill-name.zip -> skill-name/SKILL.md
+                    # We extract to skills_dir, which will create skills_dir/skill-name/
+                    import zipfile
+                    with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
+                        # Security check: prevent Zip Slip attacks
+                        for file_info in zip_file.filelist:
+                            if file_info.filename.startswith('/') or '..' in file_info.filename:
+                                logger.error(f"Unsafe file path in skill ZIP: {file_info.filename}")
+                                break
+                        else:
+                            # Extract all files to skills_dir
+                            # This will create skills_dir/skill-name/ automatically
+                            zip_file.extractall(skills_dir)
+                            skill_target_dir = os.path.join(skills_dir, skill_name)
+                            
+                            # Verify the skill folder was created
+                            if os.path.exists(skill_target_dir) and os.path.isdir(skill_target_dir):
+                                logger.info(f"Deployed skill '{skill_name}' to {skill_target_dir}")
+                                success_count += 1
+                            else:
+                                logger.error(f"Skill folder '{skill_name}' not found after extraction")
+
+                except Exception as e:
+                    logger.warning(f"Failed to download skill '{skill_name}': {str(e)}")
+                    continue
+
+            if success_count > 0:
+                logger.info(f"Successfully deployed {success_count}/{len(skills)} skills to {skills_dir}")
+            else:
+                logger.warning("No skills were successfully deployed")
+
+        except Exception as e:
+            logger.error(f"Error in _download_and_deploy_skills: {str(e)}")
+            # Don't raise - skills deployment failure shouldn't block task execution
 
