@@ -237,6 +237,9 @@ class DockerExecutor(Executor):
             "-v", f"{DOCKER_SOCKET_PATH}:{DOCKER_SOCKET_PATH}"
         ]
         
+        # Add TASK_API_DOMAIN environment variable for executor to access backend API
+        self._add_task_api_domain(cmd)
+        
         # Add workspace mount
         self._add_workspace_mount(cmd)
         
@@ -255,6 +258,13 @@ class DockerExecutor(Executor):
         cmd.append(executor_image)
         
         return cmd
+    
+    def _add_task_api_domain(self, cmd: List[str]) -> None:
+        """Add TASK_API_DOMAIN environment variable for executor to access backend API"""
+        task_api_domain = os.getenv("TASK_API_DOMAIN", "")
+        if task_api_domain:
+            cmd.extend(["-e", f"TASK_API_DOMAIN={task_api_domain}"])
+            logger.debug(f"Added TASK_API_DOMAIN environment variable: {task_api_domain}")
     
     def _add_workspace_mount(self, cmd: List[str]) -> None:
         """Add workspace mount configuration"""

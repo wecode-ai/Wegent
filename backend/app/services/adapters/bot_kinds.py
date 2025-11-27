@@ -44,13 +44,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 detail="Bot name already exists, please modify the name"
             )
 
+        # Validate skills if provided
+        if obj_in.skills:
+            self._validate_skills(db, obj_in.skills, user_id)
+
         # Create Ghost
+        ghost_spec = {
+            "systemPrompt": obj_in.system_prompt or "",
+            "mcpServers": obj_in.mcp_servers or {}
+        }
+        if obj_in.skills:
+            ghost_spec["skills"] = obj_in.skills
+
         ghost_json = {
             "kind": "Ghost",
-            "spec": {
-                "systemPrompt": obj_in.system_prompt or "",
-                "mcpServers": obj_in.mcp_servers or {}
-            },
+            "spec": ghost_spec,
             "status": {
                 "state": "Available"
             },
@@ -60,7 +68,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             },
             "apiVersion": "agent.wecode.io/v1"
         }
-        
+
         ghost = Kind(
             user_id=user_id,
             kind="Ghost",
@@ -335,6 +343,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             flag_modified(ghost, "json")  # Mark JSON field as modified
             db.add(ghost)  # Add to session
 
+        if "skills" in update_data and ghost:
+            # Validate that all referenced skills exist for this user
+            skills = update_data["skills"] or []
+            if skills:
+                self._validate_skills(db, skills, user_id)
+            ghost_crd = Ghost.model_validate(ghost.json)
+            ghost_crd.spec.skills = skills
+            ghost.json = ghost_crd.model_dump()
+            flag_modified(ghost, "json")
+            db.add(ghost)
+
         # Update timestamps
         bot.updated_at = datetime.now()
         if ghost:
@@ -528,7 +547,13 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if model and model.json:
             model_crd = Model.model_validate(model.json)
             agent_config = model_crd.spec.modelConfig
-        
+
+        # Extract skills from ghost
+        skills = []
+        if ghost:
+            ghost_crd = Ghost.model_validate(ghost.json)
+            skills = ghost_crd.spec.skills or []
+
         return {
             "id": bot.id,
             "user_id": bot.user_id,
@@ -537,10 +562,44 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "agent_config": agent_config,
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
+            "skills": skills,
             "is_active": bot.is_active,
             "created_at": bot.created_at,
             "updated_at": bot.updated_at,
         }
+
+    def _validate_skills(self, db: Session, skill_names: List[str], user_id: int) -> None:
+        """
+        Validate that all skill names exist for the user.
+
+        Args:
+            db: Database session
+            skill_names: List of skill names to validate
+            user_id: User ID
+
+        Raises:
+            HTTPException: If any skill does not exist
+        """
+        if not skill_names:
+            return
+
+        # Query all skills at once for efficiency
+        existing_skills = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Skill",
+            Kind.name.in_(skill_names),
+            Kind.namespace == "default",
+            Kind.is_active == True
+        ).all()
+
+        existing_skill_names = {skill.name for skill in existing_skills}
+        missing_skills = [name for name in skill_names if name not in existing_skill_names]
+
+        if missing_skills:
+            raise HTTPException(
+                status_code=400,
+                detail=f"The following Skills do not exist: {', '.join(missing_skills)}"
+            )
 
 
 bot_kinds_service = BotKindsService(Kind)

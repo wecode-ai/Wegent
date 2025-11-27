@@ -13,10 +13,12 @@ from app.models.kind import (
 )
 from app.models.subtask import Subtask
 from app.models.shared_team import SharedTeam
+from app.models.skill_binary import SkillBinary
 
 __all__ = [
     "User",
     "Kind",
     "Subtask",
-    "SharedTeam"
+    "SharedTeam",
+    "SkillBinary"
 ]

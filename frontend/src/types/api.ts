@@ -33,9 +33,42 @@ export interface Bot {
   agent_config: Record<string, unknown>;
   system_prompt: string;
   mcp_servers: Record<string, unknown>;
+  skills?: string[]; // Skills associated with this bot
   is_active: boolean;
   created_at: string;
   updated_at: string;
+}
+
+// Skill Types (CRD format)
+export interface SkillMetadata {
+  name: string;
+  namespace: string;
+  labels?: Record<string, string>;
+}
+
+export interface SkillSpec {
+  description: string;
+  version?: string;
+  author?: string;
+  tags?: string[];
+}
+
+export interface SkillStatus {
+  state: 'Available' | 'Unavailable';
+  fileSize?: number;
+  fileHash?: string;
+}
+
+export interface Skill {
+  apiVersion: string;
+  kind: 'Skill';
+  metadata: SkillMetadata;
+  spec: SkillSpec;
+  status?: SkillStatus;
+}
+
+export interface SkillList {
+  items: Skill[];
 }
 
 export interface Team {
