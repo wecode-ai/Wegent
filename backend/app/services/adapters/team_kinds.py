@@ -2,9 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 import json
+import copy
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -17,11 +21,45 @@ from app.models.shared_team import SharedTeam
 from app.schemas.team import TeamCreate, TeamUpdate, TeamInDB, TeamDetail, BotInfo
 from app.schemas.kind import Team, Bot, Ghost, Shell, Model, Task
 from app.services.base import BaseService
+from app.services.adapters.shell_utils import get_shell_type
+from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     """
     Team service class using kinds table
     """
+
+    # List of sensitive keys that should be decrypted when reading
+    SENSITIVE_CONFIG_KEYS = [
+        "DIFY_API_KEY",
+        # Add more sensitive keys here as needed
+    ]
+
+    def _decrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Decrypt sensitive data in agent_config when reading
+
+        Args:
+            agent_config: Agent config with potentially encrypted fields
+
+        Returns:
+            Agent config with decrypted sensitive fields
+        """
+        # Create a deep copy to avoid modifying the original
+        decrypted_config = copy.deepcopy(agent_config)
+
+        # Decrypt sensitive keys in env section
+        if "env" in decrypted_config:
+            for key in self.SENSITIVE_CONFIG_KEYS:
+                if key in decrypted_config["env"]:
+                    value = decrypted_config["env"][key]
+                    # Only decrypt if it appears to be encrypted
+                    if value and is_data_encrypted(str(value)):
+                        decrypted_value = decrypt_sensitive_data(str(value))
+                        if decrypted_value:
+                            decrypted_config["env"][key] = decrypted_value
+
+        return decrypted_config
 
     def create_with_user(
         self, db: Session, *, obj_in: TeamCreate, user_id: int
@@ -518,13 +556,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """
         Validate bots and check if bots belong to user and are active
+        Also validates Dify runtime constraint: Dify Teams must have exactly one bot
         """
         if not bots:
             raise HTTPException(
                 status_code=400,
                 detail="bots cannot be empty"
             )
-        
+
         bot_id_list = []
         for bot in bots:
             if hasattr(bot, 'bot_id'):
@@ -536,7 +575,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     status_code=400,
                     detail="Invalid bot format: missing bot_id"
                 )
-        
+
         # Check if all bots exist, belong to user, and are active in kinds table
         bots_in_db = db.query(Kind).filter(
             Kind.id.in_(bot_id_list),
@@ -544,16 +583,47 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.kind == "Bot",
             Kind.is_active == True
         ).all()
-        
+
         found_bot_ids = {bot.id for bot in bots_in_db}
         missing_bot_ids = set(bot_id_list) - found_bot_ids
-        
+
         if missing_bot_ids:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid or inactive bot_ids: {', '.join(map(str, missing_bot_ids))}"
             )
-        
+
+        # Validate external API shell constraint: must have exactly one bot
+        for bot in bots_in_db:
+            bot_crd = Bot.model_validate(bot.json)
+
+            # Get shell type using utility function
+            shell_type = get_shell_type(
+                db,
+                bot_crd.spec.shellRef.name,
+                bot_crd.spec.shellRef.namespace,
+                user_id
+            )
+
+            if shell_type == "external_api":
+                # Get shell for error message
+                shell = db.query(Kind).filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Shell",
+                    Kind.name == bot_crd.spec.shellRef.name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.is_active == True
+                ).first()
+                
+                if shell:
+                    shell_crd = Shell.model_validate(shell.json)
+                    # External API shells (like Dify) can only have one bot per team
+                    if len(bots) > 1:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"Teams using external API shells ({shell_crd.spec.runtime}) must have exactly one bot. Found {len(bots)} bots."
+                        )
+
     def get_team_by_id(self, db: Session, *, team_id: int, user_id: int) -> Optional[Kind]:
         """
         Get team by id, checking both user's own teams and shared teams
@@ -643,6 +713,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         
         # Convert members to bots format
         bots = []
+        agent_type = None  # Will store the type of the first bot
+        
         for member in team_crd.spec.members:
             # Find bot in kinds table
             bot = db.query(Kind).filter(
@@ -660,6 +732,30 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     "role": member.role or ""
                 }
                 bots.append(bot_info)
+                
+                # Get agent_type from the first bot's shell
+                if agent_type is None:
+                    bot_crd = Bot.model_validate(bot.json)
+                    shell = db.query(Kind).filter(
+                        Kind.user_id == user_id,
+                        Kind.kind == "Shell",
+                        Kind.name == bot_crd.spec.shellRef.name,
+                        Kind.namespace == bot_crd.spec.shellRef.namespace,
+                        Kind.is_active == True
+                    ).first()
+                    
+                    if shell:
+                        shell_crd = Shell.model_validate(shell.json)
+                        runtime = shell_crd.spec.runtime
+                        # Map runtime to agent type
+                        if runtime == "AgnoShell":
+                            agent_type = "agno"
+                        elif runtime == "ClaudeCodeShell":
+                            agent_type = "claude"
+                        elif runtime == "DifyShell":
+                            agent_type = "dify"
+                        else:
+                            agent_type = runtime.lower().replace("shell", "")
         
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}
@@ -673,6 +769,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "is_active": team.is_active,
             "created_at": team.created_at,
             "updated_at": team.updated_at,
+            "agent_type": agent_type,  # Add agent_type field
         }
 
     def _convert_bot_to_dict(self, bot: Kind, db: Session, user_id: int) -> Dict[str, Any]:
@@ -766,6 +863,202 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 task.json = task_crd.model_dump(mode='json')
                 task.updated_at = datetime.now()
                 flag_modified(task, "json")
+
+    def get_team_input_parameters(
+        self, db: Session, *, team_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Get input parameters required by the team's external API bots
+        Returns parameter schema if team has external API bots, otherwise empty
+        """
+        # Get team details
+        team = db.query(Kind).filter(
+            Kind.id == team_id,
+            Kind.kind == "Team",
+            Kind.is_active == True
+        ).first()
+
+        if not team:
+            raise HTTPException(
+                status_code=404,
+                detail="Team not found"
+            )
+
+        # Check if user has access to this team
+        is_author = team.user_id == user_id
+        shared_team = None
+
+        if not is_author:
+            shared_team = db.query(SharedTeam).filter(
+                SharedTeam.user_id == user_id,
+                SharedTeam.team_id == team_id,
+                SharedTeam.is_active == True
+            ).first()
+            if not shared_team:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Access denied to this team"
+                )
+
+        # Get original user context
+        original_user_id = team.user_id if is_author else shared_team.original_user_id
+        team_dict = self._convert_to_team_dict(team, db, original_user_id)
+
+        # Check if team has any external API bots (like Dify)
+        has_external_api_bot = False
+        external_api_bot = None
+
+        for bot_info in team_dict["bots"]:
+            bot_id = bot_info["bot_id"]
+            bot = db.query(Kind).filter(
+                Kind.id == bot_id,
+                Kind.user_id == original_user_id,
+                Kind.kind == "Bot",
+                Kind.is_active == True
+            ).first()
+
+            if bot:
+                bot_crd = Bot.model_validate(bot.json)
+                # Check if bot uses external API shell
+                shell_name = bot_crd.spec.shellRef.name
+                shell_namespace = bot_crd.spec.shellRef.namespace
+                
+                shell = db.query(Kind).filter(
+                    Kind.name == shell_name,
+                    Kind.namespace == shell_namespace,
+                    Kind.user_id == original_user_id,
+                    Kind.kind == "Shell",
+                    Kind.is_active == True
+                ).first()
+
+                if shell:
+                    # Use utility function to get shell type
+                    shell_type = get_shell_type(
+                        db,
+                        shell_name,
+                        shell_namespace,
+                        original_user_id
+                    )
+                    
+                    if shell_type == "external_api":
+                        has_external_api_bot = True
+                        external_api_bot = bot_crd
+                        break
+
+        if not has_external_api_bot:
+            return {
+                "has_parameters": False,
+                "parameters": []
+            }
+
+        # Get bot's model to extract API credentials
+        model_ref = external_api_bot.spec.modelRef
+        model = db.query(Kind).filter(
+            Kind.user_id == original_user_id,
+            Kind.kind == "Model",
+            Kind.name == model_ref.name,
+            Kind.namespace == model_ref.namespace,
+            Kind.is_active == True
+        ).first()
+        
+        if not model:
+            return {
+                "has_parameters": False,
+                "parameters": []
+            }
+        
+        model_crd = Model.model_validate(model.json)
+        agent_config = model_crd.spec.modelConfig or {}
+
+        # Decrypt sensitive data before using
+        decrypted_agent_config = self._decrypt_agent_config(agent_config)
+        env = decrypted_agent_config.get("env", {})
+
+        # For Dify bots, we need to call Dify API to get parameters
+        api_key = env.get("DIFY_API_KEY", "")
+        base_url = env.get("DIFY_BASE_URL", "https://api.dify.ai")
+
+        if not api_key:
+            return {
+                "has_parameters": False,
+                "parameters": []
+            }
+
+        # Call external API to get parameter schema and app info
+        try:
+            import requests
+
+            # Get app info to retrieve mode
+            app_mode = None
+            try:
+                info_response = requests.get(
+                    f"{base_url}/v1/info",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    timeout=10
+                )
+                if info_response.status_code == 200:
+                    info_data = info_response.json()
+                    app_mode = info_data.get("mode")
+            except Exception as e:
+                logger.warning("Failed to fetch app info: %s", e)
+
+            # Get app parameters
+            response = requests.get(
+                f"{base_url}/v1/parameters",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json"
+                },
+                timeout=10
+            )
+            if response.status_code == 200:
+                data = response.json()
+                user_input_form = data.get("user_input_form", [])
+
+                # Transform Dify's nested format to flat format expected by frontend
+                # Dify format: [{"text-input": {"variable": "x", ...}}, ...]
+                # Frontend expects: [{"variable": "x", "type": "text-input", ...}, ...]
+                transformed_params = []
+                for item in user_input_form:
+                    if isinstance(item, dict):
+                        # Each item is like {"text-input": {...}} or {"select": {...}}
+                        for param_type, param_data in item.items():
+                            if isinstance(param_data, dict):
+                                # Add type field and flatten
+                                transformed_param = {**param_data, "type": param_type}
+                                transformed_params.append(transformed_param)
+                
+                # has_parameters is true as long as the API request succeeds (external API bot exists)
+                result = {
+                    "has_parameters": True,
+                    "parameters": transformed_params
+                }
+                
+                # Add app_mode if available
+                if app_mode:
+                    result["app_mode"] = app_mode
+                
+                return result
+            else:
+                logger.warning("Dify API returned status %s: %s", response.status_code, response.text)
+                # has_parameters is true as long as external API bot exists, even if parameters API fails
+                result = {
+                    "has_parameters": True,
+                    "parameters": []
+                }
+                if app_mode:
+                    result["app_mode"] = app_mode
+                return result
+        except Exception as e:
+            logger.warning("Failed to fetch parameters from external API: %s", e, exc_info=True)
+            # has_parameters is true as long as external API bot exists, even if API call fails
+            return {
+                "has_parameters": True,
+                "parameters": []
+            }
 
 
 team_kinds_service = TeamKindsService(Kind)
