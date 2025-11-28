@@ -158,7 +158,32 @@ status:
 |-------|------|----------|-------------|
 | `ghostRef` | object | Yes | Ghost resource reference |
 | `shellRef` | object | Yes | Shell resource reference |
-| `modelRef` | object | Yes | Model resource reference |
+| `modelRef` | object | No | Model resource reference (optional, can use bind_model instead) |
+
+#### Model Binding Methods
+
+There are two ways to bind a model to a Bot:
+
+**Method 1: Using modelRef (Legacy)**
+```yaml
+spec:
+  modelRef:
+    name: <model-name>
+    namespace: default
+```
+
+**Method 2: Using bind_model in agent_config (Recommended)**
+```yaml
+spec:
+  agent_config:
+    bind_model: "my-custom-model"
+    bind_model_type: "user"  # Optional: 'public' or 'user'
+```
+
+The `bind_model` approach offers more flexibility:
+- Reference models by name without full YAML structure
+- Optionally specify model type to avoid naming conflicts
+- System auto-detects model type if not specified (user models first, then public)
 
 #### Reference Object Format
 
