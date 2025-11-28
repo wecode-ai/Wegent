@@ -162,6 +162,7 @@ graph LR
 
    - **Claude Code Shell**: 使用 `ANTHROPIC_AUTH_TOKEN`
    - **Agno Shell**: 使用 `ANTHROPIC_API_KEY`
+   - **Dify Shell**: 使用 `DIFY_API_KEY` 和 `DIFY_BASE_URL`
 
    请根据您的 Shell 配置设置正确的环境变量。具体要求请查看 Shell 文档或 `executor/agents/` 代码。
 
@@ -192,8 +193,8 @@ graph TB
 
     subgraph "🤖 智能体层"
         Claude["🧠 Claude Code"]
-        Ango["💻 Agno"]
-        DifyPlanned["✨ Dify（计划中）"]
+        Agno["💻 Agno"]
+        Dify["✨ Dify"]
     end
 
 
@@ -206,10 +207,10 @@ graph TB
     ExecutorManager --> Executor2
     ExecutorManager --> ExecutorN
 
-    %% AI 程序集成（目前仅支持 Claude Code）
+    %% AI 程序集成
     Executor1 --> Claude
-    Executor2 --> Claude
-    ExecutorN --> Ango
+    Executor2 --> Agno
+    ExecutorN --> Dify
 ```
 
 ## 🛠️ 开发

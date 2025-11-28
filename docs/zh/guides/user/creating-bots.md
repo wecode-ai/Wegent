@@ -40,7 +40,7 @@ Bot = Ghost (灵魂) + Shell (容器) + Model (AI 模型)
 | 组件 | 说明 | 示例 |
 |------|------|------|
 | **Ghost** | 定义智能体的个性和能力 | "前端开发专家" |
-| **Shell** | 运行时环境 | ClaudeCode, Agno |
+| **Shell** | 运行时环境 | ClaudeCode, Agno, Dify |
 | **Model** | AI 模型配置 | Claude Sonnet 4, GPT-4 |
 
 ### Bot vs Ghost
@@ -103,6 +103,7 @@ Bot 通过 `Ref` (引用) 来组合资源,而不是直接包含配置。这样�
 **选择 Shell**:
 - ClaudeCode: 适合代码开发任务
 - Agno: 适合对话和交互任务
+- Dify: 适合与 Dify 平台的外部 API 集成（支持 chat、workflow、chatflow、agent-chat 模式）
 
 **选择 Model**:
 - Sonnet: 平衡性能和成本
@@ -449,6 +450,9 @@ shellRef: ClaudeCode
 
 # 对话交互任务
 shellRef: Agno
+
+# 与 Dify 外部 API 集成
+shellRef: Dify
 ```
 
 ### 3. 复用策略

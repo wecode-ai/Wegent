@@ -26,7 +26,7 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 **Multi-module architecture:**
 - **Backend** (FastAPI + SQLAlchemy + MySQL): RESTful API and business logic
 - **Frontend** (Next.js 15 + TypeScript + React 19): Web UI with shadcn/ui components
-- **Executor**: Task execution engine (Claude Code, Agno)
+- **Executor**: Task execution engine (Claude Code, Agno, Dify)
 - **Executor Manager**: Task orchestration via Docker
 - **Shared**: Common utilities and models
 
@@ -465,13 +465,21 @@ alembic upgrade head --sql
 
 ### Executor
 
-**Tech:** Python, Claude Code SDK, Agno, Docker
+**Tech:** Python, Claude Code SDK, Agno, Dify API, Docker
+
+**Supported Agent Types:**
+- **ClaudeCode**: For code development tasks with Claude Code SDK
+- **Agno**: For dialogue and chat tasks
+- **Dify**: For external API integration with Dify platform (chat, workflow, chatflow, agent-chat modes)
 
 **Common tasks:**
 - Add agent type: Implement in `agents/`
 - Modify execution: Update `tasks/`
 
-**Environment:** `ANTHROPIC_AUTH_TOKEN` (Claude Code) or `ANTHROPIC_API_KEY` (Agno)
+**Environment Variables:**
+- Claude Code: `ANTHROPIC_AUTH_TOKEN`
+- Agno: `ANTHROPIC_API_KEY`
+- Dify: `DIFY_API_KEY`, `DIFY_BASE_URL`
 
 ### Executor Manager
 
