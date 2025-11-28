@@ -40,13 +40,18 @@ def post_create_claude_model_hook(
     wecode_model_id = model_id.split(",")[-1].strip() if "," in model_id else model_id
 
     # Add wecode-specific custom headers
-    env_config["ANTHROPIC_CUSTOM_HEADERS"] = (
-        f"wecode-user: {user_name}\n"
-        f"wecode-model-id: {wecode_model_id}\n"
-        f"wecode-action: wegent\n"
-        f"wecode-executor: claudecode\n"
-        f"git_url: {git_url}"
-    )
+    custom_headers = [
+        f"wecode-user: {user_name}",
+        f"wecode-model-id: {wecode_model_id}",
+        "wecode-source: wegent",
+        "wecode-action: wegent",
+        "wecode-executor: claudecode",
+    ]
+
+    if git_url:
+        custom_headers.append(f"git_url: {git_url}")
+
+    env_config["ANTHROPIC_CUSTOM_HEADERS"] = "\n".join(custom_headers)
     logger.debug(f"Added custom headers with wecode-user: {user_name}, wecode-model-id: {wecode_model_id}")
 
     # Add wecode-specific model configurations
