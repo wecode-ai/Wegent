@@ -50,6 +50,7 @@ export default function PipelineModeEditor({
         teamPromptMap={teamPromptMap}
         isDifyLeader={isDifyLeader}
         autoSetLeader={true}
+        sortable={true}
         onEditBot={onEditBot}
         onCreateBot={onCreateBot}
         onCloneBot={onCloneBot}

@@ -30,40 +30,36 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { modelApis, ModelCRD, PublicModelItem } from '@/apis/models';
+import { modelApis, ModelCRD, UnifiedModel } from '@/apis/models';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
 // Unified display model interface
 interface DisplayModel {
   name: string; // Unique identifier (ID)
   displayName: string; // Human-readable name (falls back to name if not set)
-  modelType: string;
+  modelType: string; // Provider type: 'openai' | 'claude'
   modelId: string;
   isPublic: boolean;
-  originalData: ModelCRD | null;
+  config: Record<string, unknown>; // Full config from unified API
 }
 
 const ModelList: React.FC = () => {
   const { t } = useTranslation('common');
   const { toast } = useToast();
-  const [userModels, setUserModels] = useState<ModelCRD[]>([]);
-  const [publicModels, setPublicModels] = useState<PublicModelItem[]>([]);
+  const [unifiedModels, setUnifiedModels] = useState<UnifiedModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingModel, setEditingModel] = useState<ModelCRD | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [deleteConfirmModel, setDeleteConfirmModel] = useState<ModelCRD | null>(null);
+  const [deleteConfirmModel, setDeleteConfirmModel] = useState<DisplayModel | null>(null);
   const [testingModelName, setTestingModelName] = useState<string | null>(null);
+  const [loadingModelName, setLoadingModelName] = useState<string | null>(null);
 
   const fetchModels = useCallback(async () => {
     setLoading(true);
     try {
-      // Fetch both user models and public models in parallel
-      const [userResponse, publicResponse] = await Promise.all([
-        modelApis.getAllModels(),
-        modelApis.getPublicModels(),
-      ]);
-      setUserModels(userResponse.items || []);
-      setPublicModels(publicResponse.items || []);
+      // Use unified API to get all models (both public and user-defined)
+      const unifiedResponse = await modelApis.getUnifiedModels(undefined, true); // include_config=true for full details
+      setUnifiedModels(unifiedResponse.data || []);
     } catch (error) {
       console.error('Failed to fetch models:', error);
       toast({
@@ -79,59 +75,75 @@ const ModelList: React.FC = () => {
     fetchModels();
   }, [fetchModels]);
 
-  // Convert to unified display format
-  // Convert to unified display format
+  // Convert unified models to display format
   const displayModels: DisplayModel[] = React.useMemo(() => {
     const result: DisplayModel[] = [];
 
-    // Add public models first
-    for (const pm of publicModels) {
-      const env = pm.config?.env || {};
+    for (const model of unifiedModels) {
+      const isPublic = model.type === 'public';
+
+      // Extract config info from unified model
+      const config = (model.config as Record<string, unknown>) || {};
+      const env = (config?.env as Record<string, unknown>) || {};
+
       result.push({
-        name: pm.name,
-        displayName: pm.name, // Public models use name as display name
-        modelType: env.model || 'claude',
-        modelId: env.model_id || '',
-        isPublic: true,
-        originalData: null,
+        name: model.name,
+        displayName: model.displayName || model.name,
+        modelType: model.provider || (env.model as string) || 'claude',
+        modelId: model.modelId || (env.model_id as string) || '',
+        isPublic,
+        config,
       });
     }
 
-    // Add user models (exclude those with same name as public models)
-    const publicNames = new Set(publicModels.map(pm => pm.name));
-    for (const model of userModels) {
-      if (!publicNames.has(model.metadata.name)) {
-        const env = model.spec.modelConfig?.env || {};
-        result.push({
-          name: model.metadata.name,
-          displayName: model.metadata.displayName || model.metadata.name, // Use displayName if available, fallback to name
-          modelType: env.model || 'claude',
-          modelId: env.model_id || '',
-          isPublic: false,
-          originalData: model,
-        });
-      }
-    }
-
     return result;
-  }, [userModels, publicModels]);
+  }, [unifiedModels]);
+  // Convert DisplayModel to ModelCRD for editing
+  const convertToModelCRD = (displayModel: DisplayModel): ModelCRD => {
+    const env = (displayModel.config?.env as Record<string, unknown>) || {};
+    return {
+      apiVersion: 'agent.wecode.io/v1',
+      kind: 'Model',
+      metadata: {
+        name: displayModel.name,
+        namespace: 'default',
+        displayName:
+          displayModel.displayName !== displayModel.name ? displayModel.displayName : undefined,
+      },
+      spec: {
+        modelConfig: {
+          env: {
+            model: displayModel.modelType === 'openai' ? 'openai' : 'claude',
+            model_id: displayModel.modelId,
+            api_key: (env.api_key as string) || '',
+            base_url: env.base_url as string | undefined,
+            custom_headers: env.custom_headers as Record<string, string> | undefined,
+          },
+        },
+      },
+      status: {
+        state: 'Available',
+      },
+    };
+  };
+
   const handleTestConnection = async (displayModel: DisplayModel) => {
-    if (displayModel.isPublic || !displayModel.originalData) {
+    if (displayModel.isPublic) {
       // Public models cannot be tested (no API key access)
       return;
     }
 
-    const model = displayModel.originalData;
-    setTestingModelName(model.metadata.name);
+    setTestingModelName(displayModel.name);
     try {
-      const env = model.spec.modelConfig?.env || {};
-      const apiKey = env.api_key;
-      // If api_key is masked (***) or empty, use model_name to load from database
+      const env = (displayModel.config?.env as Record<string, unknown>) || {};
+      const apiKey = (env.api_key as string) || '';
+
+      // Test connection requires api_key
       const result = await modelApis.testConnection({
-        provider_type: env.model === 'openai' ? 'openai' : 'anthropic',
-        model_id: env.model_id || '',
-        ...(apiKey && apiKey !== '***' ? { api_key: apiKey } : { model_name: model.metadata.name }),
-        base_url: env.base_url,
+        provider_type: displayModel.modelType === 'openai' ? 'openai' : 'anthropic',
+        model_id: displayModel.modelId,
+        api_key: apiKey,
+        base_url: env.base_url as string | undefined,
       });
 
       if (result.success) {
@@ -161,7 +173,7 @@ const ModelList: React.FC = () => {
     if (!deleteConfirmModel) return;
 
     try {
-      await modelApis.deleteModel(deleteConfirmModel.metadata.name);
+      await modelApis.deleteModel(deleteConfirmModel.name);
       toast({
         title: t('models.delete_success'),
       });
@@ -173,6 +185,23 @@ const ModelList: React.FC = () => {
         title: t('models.errors.delete_failed'),
         description: (error as Error).message,
       });
+    }
+  };
+
+  const handleEdit = async (displayModel: DisplayModel) => {
+    if (displayModel.isPublic) return;
+
+    setLoadingModelName(displayModel.name);
+    try {
+      // Fetch the full CRD data for editing
+      const modelCRD = await modelApis.getModel(displayModel.name);
+      setEditingModel(modelCRD);
+    } catch (error) {
+      // If fetch fails, construct from unified data
+      console.warn('Failed to fetch model CRD, using unified data:', error);
+      setEditingModel(convertToModelCRD(displayModel));
+    } finally {
+      setLoadingModelName(null);
     }
   };
 
@@ -263,7 +292,7 @@ const ModelList: React.FC = () => {
                       </div>
                       <div className="flex items-center gap-1 flex-shrink-0 ml-3">
                         {/* Only show action buttons for user's own models */}
-                        {!displayModel.isPublic && displayModel.originalData && (
+                        {!displayModel.isPublic && (
                           <>
                             <Button
                               variant="ghost"
@@ -283,16 +312,21 @@ const ModelList: React.FC = () => {
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8"
-                              onClick={() => setEditingModel(displayModel.originalData)}
+                              onClick={() => handleEdit(displayModel)}
+                              disabled={loadingModelName === displayModel.name}
                               title={t('models.edit')}
                             >
-                              <PencilIcon className="w-4 h-4" />
+                              {loadingModelName === displayModel.name ? (
+                                <Loader2 className="w-4 h-4 animate-spin" />
+                              ) : (
+                                <PencilIcon className="w-4 h-4" />
+                              )}
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8 hover:text-error"
-                              onClick={() => setDeleteConfirmModel(displayModel.originalData)}
+                              onClick={() => setDeleteConfirmModel(displayModel)}
                               title={t('models.delete')}
                             >
                               <TrashIcon className="w-4 h-4" />
@@ -326,7 +360,7 @@ const ModelList: React.FC = () => {
           <AlertDialogHeader>
             <AlertDialogTitle>{t('models.delete_confirm_title')}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t('models.delete_confirm_message', { name: deleteConfirmModel?.metadata.name })}
+              {t('models.delete_confirm_message', { name: deleteConfirmModel?.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

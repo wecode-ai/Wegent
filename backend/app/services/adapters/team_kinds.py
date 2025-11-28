@@ -806,7 +806,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         
         bot_crd = Bot.model_validate(bot.json)
         
-        logger.info(f"[_get_bot_summary] bot.name={bot.name}, modelRef.name={bot_crd.spec.modelRef.name}, modelRef.namespace={bot_crd.spec.modelRef.namespace}")
+        # modelRef is optional, handle None case
+        model_ref_name = bot_crd.spec.modelRef.name if bot_crd.spec.modelRef else None
+        model_ref_namespace = bot_crd.spec.modelRef.namespace if bot_crd.spec.modelRef else None
+        
+        logger.info(f"[_get_bot_summary] bot.name={bot.name}, modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}")
         
         # Get shell to extract agent_name
         shell = db.query(Kind).filter(
@@ -822,138 +826,58 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             shell_crd = Shell.model_validate(shell.json)
             agent_name = shell_crd.spec.runtime
         
-        # Get model reference
-        model_ref_name = bot_crd.spec.modelRef.name
-        model_ref_namespace = bot_crd.spec.modelRef.namespace
-        
-        # Try to find model in user's private models first
-        model = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Model",
-            Kind.name == model_ref_name,
-            Kind.namespace == model_ref_namespace,
-            Kind.is_active == True
-        ).first()
-        
-        logger.info(f"[_get_bot_summary] Private model found: {model is not None}")
-        
         agent_config = {}
         
-        if model:
-            # Private model - check if it's a custom config or predefined model
-            model_crd = Model.model_validate(model.json)
-            is_custom_config = model_crd.spec.isCustomConfig
-            
-            logger.info(f"[_get_bot_summary] Private model isCustomConfig: {is_custom_config}")
-            
-            if is_custom_config:
-                # Custom config - don't include bind_model
-                agent_config = {}
-                logger.info(f"[_get_bot_summary] Custom config (isCustomConfig=True), returning empty agent_config")
-            else:
-                # Not custom config = predefined model, return bind_model format
-                agent_config = {"bind_model": model_ref_name}
-                logger.info(f"[_get_bot_summary] Predefined model (isCustomConfig=False), returning bind_model: {agent_config}")
-        else:
-            # Try to find in public_models table
-            public_model = db.query(PublicModel).filter(
-                PublicModel.name == model_ref_name,
-                PublicModel.namespace == model_ref_namespace,
-                PublicModel.is_active == True
+        # Only try to find model if modelRef exists
+        if model_ref_name and model_ref_namespace:
+            # Try to find model in user's private models first
+            model = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Model",
+                Kind.name == model_ref_name,
+                Kind.namespace == model_ref_namespace,
+                Kind.is_active == True
             ).first()
             
-            logger.info(f"[_get_bot_summary] Public model found: {public_model is not None}")
+            logger.info(f"[_get_bot_summary] Private model found: {model is not None}")
             
-            if public_model:
-                # Public model - return bind_model format
-                agent_config = {"bind_model": public_model.name}
-                logger.info(f"[_get_bot_summary] Using bind_model from public model: {agent_config}")
+            if model:
+                # Private model - check if it's a custom config or predefined model
+                model_crd = Model.model_validate(model.json)
+                is_custom_config = model_crd.spec.isCustomConfig
+                
+                logger.info(f"[_get_bot_summary] Private model isCustomConfig: {is_custom_config}")
+                
+                if is_custom_config:
+                    # Custom config - return full modelConfig with protocol for advanced mode
+                    model_config = model_crd.spec.modelConfig or {}
+                    protocol = model_crd.spec.protocol
+                    agent_config = dict(model_config)
+                    if protocol:
+                        agent_config["protocol"] = protocol
+                    logger.info(f"[_get_bot_summary] Custom config (isCustomConfig=True), returning full agent_config: {agent_config}")
+                else:
+                    # Not custom config = predefined model, return bind_model format with type
+                    agent_config = {"bind_model": model_ref_name, "bind_model_type": "user"}
+                    logger.info(f"[_get_bot_summary] Predefined model (isCustomConfig=False), returning bind_model: {agent_config}")
             else:
-                logger.info(f"[_get_bot_summary] No model found for modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}")
-        
-        result = {
-            "agent_config": agent_config,
-            "agent_name": agent_name
-        }
-        logger.info(f"[_get_bot_summary] Returning: {result}")
-        return result
-
-    def _get_bot_summary(self, bot: Kind, db: Session, user_id: int) -> Dict[str, Any]:
-        """
-        Get a summary of bot information including agent_config with only necessary fields.
-        This is used for team list to determine if bots have predefined models.
-        """
-        import logging
-        logger = logging.getLogger(__name__)
-        
-        from app.models.public_model import PublicModel
-        
-        bot_crd = Bot.model_validate(bot.json)
-        
-        logger.info(f"[_get_bot_summary] bot.name={bot.name}, modelRef.name={bot_crd.spec.modelRef.name}, modelRef.namespace={bot_crd.spec.modelRef.namespace}")
-        
-        # Get shell to extract agent_name
-        shell = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Shell",
-            Kind.name == bot_crd.spec.shellRef.name,
-            Kind.namespace == bot_crd.spec.shellRef.namespace,
-            Kind.is_active == True
-        ).first()
-        
-        agent_name = ""
-        if shell and shell.json:
-            shell_crd = Shell.model_validate(shell.json)
-            agent_name = shell_crd.spec.runtime
-        
-        # Get model reference
-        model_ref_name = bot_crd.spec.modelRef.name
-        model_ref_namespace = bot_crd.spec.modelRef.namespace
-        
-        # Try to find model in user's private models first
-        model = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Model",
-            Kind.name == model_ref_name,
-            Kind.namespace == model_ref_namespace,
-            Kind.is_active == True
-        ).first()
-        
-        logger.info(f"[_get_bot_summary] Private model found: {model is not None}")
-        
-        agent_config = {}
-        
-        if model:
-            # Private model - check if it's a custom config or predefined model
-            model_crd = Model.model_validate(model.json)
-            is_custom_config = model_crd.spec.isCustomConfig
-            
-            logger.info(f"[_get_bot_summary] Private model isCustomConfig: {is_custom_config}")
-            
-            if is_custom_config:
-                # Custom config - don't include bind_model
-                agent_config = {}
-                logger.info(f"[_get_bot_summary] Custom config (isCustomConfig=True), returning empty agent_config")
-            else:
-                # Not custom config = predefined model, return bind_model format
-                agent_config = {"bind_model": model_ref_name}
-                logger.info(f"[_get_bot_summary] Predefined model (isCustomConfig=False), returning bind_model: {agent_config}")
+                # Try to find in public_models table
+                public_model = db.query(PublicModel).filter(
+                    PublicModel.name == model_ref_name,
+                    PublicModel.namespace == model_ref_namespace,
+                    PublicModel.is_active == True
+                ).first()
+                
+                logger.info(f"[_get_bot_summary] Public model found: {public_model is not None}")
+                
+                if public_model:
+                    # Public model - return bind_model format with type
+                    agent_config = {"bind_model": public_model.name, "bind_model_type": "public"}
+                    logger.info(f"[_get_bot_summary] Using bind_model from public model: {agent_config}")
+                else:
+                    logger.info(f"[_get_bot_summary] No model found for modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}")
         else:
-            # Try to find in public_models table
-            public_model = db.query(PublicModel).filter(
-                PublicModel.name == model_ref_name,
-                PublicModel.namespace == model_ref_namespace,
-                PublicModel.is_active == True
-            ).first()
-            
-            logger.info(f"[_get_bot_summary] Public model found: {public_model is not None}")
-            
-            if public_model:
-                # Public model - return bind_model format
-                agent_config = {"bind_model": public_model.name}
-                logger.info(f"[_get_bot_summary] Using bind_model from public model: {agent_config}")
-            else:
-                logger.info(f"[_get_bot_summary] No model found for modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}")
+            logger.info(f"[_get_bot_summary] No modelRef for bot {bot.name}")
         
         result = {
             "agent_config": agent_config,
@@ -986,14 +910,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.is_active == True
         ).first()
         
-        # Get model
-        model = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Model",
-            Kind.name == bot_crd.spec.modelRef.name,
-            Kind.namespace == bot_crd.spec.modelRef.namespace,
-            Kind.is_active == True
-        ).first()
+        # Get model - modelRef is optional
+        model = None
+        if bot_crd.spec.modelRef:
+            model = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Model",
+                Kind.name == bot_crd.spec.modelRef.name,
+                Kind.namespace == bot_crd.spec.modelRef.namespace,
+                Kind.is_active == True
+            ).first()
         
         # Extract data from components
         system_prompt = ""
@@ -1142,7 +1068,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             }
 
         # Get bot's model to extract API credentials
+        # modelRef is optional
         model_ref = external_api_bot.spec.modelRef
+        if not model_ref:
+            return {
+                "has_parameters": False,
+                "parameters": []
+            }
+        
         model = db.query(Kind).filter(
             Kind.user_id == original_user_id,
             Kind.kind == "Model",

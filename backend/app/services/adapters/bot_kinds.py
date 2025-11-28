@@ -420,7 +420,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             if bot_crd:
                 ghost = ghost_map.get((bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace))
                 shell = shell_map.get((bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace))
-                model = model_map.get((bot_crd.spec.modelRef.name, bot_crd.spec.modelRef.namespace))
+                # modelRef is optional, only get if it exists
+                if bot_crd.spec.modelRef:
+                    model = model_map.get((bot_crd.spec.modelRef.name, bot_crd.spec.modelRef.namespace))
             result.append(self._convert_to_bot_dict(bot, ghost, shell, model))
         
         return result
@@ -558,78 +560,134 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 
                 # Update bot's modelRef
                 bot_crd = Bot.model_validate(bot.json)
-                bot_crd.spec.modelRef.name = model_name
-                bot_crd.spec.modelRef.namespace = "default"
-                bot.json = bot_crd.model_dump()
-                flag_modified(bot, "json")
+                if bot_crd.spec.modelRef:
+                    bot_crd.spec.modelRef.name = model_name
+                    bot_crd.spec.modelRef.namespace = "default"
+                    bot.json = bot_crd.model_dump()
+                    flag_modified(bot, "json")
                 
-                # Delete old private model if it exists and is different from the new one
+                # Only delete old model if it's a user's private custom model (not public or predefined)
+                # A private custom model must satisfy:
+                # 1. It's a Kind object (not PublicModel)
+                # 2. It has the naming pattern "{bot.name}-model" (dedicated to this bot)
+                # 3. It has isCustomConfig=True in the model spec
                 if model and model.name != model_name:
-                    logger.info(f"[DEBUG] Deleting old private model: {model.name}")
-                    db.delete(model)
-                    model = None
+                    # Check if it's a Kind object (private model) vs PublicModel
+                    is_kind_model = isinstance(model, Kind)
+                    if is_kind_model:
+                        # Check if it's a dedicated private custom model for this bot
+                        dedicated_model_name = f"{bot.name}-model"
+                        is_dedicated_model = model.name == dedicated_model_name
+                        
+                        # Check if it has isCustomConfig=True
+                        is_custom_config = False
+                        if model.json:
+                            model_crd = Model.model_validate(model.json)
+                            is_custom_config = model_crd.spec.isCustomConfig or False
+                        
+                        # Only delete if it's a dedicated private custom model
+                        if is_dedicated_model and is_custom_config:
+                            logger.info(f"[DEBUG] Deleting old private custom model: {model.name}")
+                            db.delete(model)
+                            model = None
+                        else:
+                            logger.info(f"[DEBUG] Not deleting model {model.name}: is_dedicated={is_dedicated_model}, is_custom_config={is_custom_config}")
+                    else:
+                        logger.info(f"[DEBUG] Not deleting model {model.name}: it's a public model")
                 
                 # Get the new model for response using type hint
                 model = self._get_model_by_name_and_type(db, model_name, "default", user_id, model_type)
                 return_agent_config = new_agent_config
-            elif model:
-                # For custom config, update the existing private model
-                logger.info(f"[DEBUG] Custom config, updating existing model")
-                
-                # Extract protocol from agent_config
-                protocol = self._get_protocol_from_config(new_agent_config)
-                # Remove protocol from the config that goes into modelConfig
-                model_config = {k: v for k, v in new_agent_config.items() if k != "protocol"}
-                
-                model_crd = Model.model_validate(model.json)
-                model_crd.spec.modelConfig = model_config
-                model_crd.spec.isCustomConfig = True
-                model_crd.spec.protocol = protocol
-                model.json = model_crd.model_dump()
-                flag_modified(model, "json")
-                db.add(model)
             else:
-                # No existing model, create a new private model
-                logger.info(f"[DEBUG] No existing model, creating new private model")
+                # For custom config, we need to check if we should update existing model or create new one
+                # We should only update if the model is a dedicated private model for this bot
+                # Otherwise, we need to create a new private model
                 
                 # Extract protocol from agent_config
                 protocol = self._get_protocol_from_config(new_agent_config)
                 # Remove protocol from the config that goes into modelConfig
                 model_config = {k: v for k, v in new_agent_config.items() if k != "protocol"}
                 
-                model_json = {
-                    "kind": "Model",
-                    "spec": {
-                        "modelConfig": model_config,
-                        "isCustomConfig": True,
-                        "protocol": protocol
-                    },
-                    "status": {
-                        "state": "Available"
-                    },
-                    "metadata": {
-                        "name": f"{bot.name}-model",
-                        "namespace": "default"
-                    },
-                    "apiVersion": "agent.wecode.io/v1"
-                }
+                dedicated_model_name = f"{bot.name}-model"
                 
-                model = Kind(
-                    user_id=user_id,
-                    kind="Model",
-                    name=f"{bot.name}-model",
-                    namespace="default",
-                    json=model_json,
-                    is_active=True
-                )
-                db.add(model)
+                # Check if we have an existing dedicated private model for this bot
+                is_dedicated_private_model = False
+                if model and isinstance(model, Kind):
+                    # Check if it's a dedicated model for this bot
+                    is_dedicated_model = model.name == dedicated_model_name
+                    # Check if it has isCustomConfig=True
+                    is_custom_config = False
+                    if model.json:
+                        model_crd = Model.model_validate(model.json)
+                        is_custom_config = model_crd.spec.isCustomConfig or False
+                    is_dedicated_private_model = is_dedicated_model and is_custom_config
                 
-                # Update bot's modelRef
-                bot_crd = Bot.model_validate(bot.json)
-                bot_crd.spec.modelRef.name = f"{bot.name}-model"
-                bot_crd.spec.modelRef.namespace = "default"
-                bot.json = bot_crd.model_dump()
-                flag_modified(bot, "json")
+                if is_dedicated_private_model:
+                    # Update the existing dedicated private model
+                    logger.info(f"[DEBUG] Custom config, updating existing dedicated private model: {model.name}")
+                    model_crd = Model.model_validate(model.json)
+                    model_crd.spec.modelConfig = model_config
+                    model_crd.spec.isCustomConfig = True
+                    model_crd.spec.protocol = protocol
+                    model.json = model_crd.model_dump()
+                    flag_modified(model, "json")
+                    db.add(model)
+                elif model and isinstance(model, Kind) and model.name == dedicated_model_name:
+                    # The model exists with the dedicated name but is not marked as custom config, update it
+                    logger.info(f"[DEBUG] Custom config, updating existing model (marking as custom): {model.name}")
+                    model_crd = Model.model_validate(model.json)
+                    model_crd.spec.modelConfig = model_config
+                    model_crd.spec.isCustomConfig = True
+                    model_crd.spec.protocol = protocol
+                    model.json = model_crd.model_dump()
+                    flag_modified(model, "json")
+                    db.add(model)
+                else:
+                    # No existing dedicated private model, create a new one
+                    # This happens when:
+                    # 1. model is None (no model at all)
+                    # 2. model is a PublicModel (can't be modified)
+                    # 3. model is a Kind but not dedicated to this bot (shared model)
+                    logger.info(f"[DEBUG] Creating new private model for custom config")
+                    
+                    model_json = {
+                        "kind": "Model",
+                        "spec": {
+                            "modelConfig": model_config,
+                            "isCustomConfig": True,
+                            "protocol": protocol
+                        },
+                        "status": {
+                            "state": "Available"
+                        },
+                        "metadata": {
+                            "name": f"{bot.name}-model",
+                            "namespace": "default"
+                        },
+                        "apiVersion": "agent.wecode.io/v1"
+                    }
+                    
+                    model = Kind(
+                        user_id=user_id,
+                        kind="Model",
+                        name=dedicated_model_name,
+                        namespace="default",
+                        json=model_json,
+                        is_active=True
+                    )
+                    db.add(model)
+                    
+                    # Update bot's modelRef to point to the new dedicated model
+                    bot_crd = Bot.model_validate(bot.json)
+                    from app.schemas.kind import ModelRef
+                    if bot_crd.spec.modelRef:
+                        bot_crd.spec.modelRef.name = dedicated_model_name
+                        bot_crd.spec.modelRef.namespace = "default"
+                    else:
+                        # Create new modelRef
+                        bot_crd.spec.modelRef = ModelRef(name=dedicated_model_name, namespace="default")
+                    bot.json = bot_crd.model_dump()
+                    flag_modified(bot, "json")
 
         if "system_prompt" in update_data and ghost:
             ghost_crd = Ghost.model_validate(ghost.json)
@@ -748,7 +806,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         logger = logging.getLogger(__name__)
         
         bot_crd = Bot.model_validate(bot.json)
-        logger.info(f"[DEBUG] _get_bot_components: bot.name={bot.name}, modelRef.name={bot_crd.spec.modelRef.name}, modelRef.namespace={bot_crd.spec.modelRef.namespace}")
+        model_ref_name = bot_crd.spec.modelRef.name if bot_crd.spec.modelRef else None
+        model_ref_namespace = bot_crd.spec.modelRef.namespace if bot_crd.spec.modelRef else None
+        logger.info(f"[DEBUG] _get_bot_components: bot.name={bot.name}, modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}")
         
         # Get ghost
         ghost = db.query(Kind).filter(
@@ -767,14 +827,16 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             Kind.namespace == bot_crd.spec.shellRef.namespace,
             Kind.is_active == True
         ).first()
-        
         # Get model - try private models first, then public models
-        model = self._get_model_by_name(
-            db,
-            bot_crd.spec.modelRef.name,
-            bot_crd.spec.modelRef.namespace,
-            user_id
-        )
+        # modelRef is optional, only get if it exists
+        model = None
+        if bot_crd.spec.modelRef:
+            model = self._get_model_by_name(
+                db,
+                bot_crd.spec.modelRef.name,
+                bot_crd.spec.modelRef.namespace,
+                user_id
+            )
         
         logger.info(f"[DEBUG] _get_bot_components: ghost={ghost is not None}, shell={shell is not None}, model={model is not None}")
         if model:
@@ -806,7 +868,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot_crds[bot.id] = bot_crd
             ghost_keys.add((bot_crd.spec.ghostRef.name, bot_crd.spec.ghostRef.namespace))
             shell_keys.add((bot_crd.spec.shellRef.name, bot_crd.spec.shellRef.namespace))
-            model_keys.add((bot_crd.spec.modelRef.name, bot_crd.spec.modelRef.namespace))
+            # modelRef is optional, only add if it exists
+            if bot_crd.spec.modelRef:
+                model_keys.add((bot_crd.spec.modelRef.name, bot_crd.spec.modelRef.namespace))
         
         def build_or_filters(kind_name: str, keys: set):
             # Compose OR of AND clauses: or_(and_(kind==X, name==N, namespace==NS), ...)
@@ -905,12 +969,16 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             
             # Get the modelRef name from bot to determine if it's a dedicated private model
             bot_crd = Bot.model_validate(bot.json)
-            model_ref_name = bot_crd.spec.modelRef.name
+            model_ref_name = bot_crd.spec.modelRef.name if bot_crd.spec.modelRef else None
             dedicated_model_name = f"{bot.name}-model"
             
             # Check if this is a dedicated private model for this bot
-            # A dedicated private model has the naming pattern "{bot.name}-model"
-            is_dedicated_private_model = (model_ref_name == dedicated_model_name)
+            # A dedicated private model must satisfy BOTH conditions:
+            # 1. Has the naming pattern "{bot.name}-model"
+            # 2. Has isCustomConfig=True in the model spec
+            is_dedicated_private_model = (
+                model_ref_name == dedicated_model_name and is_custom_config
+            ) if model_ref_name else False
             
             if isinstance(model, PublicModel):
                 # This is a public model, return bind_model format with type

@@ -135,7 +135,7 @@ class BotSpec(BaseModel):
     """Bot specification"""
     ghostRef: GhostRef
     shellRef: ShellRef
-    modelRef: ModelRef
+    modelRef: Optional[ModelRef] = None
 
 
 class BotStatus(Status):

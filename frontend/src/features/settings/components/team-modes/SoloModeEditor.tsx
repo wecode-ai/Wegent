@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
@@ -20,7 +20,7 @@ import { Bot, Team } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
 import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles';
 import { Tag } from '@/components/ui/tag';
-import BotEdit from '../BotEdit';
+import BotEdit, { AgentType } from '../BotEdit';
 
 export interface SoloModeEditorProps {
   bots: Bot[];
@@ -32,6 +32,10 @@ export interface SoloModeEditorProps {
   unsavedPrompts?: Record<string, string>;
   teamPromptMap?: Map<number, boolean>;
   onOpenPromptDrawer?: () => void;
+  /** Callback to create a new bot (reuse TeamEdit's handler) - deprecated, now handled inline */
+  onCreateBot?: () => void;
+  /** List of allowed agent types for filtering when creating bots */
+  allowedAgents?: AgentType[];
 }
 
 export default function SoloModeEditor({
@@ -43,6 +47,7 @@ export default function SoloModeEditor({
   unsavedPrompts = {},
   teamPromptMap,
   onOpenPromptDrawer,
+  allowedAgents,
 }: SoloModeEditorProps) {
   const { t } = useTranslation('common');
 
@@ -88,9 +93,12 @@ export default function SoloModeEditor({
     [promptSummary.variant]
   );
 
-  // State for inline bot editing
+  // State for inline bot editing mode (readOnly vs edit)
   const [isEditingBot, setIsEditingBot] = useState(false);
-  const [editingBotId, setEditingBotId] = useState<number | null>(null);
+  // State for inline bot creation mode
+  const [isCreatingBot, setIsCreatingBot] = useState(false);
+  // Track bots IDs to detect new bot creation
+  const prevBotIdsRef = useRef<Set<number>>(new Set(bots.map(b => b.id)));
 
   // Get the selected bot
   const selectedBot = useMemo(() => {
@@ -103,7 +111,6 @@ export default function SoloModeEditor({
     (botId: number) => {
       setSelectedBotId(botId);
       setIsEditingBot(false);
-      setEditingBotId(botId);
     },
     [setSelectedBotId]
   );
@@ -118,25 +125,50 @@ export default function SoloModeEditor({
     setIsEditingBot(false);
   }, []);
 
-  // Handle create new bot
+  // Handle create new bot - show inline creation form
   const handleCreateBot = useCallback(() => {
-    setEditingBotId(0);
-    setIsEditingBot(true);
+    setIsCreatingBot(true);
+    setIsEditingBot(false);
   }, []);
 
   // Handle bot edit close
   const handleBotEditClose = useCallback(() => {
     setIsEditingBot(false);
-    // If we were creating a new bot, check if it was created and select it
-    if (editingBotId === 0 && bots.length > 0) {
-      // Select the most recently created bot (first in the list)
-      const newestBot = bots[0];
-      if (newestBot && selectedBotId !== newestBot.id) {
-        setSelectedBotId(newestBot.id);
-        setEditingBotId(newestBot.id);
+  }, []);
+
+  // Handle bot creation close - just close the creation mode (used for cancel)
+  const handleBotCreateClose = useCallback(() => {
+    // This is called when BotEdit's onClose is triggered
+    // We don't set isCreatingBot to false here because the useEffect will handle it
+    // when a new bot is detected. If no new bot is created (e.g., validation failed),
+    // we keep the creation mode open.
+  }, []);
+
+  // Handle cancel creation explicitly
+  const handleCancelCreate = useCallback(() => {
+    setIsCreatingBot(false);
+  }, []);
+
+  // Effect to detect new bot creation and auto-select it
+  useEffect(() => {
+    // Find any new bot that wasn't in the previous set
+    const currentBotIds = new Set(bots.map(b => b.id));
+    const newBotIds = bots.filter(b => !prevBotIdsRef.current.has(b.id));
+
+    // If there's a new bot, select it and close creation mode
+    if (newBotIds.length > 0) {
+      // Select the first new bot (should be the one we just created)
+      const newBot = newBotIds[0];
+      setSelectedBotId(newBot.id);
+      // Close creation mode if we were creating
+      if (isCreatingBot) {
+        setIsCreatingBot(false);
       }
     }
-  }, [editingBotId, bots, selectedBotId, setSelectedBotId]);
+
+    // Update the ref for next comparison
+    prevBotIdsRef.current = currentBotIds;
+  }, [bots, isCreatingBot, setSelectedBotId]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -241,14 +273,30 @@ export default function SoloModeEditor({
       </div>
 
       {/* Bot details / edit area */}
-      <div className="flex-1 min-h-0 rounded-md border border-border bg-base overflow-hidden">
-        {editingBotId !== null ? (
+      <div className="flex-1 min-h-[500px] rounded-md border border-border bg-base overflow-hidden">
+        {isCreatingBot ? (
+          /* Show BotEdit component in creation mode */
+          <div className="h-full overflow-auto">
+            <BotEdit
+              bots={bots}
+              setBots={setBots}
+              editingBotId={0}
+              cloningBot={null}
+              onClose={handleBotCreateClose}
+              toast={toast}
+              embedded={true}
+              readOnly={false}
+              onCancelEdit={handleCancelCreate}
+              allowedAgents={allowedAgents}
+            />
+          </div>
+        ) : selectedBotId !== null ? (
           /* Show BotEdit component - either in readOnly or edit mode */
           <div className="h-full overflow-auto">
             <BotEdit
               bots={bots}
               setBots={setBots}
-              editingBotId={editingBotId}
+              editingBotId={selectedBotId}
               cloningBot={null}
               onClose={handleBotEditClose}
               toast={toast}
@@ -256,6 +304,7 @@ export default function SoloModeEditor({
               readOnly={!isEditingBot}
               onEditClick={handleEditClick}
               onCancelEdit={handleCancelEdit}
+              allowedAgents={allowedAgents}
             />
           </div>
         ) : (

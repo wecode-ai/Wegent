@@ -29,6 +29,8 @@ export interface BotTransferProps {
   excludeLeader?: boolean;
   /** Whether to auto-set first selected bot as leader */
   autoSetLeader?: boolean;
+  /** Whether to enable drag-and-drop sorting in the right list */
+  sortable?: boolean;
   onEditBot: (botId: number) => void;
   onCreateBot: () => void;
   onCloneBot: (botId: number) => void;
@@ -47,6 +49,7 @@ export default function BotTransfer({
   selectedAgentName = null,
   excludeLeader = false,
   autoSetLeader = false,
+  sortable = false,
   onEditBot,
   onCreateBot,
   onCloneBot,
@@ -146,6 +149,15 @@ export default function BotTransfer({
     }
   };
 
+  // Handle order change from drag-and-drop
+  const onOrderChange = (newOrder: string[]) => {
+    setSelectedBotKeys(newOrder);
+    // If auto-set leader is enabled, update leader to first item
+    if (autoSetLeader && setLeaderBotId && newOrder.length > 0) {
+      setLeaderBotId(Number(newOrder[0]));
+    }
+  };
+
   return (
     <div className="flex flex-col min-h-0 mt-1 flex-1">
       <div className="flex items-center justify-between mb-1">
@@ -192,7 +204,9 @@ export default function BotTransfer({
           dataSource={transferData}
           targetKeys={selectedBotKeys.map(String)}
           onChange={onTransferChange}
+          onOrderChange={onOrderChange}
           disabled={isDifyLeader}
+          sortable={sortable}
           render={item => (
             <div className="flex items-center justify-between w-full">
               <Tooltip>

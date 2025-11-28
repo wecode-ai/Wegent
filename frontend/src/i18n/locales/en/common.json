@@ -67,7 +67,7 @@
     "agent_select": "choose an agent",
     "prompt": "Prompt",
     "prompt_placeholder": "AI-powered code review and assistance",
-    "agent_config": "Model Config",
+    "agent_config": "Bind Model",
     "mcp_config": "Mcp Config",
     "save_prompt": "Save Prompt",
     "use_custom_model": "Use Custom Model",
@@ -97,7 +97,8 @@
       "save_failed": "Save failed",
       "dify_validation_failed": "Failed to validate API key",
       "fetch_dify_apps_failed": "Failed to load Dify applications",
-      "protocol_required": "Please select a model protocol"
+      "protocol_required": "Please select a model protocol",
+      "dify_required_fields": "Dify API Key and Base URL are required"
     },
     "protocol": "Model Protocol",
     "protocol_select": "Select model protocol",
@@ -138,7 +139,8 @@
     "new_bot": "New Bot",
     "copy": "Copy Bot",
     "delete_confirm_title": "Confirm Delete",
-    "delete_confirm_message": "Are you sure you want to delete this bot? This action cannot be undone."
+    "delete_confirm_message": "Are you sure you want to delete this bot? This action cannot be undone.",
+    "manage_bots": "Manage Bots"
   },
   "messages": {
     "copy_markdown": "Copy markdown content",
@@ -237,9 +239,9 @@
     "mode_change_confirm_title": "Change Collaboration Mode",
     "mode_change_confirm_message": "Changing the collaboration mode will reset team roles and team-specific prompts. Do you want to continue?",
     "solo_max_one_bot": "Solo mode allows only 1 bot",
-    "select_bot": "Select bot",
-    "select_bot_placeholder": "Please select a bot",
-    "no_bot_selected": "No bot selected",
+    "select_bot": "Configure bot",
+    "select_bot_placeholder": "Please configure a bot",
+    "no_bot_selected": "No bot configured",
     "edit_bot_config": "Edit bot configuration"
   },
   "team_model": {
@@ -487,9 +489,9 @@
     "display_name_hint": "Human-readable name for display (optional)",
     "name": "Model Name",
     "name_readonly_hint": "Model name cannot be changed after creation",
-    "provider_type": "Provider Type",
-    "select_provider": "Select Provider",
-    "provider_hint": "Agno uses OpenAI format, Claude Code uses Anthropic format",
+    "provider_type": "Model Protocol",
+    "select_provider": "Select Protocol",
+    "provider_hint": "Agno uses OpenAI protocol, Claude Code uses Anthropic protocol",
     "api_key": "API Key",
     "base_url": "Base URL",
     "base_url_hint": "Leave empty for default endpoint, fill in for proxy or custom endpoint",

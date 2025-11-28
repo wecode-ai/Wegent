@@ -1,7 +1,7 @@
 'use client';
 
 import * as React from 'react';
-import { Search, ChevronRight, ChevronLeft } from 'lucide-react';
+import { Search, ChevronRight, ChevronLeft, GripVertical } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -19,6 +19,7 @@ export interface TransferProps {
   dataSource: TransferItem[];
   targetKeys: string[];
   onChange: (targetKeys: string[], direction: 'left' | 'right', moveKeys: string[]) => void;
+  onOrderChange?: (newOrder: string[]) => void;
   render?: (item: TransferItem) => React.ReactNode;
   showSearch?: boolean;
   filterOption?: (inputValue: string, item: TransferItem) => boolean;
@@ -29,12 +30,14 @@ export interface TransferProps {
   leftFooter?: React.ReactNode;
   rightFooter?: React.ReactNode;
   disabled?: boolean;
+  sortable?: boolean;
 }
 
 export function Transfer({
   dataSource,
   targetKeys,
   onChange,
+  onOrderChange,
   render,
   showSearch = false,
   filterOption,
@@ -45,11 +48,14 @@ export function Transfer({
   leftFooter,
   rightFooter,
   disabled = false,
+  sortable = false,
 }: TransferProps) {
   const [leftSearch, setLeftSearch] = React.useState('');
   const [rightSearch, setRightSearch] = React.useState('');
   const [leftChecked, setLeftChecked] = React.useState<string[]>([]);
   const [rightChecked, setRightChecked] = React.useState<string[]>([]);
+  const [draggedKey, setDraggedKey] = React.useState<string | null>(null);
+  const [dragOverKey, setDragOverKey] = React.useState<string | null>(null);
 
   // 分离左右两侧的数据
   const leftDataSource = React.useMemo(
@@ -57,10 +63,13 @@ export function Transfer({
     [dataSource, targetKeys]
   );
 
-  const rightDataSource = React.useMemo(
-    () => dataSource.filter(item => targetKeys.includes(item.key)),
-    [dataSource, targetKeys]
-  );
+  const rightDataSource = React.useMemo(() => {
+    const targetSet = new Set(targetKeys);
+    const itemMap = new Map(dataSource.map(item => [item.key, item]));
+    return targetKeys
+      .filter(key => targetSet.has(key) && itemMap.has(key))
+      .map(key => itemMap.get(key)!);
+  }, [dataSource, targetKeys]);
 
   // 过滤函数
   const defaultFilterOption = (inputValue: string, item: TransferItem) => {
@@ -108,6 +117,59 @@ export function Transfer({
       </div>
     );
   };
+  // 拖拽处理函数
+  const handleDragStart = (e: React.DragEvent, key: string) => {
+    setDraggedKey(key);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', key);
+  };
+
+  const handleDragOver = (e: React.DragEvent, key: string) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (draggedKey && key !== draggedKey) {
+      setDragOverKey(key);
+    }
+  };
+
+  const handleDragLeave = () => {
+    setDragOverKey(null);
+  };
+
+  const handleDrop = (e: React.DragEvent, targetKey: string) => {
+    e.preventDefault();
+    if (!draggedKey || draggedKey === targetKey) {
+      setDraggedKey(null);
+      setDragOverKey(null);
+      return;
+    }
+
+    const currentOrder = [...targetKeys];
+    const draggedIndex = currentOrder.indexOf(draggedKey);
+    const targetIndex = currentOrder.indexOf(targetKey);
+
+    if (draggedIndex === -1 || targetIndex === -1) {
+      setDraggedKey(null);
+      setDragOverKey(null);
+      return;
+    }
+
+    // 移除拖拽项并插入到目标位置
+    currentOrder.splice(draggedIndex, 1);
+    currentOrder.splice(targetIndex, 0, draggedKey);
+
+    if (onOrderChange) {
+      onOrderChange(currentOrder);
+    }
+
+    setDraggedKey(null);
+    setDragOverKey(null);
+  };
+
+  const handleDragEnd = () => {
+    setDraggedKey(null);
+    setDragOverKey(null);
+  };
 
   // 渲染列表
   const renderList = (
@@ -117,7 +179,8 @@ export function Transfer({
     search: string,
     setSearch: React.Dispatch<React.SetStateAction<string>>,
     title: string,
-    footer?: React.ReactNode
+    footer?: React.ReactNode,
+    isRightList?: boolean
   ) => {
     const allKeys = data.filter(item => !item.disabled).map(item => item.key);
     const checkedAll = allKeys.length > 0 && allKeys.every(key => checked.includes(key));
@@ -179,26 +242,43 @@ export function Transfer({
             {data.length === 0 ? (
               <div className="text-center text-sm text-muted-foreground py-8">No data</div>
             ) : (
-              data.map(item => (
-                <div
-                  key={item.key}
-                  className={cn(
-                    'flex items-center gap-2 p-2 rounded-md hover:bg-accent cursor-pointer transition-colors',
-                    item.disabled && 'opacity-50 cursor-not-allowed'
-                  )}
-                  onClick={() => !item.disabled && handleCheck(item.key)}
-                >
-                  <Checkbox
-                    checked={checked.includes(item.key)}
-                    disabled={item.disabled}
-                    onCheckedChange={() => {
-                      handleCheck(item.key);
-                    }}
-                    onClick={e => e.stopPropagation()}
-                  />
-                  <div className="flex-1 min-w-0">{renderItem(item)}</div>
-                </div>
-              ))
+              data.map(item => {
+                const isDragging = draggedKey === item.key;
+                const isDragOver = dragOverKey === item.key;
+                const canDrag = sortable && isRightList && !item.disabled;
+
+                return (
+                  <div
+                    key={item.key}
+                    className={cn(
+                      'flex items-center gap-2 p-2 rounded-md hover:bg-accent cursor-pointer transition-colors',
+                      item.disabled && 'opacity-50 cursor-not-allowed',
+                      isDragging && 'opacity-50 bg-accent',
+                      isDragOver && 'border-t-2 border-primary'
+                    )}
+                    onClick={() => !item.disabled && handleCheck(item.key)}
+                    draggable={canDrag}
+                    onDragStart={canDrag ? e => handleDragStart(e, item.key) : undefined}
+                    onDragOver={canDrag ? e => handleDragOver(e, item.key) : undefined}
+                    onDragLeave={canDrag ? handleDragLeave : undefined}
+                    onDrop={canDrag ? e => handleDrop(e, item.key) : undefined}
+                    onDragEnd={canDrag ? handleDragEnd : undefined}
+                  >
+                    {canDrag && (
+                      <GripVertical className="h-4 w-4 text-muted-foreground cursor-grab flex-shrink-0" />
+                    )}
+                    <Checkbox
+                      checked={checked.includes(item.key)}
+                      disabled={item.disabled}
+                      onCheckedChange={() => {
+                        handleCheck(item.key);
+                      }}
+                      onClick={e => e.stopPropagation()}
+                    />
+                    <div className="flex-1 min-w-0">{renderItem(item)}</div>
+                  </div>
+                );
+              })
             )}
           </div>
         </ScrollArea>
@@ -211,7 +291,6 @@ export function Transfer({
 
   return (
     <div className={cn('flex items-stretch gap-4', className)}>
-      {/* 左侧列表 */}
       {/* 左侧列表 */}
       <div className={cn('flex-1 flex flex-col', disabled && 'opacity-50 pointer-events-none')}>
         {renderList(
@@ -256,7 +335,8 @@ export function Transfer({
           rightSearch,
           setRightSearch,
           titles[1],
-          rightFooter
+          rightFooter,
+          true
         )}
       </div>
     </div>

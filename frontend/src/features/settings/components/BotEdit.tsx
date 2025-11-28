@@ -31,6 +31,9 @@ import { fetchSkillsList } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
 
+/** Agent types supported by the system */
+export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify';
+
 interface BotEditProps {
   bots: Bot[];
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
@@ -46,6 +49,8 @@ interface BotEditProps {
   onEditClick?: () => void;
   /** Callback when user clicks cancel button in edit mode (only for embedded mode) */
   onCancelEdit?: () => void;
+  /** List of allowed agent types for filtering. If not provided, all agents are shown */
+  allowedAgents?: AgentType[];
 }
 const BotEdit: React.FC<BotEditProps> = ({
   bots,
@@ -58,6 +63,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   readOnly = false,
   onEditClick,
   onCancelEdit,
+  allowedAgents,
 }) => {
   const { t, i18n } = useTranslation('common');
 
@@ -86,8 +92,15 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   const [botName, setBotName] = useState(baseBot?.name || '');
   const [agentName, setAgentName] = useState(baseBot?.agent_name || '');
+  // Helper function to remove protocol from agent_config for display
+  const getAgentConfigWithoutProtocol = (config: Record<string, unknown> | undefined): string => {
+    if (!config) return '';
+     
+    const { protocol: _, ...rest } = config;
+    return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : '';
+  };
   const [agentConfig, setAgentConfig] = useState(
-    baseBot?.agent_config ? JSON.stringify(baseBot.agent_config, null, 2) : ''
+    baseBot?.agent_config ? getAgentConfigWithoutProtocol(baseBot.agent_config) : ''
   );
 
   const [prompt, setPrompt] = useState(baseBot?.system_prompt || '');
@@ -232,13 +245,13 @@ const BotEdit: React.FC<BotEditProps> = ({
   // Documentation handlers
   const handleOpenModelDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en';
-    const docsUrl = `/docs/${lang}/guides/user/configuring-models.md`;
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-models.md`;
     window.open(docsUrl, '_blank');
   }, [i18n.language]);
 
   const handleOpenShellDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en';
-    const docsUrl = `/docs/${lang}/guides/user/configuring-shells.md`;
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-shells.md`;
     window.open(docsUrl, '_blank');
   }, [i18n.language]);
 
@@ -248,7 +261,14 @@ const BotEdit: React.FC<BotEditProps> = ({
       setLoadingAgents(true);
       try {
         const response = await agentApis.getAgents();
-        setAgents(response.items);
+        // Filter agents based on allowedAgents prop
+        let filteredAgents = response.items;
+        if (allowedAgents && allowedAgents.length > 0) {
+          filteredAgents = response.items.filter(agent =>
+            allowedAgents.includes(agent.name as AgentType)
+          );
+        }
+        setAgents(filteredAgents);
       } catch (error) {
         console.error('Failed to fetch agents:', error);
         toast({
@@ -261,7 +281,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     };
 
     fetchAgents();
-  }, [toast, t]);
+  }, [toast, t, allowedAgents]);
   // Get skills list - only for ClaudeCode agent
   useEffect(() => {
     // Only fetch skills when agent is ClaudeCode
@@ -381,7 +401,8 @@ const BotEdit: React.FC<BotEditProps> = ({
     setMcpConfigError(false);
 
     if (baseBot?.agent_config) {
-      setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2));
+      // Remove protocol from display - it's managed separately via dropdown
+      setAgentConfig(getAgentConfigWithoutProtocol(baseBot.agent_config));
     } else {
       setAgentConfig('');
     }
@@ -464,6 +485,18 @@ const BotEdit: React.FC<BotEditProps> = ({
       try {
         parsedAgentConfig = JSON.parse(trimmedConfig);
         setAgentConfigError(false);
+
+        // Validate Dify required fields
+        const env = (parsedAgentConfig as Record<string, unknown>)?.env as
+          | Record<string, unknown>
+          | undefined;
+        if (!env?.DIFY_API_KEY || !env?.DIFY_BASE_URL) {
+          toast({
+            variant: 'destructive',
+            title: t('bot.errors.dify_required_fields'),
+          });
+          return;
+        }
       } catch {
         setAgentConfigError(true);
         toast({
@@ -726,6 +759,7 @@ const BotEdit: React.FC<BotEditProps> = ({
               agentConfig={agentConfig}
               onAgentConfigChange={setAgentConfig}
               toast={toast}
+              readOnly={readOnly}
             />
           ) : (
             /* Normal Mode: Show standard configuration options */
@@ -735,7 +769,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                 <div className="flex items-center justify-between mb-1">
                   <div className="flex items-center gap-2">
                     <label className="block text-base font-medium text-text-primary">
-                      {t('bot.agent_config')} <span className="text-red-400">*</span>
+                      {t('bot.agent_config')}
                     </label>
                     {/* Help Icon */}
                     <button

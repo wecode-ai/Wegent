@@ -193,6 +193,30 @@ class ModelAggregationService:
         
         return []
 
+    def _is_custom_model(self, model_data: Dict[str, Any]) -> bool:
+        """
+        Check if a model is a custom configuration model.
+        
+        Custom models have isCustomConfig=True in their spec and should not
+        appear in the unified model list. They are user-specific configurations
+        that are only used internally.
+        
+        Args:
+            model_data: Model CRD data dictionary
+        
+        Returns:
+            True if the model is a custom config model, False otherwise
+        """
+        if not isinstance(model_data, dict):
+            return False
+        
+        try:
+            model_crd = Model.model_validate(model_data)
+            return model_crd.spec.isCustomConfig is True
+        except Exception as e:
+            logger.warning(f"Failed to check if model is custom: {e}")
+            return False
+
     def list_available_models(
         self,
         db: Session,
@@ -232,6 +256,8 @@ class ModelAggregationService:
         seen_names: Dict[str, ModelType] = {}  # Track names to handle duplicates
 
         # 1. Get user's own models via kind_service (type='user')
+        # Note: Only include non-custom models (isCustomConfig != True)
+        # Custom models are user-specific configurations that should not appear in unified list
         user_model_resources = kind_service.list_resources(
             user_id=current_user.id,
             kind="Model",
@@ -241,6 +267,12 @@ class ModelAggregationService:
         for resource in user_model_resources:
             # Format the resource to get the full CRD data
             model_data = kind_service._format_resource("Model", resource)
+            
+            # Skip custom config models - they should not appear in unified list
+            # Custom models are user-specific configurations (isCustomConfig=True)
+            if self._is_custom_model(model_data):
+                continue
+            
             info = self._extract_model_info_from_crd(model_data)
             
             # Filter by agent compatibility if agent_name is provided

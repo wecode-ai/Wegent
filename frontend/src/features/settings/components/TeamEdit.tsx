@@ -17,8 +17,10 @@ import {
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import Image from 'next/image';
 import { Loader2 } from 'lucide-react';
+import { RiRobot2Line } from 'react-icons/ri';
 
 import { Bot, Team } from '@/types/api';
+import { TeamMode, getFilteredBotsForMode, AgentType } from './team-modes';
 import { createTeam, updateTeam } from '../services/teams';
 import TeamEditDrawer from './TeamEditDrawer';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -60,9 +62,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
   // Left column: Team Name, Mode, Description
   const [name, setName] = useState('');
-  const [mode, setMode] = useState<'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'>(
-    'pipeline'
-  );
+  const [mode, setMode] = useState<TeamMode>('solo');
 
   // Right column: LeaderBot (single select), Bots Transfer (multi-select)
   // Use string key for antd Transfer, stringify bot.id here
@@ -83,9 +83,25 @@ export default function TeamEdit(props: TeamEditProps) {
 
   // Mode change confirmation dialog state
   const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false);
-  const [pendingMode, setPendingMode] = useState<
-    'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate' | null
-  >(null);
+  const [pendingMode, setPendingMode] = useState<TeamMode | null>(null);
+
+  // Filter bots based on current mode
+  const filteredBots = useMemo(() => {
+    return getFilteredBotsForMode(bots, mode);
+  }, [bots, mode]);
+
+  // Get allowed agents for current mode
+  const allowedAgentsForMode = useMemo((): AgentType[] | undefined => {
+    const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
+      solo: null, // null means all agents are allowed
+      pipeline: ['ClaudeCode', 'Agno'],
+      route: ['Agno'],
+      coordinate: ['Agno'],
+      collaborate: ['Agno'],
+    };
+    const allowed = MODE_AGENT_FILTER[mode];
+    return allowed === null ? undefined : allowed;
+  }, [mode]);
 
   const teamPromptMap = useMemo(() => {
     const map = new Map<number, boolean>();
@@ -155,9 +171,9 @@ export default function TeamEdit(props: TeamEditProps) {
     const titleKey = `team_model.${mode}`;
     const descKey = `team_model_desc.${mode}`;
 
-    // Image mapping by mode
-    const imageMap: Record<typeof mode, string> = {
-      solo: '/settings/solo.png',
+    // Image mapping by mode (solo uses icon instead of image)
+    const imageMap: Record<typeof mode, string | null> = {
+      solo: null, // Use icon instead
       pipeline: '/settings/sequential.png',
       route: '/settings/router.png',
       coordinate: '/settings/network.png',
@@ -175,13 +191,10 @@ export default function TeamEdit(props: TeamEditProps) {
   }, [mode, t]);
 
   // Reset form when initializing/switching editing object
-  // Reset form when initializing/switching editing object
   useEffect(() => {
     if (formTeam) {
       setName(formTeam.name);
-      const m =
-        (formTeam.workflow?.mode as 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate') ||
-        'pipeline';
+      const m = (formTeam.workflow?.mode as TeamMode) || 'pipeline';
       setMode(m);
       const ids = formTeam.bots.map(b => String(b.bot_id));
       setSelectedBotKeys(ids);
@@ -189,7 +202,7 @@ export default function TeamEdit(props: TeamEditProps) {
       setLeaderBotId(leaderBot?.bot_id ?? null);
     } else {
       setName('');
-      setMode('pipeline');
+      setMode('solo');
       setSelectedBotKeys([]);
       setLeaderBotId(null);
     }
@@ -198,16 +211,17 @@ export default function TeamEdit(props: TeamEditProps) {
   // When bots change, only update bots-related state, do not reset name and mode
   useEffect(() => {
     if (formTeam) {
+      // Filter by both available bots and mode-compatible bots
       const ids = formTeam.bots
-        .filter(b => bots.some(bot => bot.id === b.bot_id))
+        .filter(b => filteredBots.some((bot: Bot) => bot.id === b.bot_id))
         .map(b => String(b.bot_id));
       setSelectedBotKeys(ids);
       const leaderBot = formTeam.bots.find(
-        b => b.role === 'leader' && bots.some(bot => bot.id === b.bot_id)
+        b => b.role === 'leader' && filteredBots.some((bot: Bot) => bot.id === b.bot_id)
       );
       setLeaderBotId(leaderBot?.bot_id ?? null);
     }
-  }, [bots, formTeam]);
+  }, [filteredBots, formTeam]);
   // Check if mode change needs confirmation (has team members or prompts)
   const needsModeChangeConfirmation = useCallback(() => {
     const hasSelectedBots = selectedBotKeys.length > 0 || leaderBotId !== null;
@@ -221,21 +235,16 @@ export default function TeamEdit(props: TeamEditProps) {
   }, [selectedBotKeys, leaderBotId, unsavedPrompts, formTeam]);
 
   // Execute mode change with reset
-  const executeModeChange = useCallback(
-    (newMode: 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
-      setMode(newMode);
-      // Reset team roles and prompts
-      setSelectedBotKeys([]);
-      setLeaderBotId(null);
-      setUnsavedPrompts({});
-    },
-    []
-  );
+  const executeModeChange = useCallback((newMode: TeamMode) => {
+    setMode(newMode);
+    // Reset team roles and prompts
+    setSelectedBotKeys([]);
+    setLeaderBotId(null);
+    setUnsavedPrompts({});
+  }, []);
 
   // Change Mode with confirmation
-  const handleModeChange = (
-    newMode: 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'
-  ) => {
+  const handleModeChange = (newMode: TeamMode) => {
     // If same mode, do nothing
     if (newMode === mode) return;
 
@@ -271,9 +280,9 @@ export default function TeamEdit(props: TeamEditProps) {
 
   const isDifyLeader = useMemo(() => {
     if (leaderBotId === null) return false;
-    const leader = bots.find(b => b.id === leaderBotId);
+    const leader = filteredBots.find((b: Bot) => b.id === leaderBotId);
     return leader?.agent_name === 'Dify';
-  }, [leaderBotId, bots]);
+  }, [leaderBotId, filteredBots]);
 
   // Leader change handler
   const onLeaderChange = (botId: number) => {
@@ -282,17 +291,14 @@ export default function TeamEdit(props: TeamEditProps) {
       setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId));
     }
 
-    const newLeader = bots.find(b => b.id === botId);
+    const newLeader = filteredBots.find((b: Bot) => b.id === botId);
     // If the new leader is Dify, clear the selected bots
     if (newLeader?.agent_name === 'Dify') {
       setSelectedBotKeys([]);
     }
 
     setLeaderBotId(botId);
-
-    // Note: agent_name filtering has been removed - users can now mix different agent types
   };
-
   const handleEditBot = useCallback((botId: number) => {
     setDrawerMode('edit');
     setCloningBot(null);
@@ -309,7 +315,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
   const handleCloneBot = useCallback(
     (botId: number) => {
-      const botToClone = bots.find(b => b.id === botId);
+      const botToClone = filteredBots.find((b: Bot) => b.id === botId);
       if (!botToClone) {
         return;
       }
@@ -318,7 +324,7 @@ export default function TeamEdit(props: TeamEditProps) {
       setEditingBotId(0);
       setEditingBotDrawerVisible(true);
     },
-    [bots]
+    [filteredBots]
   );
   // Save
   const handleSave = async () => {
@@ -410,10 +416,10 @@ export default function TeamEdit(props: TeamEditProps) {
       setSaving(false);
     }
   };
-  // Leader dropdown options - show all bots (no agent_name filtering)
+  // Leader dropdown options - show filtered bots based on mode
   const leaderOptions = useMemo(() => {
-    return bots;
-  }, [bots]);
+    return filteredBots;
+  }, [filteredBots]);
 
   // Open prompt drawer handler
   const handleOpenPromptDrawer = useCallback(() => {
@@ -487,11 +493,7 @@ export default function TeamEdit(props: TeamEditProps) {
               <div className="mb-3">
                 <RadioGroup
                   value={mode}
-                  onValueChange={value =>
-                    handleModeChange(
-                      value as 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'
-                    )
-                  }
+                  onValueChange={value => handleModeChange(value as TeamMode)}
                   className="w-full grid grid-cols-5 gap-2"
                 >
                   {['solo', 'pipeline', 'route', 'coordinate', 'collaborate'].map(opt => (
@@ -530,13 +532,19 @@ export default function TeamEdit(props: TeamEditProps) {
                 )}
 
                 <div className="pt-3 rounded-md overflow-hidden flex-1 min-h-0 flex items-stretch justify-start">
-                  <Image
-                    src={MODE_INFO.info.image}
-                    alt={MODE_INFO.info.title}
-                    width={640}
-                    height={360}
-                    className="object-contain w-full h-full max-h-full"
-                  />
+                  {MODE_INFO.info.image ? (
+                    <Image
+                      src={MODE_INFO.info.image}
+                      alt={MODE_INFO.info.title}
+                      width={640}
+                      height={360}
+                      className="object-contain w-full h-full max-h-full"
+                    />
+                  ) : (
+                    <div className="flex items-center justify-center w-full h-full bg-muted/30 rounded-lg">
+                      <RiRobot2Line className="w-24 h-24 text-primary/60" />
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
@@ -548,7 +556,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {mode === 'solo' && (
             <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
               <SoloModeEditor
-                bots={bots}
+                bots={filteredBots}
                 setBots={setBots}
                 selectedBotId={leaderBotId}
                 setSelectedBotId={setLeaderBotId}
@@ -557,6 +565,8 @@ export default function TeamEdit(props: TeamEditProps) {
                 unsavedPrompts={unsavedPrompts}
                 teamPromptMap={teamPromptMap}
                 onOpenPromptDrawer={handleOpenPromptDrawer}
+                onCreateBot={handleCreateBot}
+                allowedAgents={allowedAgentsForMode}
               />
             </div>
           )}
@@ -564,7 +574,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* Pipeline mode: Show PipelineModeEditor */}
           {mode === 'pipeline' && (
             <PipelineModeEditor
-              bots={bots}
+              bots={filteredBots}
               selectedBotKeys={selectedBotKeys}
               setSelectedBotKeys={setSelectedBotKeys}
               leaderBotId={leaderBotId}
@@ -583,7 +593,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {/* Leader modes (route, coordinate, collaborate): Show LeaderModeEditor */}
           {(mode === 'route' || mode === 'coordinate' || mode === 'collaborate') && (
             <LeaderModeEditor
-              bots={bots}
+              bots={filteredBots}
               selectedBotKeys={selectedBotKeys}
               setSelectedBotKeys={setSelectedBotKeys}
               leaderBotId={leaderBotId}
@@ -1017,6 +1027,7 @@ export default function TeamEdit(props: TeamEditProps) {
         leaderBotId={leaderBotId}
         unsavedPrompts={unsavedPrompts}
         setUnsavedPrompts={setUnsavedPrompts}
+        allowedAgents={allowedAgentsForMode}
       />
 
       {/* Mode change confirmation dialog */}

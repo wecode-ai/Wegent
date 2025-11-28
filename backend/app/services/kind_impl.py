@@ -134,21 +134,7 @@ class BotKindService(KindBaseService):
                 f"Shell '{shell_name}' not found in namespace '{shell_namespace}'"
             )
         
-        # Check if referenced model exists
-        model_name = bot_crd.spec.modelRef.name
-        model_namespace = bot_crd.spec.modelRef.namespace or 'default'
-        
-        model = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == 'Model',
-            Kind.namespace == model_namespace,
-            Kind.name == model_name,
-            Kind.is_active == True
-        ).first()
-        if not model:
-            raise NotFoundException(
-                f"Model '{model_name}' not found in namespace '{model_namespace}'"
-            )
+
     
     def _get_ghost_data(self, db: Session, user_id: int, name: str, namespace: str) -> Dict[str, Any]:
         """Get ghost data from Kind table"""

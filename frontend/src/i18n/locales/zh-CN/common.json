@@ -72,7 +72,8 @@
     "new_bot": "新建机器人",
     "copy": "复制机器人",
     "delete_confirm_title": "确认删除",
-    "delete_confirm_message": "确定要删除这个机器人吗？此操作无法撤销。"
+    "delete_confirm_message": "确定要删除这个机器人吗？此操作无法撤销。",
+    "manage_bots": "管理机器人"
   },
   "bot": {
     "name": "名称",
@@ -81,7 +82,7 @@
     "agent_select": "选择执行器",
     "prompt": "提示词",
     "prompt_placeholder": "你是一个 [身份/角色定位] 助手。\n你的角色是 [能力/专长/风格]。\n你的任务是 [要完成的具体目标]。",
-    "agent_config": "模型配置",
+    "agent_config": "绑定模型",
     "mcp_config": "MCP配置",
     "save_prompt": "保存提示词",
     "use_custom_model": "自定义配置",
@@ -111,7 +112,8 @@
       "save_failed": "保存失败",
       "dify_validation_failed": "API 密钥验证失败",
       "fetch_dify_apps_failed": "加载 Dify 应用失败",
-      "protocol_required": "请选择模型协议类型"
+      "protocol_required": "请选择模型协议类型",
+      "dify_required_fields": "Dify API 密钥和基础 URL 为必填项"
     },
     "protocol": "模型协议",
     "protocol_select": "选择模型协议",
@@ -238,9 +240,9 @@
     "mode_change_confirm_title": "切换协作模式",
     "mode_change_confirm_message": "切换协作模式将重置团队角色及专属提示词，确定要继续吗？",
     "solo_max_one_bot": "独立模式最多只能选择1个机器人",
-    "select_bot": "选择机器人",
-    "select_bot_placeholder": "请选择一个机器人",
-    "no_bot_selected": "未选择机器人",
+    "select_bot": "配置机器人",
+    "select_bot_placeholder": "请配置一个机器人",
+    "no_bot_selected": "未配置机器人",
     "edit_bot_config": "编辑机器人配置"
   },
   "team_model": {
@@ -488,9 +490,9 @@
     "display_name_hint": "用于显示的友好名称（可选）",
     "name": "模型名称",
     "name_readonly_hint": "模型名称创建后不可修改",
-    "provider_type": "提供商类型",
-    "select_provider": "选择提供商",
-    "provider_hint": "Agno 使用 OpenAI 格式，Claude Code 使用 Anthropic 格式",
+    "provider_type": "模型协议",
+    "select_provider": "选择模型协议",
+    "provider_hint": "Agno 使用 OpenAI 协议，Claude Code 使用 Anthropic 协议",
     "api_key": "API Key",
     "base_url": "Base URL",
     "base_url_hint": "使用默认端点留空，使用代理或自定义端点时填写",
