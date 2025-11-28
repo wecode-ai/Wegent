@@ -2,10 +2,13 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 import json
 import copy
+
+logger = logging.getLogger(__name__)
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -937,16 +940,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                         original_user_id
                     )
                     
-                    print(f"[DEBUG] Bot {bot.name} uses shell {shell_name} with type: {shell_type}")
-                    
                     if shell_type == "external_api":
                         has_external_api_bot = True
                         external_api_bot = bot_crd
-                        print(f"[DEBUG] Found external API bot: {bot.name}")
                         break
 
         if not has_external_api_bot:
-            print("[DEBUG] No external API bot found in team")
             return {
                 "has_parameters": False,
                 "parameters": []
@@ -975,16 +974,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         decrypted_agent_config = self._decrypt_agent_config(agent_config)
         env = decrypted_agent_config.get("env", {})
 
-        print(f"[DEBUG] Model config env keys: {list(env.keys())}")
-
         # For Dify bots, we need to call Dify API to get parameters
         api_key = env.get("DIFY_API_KEY", "")
         base_url = env.get("DIFY_BASE_URL", "https://api.dify.ai")
 
-        print(f"[DEBUG] API Key present: {bool(api_key)}, Base URL: {base_url}")
-
         if not api_key:
-            print("[DEBUG] No DIFY_API_KEY found in model config")
             return {
                 "has_parameters": False,
                 "parameters": []
@@ -1008,9 +1002,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 if info_response.status_code == 200:
                     info_data = info_response.json()
                     app_mode = info_data.get("mode")
-                    print(f"[DEBUG] Retrieved Dify app mode: {app_mode}")
             except Exception as e:
-                print(f"[DEBUG] Failed to fetch app info: {e}")
+                logger.warning("Failed to fetch app info: %s", e)
 
             # Get app parameters
             response = requests.get(
@@ -1038,7 +1031,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                                 transformed_param = {**param_data, "type": param_type}
                                 transformed_params.append(transformed_param)
                 
-                print(f"[DEBUG] Successfully fetched and transformed {len(transformed_params)} parameters from Dify API")
                 # has_parameters is true as long as the API request succeeds (external API bot exists)
                 result = {
                     "has_parameters": True,
@@ -1051,7 +1043,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 
                 return result
             else:
-                print(f"[DEBUG] Dify API returned status {response.status_code}: {response.text}")
+                logger.warning("Dify API returned status %s: %s", response.status_code, response.text)
                 # has_parameters is true as long as external API bot exists, even if parameters API fails
                 result = {
                     "has_parameters": True,
@@ -1061,9 +1053,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     result["app_mode"] = app_mode
                 return result
         except Exception as e:
-            print(f"[DEBUG] Failed to fetch parameters from external API: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.warning("Failed to fetch parameters from external API: %s", e, exc_info=True)
             # has_parameters is true as long as external API bot exists, even if API call fails
             return {
                 "has_parameters": True,
