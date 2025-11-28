@@ -191,10 +191,12 @@ def save_to_remote(input_data, edit_id):
     # Construct headers
     headers = {
         'Content-Type': 'application/json',
-        'wecode-user': custom_headers.get('wecode-user', ''),
-        'wecode-model-id': custom_headers.get('wecode-model-id', ''),
         'wecode-action': 'wegent_save'
     }
+    # Add all wecode-* headers from custom_headers (except wecode-action)
+    for key, value in custom_headers.items():
+        if key.startswith('wecode') and key != 'wecode-action':
+            headers[key] = value
 
     # Send POST request synchronously
     _send_request_sync(payload, headers, edit_id)
