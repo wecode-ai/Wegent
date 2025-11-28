@@ -59,7 +59,9 @@ export default function TeamEdit(props: TeamEditProps) {
 
   // Left column: Team Name, Mode, Description
   const [name, setName] = useState('');
-  const [mode, setMode] = useState<'pipeline' | 'route' | 'coordinate' | 'collaborate'>('pipeline');
+  const [mode, setMode] = useState<'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'>(
+    'pipeline'
+  );
 
   // Right column: LeaderBot (single select), Bots Transfer (multi-select)
   // Use string key for antd Transfer, stringify bot.id here
@@ -188,6 +190,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
     // Image mapping by mode
     const imageMap: Record<typeof mode, string> = {
+      solo: '/settings/solo.png',
       pipeline: '/settings/sequential.png',
       route: '/settings/router.png',
       coordinate: '/settings/network.png',
@@ -210,7 +213,7 @@ export default function TeamEdit(props: TeamEditProps) {
     if (formTeam) {
       setName(formTeam.name);
       const m =
-        (formTeam.workflow?.mode as 'pipeline' | 'route' | 'coordinate' | 'collaborate') ||
+        (formTeam.workflow?.mode as 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate') ||
         'pipeline';
       setMode(m);
       const ids = formTeam.bots.map(b => String(b.bot_id));
@@ -239,14 +242,19 @@ export default function TeamEdit(props: TeamEditProps) {
     }
   }, [bots, formTeam]);
   // Change Mode
-  const handleModeChange = (newMode: 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
+  const handleModeChange = (
+    newMode: 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'
+  ) => {
     setMode(newMode);
-    setSelectedBotKeys([]);
+    // Only clear selectedBotKeys when switching to non-solo mode
+    if (newMode !== 'solo') {
+      setSelectedBotKeys([]);
+    }
   };
   // Get currently selected agent_name (from leader or selected bot)
   const selectedAgentName = useMemo(() => {
-    // No agent_name restriction in pipeline mode
-    if (mode === 'pipeline') return null;
+    // No agent_name restriction in solo or pipeline mode
+    if (mode === 'solo' || mode === 'pipeline') return null;
 
     // If leader exists, use leader's agent_name first
     if (leaderBotId !== null) {
@@ -285,11 +293,17 @@ export default function TeamEdit(props: TeamEditProps) {
     });
   }, [bots, leaderBotId, selectedBotKeys, isClaudeCodeAgent]);
 
+  const isDifyLeader = useMemo(() => {
+    if (leaderBotId === null) return false;
+    const leader = bots.find(b => b.id === leaderBotId);
+    return leader?.agent_name === 'Dify';
+  }, [leaderBotId, bots]);
+
   useEffect(() => {
-    if (hasClaudeCodeBot && mode !== 'pipeline') {
+    if (((hasClaudeCodeBot && mode !== 'solo') || isDifyLeader) && mode !== 'pipeline') {
       setMode('pipeline');
     }
-  }, [hasClaudeCodeBot, mode]);
+  }, [hasClaudeCodeBot, isDifyLeader, mode]);
 
   // Data source for Transfer
   const transferData = useMemo(() => {
@@ -298,10 +312,14 @@ export default function TeamEdit(props: TeamEditProps) {
       title: b.name,
       description: b.agent_name,
       disabled:
-        // In non-pipeline mode, disable options not matching agent_name if already selected
-        mode !== 'pipeline' && selectedAgentName !== null && b.agent_name !== selectedAgentName,
+        isDifyLeader ||
+        // In non-pipeline and non-solo mode, disable options not matching agent_name if already selected
+        (mode !== 'solo' &&
+          mode !== 'pipeline' &&
+          selectedAgentName !== null &&
+          b.agent_name !== selectedAgentName),
     }));
-  }, [bots, mode, selectedAgentName]);
+  }, [bots, mode, selectedAgentName, isDifyLeader]);
 
   // Transfer change
   const onTransferChange = (
@@ -322,10 +340,16 @@ export default function TeamEdit(props: TeamEditProps) {
       setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId));
     }
 
+    const newLeader = bots.find(b => b.id === botId);
+    // If the new leader is Dify, clear the selected bots
+    if (newLeader?.agent_name === 'Dify') {
+      setSelectedBotKeys([]);
+    }
+
     setLeaderBotId(botId);
 
-    // In non-pipeline mode, filter selected bots by new leader's agent_name
-    if (mode !== 'pipeline') {
+    // In non-pipeline and non-solo mode, filter selected bots by new leader's agent_name
+    if (mode !== 'solo' && mode !== 'pipeline') {
       const leaderBot = bots.find(b => b.id === botId);
       if (leaderBot) {
         // Filter out selected bots not matching agent_name
@@ -386,14 +410,16 @@ export default function TeamEdit(props: TeamEditProps) {
     if (leaderBotId == null) {
       toast({
         variant: 'destructive',
-        title: 'Leader bot is required',
+        title: mode === 'solo' ? 'Bot is required' : 'Leader bot is required',
       });
       return;
     }
-    const selectedIds = selectedBotKeys.map(k => Number(k));
 
-    // Non-pipeline mode requires agent_name consistency
-    if (mode !== 'pipeline') {
+    // For solo mode, only use leaderBotId
+    const selectedIds = mode === 'solo' ? [] : selectedBotKeys.map(k => Number(k));
+
+    // Non-pipeline and non-solo mode requires agent_name consistency
+    if (mode !== 'solo' && mode !== 'pipeline') {
       if (!validateAgentNameConsistency(selectedIds)) {
         toast({
           variant: 'destructive',
@@ -411,12 +437,18 @@ export default function TeamEdit(props: TeamEditProps) {
       allBotIds.push(leaderBotId);
     }
 
-    // Then add other bots, avoid duplicate leader bot
-    selectedIds.forEach(id => {
-      if (id !== leaderBotId) {
-        allBotIds.push(id);
+    // For solo mode, only include leaderBotId
+    if (mode !== 'solo') {
+      // Then add other bots, avoid duplicate leader bot (Skip if Dify leader)
+      // When Dify is the leader, we do not save other team members
+      if (!isDifyLeader) {
+        selectedIds.forEach(id => {
+          if (id !== leaderBotId) {
+            allBotIds.push(id);
+          }
+        });
       }
-    });
+    }
 
     // Create botsData, keep allBotIds order, retain original bot_prompt or use unsaved prompts
     const botsData = allBotIds.map(id => {
@@ -466,12 +498,12 @@ export default function TeamEdit(props: TeamEditProps) {
     }
   };
 
-  // Leader dropdown options, filter by agent_name in non-pipeline mode
+  // Leader dropdown options, filter by agent_name in non-pipeline and non-solo mode
   const leaderOptions = useMemo(() => {
-    // Show all bots in pipeline mode
-    if (mode === 'pipeline') return bots;
+    // Show all bots in solo or pipeline mode
+    if (mode === 'solo' || mode === 'pipeline') return bots;
 
-    // If non-pipeline mode and selected bot exists
+    // If non-pipeline and non-solo mode and selected bot exists
     if (selectedBotKeys.length > 0) {
       // Find first selected bot
       const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
@@ -546,22 +578,36 @@ export default function TeamEdit(props: TeamEditProps) {
             </div>
 
             {/* Integrate Mode selection and description into one container */}
-            <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
+            <div className="relative rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
+              {/* Overlay mask for Dify leader mode */}
+              {isDifyLeader && (
+                <div className="absolute inset-0 bg-white/50 dark:bg-black/50 z-10 flex items-center justify-center rounded-md backdrop-blur-[1px]">
+                  <div className="bg-background/95 px-4 py-2 rounded-md shadow-sm border border-border text-sm text-muted-foreground">
+                    {t('team.dify_mode_pipeline_only') ||
+                      'Dify bots only support pipeline execution mode.'}
+                  </div>
+                </div>
+              )}
               {/* Mode selection */}
               <div className="mb-3">
                 <RadioGroup
                   value={mode}
                   onValueChange={value =>
-                    handleModeChange(value as 'pipeline' | 'route' | 'coordinate' | 'collaborate')
+                    handleModeChange(
+                      value as 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'
+                    )
                   }
-                  className="w-full grid grid-cols-4 gap-2"
+                  className="w-full grid grid-cols-5 gap-2"
                 >
-                  {['pipeline', 'route', 'coordinate', 'collaborate'].map(opt => (
+                  {['solo', 'pipeline', 'route', 'coordinate', 'collaborate'].map(opt => (
                     <div key={opt} className="flex items-center">
                       <RadioGroupItem
                         value={opt}
                         id={`mode-${opt}`}
-                        disabled={hasClaudeCodeBot && opt !== 'pipeline'}
+                        disabled={
+                          ((hasClaudeCodeBot && opt !== 'solo') || isDifyLeader) &&
+                          opt !== 'pipeline'
+                        }
                         className="peer sr-only"
                       />
                       <label
@@ -570,7 +616,7 @@ export default function TeamEdit(props: TeamEditProps) {
                           flex items-center justify-center w-full px-3 py-1.5 text-sm font-medium
                           rounded-md cursor-pointer transition-colors
                           border border-border
-                          ${hasClaudeCodeBot && opt !== 'pipeline' ? 'opacity-50 cursor-not-allowed' : ''}
+                          ${((hasClaudeCodeBot && opt !== 'solo') || isDifyLeader) && opt !== 'pipeline' ? 'opacity-50 cursor-not-allowed' : ''}
                           peer-data-[state=checked]:bg-primary peer-data-[state=checked]:text-primary-foreground peer-data-[state=checked]:border-primary
                           hover:bg-accent hover:text-accent-foreground
                         `}
@@ -614,11 +660,12 @@ export default function TeamEdit(props: TeamEditProps) {
         {/* Right column */}
         <div className="w-full lg:w-3/5 xl:w-2/3 min-w-0 flex flex-col space-y-5 min-h-0">
           <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
-            {/* LeaderBot single select */}
+            {/* Bot select - solo mode shows "Bot", other modes show "Leader" */}
             <div className="flex flex-col">
               <div className="flex items-center mb-1">
                 <label className="block text-lg font-semibold text-text-primary">
-                  {t('team.leader')} <span className="text-red-400">*</span>
+                  {mode === 'solo' ? t('team.bot') : t('team.leader')}{' '}
+                  <span className="text-red-400">*</span>
                 </label>
               </div>
               <Select
@@ -734,117 +781,130 @@ export default function TeamEdit(props: TeamEditProps) {
               </Select>
             </div>
 
-            {/* Bots Transfer - consolidated container */}
-            <div className="flex flex-col min-h-0 mt-1">
-              <div className="flex items-center justify-between mb-1">
-                <label className="block text-lg font-semibold text-text-primary">
-                  {t('team.bots')}
-                </label>
-              </div>
-              <div className="flex items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="link"
-                      size="sm"
-                      className="h-auto p-0 text-primary hover:text-primary/80"
-                      onClick={() => {
-                        setDrawerMode('prompt');
-                        setEditingBotDrawerVisible(true);
-                      }}
-                    >
-                      <RiMagicLine className="mr-1 h-4 w-4" />
-                      {t('team.prompts_link')}
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>{t('team.prompts_tooltip')}</p>
-                  </TooltipContent>
-                </Tooltip>
-                <Tag
-                  className="!m-0 !px-2 !py-0 text-xs leading-5"
-                  variant="default"
-                  style={promptSummaryStyle}
-                >
-                  {promptSummary.label}
-                </Tag>
-              </div>
+            {/* Bots Transfer - hidden in solo mode */}
+            {mode !== 'solo' && (
+              <div className="flex flex-col min-h-0 mt-1">
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-lg font-semibold text-text-primary">
+                    {t('team.bots')}
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="h-auto p-0 text-primary hover:text-primary/80"
+                        onClick={() => {
+                          setDrawerMode('prompt');
+                          setEditingBotDrawerVisible(true);
+                        }}
+                      >
+                        <RiMagicLine className="mr-1 h-4 w-4" />
+                        {t('team.prompts_link')}
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{t('team.prompts_tooltip')}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tag
+                    className="!m-0 !px-2 !py-0 text-xs leading-5"
+                    variant="default"
+                    style={promptSummaryStyle}
+                  >
+                    {promptSummary.label}
+                  </Tag>
+                </div>
 
-              {/* Transfer component with flex-1 to fill remaining space */}
-              <div className="relative flex-1 min-h-0">
-                <Transfer
-                  dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
-                  targetKeys={selectedBotKeys.map(String)}
-                  onChange={onTransferChange}
-                  render={item => (
-                    <div className="flex items-center justify-between w-full">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <span className="truncate max-w-[150px]">
-                            {item.title}
-                            <span className="text-xs text-text-muted">({item.description})</span>
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>{`${item.title} (${item.description})`}</p>
-                        </TooltipContent>
-                      </Tooltip>
-
-                      <div className="flex items-center">
-                        {teamPromptMap.get(Number(item.key)) && (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Tag
-                                className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
-                                variant="default"
-                                style={configuredPromptBadgeStyle}
-                              >
-                                {t('team.prompts_badge')}
-                              </Tag>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>{t('team.prompts_badge_tooltip')}</p>
-                            </TooltipContent>
-                          </Tooltip>
-                        )}
-
-                        <Edit
-                          className="ml-2 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                          onClick={e => {
-                            e.stopPropagation(); // Stop event propagation to avoid triggering selection
-                            handleEditBot(Number(item.key));
-                          }}
-                        />
-                        <Copy
-                          className="ml-3 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                          onClick={e => {
-                            e.stopPropagation();
-                            handleCloneBot(Number(item.key));
-                          }}
-                        />
+                {/* Transfer component with flex-1 to fill remaining space */}
+                <div className="relative flex-1 min-h-0">
+                  {/* Overlay mask for Dify leader mode */}
+                  {isDifyLeader && (
+                    <div className="absolute inset-0 bg-white/50 dark:bg-black/50 z-10 flex items-center justify-center rounded-md backdrop-blur-[1px]">
+                      <div className="bg-background/95 px-4 py-2 rounded-md shadow-sm border border-border text-sm text-muted-foreground">
+                        {t('team.dify_no_members_hint') ||
+                          'Dify bots handle execution independently and do not support team members.'}
                       </div>
                     </div>
                   )}
-                  titles={[t('team.candidates'), t('team.in_team')]}
-                  className="h-full transfer-fill"
-                  listStyle={{
-                    backgroundColor: 'rgb(var(--color-bg-surface))',
-                    borderColor: 'rgb(var(--color-border))',
-                  }}
-                  leftFooter={
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="w-full"
-                      onClick={handleCreateBot}
-                    >
-                      <Plus className="mr-2 h-4 w-4" />
-                      {t('bots.new_bot')}
-                    </Button>
-                  }
-                />
+                  <Transfer
+                    dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
+                    targetKeys={selectedBotKeys.map(String)}
+                    onChange={onTransferChange}
+                    disabled={isDifyLeader}
+                    render={item => (
+                      <div className="flex items-center justify-between w-full">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <span className="truncate max-w-[150px]">
+                              {item.title}
+                              <span className="text-xs text-text-muted">({item.description})</span>
+                            </span>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{`${item.title} (${item.description})`}</p>
+                          </TooltipContent>
+                        </Tooltip>
+
+                        <div className="flex items-center">
+                          {teamPromptMap.get(Number(item.key)) && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Tag
+                                  className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
+                                  variant="default"
+                                  style={configuredPromptBadgeStyle}
+                                >
+                                  {t('team.prompts_badge')}
+                                </Tag>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>{t('team.prompts_badge_tooltip')}</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
+
+                          <Edit
+                            className="ml-2 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
+                            onClick={e => {
+                              e.stopPropagation(); // Stop event propagation to avoid triggering selection
+                              handleEditBot(Number(item.key));
+                            }}
+                          />
+                          <Copy
+                            className="ml-3 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleCloneBot(Number(item.key));
+                            }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    titles={[t('team.candidates'), t('team.in_team')]}
+                    className="h-full transfer-fill"
+                    listStyle={{
+                      backgroundColor: 'rgb(var(--color-bg-surface))',
+                      borderColor: 'rgb(var(--color-border))',
+                    }}
+                    leftFooter={
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={handleCreateBot}
+                        disabled={isDifyLeader}
+                      >
+                        <Plus className="mr-2 h-4 w-4" />
+                        {t('bots.new_bot')}
+                      </Button>
+                    }
+                  />
+                </div>
               </div>
-            </div>
+            )}
           </div>
           {/* Mobile Transfer layout optimization styles */}
           <style
