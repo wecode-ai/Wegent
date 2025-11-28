@@ -325,14 +325,16 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                     Kind.is_active == True
                 ).first()
                 
-                # Get model for agent config
-                model = db.query(Kind).filter(
-                    Kind.user_id == team.user_id,
-                    Kind.kind == "Model",
-                    Kind.name == bot_crd.spec.modelRef.name,
-                    Kind.namespace == bot_crd.spec.modelRef.namespace,
-                    Kind.is_active == True
-                ).first()
+                # Get model for agent config (modelRef is optional)
+                model = None
+                if bot_crd.spec.modelRef:
+                    model = db.query(Kind).filter(
+                        Kind.user_id == team.user_id,
+                        Kind.kind == "Model",
+                        Kind.name == bot_crd.spec.modelRef.name,
+                        Kind.namespace == bot_crd.spec.modelRef.namespace,
+                        Kind.is_active == True
+                    ).first()
                 
                 # Extract data from components
                 system_prompt = ""
