@@ -115,11 +115,15 @@ export default function TeamSelector({
   if (!selectedTeam || teams.length === 0) return null;
 
   return (
-    <div className="flex items-center space-x-2 min-w-0" data-tour="team-selector">
+    <div
+      className="flex items-center space-x-2 min-w-0"
+      data-tour="team-selector"
+      style={{ maxWidth: isMobile ? 200 : 260 }}
+    >
       <FaUsers
         className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}
       />
-      <div className="relative min-w-0" style={{ width: isMobile ? 200 : 260 }}>
+      <div className="relative min-w-0 flex-1">
         <SearchableSelect
           value={selectedTeam?.id.toString()}
           onValueChange={handleChange}

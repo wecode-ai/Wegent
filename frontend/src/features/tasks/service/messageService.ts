@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
-import { taskApis } from '@/apis/tasks';
+import { taskApis, CreateTaskRequest } from '@/apis/tasks';
 
 /**
  * Send message:
@@ -17,8 +17,19 @@ export async function sendMessage(params: {
   branch: GitBranch | null;
   task_id?: number;
   taskType?: 'chat' | 'code';
+  model_id?: string;
+  force_override_bot_model?: boolean;
 }) {
-  const { message, team, repo, branch, task_id, taskType = 'chat' } = params;
+  const {
+    message,
+    team,
+    repo,
+    branch,
+    task_id,
+    taskType = 'chat',
+    model_id,
+    force_override_bot_model,
+  } = params;
   const trimmed = message?.trim() ?? '';
 
   if (!trimmed) {
@@ -36,7 +47,7 @@ export async function sendMessage(params: {
   }
 
   // Unified delegation to taskApis.sendTaskMessage (internally handles whether to create a task first)
-  const payload = {
+  const payload: { task_id?: number; message: string } & CreateTaskRequest = {
     task_id: Number.isFinite(task_id as number) ? (task_id as number) : undefined,
     message: trimmed,
     title: trimmed.substring(0, 100),
@@ -51,6 +62,8 @@ export async function sendMessage(params: {
     batch: 0,
     user_id: 0,
     user_name: '',
+    model_id: model_id,
+    force_override_bot_model: force_override_bot_model,
   };
 
   try {

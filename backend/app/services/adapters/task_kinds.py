@@ -213,6 +213,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         "taskType": obj_in.task_type, # default: chat, code
                         "autoDeleteExecutor": obj_in.auto_delete_executor, # default: false, true
                         "source": obj_in.source,
+                        # Model selection fields
+                        **({"modelId": obj_in.model_id} if obj_in.model_id else {}),
+                        **({"forceOverrideBotModel": "true"} if obj_in.force_override_bot_model else {}),
                     }
                 },
                 "apiVersion": "agent.wecode.io/v1"

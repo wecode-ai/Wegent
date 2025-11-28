@@ -18,9 +18,14 @@ import SkillManagementModal from './skills/SkillManagementModal';
 
 import { Bot } from '@/types/api';
 import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
-import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
+import {
+  isPredefinedModel,
+  getModelFromConfig,
+  getModelTypeFromConfig,
+  createPredefinedModelConfig,
+} from '@/features/settings/services/bots';
 import { agentApis, Agent } from '@/apis/agents';
-import { modelApis, Model } from '@/apis/models';
+import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
 import { fetchSkillsList } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
@@ -46,10 +51,12 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [botSaving, setBotSaving] = useState(false);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
-  const [models, setModels] = useState<Model[]>([]);
+  const [models, setModels] = useState<UnifiedModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
+  const [selectedModelType, setSelectedModelType] = useState<ModelTypeEnum | undefined>(undefined);
+  const [selectedProtocol, setSelectedProtocol] = useState('');
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null;
@@ -261,6 +268,12 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
+    console.log('[DEBUG] fetchModels useEffect triggered', {
+      agentName,
+      baseBot_agent_name: baseBot?.agent_name,
+      baseBot_agent_config: baseBot?.agent_config,
+    });
+
     if (!agentName) {
       setModels([]);
       return;
@@ -269,30 +282,72 @@ const BotEdit: React.FC<BotEditProps> = ({
     const fetchModels = async () => {
       setLoadingModels(true);
       try {
-        const response = await modelApis.getModelNames(agentName);
+        // Use the new unified models API which includes type information
+        const response = await modelApis.getUnifiedModels(agentName);
+        console.log('[DEBUG] Models loaded:', response.data);
         setModels(response.data);
 
-        // When models list is empty, automatically switch to custom model mode
-        if (!response.data || response.data.length === 0) {
-          setIsCustomModel(true);
-          setSelectedModel('');
+        // After loading models, check if we should restore the bot's saved model
+        // This handles the case when editing an existing bot with a predefined model
+        // Only restore if the current agentName matches the baseBot's agent_name
+        // (i.e., user hasn't switched to a different agent)
+        const hasConfig = baseBot?.agent_config && Object.keys(baseBot.agent_config).length > 0;
+        const agentMatches = baseBot?.agent_name === agentName;
+        const isPredefined = hasConfig && isPredefinedModel(baseBot.agent_config);
+
+        console.log('[DEBUG] Model restore check:', {
+          hasConfig,
+          agentMatches,
+          isPredefined,
+          agent_config: baseBot?.agent_config,
+        });
+
+        if (hasConfig && agentMatches && isPredefined) {
+          const savedModelName = getModelFromConfig(baseBot.agent_config);
+          const savedModelType = getModelTypeFromConfig(baseBot.agent_config);
+          console.log('[DEBUG] Saved model name:', savedModelName, 'type:', savedModelType);
+          // Only set the model if it exists in the loaded models list
+          // Match by both name and type if type is specified
+          const foundModel = response.data.find((m: UnifiedModel) => {
+            if (savedModelType) {
+              return m.name === savedModelName && m.type === savedModelType;
+            }
+            return m.name === savedModelName;
+          });
+          if (savedModelName && foundModel) {
+            console.log(
+              '[DEBUG] Setting selectedModel to:',
+              savedModelName,
+              'type:',
+              foundModel.type
+            );
+            setSelectedModel(savedModelName);
+            setSelectedModelType(foundModel.type);
+          } else {
+            console.log('[DEBUG] Model not found in list, clearing selection');
+            // Model not found in list, clear selection
+            setSelectedModel('');
+            setSelectedModelType(undefined);
+          }
         }
+        // Note: Don't clear selectedModel here if agent changed,
+        // as it's already cleared in the agent select onChange handler
       } catch (error) {
         console.error('Failed to fetch models:', error);
         toast({
           variant: 'destructive',
           title: t('bot.errors.fetch_models_failed'),
         });
-        // On error, also switch to custom model mode
-        setIsCustomModel(true);
+        setModels([]);
         setSelectedModel('');
+        setSelectedModelType(undefined);
       } finally {
         setLoadingModels(false);
       }
     };
 
     fetchModels();
-  }, [agentName, toast, t]);
+  }, [agentName, toast, t, baseBot]);
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '');
@@ -312,9 +367,14 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   // Initialize model-related data after agents and models are loaded
   useEffect(() => {
-    if (!baseBot?.agent_config) {
+    // Check if agent_config is empty or doesn't exist
+    const hasValidConfig = baseBot?.agent_config && Object.keys(baseBot.agent_config).length > 0;
+
+    if (!hasValidConfig) {
+      // Default to dropdown (predefined model) mode when no config exists
       setIsCustomModel(false);
       setSelectedModel('');
+      setSelectedProtocol('');
       return;
     }
 
@@ -324,8 +384,12 @@ const BotEdit: React.FC<BotEditProps> = ({
     if (isPredefined) {
       const modelName = getModelFromConfig(baseBot.agent_config);
       setSelectedModel(modelName);
+      setSelectedProtocol('');
     } else {
       setSelectedModel('');
+      // Extract protocol from agent_config for custom configs
+      const protocol = ((baseBot.agent_config as Record<string, unknown>).protocol as string) || '';
+      setSelectedProtocol(protocol);
     }
   }, [baseBot]);
 
@@ -345,8 +409,15 @@ const BotEdit: React.FC<BotEditProps> = ({
   }, [handleBack]);
 
   // Save logic
-  // Save logic
   const handleSave = async () => {
+    console.log('[DEBUG] handleSave called', {
+      botName,
+      agentName,
+      isCustomModel,
+      selectedModel,
+      agentConfig,
+    });
+
     if (!botName.trim() || !agentName.trim()) {
       toast({
         variant: 'destructive',
@@ -356,6 +427,15 @@ const BotEdit: React.FC<BotEditProps> = ({
     }
     let parsedAgentConfig: unknown = undefined;
     if (isCustomModel) {
+      // Validate protocol is selected
+      if (!selectedProtocol) {
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.protocol_required'),
+        });
+        return;
+      }
+
       const trimmedConfig = agentConfig.trim();
       if (!trimmedConfig) {
         setAgentConfigError(true);
@@ -366,7 +446,9 @@ const BotEdit: React.FC<BotEditProps> = ({
         return;
       }
       try {
-        parsedAgentConfig = JSON.parse(trimmedConfig);
+        const configObj = JSON.parse(trimmedConfig);
+        // Add protocol to the config
+        parsedAgentConfig = { ...configObj, protocol: selectedProtocol };
         setAgentConfigError(false);
       } catch {
         setAgentConfigError(true);
@@ -377,8 +459,11 @@ const BotEdit: React.FC<BotEditProps> = ({
         return;
       }
     } else {
-      parsedAgentConfig = { private_model: selectedModel };
+      // Use createPredefinedModelConfig to include bind_model_type
+      parsedAgentConfig = createPredefinedModelConfig(selectedModel, selectedModelType);
     }
+
+    console.log('[DEBUG] parsedAgentConfig:', parsedAgentConfig);
 
     let parsedMcpConfig: Record<string, unknown> | null = null;
     if (mcpConfig.trim()) {
@@ -414,17 +499,22 @@ const BotEdit: React.FC<BotEditProps> = ({
         mcp_servers: parsedMcpConfig ?? {},
         skills: selectedSkills.length > 0 ? selectedSkills : [],
       };
+      console.log('[DEBUG] Saving bot request:', JSON.stringify(botReq, null, 2));
+
       if (editingBotId && editingBotId > 0) {
         // Edit existing bot
         const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest);
+        console.log('[DEBUG] Bot updated response:', JSON.stringify(updated, null, 2));
         setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)));
       } else {
         // Create new bot
         const created = await botApis.createBot(botReq);
+        console.log('[DEBUG] Bot created response:', JSON.stringify(created, null, 2));
         setBots(prev => [created, ...prev]);
       }
       onClose();
     } catch (error) {
+      console.error('[DEBUG] Save error:', error);
       toast({
         variant: 'destructive',
         title: (error as Error)?.message || t('bot.errors.save_failed'),
@@ -517,6 +607,8 @@ const BotEdit: React.FC<BotEditProps> = ({
                   setAgentConfig('');
                   setAgentConfigError(false);
                   setModels([]);
+                  // Clear protocol when switching agent type since protocols are filtered by agent
+                  setSelectedProtocol('');
 
                   // Adapt MCP config when switching agent type
                   if (mcpConfig.trim()) {
@@ -596,18 +688,22 @@ const BotEdit: React.FC<BotEditProps> = ({
                 )}
               </div>
               <div className="flex items-center">
-                <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
+                <span className="text-xs text-text-muted mr-2">{t('bot.advanced_mode')}</span>
                 <Switch
                   checked={isCustomModel}
                   onCheckedChange={(checked: boolean) => {
                     setIsCustomModel(checked);
                     if (checked) {
+                      // Clear data when switching to advanced mode
                       setAgentConfig('');
+                      setSelectedModel('');
+                      setSelectedProtocol('');
                       setAgentConfigError(false);
                     }
                     if (!checked) {
                       setAgentConfigError(false);
                       setTemplateSectionExpanded(false);
+                      setSelectedProtocol('');
                     }
                   }}
                 />
@@ -638,6 +734,35 @@ const BotEdit: React.FC<BotEditProps> = ({
                   </Button>
                 </div>
                 <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
+              </div>
+            )}
+
+            {/* Protocol selector - only show in advanced mode */}
+            {isCustomModel && (
+              <div className="mb-3">
+                <label className="block text-sm font-medium text-text-primary mb-1">
+                  {t('bot.protocol')} <span className="text-red-400">*</span>
+                </label>
+                <Select value={selectedProtocol} onValueChange={setSelectedProtocol}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder={t('bot.protocol_select')} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {/* Filter protocol options based on agent type */}
+                    {agentName === 'ClaudeCode' && (
+                      <SelectItem value="claude">Claude (Anthropic)</SelectItem>
+                    )}
+                    {agentName === 'Agno' && <SelectItem value="openai">OpenAI</SelectItem>}
+                    {/* Show all options if agent type is unknown or not selected */}
+                    {agentName !== 'ClaudeCode' && agentName !== 'Agno' && (
+                      <>
+                        <SelectItem value="openai">OpenAI</SelectItem>
+                        <SelectItem value="claude">Claude (Anthropic)</SelectItem>
+                      </>
+                    )}
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-text-muted mt-1">{t('bot.protocol_hint')}</p>
               </div>
             )}
 
@@ -678,21 +803,46 @@ const BotEdit: React.FC<BotEditProps> = ({
               />
             ) : (
               <Select
-                value={selectedModel}
+                value={selectedModel ? `${selectedModel}:${selectedModelType || ''}` : ''}
                 onValueChange={value => {
-                  setSelectedModel(value);
+                  // Value format: "modelName:modelType"
+                  const [modelName, modelType] = value.split(':');
+                  setSelectedModel(modelName);
+                  setSelectedModelType((modelType as ModelTypeEnum) || undefined);
                 }}
-                disabled={loadingModels}
+                disabled={loadingModels || !agentName || models.length === 0}
               >
                 <SelectTrigger className="w-full">
-                  <SelectValue placeholder={t('bot.agent_select')} />
+                  <SelectValue
+                    placeholder={
+                      !agentName
+                        ? t('bot.select_executor_first')
+                        : models.length === 0
+                          ? t('bot.no_available_models')
+                          : t('bot.model_select')
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
-                  {models.map(model => (
-                    <SelectItem key={model.name} value={model.name}>
-                      {model.name}
-                    </SelectItem>
-                  ))}
+                  {models.length === 0 ? (
+                    <div className="py-2 px-3 text-sm text-text-muted text-center">
+                      {t('bot.no_available_models')}
+                    </div>
+                  ) : (
+                    models.map(model => (
+                      <SelectItem
+                        key={`${model.name}:${model.type}`}
+                        value={`${model.name}:${model.type}`}
+                      >
+                        {model.displayName ? `${model.displayName}(${model.name})` : model.name}
+                        {model.type === 'public' && (
+                          <span className="ml-1 text-xs text-text-muted">
+                            [{t('bot.public_model', '公共')}]
+                          </span>
+                        )}
+                      </SelectItem>
+                    ))
+                  )}
                 </SelectContent>
               </Select>
             )}

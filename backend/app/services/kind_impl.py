@@ -14,7 +14,8 @@ from app.models.subtask import Subtask
 from app.core.exceptions import NotFoundException
 from app.services.kind_base import KindBaseService
 from app.services.adapters.task_kinds import task_kinds_service
-from app.schemas.kind import Bot, Team, Task
+from app.schemas.kind import Bot, Team, Task, Model
+from shared.utils.crypto import encrypt_api_key, decrypt_api_key, is_api_key_encrypted
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +39,46 @@ class ModelKindService(KindBaseService):
     def _validate_references(self, db: Session, user_id: int, resource: Dict[str, Any]) -> None:
         """No references to validate for Model"""
         pass
+    
+    def _extract_resource_data(self, resource: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract and encrypt API key in Model resource data"""
+        # Call parent method first
+        resource_data = super()._extract_resource_data(resource)
+        
+        # Encrypt API key if present
+        try:
+            if 'spec' in resource_data and 'modelConfig' in resource_data['spec']:
+                model_config = resource_data['spec']['modelConfig']
+                if 'env' in model_config and 'api_key' in model_config['env']:
+                    api_key = model_config['env']['api_key']
+                    if api_key and api_key != "***":
+                        # Only encrypt if not already encrypted
+                        if not is_api_key_encrypted(api_key):
+                            resource_data['spec']['modelConfig']['env']['api_key'] = encrypt_api_key(api_key)
+                            logger.info(f"Encrypted API key for Model resource")
+        except Exception as e:
+            logger.error(f"Failed to encrypt API key: {str(e)}")
+            raise
+        
+        return resource_data
+    
+    def _format_resource(self, resource: Kind) -> Dict[str, Any]:
+        """Format Model resource for API response with decrypted API key"""
+        # Get the stored resource data
+        result = super()._format_resource(resource)
+        
+        # Decrypt API key for display
+        try:
+            if 'spec' in result and 'modelConfig' in result['spec']:
+                model_config = result['spec']['modelConfig']
+                if 'env' in model_config and 'api_key' in model_config['env']:
+                    api_key = model_config['env']['api_key']
+                    if api_key:
+                        result['spec']['modelConfig']['env']['api_key'] = decrypt_api_key(api_key)
+        except Exception as e:
+            logger.warning(f"Failed to decrypt API key: {str(e)}")
+        
+        return result
 
 
 class ShellKindService(KindBaseService):

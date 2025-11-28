@@ -639,10 +639,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Convert kinds Team to team-like dictionary
         """
+        from app.models.public_model import PublicModel
+        
         team_crd = Team.model_validate(team.json)
         
-        # Convert members to bots format
+        # Convert members to bots format and collect agent_names for is_mix_team calculation
         bots = []
+        agent_names = set()
+        
         for member in team_crd.spec.members:
             # Find bot in kinds table
             bot = db.query(Kind).filter(
@@ -654,12 +658,21 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             ).first()
             
             if bot:
+                bot_summary = self._get_bot_summary(bot, db, user_id)
                 bot_info = {
                     "bot_id": bot.id,
                     "bot_prompt": member.prompt or "",
-                    "role": member.role or ""
+                    "role": member.role or "",
+                    "bot": bot_summary
                 }
                 bots.append(bot_info)
+                
+                # Collect agent_name for is_mix_team calculation
+                if bot_summary.get("agent_name"):
+                    agent_names.add(bot_summary["agent_name"])
+        
+        # Calculate is_mix_team: true if there are multiple different agent types
+        is_mix_team = len(agent_names) > 1
         
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}
@@ -670,10 +683,95 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "name": team.name,
             "bots": bots,
             "workflow": workflow,
+            "is_mix_team": is_mix_team,
             "is_active": team.is_active,
             "created_at": team.created_at,
             "updated_at": team.updated_at,
         }
+
+    def _get_bot_summary(self, bot: Kind, db: Session, user_id: int) -> Dict[str, Any]:
+        """
+        Get a summary of bot information including agent_config with only necessary fields.
+        This is used for team list to determine if bots have predefined models.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        from app.models.public_model import PublicModel
+        
+        bot_crd = Bot.model_validate(bot.json)
+        
+        logger.info(f"[_get_bot_summary] bot.name={bot.name}, modelRef.name={bot_crd.spec.modelRef.name}, modelRef.namespace={bot_crd.spec.modelRef.namespace}")
+        
+        # Get shell to extract agent_name
+        shell = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Shell",
+            Kind.name == bot_crd.spec.shellRef.name,
+            Kind.namespace == bot_crd.spec.shellRef.namespace,
+            Kind.is_active == True
+        ).first()
+        
+        agent_name = ""
+        if shell and shell.json:
+            shell_crd = Shell.model_validate(shell.json)
+            agent_name = shell_crd.spec.runtime
+        
+        # Get model reference
+        model_ref_name = bot_crd.spec.modelRef.name
+        model_ref_namespace = bot_crd.spec.modelRef.namespace
+        
+        # Try to find model in user's private models first
+        model = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Model",
+            Kind.name == model_ref_name,
+            Kind.namespace == model_ref_namespace,
+            Kind.is_active == True
+        ).first()
+        
+        logger.info(f"[_get_bot_summary] Private model found: {model is not None}")
+        
+        agent_config = {}
+        
+        if model:
+            # Private model - check if it's a custom config or predefined model
+            model_crd = Model.model_validate(model.json)
+            is_custom_config = model_crd.spec.isCustomConfig
+            
+            logger.info(f"[_get_bot_summary] Private model isCustomConfig: {is_custom_config}")
+            
+            if is_custom_config:
+                # Custom config - don't include bind_model
+                agent_config = {}
+                logger.info(f"[_get_bot_summary] Custom config (isCustomConfig=True), returning empty agent_config")
+            else:
+                # Not custom config = predefined model, return bind_model format
+                agent_config = {"bind_model": model_ref_name}
+                logger.info(f"[_get_bot_summary] Predefined model (isCustomConfig=False), returning bind_model: {agent_config}")
+        else:
+            # Try to find in public_models table
+            public_model = db.query(PublicModel).filter(
+                PublicModel.name == model_ref_name,
+                PublicModel.namespace == model_ref_namespace,
+                PublicModel.is_active == True
+            ).first()
+            
+            logger.info(f"[_get_bot_summary] Public model found: {public_model is not None}")
+            
+            if public_model:
+                # Public model - return bind_model format
+                agent_config = {"bind_model": public_model.name}
+                logger.info(f"[_get_bot_summary] Using bind_model from public model: {agent_config}")
+            else:
+                logger.info(f"[_get_bot_summary] No model found for modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}")
+        
+        result = {
+            "agent_config": agent_config,
+            "agent_name": agent_name
+        }
+        logger.info(f"[_get_bot_summary] Returning: {result}")
+        return result
 
     def _convert_bot_to_dict(self, bot: Kind, db: Session, user_id: int) -> Dict[str, Any]:
         """

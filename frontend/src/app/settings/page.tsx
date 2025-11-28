@@ -28,9 +28,9 @@ function DashboardContent() {
   // Tab index to name mapping
   const tabIndexToName = useMemo(
     (): Record<number, string> => ({
-      0: 'bots',
-      1: 'team',
-      2: 'models',
+      0: 'models',
+      1: 'bots',
+      2: 'team',
       3: 'integrations',
       4: 'notifications',
     }),
@@ -40,9 +40,9 @@ function DashboardContent() {
   // Tab name to index mapping
   const tabNameToIndex = useMemo(
     (): Record<string, number> => ({
-      bots: 0,
-      team: 1,
-      models: 2,
+      models: 0,
+      bots: 1,
+      team: 2,
       integrations: 3,
       notifications: 4,
     }),
@@ -114,6 +114,19 @@ function DashboardContent() {
                         }`
                       }
                     >
+                      <CpuChipIcon className="w-4 h-4" />
+                      <span>{t('settings.models')}</span>
+                    </Tab>
+
+                    <Tab
+                      className={({ selected }) =>
+                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                          selected
+                            ? 'bg-muted text-text-primary'
+                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                        }`
+                      }
+                    >
                       <RiRobot2Line className="w-4 h-4" />
                       <span>{t('settings.bot')}</span>
                     </Tab>
@@ -129,19 +142,6 @@ function DashboardContent() {
                     >
                       <UsersIcon className="w-4 h-4" />
                       <span>{t('settings.team')}</span>
-                    </Tab>
-
-                    <Tab
-                      className={({ selected }) =>
-                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
-                          selected
-                            ? 'bg-muted text-text-primary'
-                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
-                        }`
-                      }
-                    >
-                      <CpuChipIcon className="w-4 h-4" />
-                      <span>{t('settings.models')}</span>
                     </Tab>
 
                     <Tab
@@ -174,13 +174,13 @@ function DashboardContent() {
                   <div className="flex-1 min-h-0 px-8 py-4 overflow-y-auto min-w-0">
                     <Tab.Panels>
                       <Tab.Panel className="focus:outline-none">
+                        <ModelList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
                         <BotList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
-                      </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
-                        <ModelList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <GitHubIntegration />
@@ -196,6 +196,19 @@ function DashboardContent() {
                 <>
                   <div className="bg-base border-b border-border">
                     <Tab.List className="flex space-x-1 px-2 py-2">
+                      <Tab
+                        className={({ selected }) =>
+                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
+                            selected
+                              ? 'bg-muted text-text-primary'
+                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                          }`
+                        }
+                      >
+                        <CpuChipIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('settings.models')}</span>
+                      </Tab>
+
                       <Tab
                         className={({ selected }) =>
                           `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
@@ -231,19 +244,6 @@ function DashboardContent() {
                           }`
                         }
                       >
-                        <CpuChipIcon className="w-3 h-3" />
-                        <span className="hidden xs:inline">{t('settings.models')}</span>
-                      </Tab>
-
-                      <Tab
-                        className={({ selected }) =>
-                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
-                            selected
-                              ? 'bg-muted text-text-primary'
-                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
-                          }`
-                        }
-                      >
                         <PuzzlePieceIcon className="w-3 h-3" />
                         <span className="hidden xs:inline">{t('settings.integrations')}</span>
                       </Tab>
@@ -266,13 +266,13 @@ function DashboardContent() {
                   <div className="flex-1 min-h-0 px-2 py-2 overflow-y-auto min-w-0">
                     <Tab.Panels>
                       <Tab.Panel className="focus:outline-none">
+                        <ModelList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
                         <BotList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
-                      </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
-                        <ModelList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <GitHubIntegration />

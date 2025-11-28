@@ -21,6 +21,7 @@ from app.services.webhook_notification import webhook_notification_service, Noti
 from app.services.base import BaseService
 from app.core.config import settings
 from sqlalchemy.orm.attributes import flag_modified
+from shared.utils.crypto import decrypt_api_key
 
 logger = logging.getLogger(__name__)
 
@@ -354,6 +355,10 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                 if model and model.json:
                     model_crd = Model.model_validate(model.json)
                     agent_config = model_crd.spec.modelConfig
+                    # Decrypt API key for executor
+                    if isinstance(agent_config, dict) and 'env' in agent_config:
+                        if 'api_key' in agent_config['env']:
+                            agent_config['env']['api_key'] = decrypt_api_key(agent_config['env']['api_key'])
                 
                 # Get team member info for bot prompt and role
                 team_member_info = None
@@ -377,8 +382,8 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                         force_override = False
 
                         if task_crd.metadata.labels:
-                            task_model_name = task_crd.metadata.labels.get("model_id")
-                            force_override = task_crd.metadata.labels.get("force_override_bot_model") == "true"
+                            task_model_name = task_crd.metadata.labels.get("modelId")
+                            force_override = task_crd.metadata.labels.get("forceOverrideBotModel") == "true"
 
                         # 2. Determine which model name to use
                         model_name_to_use = None
@@ -393,12 +398,6 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                             if isinstance(bind_model_name, str) and bind_model_name.strip():
                                 model_name_to_use = bind_model_name.strip()
                                 logger.info(f"Using bot bound model: {model_name_to_use}")
-                            # Check for private_model (legacy support)
-                            elif not model_name_to_use:
-                                private_model_name = agent_config.get("private_model")
-                                if isinstance(private_model_name, str) and private_model_name.strip():
-                                    model_name_to_use = private_model_name.strip()
-                                    logger.info(f"Using private model (legacy): {model_name_to_use}")
                             # Fallback to task-specified model
                             if not model_name_to_use and task_model_name:
                                 model_name_to_use = task_model_name
@@ -419,6 +418,9 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                                     model_crd = Model.model_validate(model_kind.json)
                                     model_config = model_crd.spec.modelConfig
                                     if isinstance(model_config, dict):
+                                        # Decrypt API key for executor
+                                        if 'env' in model_config and 'api_key' in model_config['env']:
+                                            model_config['env']['api_key'] = decrypt_api_key(model_config['env']['api_key'])
                                         agent_config_data = model_config
                                         logger.info(f"Successfully loaded model config from kinds: {model_name_to_use}")
                                 except Exception as e:
@@ -432,6 +434,9 @@ class ExecutorKindsService(BaseService[Kind, SubtaskExecutorUpdate, SubtaskExecu
                                 if model_row and model_row.json:
                                     model_config = model_row.json.get("spec", {}).get("modelConfig", {})
                                     if isinstance(model_config, dict):
+                                        # Decrypt API key for executor (public models may also have encrypted keys)
+                                        if 'env' in model_config and 'api_key' in model_config['env']:
+                                            model_config['env']['api_key'] = decrypt_api_key(model_config['env']['api_key'])
                                         agent_config_data = model_config
                                         logger.info(f"Successfully loaded model config from public_models: {model_name_to_use}")
                                 else:

@@ -9,6 +9,7 @@ import { Send, CircleStop } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
+import ModelSelector, { Model, DEFAULT_MODEL_NAME } from './ModelSelector';
 import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
@@ -52,6 +53,8 @@ export default function ChatArea({
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
   const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null);
   const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null);
+  const [selectedModel, setSelectedModel] = useState<Model | null>(null);
+  const [forceOverride, setForceOverride] = useState(false);
   const [hasRestoredPreferences, setHasRestoredPreferences] = useState(false);
   const isMobile = useMediaQuery('(max-width: 640px)');
 
@@ -185,6 +188,8 @@ export default function ChatArea({
   const handleSendMessage = async () => {
     setIsLoading(true);
     setError('');
+    // When default model is selected, don't pass model_id (use bot's predefined model)
+    const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
     const { error, newTask } = await sendMessage({
       message: taskInputMessage,
       team: selectedTeam,
@@ -192,6 +197,8 @@ export default function ChatArea({
       branch: showRepositorySelector ? selectedBranch : null,
       task_id: selectedTaskDetail?.id,
       taskType: taskType,
+      model_id: modelId,
+      force_override_bot_model: forceOverride,
     });
     if (error) {
       toast({
@@ -451,7 +458,7 @@ export default function ChatArea({
                   />
                   {/* Team Selector and Send Button */}
                   <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
-                    <div className="flex-1 min-w-0 overflow-hidden">
+                    <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
                       {teams.length > 0 && (
                         <TeamSelector
                           selectedTeam={selectedTeam}
@@ -459,6 +466,16 @@ export default function ChatArea({
                           teams={teams}
                           disabled={hasMessages}
                           isLoading={isTeamsLoading}
+                        />
+                      )}
+                      {selectedTeam && (
+                        <ModelSelector
+                          selectedModel={selectedModel}
+                          setSelectedModel={setSelectedModel}
+                          forceOverride={forceOverride}
+                          setForceOverride={setForceOverride}
+                          selectedTeam={selectedTeam}
+                          disabled={hasMessages || isLoading}
                         />
                       )}
                     </div>
@@ -564,7 +581,7 @@ export default function ChatArea({
                 />
                 {/* Team Selector and Send Button */}
                 <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
-                  <div className="flex-1 min-w-0 overflow-hidden">
+                  <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
                     {teams.length > 0 && (
                       <TeamSelector
                         selectedTeam={selectedTeam}
@@ -572,6 +589,16 @@ export default function ChatArea({
                         teams={teams}
                         disabled={hasMessages}
                         isLoading={isTeamsLoading}
+                      />
+                    )}
+                    {selectedTeam && (
+                      <ModelSelector
+                        selectedModel={selectedModel}
+                        setSelectedModel={setSelectedModel}
+                        forceOverride={forceOverride}
+                        setForceOverride={setForceOverride}
+                        selectedTeam={selectedTeam}
+                        disabled={hasMessages || isLoading}
                       />
                     )}
                   </div>

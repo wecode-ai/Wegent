@@ -85,6 +85,8 @@
     "mcp_config": "MCP配置",
     "save_prompt": "保存提示词",
     "use_custom_model": "自定义配置",
+    "advanced_mode": "高级模式",
+    "no_available_models": "没有可用模型",
     "import_mcp": "导入",
     "import_mcp_button": "导入或追加其他平台的MCP",
     "import_mcp_title": "导入MCP配置",
@@ -106,8 +108,14 @@
       "mcp_config_json": "MCP 配置必须是合法 JSON 格式",
       "fetch_agents_failed": "获取 Agent 列表失败",
       "fetch_models_failed": "获取模型列表失败",
-      "save_failed": "保存失败"
-    }
+      "save_failed": "保存失败",
+      "protocol_required": "请选择模型协议类型"
+    },
+    "protocol": "模型协议",
+    "protocol_select": "选择模型协议",
+    "protocol_hint": "选择模型使用的协议类型：OpenAI 或 Claude (Anthropic)",
+    "select_executor_first": "请先选择执行器",
+    "model_select": "选择模型"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
@@ -432,10 +440,17 @@
   "models": {
     "title": "模型管理",
     "description": "管理您的 AI 模型配置",
+    "public": "公共",
     "create": "创建模型",
     "edit": "编辑模型",
     "delete": "删除模型",
     "test_connection": "测试连接",
+    "model_id_name": "模型标识",
+    "id_hint": "唯一标识符，只能包含小写字母、数字和连字符",
+    "id_readonly_hint": "模型标识创建后不可修改",
+    "display_name": "显示名称",
+    "display_name_placeholder": "我的 GPT-4 模型",
+    "display_name_hint": "用于显示的友好名称（可选）",
     "name": "模型名称",
     "name_readonly_hint": "模型名称创建后不可修改",
     "provider_type": "提供商类型",
@@ -447,6 +462,8 @@
     "model_id": "模型 ID",
     "select_model_id": "选择模型 ID",
     "custom_model_id_placeholder": "输入自定义模型 ID",
+    "custom_headers": "自定义 Headers",
+    "custom_headers_hint": "输入 JSON 格式的自定义 HTTP Headers，这些 Headers 会覆盖默认值",
     "no_models": "暂无模型",
     "no_models_hint": "点击上方按钮创建第一个模型",
     "loading": "加载中...",
@@ -462,10 +479,25 @@
       "create_failed": "创建模型失败",
       "update_failed": "更新模型失败",
       "delete_failed": "删除模型失败",
+      "id_required": "模型标识不能为空",
+      "id_invalid": "模型标识只能包含小写字母、数字和连字符",
       "name_required": "模型名称不能为空",
       "name_invalid": "模型名称只能包含小写字母、数字和连字符",
       "api_key_required": "API Key 不能为空",
-      "model_id_required": "模型 ID 不能为空"
+      "model_id_required": "模型 ID 不能为空",
+      "custom_headers_invalid": "自定义 Headers 格式无效",
+      "custom_headers_invalid_json": "请输入有效的 JSON 格式",
+      "custom_headers_invalid_object": "自定义 Headers 必须是一个对象",
+      "custom_headers_values_must_be_strings": "所有 Header 值必须是字符串"
     }
+  },
+  "task_submit": {
+    "select_model": "选择模型",
+    "search_model": "搜索模型...",
+    "force_override_model": "强制覆盖 Bot 绑定的模型",
+    "override_short": "覆盖",
+    "mixed_team_warning": "当前团队包含多种执行器类型，无法统一指定模型",
+    "default_model": "默认绑定模型",
+    "use_bot_model": "使用 Bot 预设模型"
   }
 }

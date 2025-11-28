@@ -8,6 +8,7 @@ import React, { useCallback, useState, useEffect } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -46,7 +47,8 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
   const isEditing = !!model;
 
   // Form state
-  const [name, setName] = useState(model?.metadata.name || '');
+  const [modelIdName, setModelIdName] = useState(model?.metadata.name || ''); // Unique identifier (ID)
+  const [displayName, setDisplayName] = useState(model?.metadata.displayName || ''); // Human-readable name
   const [providerType, setProviderType] = useState<'openai' | 'anthropic'>(
     model?.spec.modelConfig?.env?.model === 'openai' ? 'openai' : 'anthropic'
   );
@@ -54,13 +56,19 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
   const [customModelId, setCustomModelId] = useState('');
   const [apiKey, setApiKey] = useState(model?.spec.modelConfig?.env?.api_key || '');
   const [baseUrl, setBaseUrl] = useState(model?.spec.modelConfig?.env?.base_url || '');
+  const [customHeaders, setCustomHeaders] = useState(() => {
+    const headers = model?.spec.modelConfig?.env?.custom_headers;
+    if (headers && Object.keys(headers).length > 0) {
+      return JSON.stringify(headers, null, 2);
+    }
+    return '';
+  });
+  const [customHeadersError, setCustomHeadersError] = useState('');
   const [showApiKey, setShowApiKey] = useState(false);
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
-
   // Determine if current model_id is in preset options
   const modelOptions = providerType === 'openai' ? OPENAI_MODEL_OPTIONS : ANTHROPIC_MODEL_OPTIONS;
-  const isPresetModelId = modelOptions.some(opt => opt.value === modelId && opt.value !== 'custom');
 
   useEffect(() => {
     if (model?.spec.modelConfig?.env?.model_id) {
@@ -131,22 +139,54 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
     }
   };
 
+  // Validate custom headers JSON
+  const validateCustomHeaders = (value: string): Record<string, string> | null => {
+    if (!value.trim()) {
+      setCustomHeadersError('');
+      return {};
+    }
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+        setCustomHeadersError(t('models.errors.custom_headers_invalid_object'));
+        return null;
+      }
+      // Validate all values are strings
+      for (const [_key, val] of Object.entries(parsed)) {
+        if (typeof val !== 'string') {
+          setCustomHeadersError(t('models.errors.custom_headers_values_must_be_strings'));
+          return null;
+        }
+      }
+      setCustomHeadersError('');
+      return parsed as Record<string, string>;
+    } catch {
+      setCustomHeadersError(t('models.errors.custom_headers_invalid_json'));
+      return null;
+    }
+  };
+
+  const handleCustomHeadersChange = (value: string) => {
+    setCustomHeaders(value);
+    validateCustomHeaders(value);
+  };
+
   const handleSave = async () => {
     // Validation
-    if (!name.trim()) {
+    if (!modelIdName.trim()) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.name_required'),
+        title: t('models.errors.id_required'),
       });
       return;
     }
 
-    // Validate name format
+    // Validate ID format (lowercase letters, numbers, and hyphens only)
     const nameRegex = /^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$/;
-    if (!nameRegex.test(name)) {
+    if (!nameRegex.test(modelIdName)) {
       toast({
         variant: 'destructive',
-        title: t('models.errors.name_invalid'),
+        title: t('models.errors.id_invalid'),
       });
       return;
     }
@@ -168,14 +208,25 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
       return;
     }
 
+    // Validate custom headers
+    const parsedHeaders = validateCustomHeaders(customHeaders);
+    if (parsedHeaders === null) {
+      toast({
+        variant: 'destructive',
+        title: t('models.errors.custom_headers_invalid'),
+      });
+      return;
+    }
+
     setSaving(true);
     try {
       const modelCRD: ModelCRD = {
         apiVersion: 'agent.wecode.io/v1',
         kind: 'Model',
         metadata: {
-          name: name.trim(),
+          name: modelIdName.trim(),
           namespace: 'default',
+          displayName: displayName.trim() || undefined,
         },
         spec: {
           modelConfig: {
@@ -184,6 +235,8 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
               model_id: finalModelId,
               api_key: apiKey,
               ...(baseUrl && { base_url: baseUrl }),
+              ...(parsedHeaders &&
+                Object.keys(parsedHeaders).length > 0 && { custom_headers: parsedHeaders }),
             },
           },
         },
@@ -231,9 +284,8 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
   }, [handleBack]);
 
   const apiKeyPlaceholder = providerType === 'openai' ? 'sk-...' : 'sk-ant-...';
-  const baseUrlPlaceholder = providerType === 'openai'
-    ? 'https://api.openai.com/v1'
-    : 'https://api.anthropic.com';
+  const baseUrlPlaceholder =
+    providerType === 'openai' ? 'https://api.openai.com/v1' : 'https://api.anthropic.com';
 
   return (
     <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 min-h-[500px]">
@@ -275,27 +327,42 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
 
       {/* Form */}
       <div className="space-y-6 max-w-xl mx-2">
-        {/* Model Name */}
+        {/* Model ID */}
         <div className="space-y-2">
-          <Label htmlFor="name" className="text-base font-medium">
-            {t('models.name')} <span className="text-red-400">*</span>
+          <Label htmlFor="modelIdName" className="text-lg font-semibold text-text-primary">
+            {t('models.model_id_name')} <span className="text-red-400">*</span>
           </Label>
           <Input
-            id="name"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
+            id="modelIdName"
+            value={modelIdName}
+            onChange={e => setModelIdName(e.target.value)}
             placeholder="my-gpt4-model"
             disabled={isEditing}
             className="bg-base"
           />
-          {isEditing && (
-            <p className="text-xs text-text-muted">{t('models.name_readonly_hint')}</p>
-          )}
+          <p className="text-xs text-text-muted">
+            {isEditing ? t('models.id_readonly_hint') : t('models.id_hint')}
+          </p>
+        </div>
+
+        {/* Display Name */}
+        <div className="space-y-2">
+          <Label htmlFor="displayName" className="text-lg font-semibold text-text-primary">
+            {t('models.display_name')}
+          </Label>
+          <Input
+            id="displayName"
+            value={displayName}
+            onChange={e => setDisplayName(e.target.value)}
+            placeholder={t('models.display_name_placeholder')}
+            className="bg-base"
+          />
+          <p className="text-xs text-text-muted">{t('models.display_name_hint')}</p>
         </div>
 
         {/* Provider Type */}
         <div className="space-y-2">
-          <Label htmlFor="provider_type" className="text-base font-medium">
+          <Label htmlFor="provider_type" className="text-lg font-semibold text-text-primary">
             {t('models.provider_type')} <span className="text-red-400">*</span>
           </Label>
           <Select value={providerType} onValueChange={handleProviderChange}>
@@ -322,7 +389,7 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
 
         {/* Model ID */}
         <div className="space-y-2">
-          <Label htmlFor="model_id" className="text-base font-medium">
+          <Label htmlFor="model_id" className="text-lg font-semibold text-text-primary">
             {t('models.model_id')} <span className="text-red-400">*</span>
           </Label>
           <Select value={modelId} onValueChange={setModelId}>
@@ -330,7 +397,7 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
               <SelectValue placeholder={t('models.select_model_id')} />
             </SelectTrigger>
             <SelectContent>
-              {modelOptions.map((option) => (
+              {modelOptions.map(option => (
                 <SelectItem key={option.value} value={option.value}>
                   {option.label}
                 </SelectItem>
@@ -340,7 +407,7 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
           {modelId === 'custom' && (
             <Input
               value={customModelId}
-              onChange={(e) => setCustomModelId(e.target.value)}
+              onChange={e => setCustomModelId(e.target.value)}
               placeholder={t('models.custom_model_id_placeholder')}
               className="mt-2 bg-base"
             />
@@ -349,7 +416,7 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
 
         {/* API Key */}
         <div className="space-y-2">
-          <Label htmlFor="api_key" className="text-base font-medium">
+          <Label htmlFor="api_key" className="text-lg font-semibold text-text-primary">
             {t('models.api_key')} <span className="text-red-400">*</span>
           </Label>
           <div className="relative">
@@ -357,7 +424,7 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
               id="api_key"
               type={showApiKey ? 'text' : 'password'}
               value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
+              onChange={e => setApiKey(e.target.value)}
               placeholder={apiKeyPlaceholder}
               className="bg-base pr-10"
             />
@@ -368,28 +435,40 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
               className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7"
               onClick={() => setShowApiKey(!showApiKey)}
             >
-              {showApiKey ? (
-                <EyeSlashIcon className="w-4 h-4" />
-              ) : (
-                <EyeIcon className="w-4 h-4" />
-              )}
+              {showApiKey ? <EyeSlashIcon className="w-4 h-4" /> : <EyeIcon className="w-4 h-4" />}
             </Button>
           </div>
         </div>
 
         {/* Base URL */}
         <div className="space-y-2">
-          <Label htmlFor="base_url" className="text-base font-medium">
+          <Label htmlFor="base_url" className="text-lg font-semibold text-text-primary">
             {t('models.base_url')}
           </Label>
           <Input
             id="base_url"
             value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
+            onChange={e => setBaseUrl(e.target.value)}
             placeholder={baseUrlPlaceholder}
             className="bg-base"
           />
           <p className="text-xs text-text-muted">{t('models.base_url_hint')}</p>
+        </div>
+
+        {/* Custom Headers */}
+        <div className="space-y-2">
+          <Label htmlFor="custom_headers" className="text-lg font-semibold text-text-primary">
+            {t('models.custom_headers')}
+          </Label>
+          <Textarea
+            id="custom_headers"
+            value={customHeaders}
+            onChange={e => handleCustomHeadersChange(e.target.value)}
+            placeholder={`{\n  "X-Custom-Header": "value",\n  "Authorization": "Bearer token"\n}`}
+            className={`bg-base font-mono text-sm min-h-[120px] ${customHeadersError ? 'border-error' : ''}`}
+          />
+          {customHeadersError && <p className="text-xs text-error">{customHeadersError}</p>}
+          <p className="text-xs text-text-muted">{t('models.custom_headers_hint')}</p>
         </div>
       </div>
     </div>

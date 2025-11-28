@@ -82,9 +82,16 @@ export interface Team {
   created_at: string;
   updated_at: string;
   share_status?: number; // 0: 个人团队, 1: 分享中, 2: 共享团队
+  is_mix_team?: boolean; // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   user?: {
     user_name: string;
   };
+}
+
+/** Bot summary with only necessary fields for team list */
+export interface BotSummary {
+  agent_config?: Record<string, unknown>;
+  agent_name?: string;
 }
 
 /** Bot information (used for Team.bots) */
@@ -92,6 +99,7 @@ export interface TeamBot {
   bot_id: number;
   bot_prompt: string;
   role?: string;
+  bot?: BotSummary;
 }
 
 /** TaskDetail structure (adapted to latest backend response) */
