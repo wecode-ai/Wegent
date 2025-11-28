@@ -477,6 +477,7 @@
     "title": "Model Management",
     "description": "Manage your AI model configurations",
     "public": "Public",
+    "manage": "Model settings",
     "create": "Create Model",
     "edit": "Edit Model",
     "delete": "Delete Model",
