@@ -233,7 +233,14 @@
     "prompts_update_success": "Prompts updated successfully!",
     "prompts_update_error": "Failed to update prompts.",
     "dify_mode_pipeline_only": "Dify bots only support pipeline execution mode.",
-    "dify_no_members_hint": "Dify bots handle execution independently and do not support team members."
+    "dify_no_members_hint": "Dify bots handle execution independently and do not support team members.",
+    "mode_change_confirm_title": "Change Collaboration Mode",
+    "mode_change_confirm_message": "Changing the collaboration mode will reset team roles and team-specific prompts. Do you want to continue?",
+    "solo_max_one_bot": "Solo mode allows only 1 bot",
+    "select_bot": "Select bot",
+    "select_bot_placeholder": "Please select a bot",
+    "no_bot_selected": "No bot selected",
+    "edit_bot_config": "Edit bot configuration"
   },
   "team_model": {
     "solo": "Solo",

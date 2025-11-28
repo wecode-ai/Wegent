@@ -234,7 +234,14 @@
     "prompts_update_success": "提示词已更新！",
     "prompts_update_error": "更新提示词失败。",
     "dify_mode_pipeline_only": "Dify 机器人仅支持顺序（Pipeline）执行模式。",
-    "dify_no_members_hint": "Dify 机器人独立执行任务，不支持配置其他团队成员。"
+    "dify_no_members_hint": "Dify 机器人独立执行任务，不支持配置其他团队成员。",
+    "mode_change_confirm_title": "切换协作模式",
+    "mode_change_confirm_message": "切换协作模式将重置团队角色及专属提示词，确定要继续吗？",
+    "solo_max_one_bot": "独立模式最多只能选择1个机器人",
+    "select_bot": "选择机器人",
+    "select_bot_placeholder": "请选择一个机器人",
+    "no_bot_selected": "未选择机器人",
+    "edit_bot_config": "编辑机器人配置"
   },
   "team_model": {
     "solo": "独立",
@@ -302,7 +309,7 @@
   "settings": {
     "integrations": "集成",
     "bot": "机器人",
-    "team": "团队",
+    "team": "机器人",
     "models": "模型",
     "sections": {
       "general": "通用"

@@ -5,27 +5,28 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Transfer } from '@/components/ui/transfer';
 import { Button } from '@/components/ui/button';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import Image from 'next/image';
-import { Tag } from '@/components/ui/tag';
-import { RiRobot2Line, RiMagicLine } from 'react-icons/ri';
-import { Edit, Plus, Copy, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 
 import { Bot, Team } from '@/types/api';
 import { createTeam, updateTeam } from '../services/teams';
 import TeamEditDrawer from './TeamEditDrawer';
 import { useTranslation } from '@/hooks/useTranslation';
-import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles';
+
+// Import mode-specific editors
+import SoloModeEditor from './team-modes/SoloModeEditor';
+import PipelineModeEditor from './team-modes/PipelineModeEditor';
+import LeaderModeEditor from './team-modes/LeaderModeEditor';
 
 interface TeamEditProps {
   teams: Team[];
@@ -77,9 +78,14 @@ export default function TeamEdit(props: TeamEditProps) {
   const [cloningBot, setCloningBot] = useState<Bot | null>(null);
   const lastDrawerClosedAtRef = useRef<number | null>(null);
   const wasDrawerOpenRef = useRef(false);
-
   // Store unsaved team prompts
   const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({});
+
+  // Mode change confirmation dialog state
+  const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false);
+  const [pendingMode, setPendingMode] = useState<
+    'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate' | null
+  >(null);
 
   const teamPromptMap = useMemo(() => {
     const map = new Map<number, boolean>();
@@ -96,45 +102,6 @@ export default function TeamEdit(props: TeamEditProps) {
     });
     return map;
   }, [editingTeam, unsavedPrompts]);
-
-  const promptSummary = useMemo<{ label: string; variant: PromptBadgeVariant }>(() => {
-    let configuredCount = 0;
-    teamPromptMap.forEach(value => {
-      if (value) configuredCount += 1;
-    });
-    const unsavedHasContent = Object.values(unsavedPrompts).some(
-      value => (value ?? '').trim().length > 0
-    );
-
-    if (unsavedHasContent) {
-      const countText =
-        configuredCount > 0
-          ? ` - ${t('team.prompts_tag_configured', { count: configuredCount })}`
-          : '';
-      return {
-        label: `${t('team.prompts_tag_pending')}${countText}`,
-        variant: 'pending',
-      };
-    }
-
-    if (configuredCount > 0) {
-      return {
-        label: t('team.prompts_tag_configured', { count: configuredCount }),
-        variant: 'configured',
-      };
-    }
-
-    return {
-      label: t('team.prompts_tag_none'),
-      variant: 'none',
-    };
-  }, [teamPromptMap, unsavedPrompts, t]);
-
-  const configuredPromptBadgeStyle = useMemo(() => getPromptBadgeStyle('configured'), []);
-  const promptSummaryStyle = useMemo(
-    () => getPromptBadgeStyle(promptSummary.variant),
-    [promptSummary.variant]
-  );
 
   const handleBack = useCallback(() => {
     setEditingTeamId(null);
@@ -241,57 +208,66 @@ export default function TeamEdit(props: TeamEditProps) {
       setLeaderBotId(leaderBot?.bot_id ?? null);
     }
   }, [bots, formTeam]);
-  // Change Mode
+  // Check if mode change needs confirmation (has team members or prompts)
+  const needsModeChangeConfirmation = useCallback(() => {
+    const hasSelectedBots = selectedBotKeys.length > 0 || leaderBotId !== null;
+    const hasUnsavedPrompts = Object.values(unsavedPrompts).some(
+      value => (value ?? '').trim().length > 0
+    );
+    const hasExistingPrompts =
+      formTeam?.bots.some(bot => bot.bot_prompt && bot.bot_prompt.trim().length > 0) ?? false;
+
+    return hasSelectedBots || hasUnsavedPrompts || hasExistingPrompts;
+  }, [selectedBotKeys, leaderBotId, unsavedPrompts, formTeam]);
+
+  // Execute mode change with reset
+  const executeModeChange = useCallback(
+    (newMode: 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate') => {
+      setMode(newMode);
+      // Reset team roles and prompts
+      setSelectedBotKeys([]);
+      setLeaderBotId(null);
+      setUnsavedPrompts({});
+    },
+    []
+  );
+
+  // Change Mode with confirmation
   const handleModeChange = (
     newMode: 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate'
   ) => {
-    setMode(newMode);
-    // Only clear selectedBotKeys when switching to non-solo mode
-    if (newMode !== 'solo') {
-      setSelectedBotKeys([]);
+    // If same mode, do nothing
+    if (newMode === mode) return;
+
+    // Check if confirmation is needed
+    if (needsModeChangeConfirmation()) {
+      setPendingMode(newMode);
+      setModeChangeDialogVisible(true);
+    } else {
+      executeModeChange(newMode);
     }
   };
+
+  // Confirm mode change
+  const handleConfirmModeChange = () => {
+    if (pendingMode) {
+      executeModeChange(pendingMode);
+    }
+    setModeChangeDialogVisible(false);
+    setPendingMode(null);
+  };
+
+  // Cancel mode change
+  const handleCancelModeChange = () => {
+    setModeChangeDialogVisible(false);
+    setPendingMode(null);
+  };
   // Get currently selected agent_name (from leader or selected bot)
+  // Note: agent_name restriction has been removed - users can now select any mode
   const selectedAgentName = useMemo(() => {
-    // No agent_name restriction in solo or pipeline mode
-    if (mode === 'solo' || mode === 'pipeline') return null;
-
-    // If leader exists, use leader's agent_name first
-    if (leaderBotId !== null) {
-      const leaderBot = bots.find(b => b.id === leaderBotId);
-      if (leaderBot) return leaderBot.agent_name;
-    }
-
-    // If no leader but selected bot exists, use first selected bot's agent_name
-    if (selectedBotKeys.length > 0) {
-      const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
-      if (firstSelectedBot) return firstSelectedBot.agent_name;
-    }
-
-    // No selection, return null
+    // No agent_name restriction - always return null
     return null;
-  }, [mode, leaderBotId, selectedBotKeys, bots]);
-
-  const isClaudeCodeAgent = useCallback((agentName?: string | null) => {
-    if (!agentName) return false;
-    const normalized = agentName.trim().toLowerCase();
-    return (
-      normalized === 'claudecode' ||
-      normalized === 'claude_code_agent' ||
-      normalized === 'claudecodeagent'
-    );
   }, []);
-
-  const hasClaudeCodeBot = useMemo(() => {
-    const leaderBot = leaderBotId != null ? bots.find(b => b.id === leaderBotId) : null;
-    if (leaderBot && isClaudeCodeAgent(leaderBot.agent_name)) {
-      return true;
-    }
-    return selectedBotKeys.some(key => {
-      const bot = bots.find(b => String(b.id) === key);
-      return bot ? isClaudeCodeAgent(bot.agent_name) : false;
-    });
-  }, [bots, leaderBotId, selectedBotKeys, isClaudeCodeAgent]);
 
   const isDifyLeader = useMemo(() => {
     if (leaderBotId === null) return false;
@@ -299,41 +275,7 @@ export default function TeamEdit(props: TeamEditProps) {
     return leader?.agent_name === 'Dify';
   }, [leaderBotId, bots]);
 
-  useEffect(() => {
-    if (((hasClaudeCodeBot && mode !== 'solo') || isDifyLeader) && mode !== 'pipeline') {
-      setMode('pipeline');
-    }
-  }, [hasClaudeCodeBot, isDifyLeader, mode]);
-
-  // Data source for Transfer
-  const transferData = useMemo(() => {
-    return bots.map(b => ({
-      key: String(b.id),
-      title: b.name,
-      description: b.agent_name,
-      disabled:
-        isDifyLeader ||
-        // In non-pipeline and non-solo mode, disable options not matching agent_name if already selected
-        (mode !== 'solo' &&
-          mode !== 'pipeline' &&
-          selectedAgentName !== null &&
-          b.agent_name !== selectedAgentName),
-    }));
-  }, [bots, mode, selectedAgentName, isDifyLeader]);
-
-  // Transfer change
-  const onTransferChange = (
-    targetKeys: string[],
-    direction: 'left' | 'right',
-    moveKeys: string[]
-  ) => {
-    if (direction === 'right') {
-      setSelectedBotKeys([...new Set(selectedBotKeys.concat(moveKeys))]);
-      return;
-    }
-    setSelectedBotKeys(targetKeys);
-  };
-  // Leader change
+  // Leader change handler
   const onLeaderChange = (botId: number) => {
     // If new leader is in selected bots, remove it from selected bots
     if (selectedBotKeys.some(k => Number(k) === botId)) {
@@ -348,19 +290,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
     setLeaderBotId(botId);
 
-    // In non-pipeline and non-solo mode, filter selected bots by new leader's agent_name
-    if (mode !== 'solo' && mode !== 'pipeline') {
-      const leaderBot = bots.find(b => b.id === botId);
-      if (leaderBot) {
-        // Filter out selected bots not matching agent_name
-        setSelectedBotKeys(prev =>
-          prev.filter(key => {
-            const bot = bots.find(b => String(b.id) === key);
-            return bot && bot.agent_name === leaderBot.agent_name;
-          })
-        );
-      }
-    }
+    // Note: agent_name filtering has been removed - users can now mix different agent types
   };
 
   const handleEditBot = useCallback((botId: number) => {
@@ -390,14 +320,6 @@ export default function TeamEdit(props: TeamEditProps) {
     },
     [bots]
   );
-  // Validate agent_name consistency (required in non-pipeline mode)
-  const validateAgentNameConsistency = (ids: number[]) => {
-    const selected = bots.filter(b => ids.includes(b.id));
-    const agentNames = Array.from(new Set(selected.map(b => b.agent_name)));
-    return agentNames.length <= 1;
-  };
-
-  // Save
   // Save
   const handleSave = async () => {
     if (!name.trim()) {
@@ -418,16 +340,7 @@ export default function TeamEdit(props: TeamEditProps) {
     // For solo mode, only use leaderBotId
     const selectedIds = mode === 'solo' ? [] : selectedBotKeys.map(k => Number(k));
 
-    // Non-pipeline and non-solo mode requires agent_name consistency
-    if (mode !== 'solo' && mode !== 'pipeline') {
-      if (!validateAgentNameConsistency(selectedIds)) {
-        toast({
-          variant: 'destructive',
-          title: 'Only bots with the same agent_name can be selected in non-Pipeline mode',
-        });
-        return;
-      }
-    }
+    // Note: agent_name consistency validation has been removed - users can now mix different agent types
     // Assemble bots data (per-step prompt not supported, all prompts empty)
     // Ensure leader bot is first, others follow transfer order
     const allBotIds: number[] = [];
@@ -497,25 +410,16 @@ export default function TeamEdit(props: TeamEditProps) {
       setSaving(false);
     }
   };
-
-  // Leader dropdown options, filter by agent_name in non-pipeline and non-solo mode
+  // Leader dropdown options - show all bots (no agent_name filtering)
   const leaderOptions = useMemo(() => {
-    // Show all bots in solo or pipeline mode
-    if (mode === 'solo' || mode === 'pipeline') return bots;
-
-    // If non-pipeline and non-solo mode and selected bot exists
-    if (selectedBotKeys.length > 0) {
-      // Find first selected bot
-      const firstSelectedBot = bots.find(b => String(b.id) === selectedBotKeys[0]);
-      if (firstSelectedBot) {
-        // Show only bots with same agent_name
-        return bots.filter(b => b.agent_name === firstSelectedBot.agent_name);
-      }
-    }
-
-    // Show all bots if no selected bot
     return bots;
-  }, [bots, mode, selectedBotKeys]);
+  }, [bots]);
+
+  // Open prompt drawer handler
+  const handleOpenPromptDrawer = useCallback(() => {
+    setDrawerMode('prompt');
+    setEditingBotDrawerVisible(true);
+  }, []);
 
   const handleTeamUpdate = (updatedTeam: Team) => {
     setTeams(prev => prev.map(t => (t.id === updatedTeam.id ? updatedTeam : t)));
@@ -570,7 +474,7 @@ export default function TeamEdit(props: TeamEditProps) {
           </div>
 
           {/* Mode component */}
-          <div className="flex flex-col">
+          <div className="flex flex-col flex-1 min-h-0">
             <div className="flex items-center mb-1">
               <label className="block text-lg font-semibold text-text-primary">
                 {t('team.model')} <span className="text-red-400">*</span>
@@ -579,15 +483,6 @@ export default function TeamEdit(props: TeamEditProps) {
 
             {/* Integrate Mode selection and description into one container */}
             <div className="relative rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
-              {/* Overlay mask for Dify leader mode */}
-              {isDifyLeader && (
-                <div className="absolute inset-0 bg-white/50 dark:bg-black/50 z-10 flex items-center justify-center rounded-md backdrop-blur-[1px]">
-                  <div className="bg-background/95 px-4 py-2 rounded-md shadow-sm border border-border text-sm text-muted-foreground">
-                    {t('team.dify_mode_pipeline_only') ||
-                      'Dify bots only support pipeline execution mode.'}
-                  </div>
-                </div>
-              )}
               {/* Mode selection */}
               <div className="mb-3">
                 <RadioGroup
@@ -601,22 +496,13 @@ export default function TeamEdit(props: TeamEditProps) {
                 >
                   {['solo', 'pipeline', 'route', 'coordinate', 'collaborate'].map(opt => (
                     <div key={opt} className="flex items-center">
-                      <RadioGroupItem
-                        value={opt}
-                        id={`mode-${opt}`}
-                        disabled={
-                          ((hasClaudeCodeBot && opt !== 'solo') || isDifyLeader) &&
-                          opt !== 'pipeline'
-                        }
-                        className="peer sr-only"
-                      />
+                      <RadioGroupItem value={opt} id={`mode-${opt}`} className="peer sr-only" />
                       <label
                         htmlFor={`mode-${opt}`}
                         className={`
                           flex items-center justify-center w-full px-3 py-1.5 text-sm font-medium
                           rounded-md cursor-pointer transition-colors
                           border border-border
-                          ${((hasClaudeCodeBot && opt !== 'solo') || isDifyLeader) && opt !== 'pipeline' ? 'opacity-50 cursor-not-allowed' : ''}
                           peer-data-[state=checked]:bg-primary peer-data-[state=checked]:text-primary-foreground peer-data-[state=checked]:border-primary
                           hover:bg-accent hover:text-accent-foreground
                         `}
@@ -657,259 +543,71 @@ export default function TeamEdit(props: TeamEditProps) {
           </div>
         </div>
 
-        {/* Right column */}
-        <div className="w-full lg:w-3/5 xl:w-2/3 min-w-0 flex flex-col space-y-5 min-h-0">
-          <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
-            {/* Bot select - solo mode shows "Bot", other modes show "Leader" */}
-            <div className="flex flex-col">
-              <div className="flex items-center mb-1">
-                <label className="block text-lg font-semibold text-text-primary">
-                  {mode === 'solo' ? t('team.bot') : t('team.leader')}{' '}
-                  <span className="text-red-400">*</span>
-                </label>
-              </div>
-              <Select
-                value={leaderBotId?.toString() ?? undefined}
-                onValueChange={value => onLeaderChange(Number(value))}
-              >
-                <SelectTrigger className="w-full min-h-[36px]">
-                  {leaderBotId !== null ? (
-                    <div className="flex items-center justify-between w-full">
-                      <div className="flex items-center gap-2 flex-1 min-w-0">
-                        <RiRobot2Line className="w-4 h-4 text-text-muted flex-shrink-0" />
-                        <span className="truncate max-w-[200px]">
-                          {bots.find(b => b.id === leaderBotId)?.name || ''}
-                          <span className="text-text-muted text-xs ml-1">
-                            ({bots.find(b => b.id === leaderBotId)?.agent_name || ''})
-                          </span>
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2 ml-2 flex-shrink-0">
-                        <Edit
-                          className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                          onPointerDown={e => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleEditBot(leaderBotId);
-                          }}
-                        />
-                        <Copy
-                          className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                          onPointerDown={e => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            handleCloneBot(leaderBotId);
-                          }}
-                        />
-                      </div>
-                    </div>
-                  ) : (
-                    <SelectValue placeholder={t('team.select_leader')} />
-                  )}
-                </SelectTrigger>
-                <SelectContent>
-                  {leaderOptions.length === 0 ? (
-                    <div className="p-2 text-center">
-                      <Button
-                        size="sm"
-                        onClick={e => {
-                          e.stopPropagation();
-                          handleCreateBot();
-                        }}
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        {t('bots.new_bot')}
-                      </Button>
-                    </div>
-                  ) : (
-                    leaderOptions.map((b: Bot) => (
-                      <SelectItem key={b.id} value={b.id.toString()}>
-                        <div className="flex items-center w-full">
-                          <div className="flex min-w-0 flex-1 items-center space-x-2">
-                            <RiRobot2Line className="w-4 h-4 text-text-muted flex-shrink-0" />
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <span className="block truncate max-w-[200px]">
-                                  {b.name}{' '}
-                                  <span className="text-text-muted text-xs">({b.agent_name})</span>
-                                </span>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>{`${b.name} (${b.agent_name})`}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                            {teamPromptMap.get(b.id) && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Tag
-                                    className="!m-0 !ml-1 !px-1.5 !py-0 text-[11px] leading-4"
-                                    variant="default"
-                                    style={configuredPromptBadgeStyle}
-                                  >
-                                    {t('team.prompts_badge')}
-                                  </Tag>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>{t('team.prompts_badge_tooltip')}</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-3 ml-3">
-                            <Edit
-                              className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                              onPointerDown={e => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleEditBot(b.id);
-                              }}
-                            />
-                            <Copy
-                              className="h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                              onPointerDown={e => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                                handleCloneBot(b.id);
-                              }}
-                            />
-                          </div>
-                        </div>
-                      </SelectItem>
-                    ))
-                  )}
-                </SelectContent>
-              </Select>
+        {/* Right column - Mode-specific editor */}
+        <div className="w-full lg:w-3/5 xl:w-2/3 min-w-0 flex flex-col min-h-0">
+          {mode === 'solo' && (
+            <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
+              <SoloModeEditor
+                bots={bots}
+                setBots={setBots}
+                selectedBotId={leaderBotId}
+                setSelectedBotId={setLeaderBotId}
+                editingTeam={editingTeam}
+                toast={toast}
+                unsavedPrompts={unsavedPrompts}
+                teamPromptMap={teamPromptMap}
+                onOpenPromptDrawer={handleOpenPromptDrawer}
+              />
             </div>
+          )}
 
-            {/* Bots Transfer - hidden in solo mode */}
-            {mode !== 'solo' && (
-              <div className="flex flex-col min-h-0 mt-1">
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-lg font-semibold text-text-primary">
-                    {t('team.bots')}
-                  </label>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="link"
-                        size="sm"
-                        className="h-auto p-0 text-primary hover:text-primary/80"
-                        onClick={() => {
-                          setDrawerMode('prompt');
-                          setEditingBotDrawerVisible(true);
-                        }}
-                      >
-                        <RiMagicLine className="mr-1 h-4 w-4" />
-                        {t('team.prompts_link')}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{t('team.prompts_tooltip')}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                  <Tag
-                    className="!m-0 !px-2 !py-0 text-xs leading-5"
-                    variant="default"
-                    style={promptSummaryStyle}
-                  >
-                    {promptSummary.label}
-                  </Tag>
-                </div>
+          {/* Pipeline mode: Show PipelineModeEditor */}
+          {mode === 'pipeline' && (
+            <PipelineModeEditor
+              bots={bots}
+              selectedBotKeys={selectedBotKeys}
+              setSelectedBotKeys={setSelectedBotKeys}
+              leaderBotId={leaderBotId}
+              setLeaderBotId={setLeaderBotId}
+              unsavedPrompts={unsavedPrompts}
+              teamPromptMap={teamPromptMap}
+              isDifyLeader={isDifyLeader}
+              toast={toast}
+              onEditBot={handleEditBot}
+              onCreateBot={handleCreateBot}
+              onCloneBot={handleCloneBot}
+              onOpenPromptDrawer={handleOpenPromptDrawer}
+            />
+          )}
 
-                {/* Transfer component with flex-1 to fill remaining space */}
-                <div className="relative flex-1 min-h-0">
-                  {/* Overlay mask for Dify leader mode */}
-                  {isDifyLeader && (
-                    <div className="absolute inset-0 bg-white/50 dark:bg-black/50 z-10 flex items-center justify-center rounded-md backdrop-blur-[1px]">
-                      <div className="bg-background/95 px-4 py-2 rounded-md shadow-sm border border-border text-sm text-muted-foreground">
-                        {t('team.dify_no_members_hint') ||
-                          'Dify bots handle execution independently and do not support team members.'}
-                      </div>
-                    </div>
-                  )}
-                  <Transfer
-                    dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
-                    targetKeys={selectedBotKeys.map(String)}
-                    onChange={onTransferChange}
-                    disabled={isDifyLeader}
-                    render={item => (
-                      <div className="flex items-center justify-between w-full">
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="truncate max-w-[150px]">
-                              {item.title}
-                              <span className="text-xs text-text-muted">({item.description})</span>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{`${item.title} (${item.description})`}</p>
-                          </TooltipContent>
-                        </Tooltip>
+          {/* Leader modes (route, coordinate, collaborate): Show LeaderModeEditor */}
+          {(mode === 'route' || mode === 'coordinate' || mode === 'collaborate') && (
+            <LeaderModeEditor
+              bots={bots}
+              selectedBotKeys={selectedBotKeys}
+              setSelectedBotKeys={setSelectedBotKeys}
+              leaderBotId={leaderBotId}
+              setLeaderBotId={setLeaderBotId}
+              unsavedPrompts={unsavedPrompts}
+              teamPromptMap={teamPromptMap}
+              isDifyLeader={isDifyLeader}
+              selectedAgentName={selectedAgentName}
+              leaderOptions={leaderOptions}
+              toast={toast}
+              onEditBot={handleEditBot}
+              onCreateBot={handleCreateBot}
+              onCloneBot={handleCloneBot}
+              onOpenPromptDrawer={handleOpenPromptDrawer}
+              onLeaderChange={onLeaderChange}
+            />
+          )}
+        </div>
+      </div>
 
-                        <div className="flex items-center">
-                          {teamPromptMap.get(Number(item.key)) && (
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Tag
-                                  className="!m-0 !mr-2 !px-1.5 !py-0 text-[11px] leading-4"
-                                  variant="default"
-                                  style={configuredPromptBadgeStyle}
-                                >
-                                  {t('team.prompts_badge')}
-                                </Tag>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>{t('team.prompts_badge_tooltip')}</p>
-                              </TooltipContent>
-                            </Tooltip>
-                          )}
-
-                          <Edit
-                            className="ml-2 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                            onClick={e => {
-                              e.stopPropagation(); // Stop event propagation to avoid triggering selection
-                              handleEditBot(Number(item.key));
-                            }}
-                          />
-                          <Copy
-                            className="ml-3 h-4 w-4 text-muted-foreground hover:text-foreground cursor-pointer"
-                            onClick={e => {
-                              e.stopPropagation();
-                              handleCloneBot(Number(item.key));
-                            }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    titles={[t('team.candidates'), t('team.in_team')]}
-                    className="h-full transfer-fill"
-                    listStyle={{
-                      backgroundColor: 'rgb(var(--color-bg-surface))',
-                      borderColor: 'rgb(var(--color-border))',
-                    }}
-                    leftFooter={
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={handleCreateBot}
-                        disabled={isDifyLeader}
-                      >
-                        <Plus className="mr-2 h-4 w-4" />
-                        {t('bots.new_bot')}
-                      </Button>
-                    }
-                  />
-                </div>
-              </div>
-            )}
-          </div>
-          {/* Mobile Transfer layout optimization styles */}
-          <style
-            dangerouslySetInnerHTML={{
-              __html: `
+      {/* Mobile Transfer layout optimization styles */}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
               @media (max-width: 1024px) {
                 /* Stack layout on tablet */
                 .flex.flex-col.lg\\:flex-row {
@@ -1151,13 +849,13 @@ export default function TeamEdit(props: TeamEditProps) {
                 }
               }
             `,
-            }}
-          />
+        }}
+      />
 
-          {/* Desktop and responsive styles */}
-          <style
-            dangerouslySetInnerHTML={{
-              __html: `
+      {/* Desktop and responsive styles */}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
       /* Global overflow prevention */
       * {
         box-sizing: border-box !important;
@@ -1298,10 +996,8 @@ export default function TeamEdit(props: TeamEditProps) {
         white-space: nowrap !important;
       }
     `,
-            }}
-          />
-        </div>
-      </div>
+        }}
+      />
 
       {/* Bot edit drawer */}
       <TeamEditDrawer
@@ -1322,6 +1018,22 @@ export default function TeamEdit(props: TeamEditProps) {
         unsavedPrompts={unsavedPrompts}
         setUnsavedPrompts={setUnsavedPrompts}
       />
+
+      {/* Mode change confirmation dialog */}
+      <Dialog open={modeChangeDialogVisible} onOpenChange={setModeChangeDialogVisible}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('team.mode_change_confirm_title')}</DialogTitle>
+            <DialogDescription>{t('team.mode_change_confirm_message')}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={handleCancelModeChange}>
+              {t('common.cancel')}
+            </Button>
+            <Button onClick={handleConfirmModeChange}>{t('common.confirm')}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

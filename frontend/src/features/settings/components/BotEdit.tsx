@@ -5,7 +5,7 @@
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, XIcon, SettingsIcon } from 'lucide-react';
+import { Loader2, XIcon, SettingsIcon, Edit } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -38,6 +38,14 @@ interface BotEditProps {
   cloningBot: Bot | null;
   onClose: () => void;
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  /** Whether the component is embedded in another component (hides back button) */
+  embedded?: boolean;
+  /** Whether the component is in read-only mode */
+  readOnly?: boolean;
+  /** Callback when user clicks edit button in read-only mode */
+  onEditClick?: () => void;
+  /** Callback when user clicks cancel button in edit mode (only for embedded mode) */
+  onCancelEdit?: () => void;
 }
 const BotEdit: React.FC<BotEditProps> = ({
   bots,
@@ -46,6 +54,10 @@ const BotEdit: React.FC<BotEditProps> = ({
   cloningBot,
   onClose,
   toast,
+  embedded = false,
+  readOnly = false,
+  onEditClick,
+  onCancelEdit,
 }) => {
   const { t, i18n } = useTranslation('common');
 
@@ -562,30 +574,50 @@ const BotEdit: React.FC<BotEditProps> = ({
     }
   };
   return (
-    <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 min-h-[650px] overflow-hidden">
+    <div
+      className={`flex flex-col w-full bg-surface rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'min-h-0' : 'min-h-[650px]'}`}
+    >
       {/* Top navigation bar */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <button
-          onClick={handleBack}
-          className="flex items-center text-text-muted hover:text-text-primary text-base"
-          title={t('common.back')}
-        >
-          <svg
-            width="24"
-            height="24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="mr-1"
+        {!embedded ? (
+          <button
+            onClick={handleBack}
+            className="flex items-center text-text-muted hover:text-text-primary text-base"
+            title={t('common.back')}
           >
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
-          {t('common.back')}
-        </button>
-        <Button onClick={handleSave} disabled={botSaving}>
-          {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {botSaving ? t('actions.saving') : t('actions.save')}
-        </Button>
+            <svg
+              width="24"
+              height="24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="mr-1"
+            >
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
+            {t('common.back')}
+          </button>
+        ) : (
+          <div /> /* Placeholder for flex spacing */
+        )}
+        {readOnly ? (
+          <Button onClick={onEditClick} variant="outline">
+            <Edit className="mr-2 h-4 w-4" />
+            {t('actions.edit')}
+          </Button>
+        ) : (
+          <div className="flex items-center gap-2">
+            {embedded && onCancelEdit && (
+              <Button onClick={onCancelEdit} variant="outline">
+                {t('common.cancel')}
+              </Button>
+            )}
+            <Button onClick={handleSave} disabled={botSaving}>
+              {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {botSaving ? t('actions.saving') : t('actions.save')}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Main content area - using responsive layout */}
@@ -605,7 +637,8 @@ const BotEdit: React.FC<BotEditProps> = ({
               value={botName}
               onChange={e => setBotName(e.target.value)}
               placeholder={t('bot.name_placeholder')}
-              className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base"
+              disabled={readOnly}
+              className={`w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
 
@@ -641,6 +674,7 @@ const BotEdit: React.FC<BotEditProps> = ({
             <Select
               value={agentName}
               onValueChange={value => {
+                if (readOnly) return;
                 if (value !== agentName) {
                   setIsCustomModel(false);
                   setSelectedModel('');
@@ -670,7 +704,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                 }
                 setAgentName(value);
               }}
-              disabled={loadingAgents}
+              disabled={loadingAgents || readOnly}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder={t('bot.agent_select')} />
@@ -742,7 +776,9 @@ const BotEdit: React.FC<BotEditProps> = ({
                     <span className="text-xs text-text-muted mr-2">{t('bot.advanced_mode')}</span>
                     <Switch
                       checked={isCustomModel}
+                      disabled={readOnly}
                       onCheckedChange={(checked: boolean) => {
+                        if (readOnly) return;
                         setIsCustomModel(checked);
                         if (checked) {
                           // Clear data when switching to advanced mode
@@ -794,7 +830,11 @@ const BotEdit: React.FC<BotEditProps> = ({
                     <label className="block text-sm font-medium text-text-primary mb-1">
                       {t('bot.protocol')} <span className="text-red-400">*</span>
                     </label>
-                    <Select value={selectedProtocol} onValueChange={setSelectedProtocol}>
+                    <Select
+                      value={selectedProtocol}
+                      onValueChange={setSelectedProtocol}
+                      disabled={readOnly}
+                    >
                       <SelectTrigger className="w-full">
                         <SelectValue placeholder={t('bot.protocol_select')} />
                       </SelectTrigger>
@@ -821,6 +861,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                   <textarea
                     value={agentConfig}
                     onChange={e => {
+                      if (readOnly) return;
                       const value = e.target.value;
                       setAgentConfig(value);
                       if (!value.trim()) {
@@ -829,6 +870,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                     }}
                     onBlur={prettifyAgentConfig}
                     rows={4}
+                    disabled={readOnly}
                     placeholder={
                       agentName === 'ClaudeCode'
                         ? `{
@@ -850,7 +892,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 }`
                           : ''
                     }
-                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
+                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   />
                 ) : (
                   <Select
@@ -861,7 +903,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                       setSelectedModel(modelName);
                       setSelectedModelType((modelType as ModelTypeEnum) || undefined);
                     }}
-                    disabled={loadingModels || !agentName || models.length === 0}
+                    disabled={loadingModels || !agentName || models.length === 0 || readOnly}
                   >
                     <SelectTrigger className="w-full">
                       <SelectValue
@@ -956,10 +998,12 @@ const BotEdit: React.FC<BotEditProps> = ({
                         <Select
                           value=""
                           onValueChange={value => {
+                            if (readOnly) return;
                             if (value && !selectedSkills.includes(value)) {
                               setSelectedSkills([...selectedSkills, value]);
                             }
                           }}
+                          disabled={readOnly}
                         >
                           <SelectTrigger className="w-full">
                             <SelectValue placeholder={t('skills.select_skill_to_add')} />
@@ -984,10 +1028,12 @@ const BotEdit: React.FC<BotEditProps> = ({
                               >
                                 <span>{skill}</span>
                                 <button
-                                  onClick={() =>
-                                    setSelectedSkills(selectedSkills.filter(s => s !== skill))
-                                  }
-                                  className="text-text-muted hover:text-text-primary"
+                                  onClick={() => {
+                                    if (readOnly) return;
+                                    setSelectedSkills(selectedSkills.filter(s => s !== skill));
+                                  }}
+                                  disabled={readOnly}
+                                  className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
                                 >
                                   <XIcon className="w-3 h-3" />
                                 </button>
@@ -1016,6 +1062,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                 <textarea
                   value={mcpConfig}
                   onChange={e => {
+                    if (readOnly) return;
                     const value = e.target.value;
                     setMcpConfig(value);
                     if (!value.trim()) {
@@ -1023,7 +1070,8 @@ const BotEdit: React.FC<BotEditProps> = ({
                     }
                   }}
                   onBlur={prettifyMcpConfig}
-                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
+                  disabled={readOnly}
+                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   placeholder={`{
   "github": {
     "command": "docker",
@@ -1067,9 +1115,13 @@ const BotEdit: React.FC<BotEditProps> = ({
             {/* textarea occupies all space in the second row */}
             <textarea
               value={prompt}
-              onChange={e => setPrompt(e.target.value)}
+              onChange={e => {
+                if (readOnly) return;
+                setPrompt(e.target.value);
+              }}
+              disabled={readOnly}
               placeholder={t('bot.prompt_placeholder')}
-              className="w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow"
+              className={`w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
         )}
