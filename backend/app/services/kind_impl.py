@@ -341,6 +341,7 @@ class TaskKindService(KindBaseService):
                 subtask_list.append({
                     'title': subtask.title,
                     'role': subtask.role,
+                    'prompt': subtask.prompt,
                     'bot_ids': subtask.bot_ids,
                     'executor_namespace': subtask.executor_namespace,
                     'executor_name': subtask.executor_name,
