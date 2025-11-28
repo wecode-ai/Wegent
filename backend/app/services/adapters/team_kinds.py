@@ -743,30 +743,40 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         
         # Calculate is_mix_team: true if there are multiple different agent types
         is_mix_team = len(agent_names) > 1
+        
+        # Get agent_type from the first bot's shell
+        agent_type = None
+        if bots:
+            first_bot_id = bots[0]["bot_id"]
+            first_bot = db.query(Kind).filter(
+                Kind.id == first_bot_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Bot",
+                Kind.is_active == True
+            ).first()
+            
+            if first_bot:
+                bot_crd = Bot.model_validate(first_bot.json)
+                shell = db.query(Kind).filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Shell",
+                    Kind.name == bot_crd.spec.shellRef.name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.is_active == True
+                ).first()
                 
-                # Get agent_type from the first bot's shell
-                if agent_type is None:
-                    bot_crd = Bot.model_validate(bot.json)
-                    shell = db.query(Kind).filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Shell",
-                        Kind.name == bot_crd.spec.shellRef.name,
-                        Kind.namespace == bot_crd.spec.shellRef.namespace,
-                        Kind.is_active == True
-                    ).first()
-                    
-                    if shell:
-                        shell_crd = Shell.model_validate(shell.json)
-                        runtime = shell_crd.spec.runtime
-                        # Map runtime to agent type
-                        if runtime == "AgnoShell":
-                            agent_type = "agno"
-                        elif runtime == "ClaudeCodeShell":
-                            agent_type = "claude"
-                        elif runtime == "DifyShell":
-                            agent_type = "dify"
-                        else:
-                            agent_type = runtime.lower().replace("shell", "")
+                if shell:
+                    shell_crd = Shell.model_validate(shell.json)
+                    runtime = shell_crd.spec.runtime
+                    # Map runtime to agent type
+                    if runtime == "AgnoShell":
+                        agent_type = "agno"
+                    elif runtime == "ClaudeCodeShell":
+                        agent_type = "claude"
+                    elif runtime == "DifyShell":
+                        agent_type = "dify"
+                    else:
+                        agent_type = runtime.lower().replace("shell", "")
         
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}

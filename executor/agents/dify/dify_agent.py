@@ -9,12 +9,16 @@
 import json
 import requests
 from typing import Dict, Any, Optional
+import time
 
 from executor.agents.base import Agent
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.models.task import ExecutionResult
 from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
+from executor.tasks.task_state_manager import TaskStateManager, TaskState
+from executor.tasks.resource_manager import ResourceManager
+from executor.config import config
 
 logger = setup_logger("dify_agent")
 
@@ -35,6 +39,9 @@ class DifyAgent(Agent):
 
     # Static dictionary for storing conversation IDs per task
     _conversations: Dict[str, str] = {}
+    
+    # Static dictionary for storing task_id (from Dify streaming response) per task
+    _dify_task_ids: Dict[str, str] = {}
 
     def get_name(self) -> str:
         return "Dify"
@@ -75,9 +82,18 @@ class DifyAgent(Agent):
 
         # Get application info to determine the app mode
         self.app_mode = self._get_app_mode()
-
         # Get or create conversation ID for this task (only for chat/chatflow)
         self.conversation_id = self._get_conversation_id() if self.app_mode in ["chat", "chatflow", "agent-chat"] else None
+        
+        # Initialize task state manager and resource manager
+        self.task_state_manager = TaskStateManager()
+        self.resource_manager = ResourceManager()
+        
+        # Set initial task state to RUNNING
+        self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
+        
+        # Store current Dify task_id for cancellation
+        self.current_dify_task_id: Optional[str] = None
 
         logger.info(
             f"DifyAgent initialized for task {self.task_id}, "
@@ -336,12 +352,26 @@ class DifyAgent(Agent):
             conversation_id = ""
 
             for line in response.iter_lines():
+                # Check for cancellation before processing each line
+                if self.task_state_manager.is_cancelled(self.task_id):
+                    logger.info(f"Task {self.task_id} cancelled during streaming, stopping API call")
+                    # Try to stop the Dify task if we have task_id
+                    if self.current_dify_task_id:
+                        self._stop_dify_task(self.current_dify_task_id)
+                    raise Exception("Task cancelled by user")
+                
                 if line:
                     line_str = line.decode('utf-8')
                     if line_str.startswith('data: '):
                         data_str = line_str[6:]  # Remove 'data: ' prefix
                         try:
                             data = json.loads(data_str)
+
+                            # Extract and store task_id for cancellation
+                            if "task_id" in data and not self.current_dify_task_id:
+                                self.current_dify_task_id = data["task_id"]
+                                self._save_dify_task_id(self.current_dify_task_id)
+                                logger.info(f"Stored Dify task_id: {self.current_dify_task_id}")
 
                             # Extract conversation_id
                             if "conversation_id" in data and not conversation_id:
@@ -435,12 +465,26 @@ class DifyAgent(Agent):
             workflow_run_id = ""
 
             for line in response.iter_lines():
+                # Check for cancellation before processing each line
+                if self.task_state_manager.is_cancelled(self.task_id):
+                    logger.info(f"Task {self.task_id} cancelled during workflow streaming, stopping API call")
+                    # Try to stop the Dify workflow task if we have task_id
+                    if self.current_dify_task_id:
+                        self._stop_dify_workflow_task(self.current_dify_task_id)
+                    raise Exception("Task cancelled by user")
+                
                 if line:
                     line_str = line.decode('utf-8')
                     if line_str.startswith('data: '):
                         data_str = line_str[6:]  # Remove 'data: ' prefix
                         try:
                             data = json.loads(data_str)
+
+                            # Extract and store task_id for cancellation
+                            if "task_id" in data and not self.current_dify_task_id:
+                                self.current_dify_task_id = data["task_id"]
+                                self._save_dify_task_id(self.current_dify_task_id)
+                                logger.info(f"Stored Dify workflow task_id: {self.current_dify_task_id}")
 
                             # Extract workflow_run_id
                             if "workflow_run_id" in data and not workflow_run_id:
@@ -508,6 +552,11 @@ class DifyAgent(Agent):
             TaskStatus: Execution status
         """
         try:
+            # Check if task was cancelled before execution
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} was cancelled before execution")
+                return TaskStatus.COMPLETED
+            
             # Validate configuration
             if not self._validate_config():
                 self.report_progress(
@@ -534,11 +583,17 @@ class DifyAgent(Agent):
 
             result = self._call_dify_api(self.prompt)
 
+            # Check if cancelled after API call
+            if self.task_state_manager.is_cancelled(self.task_id):
+                logger.info(f"Task {self.task_id} was cancelled after API call")
+                return TaskStatus.COMPLETED
+
             # Extract answer
             answer = result.get("answer", "")
 
             if answer:
                 logger.info(f"Received response from Dify, length: {len(answer)}")
+                self.task_state_manager.set_state(self.task_id, TaskState.COMPLETED)
                 self.report_progress(
                     100,
                     TaskStatus.COMPLETED.value,
@@ -548,6 +603,7 @@ class DifyAgent(Agent):
                 return TaskStatus.COMPLETED
             else:
                 logger.warning("No answer received from Dify API")
+                self.task_state_manager.set_state(self.task_id, TaskState.FAILED)
                 self.report_progress(
                     100,
                     TaskStatus.FAILED.value,
@@ -558,12 +614,162 @@ class DifyAgent(Agent):
         except Exception as e:
             error_message = str(e)
             logger.exception(f"Error in Dify Agent execution: {error_message}")
+            
+            # Check if error was due to cancellation
+            if "cancelled" in error_message.lower():
+                self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+                logger.info(f"Task {self.task_id} execution stopped due to cancellation")
+                return TaskStatus.COMPLETED
+            
+            self.task_state_manager.set_state(self.task_id, TaskState.FAILED)
             self.report_progress(
                 100,
                 TaskStatus.FAILED.value,
                 f"Dify Agent execution failed: {error_message}"
             )
             return TaskStatus.FAILED
+
+    def _save_dify_task_id(self, dify_task_id: str) -> None:
+        """
+        Save Dify task_id for this task
+
+        Args:
+            dify_task_id: The Dify task ID to save
+        """
+        task_key = str(self.task_id)
+        self._dify_task_ids[task_key] = dify_task_id
+        logger.info(f"Saved Dify task_id {dify_task_id} for task {self.task_id}")
+
+    def _get_dify_task_id(self) -> Optional[str]:
+        """
+        Get Dify task_id for this task
+
+        Returns:
+            Dify task ID or None
+        """
+        task_key = str(self.task_id)
+        return self._dify_task_ids.get(task_key)
+
+    def _stop_dify_task(self, dify_task_id: str) -> bool:
+        """
+        Stop Dify chat/chatflow task using stop API
+
+        Args:
+            dify_task_id: The Dify task ID to stop
+
+        Returns:
+            True if stop request was successful
+        """
+        try:
+            api_url = f"{self.dify_config['base_url']}/v1/chat-messages/{dify_task_id}/stop"
+            headers = {
+                "Authorization": f"Bearer {self.dify_config['api_key']}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "user": f"task-{self.task_id}"
+            }
+
+            logger.info(f"Stopping Dify task: {dify_task_id}")
+            response = requests.post(api_url, headers=headers, json=payload, timeout=10)
+            response.raise_for_status()
+
+            result = response.json()
+            if result.get("result") == "success":
+                logger.info(f"Successfully stopped Dify task: {dify_task_id}")
+                return True
+            else:
+                logger.warning(f"Dify stop API returned unexpected result: {result}")
+                return False
+
+        except Exception as e:
+            logger.warning(f"Failed to stop Dify task {dify_task_id}: {e}")
+            return False
+
+    def _stop_dify_workflow_task(self, dify_task_id: str) -> bool:
+        """
+        Stop Dify workflow task using stop API
+
+        Args:
+            dify_task_id: The Dify workflow task ID to stop
+
+        Returns:
+            True if stop request was successful
+        """
+        try:
+            api_url = f"{self.dify_config['base_url']}/v1/workflows/tasks/{dify_task_id}/stop"
+            headers = {
+                "Authorization": f"Bearer {self.dify_config['api_key']}",
+                "Content-Type": "application/json"
+            }
+            payload = {
+                "user": f"task-{self.task_id}"
+            }
+
+            logger.info(f"Stopping Dify workflow task: {dify_task_id}")
+            response = requests.post(api_url, headers=headers, json=payload, timeout=10)
+            response.raise_for_status()
+
+            result = response.json()
+            if result.get("result") == "success":
+                logger.info(f"Successfully stopped Dify workflow task: {dify_task_id}")
+                return True
+            else:
+                logger.warning(f"Dify workflow stop API returned unexpected result: {result}")
+                return False
+
+        except Exception as e:
+            logger.warning(f"Failed to stop Dify workflow task {dify_task_id}: {e}")
+            return False
+
+    def cancel_run(self) -> bool:
+        """
+        Cancel the current running Dify task
+
+        Returns:
+            bool: True if cancellation was successful, False otherwise
+        """
+        try:
+            # Step 1: Check current state - don't cancel if already completed or failed
+            current_state = self.task_state_manager.get_state(self.task_id)
+            if current_state in [TaskState.COMPLETED, TaskState.FAILED]:
+                logger.info(f"Task {self.task_id} is already in {current_state} state, skipping cancellation")
+                return True
+            
+            # Step 2: Immediately set to CANCELLED state
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            logger.info(f"Task {self.task_id} marked as cancelled")
+
+            # Step 3: Try to stop Dify task if we have task_id
+            dify_task_id = self.current_dify_task_id or self._get_dify_task_id()
+            if dify_task_id:
+                if self.app_mode == "workflow":
+                    self._stop_dify_workflow_task(dify_task_id)
+                else:
+                    self._stop_dify_task(dify_task_id)
+                logger.info(f"Sent stop signal to Dify task {dify_task_id}")
+            else:
+                logger.warning(f"No Dify task_id available for task {self.task_id}, cannot send stop signal")
+
+            # Step 4: Wait briefly for graceful cleanup
+            max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
+            waited = 0
+            while waited < max_wait:
+                # Check if cleanup completed
+                if self.task_state_manager.get_state(self.task_id) is None:
+                    logger.info(f"Task {self.task_id} cleaned up gracefully")
+                    return True
+                time.sleep(0.1)
+                waited += 0.1
+
+            logger.info(f"Task {self.task_id} cancelled (cleanup may continue in background)")
+            return True
+
+        except Exception as e:
+            logger.exception(f"Error cancelling task {self.task_id}: {e}")
+            # Ensure cancelled state even on error
+            self.task_state_manager.set_state(self.task_id, TaskState.CANCELLED)
+            return False
 
     @classmethod
     def clear_conversation(cls, task_id: int) -> None:
@@ -577,3 +783,8 @@ class DifyAgent(Agent):
         if task_key in cls._conversations:
             del cls._conversations[task_key]
             logger.info(f"Cleared conversation for task {task_id}")
+        
+        # Also clear Dify task_id
+        if task_key in cls._dify_task_ids:
+            del cls._dify_task_ids[task_key]
+            logger.info(f"Cleared Dify task_id for task {task_id}")

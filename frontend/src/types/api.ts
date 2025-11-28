@@ -94,6 +94,7 @@ export interface Team {
   created_at: string;
   updated_at: string;
   share_status?: number; // 0: 个人团队, 1: 分享中, 2: 共享团队
+  agent_type?: string; // agno, claude, dify, etc.
   is_mix_team?: boolean; // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   user?: {
     user_name: string;
