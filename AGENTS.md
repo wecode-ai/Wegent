@@ -456,6 +456,11 @@ alembic upgrade head --sql
 - Add component: Use/extend `src/components/ui/`
 - Add type: Define in `src/types/`
 
+**Key feature modules:**
+- `src/features/settings/` - Settings page components including Models, Teams, Bots
+- `src/features/tasks/` - Task management and chat interface
+- `src/apis/models.ts` - Model API client (unified models, test connection)
+
 **Environment:** `NEXT_PUBLIC_API_URL` for client-side API calls
 
 ### Executor
@@ -473,6 +478,52 @@ alembic upgrade head --sql
 **Tech:** Python, Docker SDK, FastAPI
 
 **Environment:** `TASK_API_DOMAIN`, `EXECUTOR_IMAGE`, `MAX_CONCURRENT_TASKS`, `NETWORK`
+
+---
+
+## 🔧 Model Management
+
+### Model Types
+
+Wegent supports two types of AI models:
+
+| Type | Description | Storage |
+|------|-------------|---------|
+| **Public** | System-provided models, shared across all users | `public_models` table |
+| **User** | User-defined private models | `kinds` table (kind='Model') |
+
+### Model Resolution Order
+
+When a Bot executes a task, models are resolved in this order:
+1. Task-level model override (if `force_override_bot_model` is true)
+2. Bot's `bind_model` from `agent_config`
+3. Bot's `modelRef` (legacy)
+4. Default model
+
+### Key APIs
+
+- `GET /api/models/unified` - List all available models (public + user)
+- `GET /api/models/unified/{name}` - Get specific model by name
+- `POST /api/models/test-connection` - Test model API connection
+- `GET /api/models/compatible?agent_name=X` - Get models compatible with agent type
+
+### Bot Model Binding
+
+Two ways to bind models to Bots:
+
+```yaml
+# Method 1: Using modelRef (legacy)
+spec:
+  modelRef:
+    name: model-name
+    namespace: default
+
+# Method 2: Using bind_model (recommended)
+spec:
+  agent_config:
+    bind_model: "my-model"
+    bind_model_type: "user"  # Optional: 'public' or 'user'
+```
 
 ---
 
@@ -549,6 +600,6 @@ docker-compose up -d --build [service]
 
 ---
 
-**Last Updated**: 2025-01
-**Wegent Version**: 1.0.7
+**Last Updated**: 2025-07
+**Wegent Version**: 1.0.8
 **Maintained by**: WeCode-AI Team

@@ -158,7 +158,32 @@ status:
 |------|------|------|------|
 | `ghostRef` | object | 是 | Ghost 资源引用 |
 | `shellRef` | object | 是 | Shell 资源引用 |
-| `modelRef` | object | 是 | Model 资源引用 |
+| `modelRef` | object | 否 | Model 资源引用 (可选，也可使用 bind_model) |
+
+#### 模型绑定方式
+
+有两种方式将模型绑定到 Bot:
+
+**方式 1: 使用 modelRef (旧版)**
+```yaml
+spec:
+  modelRef:
+    name: <model-name>
+    namespace: default
+```
+
+**方式 2: 在 agent_config 中使用 bind_model (推荐)**
+```yaml
+spec:
+  agent_config:
+    bind_model: "my-custom-model"
+    bind_model_type: "user"  # 可选: 'public' 或 'user'
+```
+
+`bind_model` 方式提供更多灵活性:
+- 通过名称引用模型，无需完整的 YAML 结构
+- 可选指定模型类型以避免命名冲突
+- 如果未指定，系统会自动检测模型类型 (优先用户模型，然后公共模型)
 
 #### 引用对象格式
 
