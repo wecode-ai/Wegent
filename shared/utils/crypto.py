@@ -143,3 +143,47 @@ def is_token_encrypted(token: str) -> bool:
         return len(decoded) > 0 and len(decoded) % 16 == 0
     except Exception:
         return False
+
+
+def encrypt_sensitive_data(plain_data: str) -> str:
+    """
+    Encrypt sensitive data using AES-256-CBC encryption
+    Generic function that can be used for any sensitive data (API keys, tokens, etc.)
+
+    Args:
+        plain_data: Plain text sensitive data
+
+    Returns:
+        Base64 encoded encrypted data
+    """
+    # Reuse the same encryption logic as git tokens
+    return encrypt_git_token(plain_data)
+
+
+def decrypt_sensitive_data(encrypted_data: str) -> Optional[str]:
+    """
+    Decrypt sensitive data using AES-256-CBC decryption
+    Generic function that can be used for any sensitive data (API keys, tokens, etc.)
+
+    Args:
+        encrypted_data: Base64 encoded encrypted data
+
+    Returns:
+        Decrypted plain text data, or None if decryption fails
+    """
+    # Reuse the same decryption logic as git tokens
+    return decrypt_git_token(encrypted_data)
+
+
+def is_data_encrypted(data: str) -> bool:
+    """
+    Check if data appears to be encrypted (base64 encoded)
+    Generic function that can be used for any sensitive data
+
+    Args:
+        data: Data to check
+
+    Returns:
+        True if data appears to be encrypted, False otherwise
+    """
+    return is_token_encrypted(data)

@@ -48,6 +48,7 @@ class TeamInDB(TeamBase):
     updated_at: datetime
     user: Optional[dict[str, Any]] = None
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
+    agent_type: Optional[str] = None  # agno, claude, dify, etc.
 
     class Config:
         from_attributes = True

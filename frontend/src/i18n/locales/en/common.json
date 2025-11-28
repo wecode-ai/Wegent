@@ -92,8 +92,31 @@
       "mcp_config_json": "MCP configuration must be valid JSON",
       "fetch_agents_failed": "Failed to load agents",
       "fetch_models_failed": "Failed to load models",
-      "save_failed": "Save failed"
-    }
+      "save_failed": "Save failed",
+      "dify_validation_failed": "Failed to validate API key",
+      "fetch_dify_apps_failed": "Failed to load Dify applications"
+    },
+    "dify_api_key": "Dify API Key",
+    "dify_api_key_hint": "Enter your Dify application API key. Each Dify application has its own API key.",
+    "dify_api_key_required": "Please enter Dify API Key and Base URL first",
+    "dify_base_url": "Dify Base URL",
+    "dify_base_url_hint": "Dify API base URL. Use https://api.dify.ai for Dify Cloud, or your self-hosted URL.",
+    "dify_mode_title": "Dify External API Mode",
+    "dify_mode_description": "Dify bot delegates execution to external Dify API service. Enter your Dify application API key to get started.",
+    "dify_validation_success": "API Key validated successfully",
+    "view_dify_docs": "View Dify API Documentation",
+    "validate_api_key": "Validate API Key",
+    "validating": "Validating...",
+    "validation_success": "API Key Validated Successfully",
+    "config_preview": "Configuration Preview",
+    "loading": "Loading...",
+    "dify_app_parameters": "Application Parameters",
+    "dify_parameters_count": "parameters",
+    "dify_parameters_hint": "Configure the input parameters for this application. These values will be used when executing tasks.",
+    "dify_parameters_loading": "Loading parameters...",
+    "dify_parameters_load_failed": "Failed to load application parameters",
+    "dify_parameters_refresh": "Refresh parameters",
+    "dify_no_parameters": "No parameters configured for this application."
   },
   "bots": {
     "title": "AI Assistant",
@@ -199,7 +222,9 @@
     "prompts_badge_tooltip": "This bot runs with an extra team-only prompt add-on.",
     "prompts_save_success": "Prompts saved! They will be applied when you save the team.",
     "prompts_update_success": "Prompts updated successfully!",
-    "prompts_update_error": "Failed to update prompts."
+    "prompts_update_error": "Failed to update prompts.",
+    "dify_mode_pipeline_only": "Dify bots only support pipeline execution mode.",
+    "dify_no_members_hint": "Dify bots handle execution independently and do not support team members."
   },
   "team_model": {
     "pipeline": "Pipeline",

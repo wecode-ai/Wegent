@@ -9,6 +9,8 @@ kind: Shell
 metadata:
   name: ClaudeCode
   namespace: default
+  labels:
+    type: local_engine
 spec:
   runtime: ClaudeCode
   supportModel: []
@@ -20,8 +22,23 @@ kind: Shell
 metadata:
   name: Agno
   namespace: default
+  labels:
+    type: local_engine
 spec:
   runtime: Agno
+  supportModel: []
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: Dify
+  namespace: default
+  labels:
+    type: external_api
+spec:
+  runtime: Dify
   supportModel: []
 status:
   state: Available

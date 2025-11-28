@@ -121,7 +121,7 @@ export default function TaskSidebar({
       thisWeekUnread: getUnreadCount(thisWeekTasks),
       earlierUnread: getUnreadCount(earlierTasks),
     };
-  }, [tasks, getUnreadCount, viewStatusVersion]);
+  }, [tasks, getUnreadCount]);
 
   // New task
   const handleNewAgentClick = () => {
@@ -149,7 +149,7 @@ export default function TaskSidebar({
   // Calculate total unread count
   const totalUnreadCount = React.useMemo(() => {
     return getUnreadCount(tasks);
-  }, [tasks, getUnreadCount, viewStatusVersion]);
+  }, [tasks, getUnreadCount]);
 
   // Scroll to bottom to load more
   useEffect(() => {

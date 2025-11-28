@@ -106,8 +106,31 @@
       "mcp_config_json": "MCP 配置必须是合法 JSON 格式",
       "fetch_agents_failed": "获取 Agent 列表失败",
       "fetch_models_failed": "获取模型列表失败",
-      "save_failed": "保存失败"
-    }
+      "save_failed": "保存失败",
+      "dify_validation_failed": "API 密钥验证失败",
+      "fetch_dify_apps_failed": "加载 Dify 应用失败"
+    },
+    "dify_api_key": "Dify API 密钥",
+    "dify_api_key_hint": "输入您的 Dify 应用 API 密钥。每个 Dify 应用都有自己的 API 密钥。",
+    "dify_api_key_required": "请先输入 Dify API 密钥和基础 URL",
+    "dify_base_url": "Dify 基础 URL",
+    "dify_base_url_hint": "Dify API 基础 URL。使用 https://api.dify.ai 访问 Dify 云服务,或使用您的自托管 URL。",
+    "dify_mode_title": "Dify 外部 API 模式",
+    "dify_mode_description": "Dify 机器人将执行委托给外部 Dify API 服务。输入您的 Dify 应用 API 密钥开始使用。",
+    "dify_validation_success": "API 密钥验证成功",
+    "view_dify_docs": "查看 Dify API 文档",
+    "validate_api_key": "验证 API 密钥",
+    "validating": "验证中...",
+    "validation_success": "API 密钥验证成功",
+    "config_preview": "配置预览",
+    "loading": "加载中...",
+    "dify_app_parameters": "应用参数",
+    "dify_parameters_count": "个参数",
+    "dify_parameters_hint": "配置此应用的输入参数。这些值将在执行任务时使用。",
+    "dify_parameters_loading": "加载参数中...",
+    "dify_parameters_load_failed": "加载应用参数失败",
+    "dify_parameters_refresh": "刷新参数",
+    "dify_no_parameters": "此应用未配置输入参数。"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",
@@ -200,7 +223,9 @@
     "prompts_badge_tooltip": "该机器人在当前团队设置了追加提示词。",
     "prompts_save_success": "已保存！在保存团队后会生效。",
     "prompts_update_success": "提示词已更新！",
-    "prompts_update_error": "更新提示词失败。"
+    "prompts_update_error": "更新提示词失败。",
+    "dify_mode_pipeline_only": "Dify 机器人仅支持顺序（Pipeline）执行模式。",
+    "dify_no_members_hint": "Dify 机器人独立执行任务，不支持配置其他团队成员。"
   },
   "team_model": {
     "pipeline": "顺序",

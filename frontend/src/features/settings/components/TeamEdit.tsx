@@ -285,11 +285,17 @@ export default function TeamEdit(props: TeamEditProps) {
     });
   }, [bots, leaderBotId, selectedBotKeys, isClaudeCodeAgent]);
 
+  const isDifyLeader = useMemo(() => {
+    if (leaderBotId === null) return false;
+    const leader = bots.find(b => b.id === leaderBotId);
+    return leader?.agent_name === 'Dify';
+  }, [leaderBotId, bots]);
+
   useEffect(() => {
-    if (hasClaudeCodeBot && mode !== 'pipeline') {
+    if ((hasClaudeCodeBot || isDifyLeader) && mode !== 'pipeline') {
       setMode('pipeline');
     }
-  }, [hasClaudeCodeBot, mode]);
+  }, [hasClaudeCodeBot, isDifyLeader, mode]);
 
   // Data source for Transfer
   const transferData = useMemo(() => {
@@ -298,10 +304,11 @@ export default function TeamEdit(props: TeamEditProps) {
       title: b.name,
       description: b.agent_name,
       disabled:
+        isDifyLeader ||
         // In non-pipeline mode, disable options not matching agent_name if already selected
-        mode !== 'pipeline' && selectedAgentName !== null && b.agent_name !== selectedAgentName,
+        (mode !== 'pipeline' && selectedAgentName !== null && b.agent_name !== selectedAgentName),
     }));
-  }, [bots, mode, selectedAgentName]);
+  }, [bots, mode, selectedAgentName, isDifyLeader]);
 
   // Transfer change
   const onTransferChange = (
@@ -320,6 +327,12 @@ export default function TeamEdit(props: TeamEditProps) {
     // If new leader is in selected bots, remove it from selected bots
     if (selectedBotKeys.some(k => Number(k) === botId)) {
       setSelectedBotKeys(prev => prev.filter(k => Number(k) !== botId));
+    }
+
+    const newLeader = bots.find(b => b.id === botId);
+    // If the new leader is Dify, clear the selected bots
+    if (newLeader?.agent_name === 'Dify') {
+      setSelectedBotKeys([]);
     }
 
     setLeaderBotId(botId);
@@ -411,12 +424,15 @@ export default function TeamEdit(props: TeamEditProps) {
       allBotIds.push(leaderBotId);
     }
 
-    // Then add other bots, avoid duplicate leader bot
-    selectedIds.forEach(id => {
-      if (id !== leaderBotId) {
-        allBotIds.push(id);
-      }
-    });
+    // Then add other bots, avoid duplicate leader bot (Skip if Dify leader)
+    // When Dify is the leader, we do not save other team members
+    if (!isDifyLeader) {
+      selectedIds.forEach(id => {
+        if (id !== leaderBotId) {
+          allBotIds.push(id);
+        }
+      });
+    }
 
     // Create botsData, keep allBotIds order, retain original bot_prompt or use unsaved prompts
     const botsData = allBotIds.map(id => {
@@ -546,7 +562,16 @@ export default function TeamEdit(props: TeamEditProps) {
             </div>
 
             {/* Integrate Mode selection and description into one container */}
-            <div className="rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
+            <div className="relative rounded-md border border-border bg-base p-4 flex flex-col flex-1 min-h-0">
+              {/* Overlay mask for Dify leader mode */}
+              {isDifyLeader && (
+                <div className="absolute inset-0 bg-white/50 dark:bg-black/50 z-10 flex items-center justify-center rounded-md backdrop-blur-[1px]">
+                  <div className="bg-background/95 px-4 py-2 rounded-md shadow-sm border border-border text-sm text-muted-foreground">
+                    {t('team.dify_mode_pipeline_only') ||
+                      'Dify bots only support pipeline execution mode.'}
+                  </div>
+                </div>
+              )}
               {/* Mode selection */}
               <div className="mb-3">
                 <RadioGroup
@@ -561,7 +586,7 @@ export default function TeamEdit(props: TeamEditProps) {
                       <RadioGroupItem
                         value={opt}
                         id={`mode-${opt}`}
-                        disabled={hasClaudeCodeBot && opt !== 'pipeline'}
+                        disabled={(hasClaudeCodeBot || isDifyLeader) && opt !== 'pipeline'}
                         className="peer sr-only"
                       />
                       <label
@@ -570,7 +595,7 @@ export default function TeamEdit(props: TeamEditProps) {
                           flex items-center justify-center w-full px-3 py-1.5 text-sm font-medium
                           rounded-md cursor-pointer transition-colors
                           border border-border
-                          ${hasClaudeCodeBot && opt !== 'pipeline' ? 'opacity-50 cursor-not-allowed' : ''}
+                          ${(hasClaudeCodeBot || isDifyLeader) && opt !== 'pipeline' ? 'opacity-50 cursor-not-allowed' : ''}
                           peer-data-[state=checked]:bg-primary peer-data-[state=checked]:text-primary-foreground peer-data-[state=checked]:border-primary
                           hover:bg-accent hover:text-accent-foreground
                         `}
@@ -772,10 +797,20 @@ export default function TeamEdit(props: TeamEditProps) {
 
               {/* Transfer component with flex-1 to fill remaining space */}
               <div className="relative flex-1 min-h-0">
+                {/* Overlay mask for Dify leader mode */}
+                {isDifyLeader && (
+                  <div className="absolute inset-0 bg-white/50 dark:bg-black/50 z-10 flex items-center justify-center rounded-md backdrop-blur-[1px]">
+                    <div className="bg-background/95 px-4 py-2 rounded-md shadow-sm border border-border text-sm text-muted-foreground">
+                      {t('team.dify_no_members_hint') ||
+                        'Dify bots handle execution independently and do not support team members.'}
+                    </div>
+                  </div>
+                )}
                 <Transfer
                   dataSource={transferData.filter(item => Number(item.key) !== leaderBotId)}
                   targetKeys={selectedBotKeys.map(String)}
                   onChange={onTransferChange}
+                  disabled={isDifyLeader}
                   render={item => (
                     <div className="flex items-center justify-between w-full">
                       <Tooltip>
@@ -837,6 +872,7 @@ export default function TeamEdit(props: TeamEditProps) {
                       size="sm"
                       className="w-full"
                       onClick={handleCreateBot}
+                      disabled={isDifyLeader}
                     >
                       <Plus className="mr-2 h-4 w-4" />
                       {t('bots.new_bot')}
