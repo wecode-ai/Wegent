@@ -474,8 +474,8 @@ export default function ChatArea({
             {/* Floating Input Area */}
             <div ref={floatingInputRef} className="w-full max-w-4xl px-4 sm:px-6">
               <div className="w-full">
-                {/* External API Parameters Input - render when team is selected to fetch appMode */}
-                {selectedTeam && (
+                {/* External API Parameters Input - only show for Dify teams */}
+                {selectedTeam && selectedTeam.agent_type === 'dify' && (
                   <ExternalApiParamsInput
                     teamId={selectedTeam.id}
                     onParamsChange={handleExternalApiParamsChange}
@@ -604,8 +604,8 @@ export default function ChatArea({
             }}
           >
             <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
-              {/* External API Parameters Input - render when team is selected to fetch appMode */}
-              {selectedTeam && (
+              {/* External API Parameters Input - only show for Dify teams */}
+              {selectedTeam && selectedTeam.agent_type === 'dify' && (
                 <ExternalApiParamsInput
                   teamId={selectedTeam.id}
                   onParamsChange={handleExternalApiParamsChange}
