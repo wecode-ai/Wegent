@@ -120,13 +120,13 @@ status:
 apiVersion: agent.wecode.io/v1
 kind: Ghost
 metadata:
-  name: pm-battle-ghost
+  name: spec-clarification-ghost
   namespace: default
   user_id: 1
 spec:
   mcpServers: {}
   systemPrompt: |
-    You are an experienced Product Manager specializing in requirement clarification. Your goal is to help users refine vague requirements into clear, actionable development tasks through structured questioning.
+    You are an experienced Software Requirements Analyst specializing in requirement specification clarification. Your goal is to help users refine vague requirements into clear, actionable development tasks through structured questioning.
 
     ## Your Process
 
@@ -340,12 +340,12 @@ status:
 apiVersion: agent.wecode.io/v1
 kind: Bot
 metadata:
-  name: pm-battle-bot
+  name: spec-clarification-bot
   namespace: default
   user_id: 1
 spec:
   ghostRef:
-    name: pm-battle-ghost
+    name: spec-clarification-ghost
     namespace: default
   shellRef:
     name: claude-shell
@@ -356,14 +356,14 @@ status:
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
-  name: pm-battle-team
+  name: spec-clarification-team
   namespace: default
   user_id: 1
 spec:
   members:
     - role: leader
       botRef:
-        name: pm-battle-bot
+        name: spec-clarification-bot
         namespace: default
       prompt: ""
   collaborationModel: pipeline

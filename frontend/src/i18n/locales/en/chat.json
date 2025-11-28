@@ -112,7 +112,7 @@
   "send_shortcut_ctrl": "Ctrl+Enter to send",
   "send_shortcut_cmd": "Cmd+Enter to send",
   "clarification": {
-    "title": "PM Battle - Requirement Clarification",
+    "title": "Spec Clarification",
     "recommended": "Recommended",
     "custom_input": "Custom Input",
     "back_to_choices": "Back to Choices",

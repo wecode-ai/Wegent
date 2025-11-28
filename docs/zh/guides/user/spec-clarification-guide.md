@@ -1,8 +1,8 @@
-# "与产品经理搏斗" 需求澄清模式使用指南
+# 需求规范澄清(Spec Clarification)使用指南
 
 ## 功能概述
 
-"与产品经理搏斗"是 Wegent 系统的交互式需求澄清模式，帮助用户通过结构化问答将模糊需求精炼为清晰的开发任务。
+需求规范澄清(Spec Clarification)是 Wegent 系统的交互式需求澄清模式，帮助用户通过结构化问答将模糊需求精炼为清晰的开发任务。
 
 ## 快速开始
 
@@ -10,14 +10,14 @@
 
 系统首次启动时会自动创建以下实体：
 
-- **pm-battle-ghost**: 需求澄清系统提示词
-- **pm-battle-bot**: 需求澄清Bot
-- **pm-battle-team**: 需求澄清团队
+- **spec-clarification-ghost**: 需求澄清系统提示词
+- **spec-clarification-bot**: 需求澄清Bot
+- **spec-clarification-team**: 需求澄清团队
 
 ### 2. 在前端选择团队
 
 1. 进入 Code 页面
-2. 在 Team 选择器中选择 **pm-battle-team**
+2. 在 Team 选择器中选择 **spec-clarification-team**
 3. 输入模糊需求，例如："我想添加一个用户登录功能"
 
 ### 3. 交互流程
@@ -61,7 +61,7 @@ MessagesArea.tsx
 ```mermaid
 sequenceDiagram
     User->>+Frontend: 提交模糊需求
-    Frontend->>+Backend: 发送消息到 pm-battle-bot
+    Frontend->>+Backend: 发送消息到 spec-clarification-bot
     Backend->>+Agent: 调用需求澄清Agent
     Agent-->>-Backend: 返回澄清问题JSON
     Backend-->>-Frontend: 返回subtask结果
@@ -163,15 +163,15 @@ Agent 输出 Markdown 格式的最终需求提示词：
 
 ### 修改 system_prompt
 
-如果需要调整澄清问题的风格或逻辑，可以修改 `pm-battle-ghost` 的 `systemPrompt`：
+如果需要调整澄清问题的风格或逻辑，可以修改 `spec-clarification-ghost` 的 `systemPrompt`：
 
-1. 在设置页面找到 "pm-battle-ghost"
+1. 在设置页面找到 "spec-clarification-ghost"
 2. 编辑 system_prompt
 3. 保存更改
 
 ### 创建新的需求澄清 Bot
 
-1. 创建新的 Ghost，参考 `pm-battle-ghost` 的 system_prompt 结构
+1. 创建新的 Ghost，参考 `spec-clarification-ghost` 的 system_prompt 结构
 2. 创建新的 Bot，引用新的 Ghost
 3. 创建新的 Team，引用新的 Bot
 4. 在前端选择新的 Team 使用
@@ -200,7 +200,7 @@ Agent 输出 Markdown 格式的最终需求提示词：
 ### 前端使用
 
 1. **选择合适的 Team**:
-   - 需求澄清阶段：选择 `pm-battle-team`
+   - 需求澄清阶段：选择 `spec-clarification-team`
    - 代码生成阶段：切换到 `dev-team`
 
 2. **回答技巧**:

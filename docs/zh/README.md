@@ -34,7 +34,7 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 - [管理 Skills](./guides/user/managing-skills.md) - 上传和使用 Claude Code Skills
 - [创建 Team](./guides/user/creating-teams.md) - 构建协作团队
 - [管理任务](./guides/user/managing-tasks.md) - 创建和管理工作任务
-- [需求澄清模式](./guides/user/pm-battle-guide.md) - "与产品经理搏斗"需求澄清使用指南
+- [需求规范澄清](./guides/user/spec-clarification-guide.md) - Spec Clarification 需求澄清使用指南
 
 #### 💻 开发者指南
 
