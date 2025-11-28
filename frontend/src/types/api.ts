@@ -94,6 +94,7 @@ export interface Team {
   created_at: string;
   updated_at: string;
   share_status?: number; // 0: 个人团队, 1: 分享中, 2: 共享团队
+  agent_type?: string; // agno, claude, dify, etc.
   user?: {
     user_name: string;
   };
