@@ -126,7 +126,11 @@
     "loading": "加载中...",
     "dify_app_parameters": "应用参数",
     "dify_parameters_count": "个参数",
-    "dify_parameters_hint": "配置此 Dify 应用的输入参数。这些值将在执行任务时使用。"
+    "dify_parameters_hint": "配置此应用的输入参数。这些值将在执行任务时使用。",
+    "dify_parameters_loading": "加载参数中...",
+    "dify_parameters_load_failed": "加载应用参数失败",
+    "dify_parameters_refresh": "刷新参数",
+    "dify_no_parameters": "此应用未配置输入参数。"
   },
   "messages": {
     "copy_markdown": "复制 Markdown 内容",

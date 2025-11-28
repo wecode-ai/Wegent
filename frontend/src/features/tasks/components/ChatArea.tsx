@@ -596,7 +596,7 @@ export default function ChatArea({
         {hasMessages && (
           <div
             ref={floatingInputRef}
-            className="fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0"
+            className="fixed bottom-0 z-50 bg-gradient-to-t from-base via-base/95 to-base/0"
             style={{
               left: floatingMetrics.width ? floatingMetrics.left : 0,
               width: floatingMetrics.width || '100%',

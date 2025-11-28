@@ -112,7 +112,11 @@
     "loading": "Loading...",
     "dify_app_parameters": "Application Parameters",
     "dify_parameters_count": "parameters",
-    "dify_parameters_hint": "Configure the input parameters for this Dify application. These values will be used when executing tasks."
+    "dify_parameters_hint": "Configure the input parameters for this application. These values will be used when executing tasks.",
+    "dify_parameters_loading": "Loading parameters...",
+    "dify_parameters_load_failed": "Failed to load application parameters",
+    "dify_parameters_refresh": "Refresh parameters",
+    "dify_no_parameters": "No parameters configured for this application."
   },
   "bots": {
     "title": "AI Assistant",
