@@ -35,7 +35,8 @@
     "subtask_completed": "子任务已完成",
     "subtask_failed": "子任务失败",
     "unknown_error": "未知错误",
-    "bot": "机器人"
+    "bot": "机器人",
+    "application_parameters": "应用参数"
   },
   "settings": {
     "model": "模型",

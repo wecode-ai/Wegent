@@ -401,6 +401,49 @@ export default function MessagesArea({
   };
 
   const renderPlainMessage = (msg: Message) => {
+    // Check if this is an external API params message
+    if (msg.type === 'user' && msg.content.includes('[EXTERNAL_API_PARAMS]')) {
+      const paramsMatch = msg.content.match(
+        /\[EXTERNAL_API_PARAMS\]([\s\S]*?)\[\/EXTERNAL_API_PARAMS\]/
+      );
+      if (paramsMatch) {
+        try {
+          const params = JSON.parse(paramsMatch[1]);
+          const remainingContent = msg.content
+            .replace(/\[EXTERNAL_API_PARAMS\][\s\S]*?\[\/EXTERNAL_API_PARAMS\]\n?/, '')
+            .trim();
+
+          return (
+            <div className="space-y-3">
+              {/* Render parameters as cards */}
+              <div className="bg-base-secondary rounded-lg p-3 border border-border">
+                <div className="text-xs font-semibold text-text-muted mb-2">
+                  📋 {t('messages.application_parameters') || '应用参数'}
+                </div>
+                <div className="space-y-2">
+                  {Object.entries(params).map(([key, value]) => (
+                    <div key={key} className="flex items-start gap-2">
+                      <span className="text-xs font-medium text-text-secondary min-w-[80px]">
+                        {key}:
+                      </span>
+                      <span className="text-xs text-text-primary flex-1 break-all">
+                        {String(value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {/* Render remaining content if any */}
+              {remainingContent && <div className="text-sm break-all">{remainingContent}</div>}
+            </div>
+          );
+        } catch (e) {
+          console.error('Failed to parse EXTERNAL_API_PARAMS:', e);
+          // Fall through to default rendering
+        }
+      }
+    }
+
     // Check if this is a Markdown clarification answer (user message)
     if (msg.type === 'user' && msg.content.includes('## 📝 我的回答')) {
       // Parse Markdown answer format
@@ -627,7 +670,7 @@ export default function MessagesArea({
 
     return {
       type: 'final_prompt',
-      prompt: match[1].trim(),
+      final_prompt: match[1].trim(),
     };
   };
 

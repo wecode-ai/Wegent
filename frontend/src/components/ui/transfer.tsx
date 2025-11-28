@@ -28,6 +28,7 @@ export interface TransferProps {
   operations?: [string, string];
   leftFooter?: React.ReactNode;
   rightFooter?: React.ReactNode;
+  disabled?: boolean;
 }
 
 export function Transfer({
@@ -43,6 +44,7 @@ export function Transfer({
   operations = ['>', '<'],
   leftFooter,
   rightFooter,
+  disabled = false,
 }: TransferProps) {
   const [leftSearch, setLeftSearch] = React.useState('');
   const [rightSearch, setRightSearch] = React.useState('');
@@ -210,7 +212,8 @@ export function Transfer({
   return (
     <div className={cn('flex items-stretch gap-4', className)}>
       {/* 左侧列表 */}
-      <div className="flex-1 flex flex-col">
+      {/* 左侧列表 */}
+      <div className={cn('flex-1 flex flex-col', disabled && 'opacity-50 pointer-events-none')}>
         {renderList(
           filteredLeftData,
           leftChecked,
@@ -228,7 +231,7 @@ export function Transfer({
           size="sm"
           variant="outline"
           onClick={moveToRight}
-          disabled={leftChecked.length === 0}
+          disabled={disabled || leftChecked.length === 0}
           className="h-8 w-8 p-0"
         >
           {operations[0] === '>' ? <ChevronRight className="h-4 w-4" /> : operations[0]}
@@ -237,7 +240,7 @@ export function Transfer({
           size="sm"
           variant="outline"
           onClick={moveToLeft}
-          disabled={rightChecked.length === 0}
+          disabled={disabled || rightChecked.length === 0}
           className="h-8 w-8 p-0"
         >
           {operations[1] === '<' ? <ChevronLeft className="h-4 w-4" /> : operations[1]}
@@ -245,7 +248,7 @@ export function Transfer({
       </div>
 
       {/* 右侧列表 */}
-      <div className="flex-1 flex flex-col">
+      <div className={cn('flex-1 flex flex-col', disabled && 'opacity-50 pointer-events-none')}>
         {renderList(
           filteredRightData,
           rightChecked,

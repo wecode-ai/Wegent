@@ -125,7 +125,7 @@ export default function BotList() {
         <div
           className={`bg-base border border-border rounded-md p-2 w-full ${
             isEditing
-              ? 'md:min-h-[70vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
+              ? 'md:min-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'
               : 'max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'
           }`}
         >

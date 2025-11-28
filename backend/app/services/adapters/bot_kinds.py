@@ -5,6 +5,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 import json
+import copy
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -17,12 +18,44 @@ from app.models.public_shell import PublicShell
 from app.schemas.bot import BotCreate, BotUpdate, BotInDB, BotDetail
 from app.schemas.kind import Ghost, Bot, Shell, Model, Team
 from app.services.base import BaseService
+from app.services.adapters.shell_utils import get_shell_type
+from shared.utils.crypto import encrypt_sensitive_data, is_data_encrypted
 
 
 class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
     """
     Bot service class using kinds table
     """
+
+    # List of sensitive keys that should be encrypted in agent_config
+    SENSITIVE_CONFIG_KEYS = [
+        "DIFY_API_KEY",
+        # Add more sensitive keys here as needed
+    ]
+
+    def _encrypt_agent_config(self, agent_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Encrypt sensitive data in agent_config before storing
+
+        Args:
+            agent_config: Original agent config dictionary
+
+        Returns:
+            Agent config with encrypted sensitive fields
+        """
+        # Create a deep copy to avoid modifying the original
+        encrypted_config = copy.deepcopy(agent_config)
+
+        # Encrypt sensitive keys in env section
+        if "env" in encrypted_config:
+            for key in self.SENSITIVE_CONFIG_KEYS:
+                if key in encrypted_config["env"]:
+                    value = encrypted_config["env"][key]
+                    # Only encrypt if not already encrypted
+                    if value and not is_data_encrypted(str(value)):
+                        encrypted_config["env"][key] = encrypt_sensitive_data(str(value))
+
+        return encrypted_config
 
     def create_with_user(
         self, db: Session, *, obj_in: BotCreate, user_id: int
@@ -47,6 +80,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Validate skills if provided
         if obj_in.skills:
             self._validate_skills(db, obj_in.skills, user_id)
+
+        # Encrypt sensitive data in agent_config before storing
+        encrypted_agent_config = self._encrypt_agent_config(obj_in.agent_config)
 
         # Create Ghost
         ghost_spec = {
@@ -83,7 +119,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         model_json = {
             "kind": "Model",
             "spec": {
-                "modelConfig": obj_in.agent_config
+                "modelConfig": encrypted_agent_config
             },
             "status": {
                 "state": "Available"
@@ -104,8 +140,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             is_active=True
         )
         db.add(model)
-
         support_model = []
+        shell_type = "local_engine"  # Default shell type
         if obj_in.agent_name:
             public_shell = db.query(PublicShell).filter(
                 PublicShell.name == obj_in.agent_name,
@@ -115,6 +151,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             if public_shell and isinstance(public_shell.json, dict):
                 shell_crd = Shell.model_validate(public_shell.json)
                 support_model = shell_crd.spec.supportModel or []
+                # Get shell type from metadata.labels
+                if shell_crd.metadata.labels and "type" in shell_crd.metadata.labels:
+                    shell_type = shell_crd.metadata.labels["type"]
 
         shell_json = {
             "kind": "Shell",
@@ -122,12 +161,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 "runtime": obj_in.agent_name,
                 "supportModel": support_model
             },
-            "status": {
-                "state": "Available"
-            },
             "metadata": {
                 "name": f"{obj_in.name}-shell",
-                "namespace": "default"
+                "namespace": "default",
+                "labels": {
+                    "type": shell_type
+                }
+            },
+            "status": {
+                "state": "Available"
             },
             "apiVersion": "agent.wecode.io/v1"
         }
@@ -305,8 +347,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             flag_modified(bot, "json")  # Mark JSON field as modified
 
         if "agent_name" in update_data and shell:
-            # Query public_shells table to get supportModel based on new agent_name
+            # Query public_shells table to get supportModel and shell type based on new agent_name
             support_model = []
+            shell_type = "local_engine"  # Default shell type
             new_agent_name = update_data["agent_name"]
             if new_agent_name:
                 public_shell = db.query(PublicShell).filter(
@@ -315,18 +358,27 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 ).first()
                 
                 if public_shell and isinstance(public_shell.json, dict):
-                    shell_crd = Shell.model_validate(public_shell.json)
-                    support_model = shell_crd.spec.supportModel or []
+                    public_shell_crd = Shell.model_validate(public_shell.json)
+                    support_model = public_shell_crd.spec.supportModel or []
+                    # Get shell type from metadata.labels
+                    if public_shell_crd.metadata.labels and "type" in public_shell_crd.metadata.labels:
+                        shell_type = public_shell_crd.metadata.labels["type"]
 
             shell_crd = Shell.model_validate(shell.json)
             shell_crd.spec.runtime = new_agent_name
             shell_crd.spec.supportModel = support_model
+            # Update shell type in metadata.labels
+            if not shell_crd.metadata.labels:
+                shell_crd.metadata.labels = {}
+            shell_crd.metadata.labels["type"] = shell_type
             shell.json = shell_crd.model_dump()
             flag_modified(shell, "json")  # Mark JSON field as modified
 
         if "agent_config" in update_data and model:
             model_crd = Model.model_validate(model.json)
-            model_crd.spec.modelConfig = update_data["agent_config"]
+            # Encrypt sensitive data before updating
+            encrypted_agent_config = self._encrypt_agent_config(update_data["agent_config"])
+            model_crd.spec.modelConfig = encrypted_agent_config
             model.json = model_crd.model_dump()
             flag_modified(model, "json")  # Mark JSON field as modified
 

@@ -98,6 +98,7 @@ export function SearchableSelect({
             type="button"
             role="combobox"
             aria-expanded={isOpen}
+            aria-controls="searchable-select-popover"
             disabled={disabled}
             className={cn(
               'flex h-9 w-full min-w-0 items-center justify-between rounded-lg border text-left',

@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Send, CircleStop } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
@@ -12,6 +12,7 @@ import TeamSelector from './TeamSelector';
 import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
+import ExternalApiParamsInput from './ExternalApiParamsInput';
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { sendMessage } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -60,6 +61,20 @@ export default function ChatArea({
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
 
+  // External API parameters state
+  const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
+  const [appMode, setAppMode] = useState<string | undefined>(undefined);
+
+  // Memoize the params change handler to prevent infinite re-renders
+  const handleExternalApiParamsChange = useCallback((params: Record<string, string>) => {
+    setExternalApiParams(params);
+  }, []);
+
+  // Handle app mode change from ExternalApiParamsInput
+  const handleAppModeChange = useCallback((mode: string | undefined) => {
+    setAppMode(mode);
+  }, []);
+
   const chatAreaRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const isUserNearBottomRef = useRef(true);
@@ -78,6 +93,11 @@ export default function ChatArea({
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
   const lastSubtaskId = lastSubtask?.id;
   const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at;
+
+  // Determine if chat input should be hidden (workflow mode always hides chat input)
+  const shouldHideChatInput = React.useMemo(() => {
+    return appMode === 'workflow';
+  }, [appMode]);
 
   // Restore user preferences from localStorage when teams load
   useEffect(() => {
@@ -142,6 +162,10 @@ export default function ChatArea({
     console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null');
     setSelectedTeam(team);
 
+    // Reset external API params when team changes
+    setExternalApiParams({});
+    setAppMode(undefined);
+
     // Save team preference to localStorage
     if (team && team.id) {
       console.log('[ChatArea] Saving team to localStorage:', team.id);
@@ -185,8 +209,18 @@ export default function ChatArea({
   const handleSendMessage = async () => {
     setIsLoading(true);
     setError('');
+
+    // Prepare message with embedded external API parameters if applicable
+    let finalMessage = taskInputMessage;
+    if (Object.keys(externalApiParams).length > 0) {
+      // Embed parameters using special marker format
+      // Backend will extract these parameters for external API calls
+      const paramsJson = JSON.stringify(externalApiParams);
+      finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${taskInputMessage}`;
+    }
+
     const { error, newTask } = await sendMessage({
-      message: taskInputMessage,
+      message: finalMessage,
       team: selectedTeam,
       repo: showRepositorySelector ? selectedRepo : null,
       branch: showRepositorySelector ? selectedBranch : null,
@@ -440,17 +474,32 @@ export default function ChatArea({
             {/* Floating Input Area */}
             <div ref={floatingInputRef} className="w-full max-w-4xl px-4 sm:px-6">
               <div className="w-full">
+                {/* External API Parameters Input - render when team is selected to fetch appMode */}
+                {selectedTeam && (
+                  <ExternalApiParamsInput
+                    teamId={selectedTeam.id}
+                    onParamsChange={handleExternalApiParamsChange}
+                    onAppModeChange={handleAppModeChange}
+                    initialParams={externalApiParams}
+                  />
+                )}
+
                 {/* Chat Input Card */}
                 <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
-                  <ChatInput
-                    message={taskInputMessage}
-                    setMessage={setTaskInputMessage}
-                    handleSendMessage={handleSendMessage}
-                    isLoading={isLoading}
-                    taskType={taskType}
-                  />
-                  {/* Team Selector and Send Button */}
-                  <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
+                  {/* Chat Input - hide for workflow mode when no messages */}
+                  {!shouldHideChatInput && (
+                    <ChatInput
+                      message={taskInputMessage}
+                      setMessage={setTaskInputMessage}
+                      handleSendMessage={handleSendMessage}
+                      isLoading={isLoading}
+                      taskType={taskType}
+                    />
+                  )}
+                  {/* Team Selector and Send Button - always show */}
+                  <div
+                    className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
+                  >
                     <div className="flex-1 min-w-0 overflow-hidden">
                       {teams.length > 0 && (
                         <TeamSelector
@@ -500,7 +549,9 @@ export default function ChatArea({
                           variant="ghost"
                           size="icon"
                           onClick={handleSendMessage}
-                          disabled={isLoading || !taskInputMessage.trim()}
+                          disabled={
+                            isLoading || (shouldHideChatInput ? false : !taskInputMessage.trim())
+                          }
                           className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
                         >
                           {isLoading ? (
@@ -545,7 +596,7 @@ export default function ChatArea({
         {hasMessages && (
           <div
             ref={floatingInputRef}
-            className="fixed bottom-0 z-10 bg-gradient-to-t from-base via-base/95 to-base/0"
+            className="fixed bottom-0 z-50 bg-gradient-to-t from-base via-base/95 to-base/0"
             style={{
               left: floatingMetrics.width ? floatingMetrics.left : 0,
               width: floatingMetrics.width || '100%',
@@ -553,17 +604,32 @@ export default function ChatArea({
             }}
           >
             <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 py-4">
+              {/* External API Parameters Input - render when team is selected to fetch appMode */}
+              {selectedTeam && (
+                <ExternalApiParamsInput
+                  teamId={selectedTeam.id}
+                  onParamsChange={handleExternalApiParamsChange}
+                  onAppModeChange={handleAppModeChange}
+                  initialParams={externalApiParams}
+                />
+              )}
+
               {/* Chat Input Card */}
               <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
-                <ChatInput
-                  message={taskInputMessage}
-                  setMessage={setTaskInputMessage}
-                  handleSendMessage={handleSendMessage}
-                  isLoading={isLoading}
-                  taskType={taskType}
-                />
-                {/* Team Selector and Send Button */}
-                <div className="flex items-center justify-between px-3 pb-0.5 gap-2">
+                {/* Chat Input - hide for workflow mode */}
+                {!shouldHideChatInput && (
+                  <ChatInput
+                    message={taskInputMessage}
+                    setMessage={setTaskInputMessage}
+                    handleSendMessage={handleSendMessage}
+                    isLoading={isLoading}
+                    taskType={taskType}
+                  />
+                )}
+                {/* Team Selector and Send Button - always show */}
+                <div
+                  className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
+                >
                   <div className="flex-1 min-w-0 overflow-hidden">
                     {teams.length > 0 && (
                       <TeamSelector
@@ -613,7 +679,9 @@ export default function ChatArea({
                         variant="ghost"
                         size="icon"
                         onClick={handleSendMessage}
-                        disabled={isLoading || !taskInputMessage.trim()}
+                        disabled={
+                          isLoading || (shouldHideChatInput ? false : !taskInputMessage.trim())
+                        }
                         className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
                       >
                         {isLoading ? <LoadingDots /> : <Send className="h-5 w-5 text-text-muted" />}

@@ -35,7 +35,8 @@
     "subtask_completed": "Subtask completed",
     "subtask_failed": "Subtask failed",
     "unknown_error": "Unknown error",
-    "bot": "Bot"
+    "bot": "Bot",
+    "application_parameters": "Application Parameters"
   },
   "settings": {
     "model": "Model",
