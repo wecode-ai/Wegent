@@ -493,7 +493,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 
       {/* Main content area - using responsive layout */}
       <div className="flex flex-col lg:flex-row gap-4 flex-grow mx-2 min-h-0 overflow-hidden">
-        <div className="flex flex-col space-y-3 overflow-y-auto w-full lg:w-2/5 xl:w-1/3 flex-shrink-0">
+        <div className={`flex flex-col space-y-3 overflow-y-auto flex-shrink-0 ${isDifyAgent ? 'w-full' : 'w-full lg:w-2/5 xl:w-1/3'}`}>
           {/* Bot Name */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
@@ -587,11 +587,13 @@ const BotEdit: React.FC<BotEditProps> = ({
           {/* Conditional rendering based on agent type */}
           {isDifyAgent ? (
             /* Dify Mode: Show specialized Dify configuration */
-            <DifyBotConfig
-              agentConfig={agentConfig}
-              onAgentConfigChange={setAgentConfig}
-              toast={toast}
-            />
+            <div className="w-full max-w-[800px]">
+              <DifyBotConfig
+                agentConfig={agentConfig}
+                onAgentConfigChange={setAgentConfig}
+                toast={toast}
+              />
+            </div>
           ) : (
             /* Normal Mode: Show standard configuration options */
             <>
@@ -959,6 +961,10 @@ const BotEdit: React.FC<BotEditProps> = ({
             }
             .w-full.lg\\:w-3\\/5.xl\\:w-2\\/3 {
               width: 100% !important;
+            }
+            /* Ensure max-width wrapper works on mobile */
+            .max-w-\\[800px\\] {
+              max-width: 100% !important;
             }
           }
 
