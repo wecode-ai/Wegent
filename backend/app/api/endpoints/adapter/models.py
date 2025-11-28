@@ -4,11 +4,13 @@
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
+import logging
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
+from app.models.kind import Kind
 from app.schemas.model import (
     ModelCreate,
     ModelUpdate,
@@ -18,8 +20,10 @@ from app.schemas.model import (
     ModelBulkCreateItem,
 )
 from app.services.adapters import public_model_service
+from app.services.model_aggregation_service import model_aggregation_service, ModelType
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("", response_model=ModelListResponse)
@@ -46,17 +50,105 @@ def list_model_names(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get all active model names
+    Get all active model names (legacy API, use /unified for new implementations)
 
     Response:
     {
       "data": [
-        {"name": "string"}
+        {"name": "string", "displayName": "string"}
       ]
     }
     """
     data = public_model_service.list_model_names(db=db, current_user=current_user, agent_name=agent_name)
     return {"data": data}
+
+
+@router.get("/unified")
+def list_unified_models(
+    agent_name: Optional[str] = Query(None, description="Agent name to filter compatible models (Agno, ClaudeCode)"),
+    include_config: bool = Query(False, description="Whether to include full config in response"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get unified list of all available models (both public and user-defined).
+    
+    This endpoint aggregates models from:
+    - Public models (type='public'): Shared across all users
+    - User-defined models (type='user'): Private to the current user
+    
+    Each model includes a 'type' field to identify its source, which is
+    important for avoiding naming conflicts when binding models.
+
+    Parameters:
+    - agent_name: Optional agent name to filter compatible models
+    - include_config: Whether to include full model config in response
+
+    Response:
+    {
+      "data": [
+        {
+          "name": "model-name",
+          "type": "public" | "user",
+          "displayName": "Human Readable Name",
+          "provider": "openai" | "claude",
+          "modelId": "gpt-4"
+        }
+      ]
+    }
+    """
+    data = model_aggregation_service.list_available_models(
+        db=db,
+        current_user=current_user,
+        agent_name=agent_name,
+        include_config=include_config
+    )
+    return {"data": data}
+
+
+@router.get("/unified/{model_name}")
+def get_unified_model(
+    model_name: str,
+    model_type: Optional[str] = Query(None, description="Model type ('public' or 'user')"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get a specific model by name, optionally with type hint.
+    
+    If model_type is not provided, it will try to find the model
+    in the following order:
+    1. User's own models (type='user')
+    2. Public models (type='public')
+    
+    Parameters:
+    - model_name: Model name
+    - model_type: Optional model type hint ('public' or 'user')
+
+    Response:
+    {
+      "name": "model-name",
+      "type": "public" | "user",
+      "displayName": "Human Readable Name",
+      "provider": "openai" | "claude",
+      "modelId": "gpt-4",
+      "config": {...},
+      "isActive": true
+    }
+    """
+    from fastapi import HTTPException
+    
+    result = model_aggregation_service.resolve_model(
+        db=db,
+        current_user=current_user,
+        name=model_name,
+        model_type=model_type
+    )
+    
+    if not result:
+        raise HTTPException(status_code=404, detail="Model not found")
+    
+    return result
 
 
 @router.post("", response_model=ModelInDB, status_code=status.HTTP_201_CREATED)
@@ -166,3 +258,138 @@ def delete_model(
     """
     public_model_service.delete_model(db=db, model_id=model_id, current_user=current_user)
     return {"message": "Model deleted successfully"}
+
+
+@router.post("/test-connection")
+def test_model_connection(
+    test_data: dict,
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Test model connection
+
+    Request body:
+    {
+      "provider_type": "openai" | "anthropic",
+      "model_id": "gpt-4",
+      "api_key": "sk-...",
+      "base_url": "https://api.openai.com/v1"  // optional
+    }
+
+    Response:
+    {
+      "success": true | false,
+      "message": "Connection successful" | "Error message"
+    }
+    """
+    provider_type = test_data.get("provider_type")
+    model_id = test_data.get("model_id")
+    api_key = test_data.get("api_key")
+    base_url = test_data.get("base_url")
+
+    if not provider_type or not model_id or not api_key:
+        return {
+            "success": False,
+            "message": "Missing required fields: provider_type, model_id, api_key"
+        }
+
+    try:
+        if provider_type == "openai":
+            import openai
+            client = openai.OpenAI(
+                api_key=api_key,
+                base_url=base_url or "https://api.openai.com/v1"
+            )
+            # Send minimal test request
+            response = client.chat.completions.create(
+                model=model_id,
+                messages=[{"role": "user", "content": "hi"}],
+                max_tokens=1
+            )
+            return {
+                "success": True,
+                "message": f"Successfully connected to {model_id}"
+            }
+
+        elif provider_type == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            if base_url:
+                client.base_url = base_url
+
+            response = client.messages.create(
+                model=model_id,
+                max_tokens=1,
+                messages=[{"role": "user", "content": "hi"}]
+            )
+            return {
+                "success": True,
+                "message": f"Successfully connected to {model_id}"
+            }
+
+        else:
+            return {
+                "success": False,
+                "message": "Unsupported provider type"
+            }
+
+    except Exception as e:
+        logger.error(f"Model connection test failed: {str(e)}")
+        return {
+            "success": False,
+            "message": f"Connection failed: {str(e)}"
+        }
+
+
+@router.get("/compatible")
+def get_compatible_models(
+    agent_name: str = Query(..., description="Agent name (Agno or ClaudeCode)"),
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Get models compatible with a specific agent type
+
+    Parameters:
+    - agent_name: "Agno" or "ClaudeCode"
+
+    Response:
+    {
+      "models": [
+        {"name": "my-gpt4-model"},
+        {"name": "my-gpt4o-model"}
+      ]
+    }
+    """
+    from app.schemas.kind import Model as ModelCRD
+
+    # Query all active Model CRDs from kinds table
+    models = db.query(Kind).filter(
+        Kind.user_id == current_user.id,
+        Kind.kind == "Model",
+        Kind.namespace == "default",
+        Kind.is_active == True
+    ).all()
+
+    compatible_models = []
+
+    for model_kind in models:
+        try:
+            if not model_kind.json:
+                continue
+            model_crd = ModelCRD.model_validate(model_kind.json)
+            model_config = model_crd.spec.modelConfig
+            if isinstance(model_config, dict):
+                env = model_config.get("env", {})
+                model_type = env.get("model", "")
+
+                # Filter compatible models
+                if agent_name == "Agno" and model_type == "openai":
+                    compatible_models.append({"name": model_kind.name})
+                elif agent_name == "ClaudeCode" and model_type == "claude":
+                    compatible_models.append({"name": model_kind.name})
+        except Exception as e:
+            logger.warning(f"Failed to parse model {model_kind.name}: {e}")
+            continue
+
+    return {"models": compatible_models}

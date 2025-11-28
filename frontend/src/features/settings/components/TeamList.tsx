@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import '@/features/common/scrollbar.css';
 import { AiOutlineTeam } from 'react-icons/ai';
+import { RiRobot2Line } from 'react-icons/ri';
 import LoadingState from '@/features/common/LoadingState';
 import {
   PencilIcon,
@@ -20,6 +21,7 @@ import { Bot, Team } from '@/types/api';
 import { fetchTeamsList, deleteTeam, shareTeam } from '../services/teams';
 import { fetchBotsList } from '../services/bots';
 import TeamEdit from './TeamEdit';
+import BotList from './BotList';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import TeamShareModal from './TeamShareModal';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -53,6 +55,7 @@ export default function TeamList() {
   const [shareData, setShareData] = useState<{ teamName: string; shareUrl: string } | null>(null);
   const [sharingId, setSharingId] = useState<number | null>(null);
   const [_deletingId, setDeletingId] = useState<number | null>(null);
+  const [botListVisible, setBotListVisible] = useState(false);
   const router = useRouter();
   const isEditing = editingTeamId !== null;
   const isMobile = useMediaQuery('(max-width: 639px)');
@@ -346,10 +349,18 @@ export default function TeamList() {
                     )}
                   </div>
                   <div className="border-t border-border pt-3 mt-3 bg-base">
-                    <div className="flex justify-center">
+                    <div className="flex justify-center gap-3">
                       <UnifiedAddButton onClick={handleCreateTeam}>
                         {t('teams.new_team')}
                       </UnifiedAddButton>
+                      <Button
+                        variant="outline"
+                        onClick={() => setBotListVisible(true)}
+                        className="flex items-center gap-2"
+                      >
+                        <RiRobot2Line className="w-4 h-4" />
+                        {t('bots.manage_bots')}
+                      </Button>
                     </div>
                   </div>
                 </>
@@ -386,6 +397,19 @@ export default function TeamList() {
           shareUrl={shareData.shareUrl}
         />
       )}
+
+      {/* Bot list dialog */}
+      <Dialog open={botListVisible} onOpenChange={setBotListVisible}>
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+          <DialogHeader>
+            <DialogTitle>{t('bots.title')}</DialogTitle>
+            <DialogDescription>{t('bots.description')}</DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 overflow-y-auto">
+            <BotList />
+          </div>
+        </DialogContent>
+      </Dialog>
       {/* Error prompt unified with antd message, no local rendering */}
     </>
   );

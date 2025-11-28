@@ -39,7 +39,7 @@ def build_callback_url(task: dict) -> str:
         # Get the host IP that's accessible from containers
         # 127.0.0.1 won't work for container-to-container communication
         callback_host = os.getenv("CALLBACK_HOST", get_host_ip())
-        callback_port = os.getenv("CALLBACK_PORT", "8080")
+        callback_port = os.getenv("CALLBACK_PORT", "8001")
 
         # Ensure protocol prefix for consistent parsing
         if not callback_host.startswith(("http://", "https://")):

@@ -14,6 +14,7 @@ class ObjectMeta(BaseModel):
     """Standard Kubernetes object metadata"""
     name: str
     namespace: str = "default"
+    displayName: Optional[str] = None  # Human-readable display name
     labels: Optional[Dict[str, str]] = None
     # annotations: Optional[Dict[str, str]] = None
 
@@ -58,6 +59,8 @@ class GhostList(BaseModel):
 class ModelSpec(BaseModel):
     """Model specification"""
     modelConfig: Dict[str, Any]
+    isCustomConfig: Optional[bool] = None  # True if user customized the config, False/None if using predefined model
+    protocol: Optional[str] = None  # Model protocol type: 'openai', 'claude', etc. Required for custom configs
 
 
 class ModelStatus(Status):
@@ -132,7 +135,7 @@ class BotSpec(BaseModel):
     """Bot specification"""
     ghostRef: GhostRef
     shellRef: ShellRef
-    modelRef: ModelRef
+    modelRef: Optional[ModelRef] = None
 
 
 class BotStatus(Status):

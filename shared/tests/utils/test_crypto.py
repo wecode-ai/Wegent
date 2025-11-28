@@ -12,8 +12,68 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../.
 from utils.crypto import (
     encrypt_git_token,
     decrypt_git_token,
-    is_token_encrypted
+    is_token_encrypted,
+    encrypt_api_key,
+    decrypt_api_key,
+    is_api_key_encrypted,
+    mask_api_key,
+    encrypt_sensitive_data,
+    decrypt_sensitive_data,
+    is_data_encrypted
 )
+
+
+@pytest.mark.unit
+class TestCoreSensitiveDataEncryption:
+    """Test core sensitive data encryption and decryption functions"""
+
+    def test_encrypt_decrypt_basic_data(self):
+        """Test basic encryption and decryption of sensitive data"""
+        original_data = "my_secret_data_12345"
+
+        encrypted = encrypt_sensitive_data(original_data)
+        assert encrypted != original_data
+        assert len(encrypted) > 0
+
+        decrypted = decrypt_sensitive_data(encrypted)
+        assert decrypted == original_data
+
+    def test_encrypt_empty_data(self):
+        """Test encrypting empty data"""
+        empty_data = ""
+
+        encrypted = encrypt_sensitive_data(empty_data)
+        assert encrypted == ""
+
+        decrypted = decrypt_sensitive_data(encrypted)
+        assert decrypted == ""
+
+    def test_encrypt_special_mask_data(self):
+        """Test encrypting the special *** mask"""
+        mask_data = "***"
+
+        encrypted = encrypt_sensitive_data(mask_data)
+        assert encrypted == "***"
+
+        decrypted = decrypt_sensitive_data(encrypted)
+        assert decrypted == "***"
+
+    def test_is_data_encrypted_with_encrypted_data(self):
+        """Test is_data_encrypted returns True for encrypted data"""
+        original_data = "test_data_12345"
+        encrypted = encrypt_sensitive_data(original_data)
+
+        assert is_data_encrypted(encrypted) is True
+
+    def test_is_data_encrypted_with_plain_data(self):
+        """Test is_data_encrypted returns False for plain data"""
+        plain_data = "plain_data_123"
+
+        assert is_data_encrypted(plain_data) is False
+
+    def test_is_data_encrypted_with_empty_data(self):
+        """Test is_data_encrypted returns False for empty data"""
+        assert is_data_encrypted("") is False
 
 
 @pytest.mark.unit
@@ -121,11 +181,121 @@ class TestGitTokenEncryption:
 
         # Reset the global key cache
         import utils.crypto as crypto_module
-        crypto_module._git_token_aes_key = None
-        crypto_module._git_token_aes_iv = None
+        crypto_module._aes_key = None
+        crypto_module._aes_iv = None
 
         token = "test_token_with_custom_keys"
         encrypted = encrypt_git_token(token)
         decrypted = decrypt_git_token(encrypted)
 
         assert decrypted == token
+
+
+@pytest.mark.unit
+class TestApiKeyEncryption:
+    """Test API key encryption and decryption"""
+
+    def test_encrypt_decrypt_openai_api_key(self):
+        """Test encryption and decryption of OpenAI API key"""
+        original_key = "sk-proj-1234567890abcdefghijklmnopqrstuvwxyz"
+
+        encrypted = encrypt_api_key(original_key)
+        assert encrypted != original_key
+        assert len(encrypted) > 0
+
+        decrypted = decrypt_api_key(encrypted)
+        assert decrypted == original_key
+
+    def test_encrypt_decrypt_anthropic_api_key(self):
+        """Test encryption and decryption of Anthropic API key"""
+        original_key = "sk-ant-api03-1234567890abcdefghijklmnopqrstuvwxyz"
+
+        encrypted = encrypt_api_key(original_key)
+        assert encrypted != original_key
+        assert len(encrypted) > 0
+
+        decrypted = decrypt_api_key(encrypted)
+        assert decrypted == original_key
+
+    def test_encrypt_empty_api_key(self):
+        """Test encrypting an empty API key"""
+        empty_key = ""
+
+        encrypted = encrypt_api_key(empty_key)
+        assert encrypted == ""
+
+        decrypted = decrypt_api_key(encrypted)
+        assert decrypted == ""
+
+    def test_is_api_key_encrypted_with_sk_prefix(self):
+        """Test is_api_key_encrypted returns False for keys with sk- prefix"""
+        openai_key = "sk-proj-1234567890"
+        anthropic_key = "sk-ant-api03-1234567890"
+
+        assert is_api_key_encrypted(openai_key) is False
+        assert is_api_key_encrypted(anthropic_key) is False
+
+    def test_is_api_key_encrypted_with_encrypted_key(self):
+        """Test is_api_key_encrypted returns True for encrypted keys"""
+        original_key = "sk-proj-1234567890"
+        encrypted = encrypt_api_key(original_key)
+
+        assert is_api_key_encrypted(encrypted) is True
+
+    def test_encrypt_already_encrypted_key_returns_same(self):
+        """Test that encrypting an already encrypted key returns the same value"""
+        original_key = "sk-proj-1234567890"
+        encrypted1 = encrypt_api_key(original_key)
+        encrypted2 = encrypt_api_key(encrypted1)
+
+        # Should not double-encrypt
+        assert encrypted1 == encrypted2
+
+    def test_decrypt_plain_api_key_backward_compatibility(self):
+        """Test that decrypting a plain API key returns it unchanged (backward compatibility)"""
+        plain_key = "sk-proj-1234567890"
+
+        decrypted = decrypt_api_key(plain_key)
+        assert decrypted == plain_key
+
+    def test_mask_api_key_plain_text(self):
+        """Test masking a plain text API key"""
+        api_key = "sk-proj-1234567890abcdef"
+
+        masked = mask_api_key(api_key)
+        assert masked == "sk-p...cdef"
+
+    def test_mask_api_key_encrypted(self):
+        """Test masking an encrypted API key"""
+        original_key = "sk-proj-1234567890"
+        encrypted = encrypt_api_key(original_key)
+
+        masked = mask_api_key(encrypted)
+        assert masked == "***"
+
+    def test_mask_api_key_empty(self):
+        """Test masking an empty API key"""
+        assert mask_api_key("") == "***"
+        assert mask_api_key("***") == "***"
+
+    def test_mask_api_key_short(self):
+        """Test masking a short API key"""
+        short_key = "sk-1234"
+
+        masked = mask_api_key(short_key)
+        assert masked == "***"
+
+    def test_api_key_and_git_token_use_same_encryption(self):
+        """Test that API key and git token use the same encryption algorithm"""
+        test_data = "test_data_12345"
+
+        # Encrypt using both functions
+        encrypted_as_api_key = encrypt_api_key(test_data)
+        encrypted_as_git_token = encrypt_git_token(test_data)
+
+        # They should produce the same result (same algorithm, same keys)
+        assert encrypted_as_api_key == encrypted_as_git_token
+
+        # Both should decrypt correctly
+        assert decrypt_api_key(encrypted_as_api_key) == test_data
+        assert decrypt_git_token(encrypted_as_git_token) == test_data

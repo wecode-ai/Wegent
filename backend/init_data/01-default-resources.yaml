@@ -72,22 +72,7 @@ spec:
 status:
   state: Available
 ---
-apiVersion: agent.wecode.io/v1
-kind: Model
-metadata:
-  name: claude-model
-  namespace: default
-  user_id: 1
-spec:
-  modelConfig:
-    env:
-      ANTHROPIC_MODEL: claude-4.1-opus
-      ANTHROPIC_API_KEY: xxxxxx
-      ANTHROPIC_BASE_URL: sk-xxxxxx
-      ANTHROPIC_DEFAULT_HAIKU_MODEL: claude-haiku-4-5-20251001
-status:
-  state: Available
----
+
 apiVersion: agent.wecode.io/v1
 kind: Shell
 metadata:
@@ -108,9 +93,6 @@ metadata:
 spec:
   ghostRef:
     name: developer-ghost
-    namespace: default
-  modelRef:
-    name: claude-model
     namespace: default
   shellRef:
     name: claude-shell
@@ -364,9 +346,6 @@ metadata:
 spec:
   ghostRef:
     name: pm-battle-ghost
-    namespace: default
-  modelRef:
-    name: claude-model
     namespace: default
   shellRef:
     name: claude-shell

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 """
-Cryptography utilities for encrypting sensitive data like git tokens
+Cryptography utilities for encrypting sensitive data like git tokens and API keys
 """
 
 import base64
@@ -18,41 +18,47 @@ from cryptography.hazmat.backends import default_backend
 logger = logging.getLogger(__name__)
 
 # Global encryption key cache
-_git_token_aes_key = None
-_git_token_aes_iv = None
+_aes_key = None
+_aes_iv = None
 
 
-def _get_git_token_encryption_key():
-    """Get or initialize git token encryption key and IV from settings"""
-    global _git_token_aes_key, _git_token_aes_iv
-    if _git_token_aes_key is None:
-        # Try to load keys from the backend settings if available
+def _get_encryption_key():
+    """Get or initialize encryption key and IV from environment variables"""
+    global _aes_key, _aes_iv
+    if _aes_key is None:
+        # Load keys from environment variables
         aes_key = os.environ.get('GIT_TOKEN_AES_KEY', '12345678901234567890123456789012')
         aes_iv = os.environ.get('GIT_TOKEN_AES_IV', '1234567890123456')
-        _git_token_aes_key = aes_key.encode('utf-8')
-        _git_token_aes_iv = aes_iv.encode('utf-8')
+        _aes_key = aes_key.encode('utf-8')
+        _aes_iv = aes_iv.encode('utf-8')
         logger.info("Loaded encryption keys from environment variables")
-    return _git_token_aes_key, _git_token_aes_iv
+    return _aes_key, _aes_iv
 
 
-def encrypt_git_token(plain_token: str) -> str:
+# ============================================================================
+# Core encryption/decryption functions
+# ============================================================================
+
+def encrypt_sensitive_data(plain_text: str) -> str:
     """
-    Encrypt git token using AES-256-CBC encryption
+    Encrypt sensitive data using AES-256-CBC encryption
+    
+    This is the core encryption function used by all sensitive data encryption.
 
     Args:
-        plain_token: Plain text git token
+        plain_text: Plain text data to encrypt
 
     Returns:
-        Base64 encoded encrypted token
+        Base64 encoded encrypted data
     """
-    if not plain_token:
+    if not plain_text:
         return ""
 
-    if plain_token == "***":
+    if plain_text == "***":
         return "***"
 
     try:
-        aes_key, aes_iv = _get_git_token_encryption_key()
+        aes_key, aes_iv = _get_encryption_key()
 
         # Create cipher object
         cipher = Cipher(
@@ -64,7 +70,7 @@ def encrypt_git_token(plain_token: str) -> str:
 
         # Pad the data to 16-byte boundary (AES block size)
         padder = padding.PKCS7(128).padder()
-        padded_data = padder.update(plain_token.encode('utf-8')) + padder.finalize()
+        padded_data = padder.update(plain_text.encode('utf-8')) + padder.finalize()
 
         # Encrypt the data
         encrypted_bytes = encryptor.update(padded_data) + encryptor.finalize()
@@ -72,31 +78,33 @@ def encrypt_git_token(plain_token: str) -> str:
         # Return base64 encoded encrypted data
         return base64.b64encode(encrypted_bytes).decode('utf-8')
     except Exception as e:
-        logger.error(f"Failed to encrypt git token: {str(e)}")
+        logger.error(f"Failed to encrypt sensitive data: {str(e)}")
         raise
 
 
-def decrypt_git_token(encrypted_token: str) -> Optional[str]:
+def decrypt_sensitive_data(encrypted_text: str) -> Optional[str]:
     """
-    Decrypt git token using AES-256-CBC decryption
+    Decrypt sensitive data using AES-256-CBC decryption
+    
+    This is the core decryption function used by all sensitive data decryption.
 
     Args:
-        encrypted_token: Base64 encoded encrypted token
+        encrypted_text: Base64 encoded encrypted data
 
     Returns:
-        Decrypted plain text token, or None if decryption fails
+        Decrypted plain text data, or original text if decryption fails
     """
-    if not encrypted_token:
+    if not encrypted_text:
         return ""
 
-    if encrypted_token == "***":
+    if encrypted_text == "***":
         return "***"
 
     try:
-        aes_key, aes_iv = _get_git_token_encryption_key()
+        aes_key, aes_iv = _get_encryption_key()
 
         # Decode base64 encrypted data
-        encrypted_bytes = base64.b64decode(encrypted_token.encode('utf-8'))
+        encrypted_bytes = base64.b64decode(encrypted_text.encode('utf-8'))
 
         # Create cipher object
         cipher = Cipher(
@@ -116,10 +124,62 @@ def decrypt_git_token(encrypted_token: str) -> Optional[str]:
         # Return decrypted string
         return decrypted_bytes.decode('utf-8')
     except Exception as e:
-        logger.warning(f"Failed to decrypt git token: {str(e)}")
-        # Return the original token as fallback for backward compatibility
-        # This handles the case where old tokens are still in plain text
-        return encrypted_token
+        logger.warning(f"Failed to decrypt sensitive data: {str(e)}")
+        # Return the original text as fallback for backward compatibility
+        return encrypted_text
+
+
+def is_data_encrypted(data: str) -> bool:
+    """
+    Check if data appears to be encrypted (base64 encoded AES ciphertext)
+
+    Args:
+        data: Data to check
+
+    Returns:
+        True if data appears to be encrypted, False otherwise
+    """
+    if not data:
+        return False
+
+    try:
+        # Try to base64 decode
+        decoded = base64.b64decode(data.encode('utf-8'))
+        # If successful and the result is binary data with correct block size,
+        # it's likely encrypted
+        return len(decoded) > 0 and len(decoded) % 16 == 0
+    except Exception:
+        return False
+
+
+# ============================================================================
+# Git Token specific functions (for backward compatibility)
+# ============================================================================
+
+def encrypt_git_token(plain_token: str) -> str:
+    """
+    Encrypt git token using AES-256-CBC encryption
+
+    Args:
+        plain_token: Plain text git token
+
+    Returns:
+        Base64 encoded encrypted token
+    """
+    return encrypt_sensitive_data(plain_token)
+
+
+def decrypt_git_token(encrypted_token: str) -> Optional[str]:
+    """
+    Decrypt git token using AES-256-CBC decryption
+
+    Args:
+        encrypted_token: Base64 encoded encrypted token
+
+    Returns:
+        Decrypted plain text token, or original token if decryption fails
+    """
+    return decrypt_sensitive_data(encrypted_token)
 
 
 def is_token_encrypted(token: str) -> bool:
@@ -132,58 +192,94 @@ def is_token_encrypted(token: str) -> bool:
     Returns:
         True if token appears to be encrypted, False otherwise
     """
-    if not token:
+    return is_data_encrypted(token)
+
+
+# ============================================================================
+# API Key specific functions
+# ============================================================================
+
+def encrypt_api_key(plain_key: str) -> str:
+    """
+    Encrypt API key using AES-256-CBC encryption
+
+    Args:
+        plain_key: Plain text API key
+
+    Returns:
+        Base64 encoded encrypted key
+    """
+    if not plain_key:
+        return ""
+    
+    # Don't re-encrypt if already encrypted
+    if is_api_key_encrypted(plain_key):
+        return plain_key
+    
+    return encrypt_sensitive_data(plain_key)
+
+
+def decrypt_api_key(encrypted_key: str) -> Optional[str]:
+    """
+    Decrypt API key using AES-256-CBC decryption
+
+    Args:
+        encrypted_key: Base64 encoded encrypted key
+
+    Returns:
+        Decrypted plain text key, or original key if decryption fails
+    """
+    if not encrypted_key:
+        return ""
+    
+    # If not encrypted, return as-is (backward compatibility)
+    if not is_api_key_encrypted(encrypted_key):
+        return encrypted_key
+    
+    return decrypt_sensitive_data(encrypted_key)
+
+
+def is_api_key_encrypted(key: str) -> bool:
+    """
+    Check if an API key appears to be encrypted (base64 encoded AES ciphertext)
+
+    Args:
+        key: Key to check
+
+    Returns:
+        True if key appears to be encrypted, False otherwise
+    """
+    if not key:
         return False
 
-    try:
-        # Try to base64 decode
-        decoded = base64.b64decode(token.encode('utf-8'))
-        # If successful and the result is binary data (not plain text),
-        # it's likely encrypted
-        return len(decoded) > 0 and len(decoded) % 16 == 0
-    except Exception:
-        return False
+    # Common API key prefixes that indicate plain text
+    plain_text_prefixes = ['sk-', 'sk_', 'api-', 'api_', 'key-', 'key_']
+    for prefix in plain_text_prefixes:
+        if key.startswith(prefix):
+            return False
+
+    return is_data_encrypted(key)
 
 
-def encrypt_sensitive_data(plain_data: str) -> str:
+def mask_api_key(key: str) -> str:
     """
-    Encrypt sensitive data using AES-256-CBC encryption
-    Generic function that can be used for any sensitive data (API keys, tokens, etc.)
+    Mask an API key for display purposes
 
     Args:
-        plain_data: Plain text sensitive data
+        key: API key to mask (can be encrypted or plain text)
 
     Returns:
-        Base64 encoded encrypted data
+        Masked key showing only first and last few characters, or "***" if encrypted
     """
-    # Reuse the same encryption logic as git tokens
-    return encrypt_git_token(plain_data)
+    if not key or key == "***":
+        return "***"
 
+    # If encrypted, just return mask
+    if is_api_key_encrypted(key):
+        return "***"
 
-def decrypt_sensitive_data(encrypted_data: str) -> Optional[str]:
-    """
-    Decrypt sensitive data using AES-256-CBC decryption
-    Generic function that can be used for any sensitive data (API keys, tokens, etc.)
+    # For plain text keys, show partial
+    if len(key) <= 8:
+        return "***"
 
-    Args:
-        encrypted_data: Base64 encoded encrypted data
-
-    Returns:
-        Decrypted plain text data, or None if decryption fails
-    """
-    # Reuse the same decryption logic as git tokens
-    return decrypt_git_token(encrypted_data)
-
-
-def is_data_encrypted(data: str) -> bool:
-    """
-    Check if data appears to be encrypted (base64 encoded)
-    Generic function that can be used for any sensitive data
-
-    Args:
-        data: Data to check
-
-    Returns:
-        True if data appears to be encrypted, False otherwise
-    """
-    return is_token_encrypted(data)
+    return f"{key[:4]}...{key[-4:]}"

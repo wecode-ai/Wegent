@@ -10,11 +10,17 @@ from pydantic import BaseModel
 from app.schemas.user import UserInDB
 from app.schemas.bot import BotInDB
 
+class BotSummary(BaseModel):
+    """Bot summary model with only necessary fields for team list"""
+    agent_config: Optional[dict[str, Any]] = None
+    agent_name: Optional[str] = None
+
 class BotInfo(BaseModel):
     """Bot information model"""
     bot_id: int
     bot_prompt: Optional[str] = None
     role: Optional[str] = None
+    bot: Optional[BotSummary] = None
 
 class BotDetailInfo(BaseModel):
     """Bot detail information model with bot object"""

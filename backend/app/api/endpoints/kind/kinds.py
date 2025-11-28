@@ -137,7 +137,7 @@ async def update_resource(
     return schema_class.parse_obj(formatted_resource)
 
 
-@router.delete("/namespaces/{namespace}/{kinds}/{name}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/namespaces/{namespace}/{kinds}/{name}")
 async def delete_resource(
     namespace: str = Path(..., description="Resource namespace"),
     kinds: str = Path(..., description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks"),
@@ -148,7 +148,7 @@ async def delete_resource(
     Delete a resource
     
     Deletes a resource of the specified kind with the given name in the namespace.
-    Returns no content on success.
+    Returns a success message on completion.
     """
     # Validate resource type
     kind = validate_resource_type(kinds)

@@ -709,11 +709,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Convert kinds Team to team-like dictionary
         """
+        from app.models.public_model import PublicModel
+        
         team_crd = Team.model_validate(team.json)
         
-        # Convert members to bots format
+        # Convert members to bots format and collect agent_names for is_mix_team calculation
         bots = []
-        agent_type = None  # Will store the type of the first bot
+        agent_names = set()
         
         for member in team_crd.spec.members:
             # Find bot in kinds table
@@ -726,36 +728,54 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             ).first()
             
             if bot:
+                bot_summary = self._get_bot_summary(bot, db, user_id)
                 bot_info = {
                     "bot_id": bot.id,
                     "bot_prompt": member.prompt or "",
-                    "role": member.role or ""
+                    "role": member.role or "",
+                    "bot": bot_summary
                 }
                 bots.append(bot_info)
                 
-                # Get agent_type from the first bot's shell
-                if agent_type is None:
-                    bot_crd = Bot.model_validate(bot.json)
-                    shell = db.query(Kind).filter(
-                        Kind.user_id == user_id,
-                        Kind.kind == "Shell",
-                        Kind.name == bot_crd.spec.shellRef.name,
-                        Kind.namespace == bot_crd.spec.shellRef.namespace,
-                        Kind.is_active == True
-                    ).first()
-                    
-                    if shell:
-                        shell_crd = Shell.model_validate(shell.json)
-                        runtime = shell_crd.spec.runtime
-                        # Map runtime to agent type
-                        if runtime == "AgnoShell":
-                            agent_type = "agno"
-                        elif runtime == "ClaudeCodeShell":
-                            agent_type = "claude"
-                        elif runtime == "DifyShell":
-                            agent_type = "dify"
-                        else:
-                            agent_type = runtime.lower().replace("shell", "")
+                # Collect agent_name for is_mix_team calculation
+                if bot_summary.get("agent_name"):
+                    agent_names.add(bot_summary["agent_name"])
+        
+        # Calculate is_mix_team: true if there are multiple different agent types
+        is_mix_team = len(agent_names) > 1
+        
+        # Get agent_type from the first bot's shell
+        agent_type = None
+        if bots:
+            first_bot_id = bots[0]["bot_id"]
+            first_bot = db.query(Kind).filter(
+                Kind.id == first_bot_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Bot",
+                Kind.is_active.is_(True)
+            ).first()
+            
+            if first_bot:
+                bot_crd = Bot.model_validate(first_bot.json)
+                shell = db.query(Kind).filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Shell",
+                    Kind.name == bot_crd.spec.shellRef.name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.is_active.is_(True)
+                ).first()
+                if shell:
+                    shell_crd = Shell.model_validate(shell.json)
+                    runtime = shell_crd.spec.runtime
+                    # Map runtime to agent type
+                    if runtime == "AgnoShell":
+                        agent_type = "agno"
+                    elif runtime == "ClaudeCodeShell":
+                        agent_type = "claude"
+                    elif runtime == "DifyShell":
+                        agent_type = "dify"
+                    else:
+                        agent_type = runtime.lower().replace("shell", "")
         
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}
@@ -766,11 +786,104 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "name": team.name,
             "bots": bots,
             "workflow": workflow,
+            "is_mix_team": is_mix_team,
             "is_active": team.is_active,
             "created_at": team.created_at,
             "updated_at": team.updated_at,
             "agent_type": agent_type,  # Add agent_type field
         }
+
+    def _get_bot_summary(self, bot: Kind, db: Session, user_id: int) -> Dict[str, Any]:
+        """
+        Get a summary of bot information including agent_config with only necessary fields.
+        This is used for team list to determine if bots have predefined models.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        from app.models.public_model import PublicModel
+        
+        bot_crd = Bot.model_validate(bot.json)
+        
+        # modelRef is optional, handle None case
+        model_ref_name = bot_crd.spec.modelRef.name if bot_crd.spec.modelRef else None
+        model_ref_namespace = bot_crd.spec.modelRef.namespace if bot_crd.spec.modelRef else None
+        
+        logger.info(f"[_get_bot_summary] bot.name={bot.name}, modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}")
+        
+        # Get shell to extract agent_name
+        shell = db.query(Kind).filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Shell",
+            Kind.name == bot_crd.spec.shellRef.name,
+            Kind.namespace == bot_crd.spec.shellRef.namespace,
+            Kind.is_active.is_(True)
+        ).first()
+        
+        agent_name = ""
+        if shell and shell.json:
+            shell_crd = Shell.model_validate(shell.json)
+            agent_name = shell_crd.spec.runtime
+        
+        agent_config = {}
+        
+        # Only try to find model if modelRef exists
+        if model_ref_name and model_ref_namespace:
+            # Try to find model in user's private models first
+            model = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Model",
+                Kind.name == model_ref_name,
+                Kind.namespace == model_ref_namespace,
+                Kind.is_active.is_(True)
+            ).first()
+            
+            logger.info(f"[_get_bot_summary] Private model found: {model is not None}")
+            
+            if model:
+                # Private model - check if it's a custom config or predefined model
+                model_crd = Model.model_validate(model.json)
+                is_custom_config = model_crd.spec.isCustomConfig
+                
+                logger.info(f"[_get_bot_summary] Private model isCustomConfig: {is_custom_config}")
+                
+                if is_custom_config:
+                    # Custom config - return full modelConfig with protocol for advanced mode
+                    model_config = model_crd.spec.modelConfig or {}
+                    protocol = model_crd.spec.protocol
+                    agent_config = dict(model_config)
+                    if protocol:
+                        agent_config["protocol"] = protocol
+                    logger.info(f"[_get_bot_summary] Custom config (isCustomConfig=True), returning full agent_config: {agent_config}")
+                else:
+                    # Not custom config = predefined model, return bind_model format with type
+                    agent_config = {"bind_model": model_ref_name, "bind_model_type": "user"}
+                    logger.info(f"[_get_bot_summary] Predefined model (isCustomConfig=False), returning bind_model: {agent_config}")
+            else:
+                # Try to find in public_models table
+                public_model = db.query(PublicModel).filter(
+                    PublicModel.name == model_ref_name,
+                    PublicModel.namespace == model_ref_namespace,
+                    PublicModel.is_active.is_(True)
+                ).first()
+                
+                logger.info(f"[_get_bot_summary] Public model found: {public_model is not None}")
+                
+                if public_model:
+                    # Public model - return bind_model format with type
+                    agent_config = {"bind_model": public_model.name, "bind_model_type": "public"}
+                    logger.info(f"[_get_bot_summary] Using bind_model from public model: {agent_config}")
+                else:
+                    logger.info(f"[_get_bot_summary] No model found for modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}")
+        else:
+            logger.info(f"[_get_bot_summary] No modelRef for bot {bot.name}")
+        
+        result = {
+            "agent_config": agent_config,
+            "agent_name": agent_name
+        }
+        logger.info(f"[_get_bot_summary] Returning: {result}")
+        return result
 
     def _convert_bot_to_dict(self, bot: Kind, db: Session, user_id: int) -> Dict[str, Any]:
         """
@@ -796,14 +909,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.is_active == True
         ).first()
         
-        # Get model
-        model = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Model",
-            Kind.name == bot_crd.spec.modelRef.name,
-            Kind.namespace == bot_crd.spec.modelRef.namespace,
-            Kind.is_active == True
-        ).first()
+        # Get model - modelRef is optional
+        model = None
+        if bot_crd.spec.modelRef:
+            model = db.query(Kind).filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Model",
+                Kind.name == bot_crd.spec.modelRef.name,
+                Kind.namespace == bot_crd.spec.modelRef.namespace,
+                Kind.is_active.is_(True)
+            ).first()
         
         # Extract data from components
         system_prompt = ""
@@ -952,7 +1067,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             }
 
         # Get bot's model to extract API credentials
+        # modelRef is optional
         model_ref = external_api_bot.spec.modelRef
+        if not model_ref:
+            return {
+                "has_parameters": False,
+                "parameters": []
+            }
+        
         model = db.query(Kind).filter(
             Kind.user_id == original_user_id,
             Kind.kind == "Model",
