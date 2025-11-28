@@ -71,6 +71,18 @@ export interface SkillList {
   items: Skill[];
 }
 
+// Shell Types
+export interface Shell {
+  id: number;
+  name: string;
+  runtime: string;
+  shell_type?: 'local_engine' | 'external_api';
+  support_model?: string[];
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Team {
   id: number;
   name: string;
@@ -82,9 +94,17 @@ export interface Team {
   created_at: string;
   updated_at: string;
   share_status?: number; // 0: 个人团队, 1: 分享中, 2: 共享团队
+  agent_type?: string; // agno, claude, dify, etc.
+  is_mix_team?: boolean; // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   user?: {
     user_name: string;
   };
+}
+
+/** Bot summary with only necessary fields for team list */
+export interface BotSummary {
+  agent_config?: Record<string, unknown>;
+  agent_name?: string;
 }
 
 /** Bot information (used for Team.bots) */
@@ -92,6 +112,7 @@ export interface TeamBot {
   bot_id: number;
   bot_prompt: string;
   role?: string;
+  bot?: BotSummary;
 }
 
 /** TaskDetail structure (adapted to latest backend response) */
@@ -332,5 +353,32 @@ export interface ClarificationAnswerPayload {
 
 export interface FinalPromptData {
   type: 'final_prompt';
-  prompt: string;
+  final_prompt: string;
+}
+
+// Dify Types
+export interface DifyApp {
+  id: string;
+  name: string;
+  mode: 'chat' | 'workflow' | 'agent' | 'chatflow';
+  icon: string;
+  icon_background: string;
+}
+
+export interface DifyBotPrompt {
+  difyAppId?: string;
+  params?: Record<string, unknown>;
+}
+
+export interface DifyParameterField {
+  variable: string;
+  label: string;
+  type: 'text-input' | 'select' | 'paragraph';
+  required?: boolean;
+  default?: string;
+  options?: Array<{ label: string; value: string }>;
+}
+
+export interface DifyParametersSchema {
+  user_input_form: DifyParameterField[];
 }

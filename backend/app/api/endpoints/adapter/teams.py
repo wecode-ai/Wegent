@@ -92,6 +92,19 @@ def share_team(
         user_id=current_user.id,
     )
 
+@router.get("/{team_id}/input-parameters")
+def get_team_input_parameters(
+    team_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get input parameters required by the team's external API bots"""
+    return team_kinds_service.get_team_input_parameters(
+        db=db,
+        team_id=team_id,
+        user_id=current_user.id
+    )
+
 @router.get("/share/info")
 def get_share_info(
     share_token: str = Query(..., description="Share token"),

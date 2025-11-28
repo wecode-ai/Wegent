@@ -5,7 +5,7 @@
 import React, { useCallback, useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Loader2, XIcon, SettingsIcon } from 'lucide-react';
+import { Loader2, XIcon, SettingsIcon, Edit } from 'lucide-react';
 import {
   Select,
   SelectContent,
@@ -15,15 +15,24 @@ import {
 } from '@/components/ui/select';
 import McpConfigImportModal from './McpConfigImportModal';
 import SkillManagementModal from './skills/SkillManagementModal';
+import DifyBotConfig from './DifyBotConfig';
 
 import { Bot } from '@/types/api';
 import { botApis, CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
-import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
+import {
+  isPredefinedModel,
+  getModelFromConfig,
+  getModelTypeFromConfig,
+  createPredefinedModelConfig,
+} from '@/features/settings/services/bots';
 import { agentApis, Agent } from '@/apis/agents';
-import { modelApis, Model } from '@/apis/models';
+import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
 import { fetchSkillsList } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
+
+/** Agent types supported by the system */
+export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify';
 
 interface BotEditProps {
   bots: Bot[];
@@ -32,6 +41,16 @@ interface BotEditProps {
   cloningBot: Bot | null;
   onClose: () => void;
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  /** Whether the component is embedded in another component (hides back button) */
+  embedded?: boolean;
+  /** Whether the component is in read-only mode */
+  readOnly?: boolean;
+  /** Callback when user clicks edit button in read-only mode */
+  onEditClick?: () => void;
+  /** Callback when user clicks cancel button in edit mode (only for embedded mode) */
+  onCancelEdit?: () => void;
+  /** List of allowed agent types for filtering. If not provided, all agents are shown */
+  allowedAgents?: AgentType[];
 }
 const BotEdit: React.FC<BotEditProps> = ({
   bots,
@@ -40,16 +59,23 @@ const BotEdit: React.FC<BotEditProps> = ({
   cloningBot,
   onClose,
   toast,
+  embedded = false,
+  readOnly = false,
+  onEditClick,
+  onCancelEdit,
+  allowedAgents,
 }) => {
   const { t, i18n } = useTranslation('common');
 
   const [botSaving, setBotSaving] = useState(false);
   const [agents, setAgents] = useState<Agent[]>([]);
   const [loadingAgents, setLoadingAgents] = useState(false);
-  const [models, setModels] = useState<Model[]>([]);
+  const [models, setModels] = useState<UnifiedModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [isCustomModel, setIsCustomModel] = useState(false);
   const [selectedModel, setSelectedModel] = useState('');
+  const [selectedModelType, setSelectedModelType] = useState<ModelTypeEnum | undefined>(undefined);
+  const [selectedProtocol, setSelectedProtocol] = useState('');
 
   // Current editing object
   const editingBot = editingBotId > 0 ? bots.find(b => b.id === editingBotId) || null : null;
@@ -66,8 +92,15 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   const [botName, setBotName] = useState(baseBot?.name || '');
   const [agentName, setAgentName] = useState(baseBot?.agent_name || '');
+  // Helper function to remove protocol from agent_config for display
+  const getAgentConfigWithoutProtocol = (config: Record<string, unknown> | undefined): string => {
+    if (!config) return '';
+     
+    const { protocol: _, ...rest } = config;
+    return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : '';
+  };
   const [agentConfig, setAgentConfig] = useState(
-    baseBot?.agent_config ? JSON.stringify(baseBot.agent_config, null, 2) : ''
+    baseBot?.agent_config ? getAgentConfigWithoutProtocol(baseBot.agent_config) : ''
   );
 
   const [prompt, setPrompt] = useState(baseBot?.system_prompt || '');
@@ -82,6 +115,9 @@ const BotEdit: React.FC<BotEditProps> = ({
   const [importModalVisible, setImportModalVisible] = useState(false);
   const [templateSectionExpanded, setTemplateSectionExpanded] = useState(false);
   const [skillManagementModalOpen, setSkillManagementModalOpen] = useState(false);
+
+  // Check if current agent is Dify
+  const isDifyAgent = useMemo(() => agentName === 'Dify', [agentName]);
 
   const prettifyAgentConfig = useCallback(() => {
     setAgentConfig(prev => {
@@ -209,15 +245,15 @@ const BotEdit: React.FC<BotEditProps> = ({
   // Documentation handlers
   const handleOpenModelDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en';
-    const docsUrl = `/docs/${lang}/guides/user/configuring-models.md`;
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-models.md`;
     window.open(docsUrl, '_blank');
-  }, [t]);
+  }, [i18n.language]);
 
   const handleOpenShellDocs = useCallback(() => {
     const lang = i18n.language === 'zh-CN' ? 'zh' : 'en';
-    const docsUrl = `/docs/${lang}/guides/user/configuring-shells.md`;
+    const docsUrl = `https://github.com/wecode-ai/wegent/blob/main/docs/${lang}/guides/user/configuring-shells.md`;
     window.open(docsUrl, '_blank');
-  }, [t]);
+  }, [i18n.language]);
 
   // Get agents list
   useEffect(() => {
@@ -225,7 +261,14 @@ const BotEdit: React.FC<BotEditProps> = ({
       setLoadingAgents(true);
       try {
         const response = await agentApis.getAgents();
-        setAgents(response.items);
+        // Filter agents based on allowedAgents prop
+        let filteredAgents = response.items;
+        if (allowedAgents && allowedAgents.length > 0) {
+          filteredAgents = response.items.filter(agent =>
+            allowedAgents.includes(agent.name as AgentType)
+          );
+        }
+        setAgents(filteredAgents);
       } catch (error) {
         console.error('Failed to fetch agents:', error);
         toast({
@@ -238,10 +281,16 @@ const BotEdit: React.FC<BotEditProps> = ({
     };
 
     fetchAgents();
-  }, [toast, t]);
-
-  // Get skills list
+  }, [toast, t, allowedAgents]);
+  // Get skills list - only for ClaudeCode agent
   useEffect(() => {
+    // Only fetch skills when agent is ClaudeCode
+    if (agentName !== 'ClaudeCode') {
+      setAvailableSkills([]);
+      setLoadingSkills(false);
+      return;
+    }
+
     const fetchSkills = async () => {
       setLoadingSkills(true);
       try {
@@ -257,10 +306,16 @@ const BotEdit: React.FC<BotEditProps> = ({
       }
     };
     fetchSkills();
-  }, [toast, t]);
+  }, [agentName, toast, t]);
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
+    console.log('[DEBUG] fetchModels useEffect triggered', {
+      agentName,
+      baseBot_agent_name: baseBot?.agent_name,
+      baseBot_agent_config: baseBot?.agent_config,
+    });
+
     if (!agentName) {
       setModels([]);
       return;
@@ -269,30 +324,72 @@ const BotEdit: React.FC<BotEditProps> = ({
     const fetchModels = async () => {
       setLoadingModels(true);
       try {
-        const response = await modelApis.getModelNames(agentName);
+        // Use the new unified models API which includes type information
+        const response = await modelApis.getUnifiedModels(agentName);
+        console.log('[DEBUG] Models loaded:', response.data);
         setModels(response.data);
 
-        // When models list is empty, automatically switch to custom model mode
-        if (!response.data || response.data.length === 0) {
-          setIsCustomModel(true);
-          setSelectedModel('');
+        // After loading models, check if we should restore the bot's saved model
+        // This handles the case when editing an existing bot with a predefined model
+        // Only restore if the current agentName matches the baseBot's agent_name
+        // (i.e., user hasn't switched to a different agent)
+        const hasConfig = baseBot?.agent_config && Object.keys(baseBot.agent_config).length > 0;
+        const agentMatches = baseBot?.agent_name === agentName;
+        const isPredefined = hasConfig && isPredefinedModel(baseBot.agent_config);
+
+        console.log('[DEBUG] Model restore check:', {
+          hasConfig,
+          agentMatches,
+          isPredefined,
+          agent_config: baseBot?.agent_config,
+        });
+
+        if (hasConfig && agentMatches && isPredefined) {
+          const savedModelName = getModelFromConfig(baseBot.agent_config);
+          const savedModelType = getModelTypeFromConfig(baseBot.agent_config);
+          console.log('[DEBUG] Saved model name:', savedModelName, 'type:', savedModelType);
+          // Only set the model if it exists in the loaded models list
+          // Match by both name and type if type is specified
+          const foundModel = response.data.find((m: UnifiedModel) => {
+            if (savedModelType) {
+              return m.name === savedModelName && m.type === savedModelType;
+            }
+            return m.name === savedModelName;
+          });
+          if (savedModelName && foundModel) {
+            console.log(
+              '[DEBUG] Setting selectedModel to:',
+              savedModelName,
+              'type:',
+              foundModel.type
+            );
+            setSelectedModel(savedModelName);
+            setSelectedModelType(foundModel.type);
+          } else {
+            console.log('[DEBUG] Model not found in list, clearing selection');
+            // Model not found in list, clear selection
+            setSelectedModel('');
+            setSelectedModelType(undefined);
+          }
         }
+        // Note: Don't clear selectedModel here if agent changed,
+        // as it's already cleared in the agent select onChange handler
       } catch (error) {
         console.error('Failed to fetch models:', error);
         toast({
           variant: 'destructive',
           title: t('bot.errors.fetch_models_failed'),
         });
-        // On error, also switch to custom model mode
-        setIsCustomModel(true);
+        setModels([]);
         setSelectedModel('');
+        setSelectedModelType(undefined);
       } finally {
         setLoadingModels(false);
       }
     };
 
     fetchModels();
-  }, [agentName, toast, t]);
+  }, [agentName, toast, t, baseBot]);
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '');
@@ -304,7 +401,8 @@ const BotEdit: React.FC<BotEditProps> = ({
     setMcpConfigError(false);
 
     if (baseBot?.agent_config) {
-      setAgentConfig(JSON.stringify(baseBot.agent_config, null, 2));
+      // Remove protocol from display - it's managed separately via dropdown
+      setAgentConfig(getAgentConfigWithoutProtocol(baseBot.agent_config));
     } else {
       setAgentConfig('');
     }
@@ -312,9 +410,14 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   // Initialize model-related data after agents and models are loaded
   useEffect(() => {
-    if (!baseBot?.agent_config) {
+    // Check if agent_config is empty or doesn't exist
+    const hasValidConfig = baseBot?.agent_config && Object.keys(baseBot.agent_config).length > 0;
+
+    if (!hasValidConfig) {
+      // Default to dropdown (predefined model) mode when no config exists
       setIsCustomModel(false);
       setSelectedModel('');
+      setSelectedProtocol('');
       return;
     }
 
@@ -324,8 +427,12 @@ const BotEdit: React.FC<BotEditProps> = ({
     if (isPredefined) {
       const modelName = getModelFromConfig(baseBot.agent_config);
       setSelectedModel(modelName);
+      setSelectedProtocol('');
     } else {
       setSelectedModel('');
+      // Extract protocol from agent_config for custom configs
+      const protocol = ((baseBot.agent_config as Record<string, unknown>).protocol as string) || '';
+      setSelectedProtocol(protocol);
     }
   }, [baseBot]);
 
@@ -345,8 +452,15 @@ const BotEdit: React.FC<BotEditProps> = ({
   }, [handleBack]);
 
   // Save logic
-  // Save logic
   const handleSave = async () => {
+    console.log('[DEBUG] handleSave called', {
+      botName,
+      agentName,
+      isCustomModel,
+      selectedModel,
+      agentConfig,
+    });
+
     if (!botName.trim() || !agentName.trim()) {
       toast({
         variant: 'destructive',
@@ -354,8 +468,11 @@ const BotEdit: React.FC<BotEditProps> = ({
       });
       return;
     }
+
     let parsedAgentConfig: unknown = undefined;
-    if (isCustomModel) {
+
+    // For Dify agent, always use custom model configuration
+    if (isDifyAgent) {
       const trimmedConfig = agentConfig.trim();
       if (!trimmedConfig) {
         setAgentConfigError(true);
@@ -368,6 +485,51 @@ const BotEdit: React.FC<BotEditProps> = ({
       try {
         parsedAgentConfig = JSON.parse(trimmedConfig);
         setAgentConfigError(false);
+
+        // Validate Dify required fields
+        const env = (parsedAgentConfig as Record<string, unknown>)?.env as
+          | Record<string, unknown>
+          | undefined;
+        if (!env?.DIFY_API_KEY || !env?.DIFY_BASE_URL) {
+          toast({
+            variant: 'destructive',
+            title: t('bot.errors.dify_required_fields'),
+          });
+          return;
+        }
+      } catch {
+        setAgentConfigError(true);
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.agent_config_json'),
+        });
+        return;
+      }
+    } else if (isCustomModel) {
+      // Non-Dify custom model configuration
+      // Validate protocol is selected
+      if (!selectedProtocol) {
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.protocol_required'),
+        });
+        return;
+      }
+
+      const trimmedConfig = agentConfig.trim();
+      if (!trimmedConfig) {
+        setAgentConfigError(true);
+        toast({
+          variant: 'destructive',
+          title: t('bot.errors.agent_config_json'),
+        });
+        return;
+      }
+      try {
+        const configObj = JSON.parse(trimmedConfig);
+        // Add protocol to the config
+        parsedAgentConfig = { ...configObj, protocol: selectedProtocol };
+        setAgentConfigError(false);
       } catch {
         setAgentConfigError(true);
         toast({
@@ -377,11 +539,16 @@ const BotEdit: React.FC<BotEditProps> = ({
         return;
       }
     } else {
-      parsedAgentConfig = { private_model: selectedModel };
+      // Use createPredefinedModelConfig to include bind_model_type
+      parsedAgentConfig = createPredefinedModelConfig(selectedModel, selectedModelType);
     }
 
+    console.log('[DEBUG] parsedAgentConfig:', parsedAgentConfig);
+
     let parsedMcpConfig: Record<string, unknown> | null = null;
-    if (mcpConfig.trim()) {
+
+    // Skip MCP config for Dify agent
+    if (!isDifyAgent && mcpConfig.trim()) {
       try {
         parsedMcpConfig = JSON.parse(mcpConfig);
         // Adapt MCP config types based on selected agent
@@ -404,27 +571,33 @@ const BotEdit: React.FC<BotEditProps> = ({
     } else {
       setMcpConfigError(false);
     }
+
     setBotSaving(true);
     try {
       const botReq: CreateBotRequest = {
         name: botName.trim(),
         agent_name: agentName.trim(),
         agent_config: parsedAgentConfig as Record<string, unknown>,
-        system_prompt: prompt.trim() || '',
+        system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
         mcp_servers: parsedMcpConfig ?? {},
         skills: selectedSkills.length > 0 ? selectedSkills : [],
       };
+      console.log('[DEBUG] Saving bot request:', JSON.stringify(botReq, null, 2));
+
       if (editingBotId && editingBotId > 0) {
         // Edit existing bot
         const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest);
+        console.log('[DEBUG] Bot updated response:', JSON.stringify(updated, null, 2));
         setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)));
       } else {
         // Create new bot
         const created = await botApis.createBot(botReq);
+        console.log('[DEBUG] Bot created response:', JSON.stringify(created, null, 2));
         setBots(prev => [created, ...prev]);
       }
       onClose();
     } catch (error) {
+      console.error('[DEBUG] Save error:', error);
       toast({
         variant: 'destructive',
         title: (error as Error)?.message || t('bot.errors.save_failed'),
@@ -434,35 +607,57 @@ const BotEdit: React.FC<BotEditProps> = ({
     }
   };
   return (
-    <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 min-h-[650px] overflow-hidden">
+    <div
+      className={`flex flex-col w-full bg-surface rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'min-h-0' : 'min-h-[650px]'}`}
+    >
       {/* Top navigation bar */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
-        <button
-          onClick={handleBack}
-          className="flex items-center text-text-muted hover:text-text-primary text-base"
-          title={t('common.back')}
-        >
-          <svg
-            width="24"
-            height="24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="mr-1"
+        {!embedded ? (
+          <button
+            onClick={handleBack}
+            className="flex items-center text-text-muted hover:text-text-primary text-base"
+            title={t('common.back')}
           >
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
-          {t('common.back')}
-        </button>
-        <Button onClick={handleSave} disabled={botSaving}>
-          {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          {botSaving ? t('actions.saving') : t('actions.save')}
-        </Button>
+            <svg
+              width="24"
+              height="24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              className="mr-1"
+            >
+              <path d="M15 6l-6 6 6 6" />
+            </svg>
+            {t('common.back')}
+          </button>
+        ) : (
+          <div /> /* Placeholder for flex spacing */
+        )}
+        {readOnly ? (
+          <Button onClick={onEditClick} variant="outline">
+            <Edit className="mr-2 h-4 w-4" />
+            {t('actions.edit')}
+          </Button>
+        ) : (
+          <div className="flex items-center gap-2">
+            {embedded && onCancelEdit && (
+              <Button onClick={onCancelEdit} variant="outline">
+                {t('common.cancel')}
+              </Button>
+            )}
+            <Button onClick={handleSave} disabled={botSaving}>
+              {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {botSaving ? t('actions.saving') : t('actions.save')}
+            </Button>
+          </div>
+        )}
       </div>
 
       {/* Main content area - using responsive layout */}
       <div className="flex flex-col lg:flex-row gap-4 flex-grow mx-2 min-h-0 overflow-hidden">
-        <div className="flex flex-col space-y-3 overflow-y-auto w-full lg:w-2/5 xl:w-1/3 flex-shrink-0">
+        <div
+          className={`flex flex-col space-y-3 overflow-y-auto w-full flex-shrink-0 ${isDifyAgent ? 'lg:w-full' : 'lg:w-2/5 xl:w-1/3'}`}
+        >
           {/* Bot Name */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
@@ -475,7 +670,8 @@ const BotEdit: React.FC<BotEditProps> = ({
               value={botName}
               onChange={e => setBotName(e.target.value)}
               placeholder={t('bot.name_placeholder')}
-              className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base"
+              disabled={readOnly}
+              className={`w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
 
@@ -511,12 +707,15 @@ const BotEdit: React.FC<BotEditProps> = ({
             <Select
               value={agentName}
               onValueChange={value => {
+                if (readOnly) return;
                 if (value !== agentName) {
                   setIsCustomModel(false);
                   setSelectedModel('');
                   setAgentConfig('');
                   setAgentConfigError(false);
                   setModels([]);
+                  // Clear protocol when switching agent type since protocols are filtered by agent
+                  setSelectedProtocol('');
 
                   // Adapt MCP config when switching agent type
                   if (mcpConfig.trim()) {
@@ -538,7 +737,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                 }
                 setAgentName(value);
               }}
-              disabled={loadingAgents}
+              disabled={loadingAgents || readOnly}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder={t('bot.agent_select')} />
@@ -553,109 +752,162 @@ const BotEdit: React.FC<BotEditProps> = ({
             </Select>
           </div>
 
-          {/* Agent Config */}
-          <div className="flex flex-col">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-2">
-                <label className="block text-base font-medium text-text-primary">
-                  {t('bot.agent_config')} <span className="text-red-400">*</span>
-                </label>
-                {/* Help Icon */}
-                <button
-                  type="button"
-                  onClick={() => handleOpenModelDocs()}
-                  className="text-text-muted hover:text-primary transition-colors"
-                  title={t('bot.view_model_config_guide')}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-5 w-5"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+          {/* Conditional rendering based on agent type */}
+          {isDifyAgent ? (
+            /* Dify Mode: Show specialized Dify configuration */
+            <DifyBotConfig
+              agentConfig={agentConfig}
+              onAgentConfigChange={setAgentConfig}
+              toast={toast}
+              readOnly={readOnly}
+            />
+          ) : (
+            /* Normal Mode: Show standard configuration options */
+            <>
+              {/* Agent Config */}
+              <div className="flex flex-col">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center gap-2">
+                    <label className="block text-base font-medium text-text-primary">
+                      {t('bot.agent_config')}
+                    </label>
+                    {/* Help Icon */}
+                    <button
+                      type="button"
+                      onClick={() => handleOpenModelDocs()}
+                      className="text-text-muted hover:text-primary transition-colors"
+                      title={t('bot.view_model_config_guide')}
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                        />
+                      </svg>
+                    </button>
+                    {/* Template Button - Only show when Custom Model is enabled */}
+                    {isCustomModel && (
+                      <button
+                        type="button"
+                        onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
+                        className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
+                        title={t('bot.quick_templates')}
+                      >
+                        <span className="text-sm">📋</span>
+                        <span>{t('bot.template')}</span>
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-xs text-text-muted mr-2">{t('bot.advanced_mode')}</span>
+                    <Switch
+                      checked={isCustomModel}
+                      disabled={readOnly}
+                      onCheckedChange={(checked: boolean) => {
+                        if (readOnly) return;
+                        setIsCustomModel(checked);
+                        if (checked) {
+                          // Clear data when switching to advanced mode
+                          setAgentConfig('');
+                          setSelectedModel('');
+                          setSelectedProtocol('');
+                          setAgentConfigError(false);
+                        }
+                        if (!checked) {
+                          setAgentConfigError(false);
+                          setTemplateSectionExpanded(false);
+                          setSelectedProtocol('');
+                        }
+                      }}
                     />
-                  </svg>
-                </button>
-                {/* Template Button - Only show when Custom Model is enabled */}
-                {isCustomModel && (
-                  <button
-                    type="button"
-                    onClick={() => setTemplateSectionExpanded(!templateSectionExpanded)}
-                    className="flex items-center gap-1 text-xs text-text-muted hover:text-primary transition-colors"
-                    title={t('bot.quick_templates')}
-                  >
-                    <span className="text-sm">📋</span>
-                    <span>{t('bot.template')}</span>
-                  </button>
-                )}
-              </div>
-              <div className="flex items-center">
-                <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
-                <Switch
-                  checked={isCustomModel}
-                  onCheckedChange={(checked: boolean) => {
-                    setIsCustomModel(checked);
-                    if (checked) {
-                      setAgentConfig('');
-                      setAgentConfigError(false);
-                    }
-                    if (!checked) {
-                      setAgentConfigError(false);
-                      setTemplateSectionExpanded(false);
-                    }
-                  }}
-                />
-              </div>
-            </div>
-
-            {/* Template Expanded Content - Only show when expanded */}
-            {isCustomModel && templateSectionExpanded && (
-              <div className="mb-3 bg-base-secondary rounded-md p-3">
-                <div className="flex gap-2 flex-wrap mb-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleApplyClaudeSonnetTemplate()}
-                    className="text-xs"
-                    type="button"
-                  >
-                    Claude Sonnet 4 {t('bot.template')}
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => handleApplyOpenAIGPT4Template()}
-                    className="text-xs"
-                    type="button"
-                  >
-                    OpenAI GPT-4 {t('bot.template')}
-                  </Button>
+                  </div>
                 </div>
-                <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
-              </div>
-            )}
 
-            {isCustomModel ? (
-              <textarea
-                value={agentConfig}
-                onChange={e => {
-                  const value = e.target.value;
-                  setAgentConfig(value);
-                  if (!value.trim()) {
-                    setAgentConfigError(false);
-                  }
-                }}
-                onBlur={prettifyAgentConfig}
-                rows={4}
-                placeholder={
-                  agentName === 'ClaudeCode'
-                    ? `{
+                {/* Template Expanded Content - Only show when expanded */}
+                {isCustomModel && templateSectionExpanded && (
+                  <div className="mb-3 bg-base-secondary rounded-md p-3">
+                    <div className="flex gap-2 flex-wrap mb-2">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleApplyClaudeSonnetTemplate()}
+                        className="text-xs"
+                        type="button"
+                      >
+                        Claude Sonnet 4 {t('bot.template')}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => handleApplyOpenAIGPT4Template()}
+                        className="text-xs"
+                        type="button"
+                      >
+                        OpenAI GPT-4 {t('bot.template')}
+                      </Button>
+                    </div>
+                    <p className="text-xs text-text-muted">⚠️ {t('bot.template_hint')}</p>
+                  </div>
+                )}
+
+                {/* Protocol selector - only show in advanced mode */}
+                {isCustomModel && (
+                  <div className="mb-3">
+                    <label className="block text-sm font-medium text-text-primary mb-1">
+                      {t('bot.protocol')} <span className="text-red-400">*</span>
+                    </label>
+                    <Select
+                      value={selectedProtocol}
+                      onValueChange={setSelectedProtocol}
+                      disabled={readOnly}
+                    >
+                      <SelectTrigger className="w-full">
+                        <SelectValue placeholder={t('bot.protocol_select')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {/* Filter protocol options based on agent type */}
+                        {agentName === 'ClaudeCode' && (
+                          <SelectItem value="claude">Claude (Anthropic)</SelectItem>
+                        )}
+                        {agentName === 'Agno' && <SelectItem value="openai">OpenAI</SelectItem>}
+                        {/* Show all options if agent type is unknown or not selected */}
+                        {agentName !== 'ClaudeCode' && agentName !== 'Agno' && (
+                          <>
+                            <SelectItem value="openai">OpenAI</SelectItem>
+                            <SelectItem value="claude">Claude (Anthropic)</SelectItem>
+                          </>
+                        )}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-text-muted mt-1">{t('bot.protocol_hint')}</p>
+                  </div>
+                )}
+
+                {isCustomModel ? (
+                  <textarea
+                    value={agentConfig}
+                    onChange={e => {
+                      if (readOnly) return;
+                      const value = e.target.value;
+                      setAgentConfig(value);
+                      if (!value.trim()) {
+                        setAgentConfigError(false);
+                      }
+                    }}
+                    onBlur={prettifyAgentConfig}
+                    rows={4}
+                    disabled={readOnly}
+                    placeholder={
+                      agentName === 'ClaudeCode'
+                        ? `{
   "env": {
     "model": "claude",
     "model_id": "xxxxx",
@@ -663,8 +915,8 @@ const BotEdit: React.FC<BotEditProps> = ({
     "base_url": "xxxxxx"
   }
 }`
-                    : agentName === 'Agno'
-                      ? `{
+                        : agentName === 'Agno'
+                          ? `{
   "env": {
     "model": "openai",
     "model_id": "xxxxxx",
@@ -672,156 +924,189 @@ const BotEdit: React.FC<BotEditProps> = ({
     "base_url": "xxxxxx"
   }
 }`
-                      : ''
-                }
-                className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
-              />
-            ) : (
-              <Select
-                value={selectedModel}
-                onValueChange={value => {
-                  setSelectedModel(value);
-                }}
-                disabled={loadingModels}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder={t('bot.agent_select')} />
-                </SelectTrigger>
-                <SelectContent>
-                  {models.map(model => (
-                    <SelectItem key={model.name} value={model.name}>
-                      {model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            )}
-          </div>
-
-          {/* Skills Selection - Only show for ClaudeCode agent */}
-          {agentName === 'ClaudeCode' && (
-            <div className="flex flex-col">
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center">
-                  <label className="block text-base font-medium text-text-primary">
-                    {t('skills.skills_section')}
-                  </label>
-                  <span className="text-xs text-text-muted ml-2">
-                    {t('skills.skills_optional')}
-                  </span>
-                  {/* Help Icon for Skills */}
-                  <a
-                    href="https://www.claude.com/blog/skills"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-2 text-text-muted hover:text-primary transition-colors"
-                    title="Learn more about Claude Skills"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
-                    >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </a>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setSkillManagementModalOpen(true)}
-                  className="text-xs"
-                >
-                  <SettingsIcon className="w-3 h-3 mr-1" />
-                  {t('skills.manage_skills_button')}
-                </Button>
-              </div>
-              <div className="bg-base rounded-md p-2 min-h-[80px]">
-                {loadingSkills ? (
-                  <div className="text-sm text-text-muted">{t('skills.loading_skills')}</div>
-                ) : availableSkills.length === 0 ? (
-                  <div className="text-sm text-text-muted">{t('skills.no_skills_available')}</div>
+                          : ''
+                    }
+                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                  />
                 ) : (
-                  <div className="space-y-2">
-                    <Select
-                      value=""
-                      onValueChange={value => {
-                        if (value && !selectedSkills.includes(value)) {
-                          setSelectedSkills([...selectedSkills, value]);
+                  <Select
+                    value={selectedModel ? `${selectedModel}:${selectedModelType || ''}` : ''}
+                    onValueChange={value => {
+                      // Value format: "modelName:modelType"
+                      const [modelName, modelType] = value.split(':');
+                      setSelectedModel(modelName);
+                      setSelectedModelType((modelType as ModelTypeEnum) || undefined);
+                    }}
+                    disabled={loadingModels || !agentName || models.length === 0 || readOnly}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue
+                        placeholder={
+                          !agentName
+                            ? t('bot.select_executor_first')
+                            : models.length === 0
+                              ? t('bot.no_available_models')
+                              : t('bot.model_select')
                         }
-                      }}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t('skills.select_skill_to_add')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableSkills
-                          .filter(skill => !selectedSkills.includes(skill))
-                          .map(skill => (
-                            <SelectItem key={skill} value={skill}>
-                              {skill}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
-
-                    {selectedSkills.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {selectedSkills.map(skill => (
-                          <div
-                            key={skill}
-                            className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {models.length === 0 ? (
+                        <div className="py-2 px-3 text-sm text-text-muted text-center">
+                          {t('bot.no_available_models')}
+                        </div>
+                      ) : (
+                        models.map(model => (
+                          <SelectItem
+                            key={`${model.name}:${model.type}`}
+                            value={`${model.name}:${model.type}`}
                           >
-                            <span>{skill}</span>
-                            <button
-                              onClick={() =>
-                                setSelectedSkills(selectedSkills.filter(s => s !== skill))
-                              }
-                              className="text-text-muted hover:text-text-primary"
-                            >
-                              <XIcon className="w-3 h-3" />
-                            </button>
+                            {model.displayName ? `${model.displayName}(${model.name})` : model.name}
+                            {model.type === 'public' && (
+                              <span className="ml-1 text-xs text-text-muted">
+                                [{t('bot.public_model', '公共')}]
+                              </span>
+                            )}
+                          </SelectItem>
+                        ))
+                      )}
+                    </SelectContent>
+                  </Select>
+                )}
+              </div>
+
+              {/* Skills Selection - Only show for ClaudeCode agent */}
+              {agentName === 'ClaudeCode' && (
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center">
+                      <label className="block text-base font-medium text-text-primary">
+                        {t('skills.skills_section')}
+                      </label>
+                      <span className="text-xs text-text-muted ml-2">
+                        {t('skills.skills_optional')}
+                      </span>
+                      {/* Help Icon for Skills */}
+                      <a
+                        href="https://www.claude.com/blog/skills"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-2 text-text-muted hover:text-primary transition-colors"
+                        title="Learn more about Claude Skills"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-5 w-5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                      </a>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setSkillManagementModalOpen(true)}
+                      className="text-xs"
+                    >
+                      <SettingsIcon className="w-3 h-3 mr-1" />
+                      {t('skills.manage_skills_button')}
+                    </Button>
+                  </div>
+                  <div className="bg-base rounded-md p-2 min-h-[80px]">
+                    {loadingSkills ? (
+                      <div className="text-sm text-text-muted">{t('skills.loading_skills')}</div>
+                    ) : availableSkills.length === 0 ? (
+                      <div className="text-sm text-text-muted">
+                        {t('skills.no_skills_available')}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Select
+                          value=""
+                          onValueChange={value => {
+                            if (readOnly) return;
+                            if (value && !selectedSkills.includes(value)) {
+                              setSelectedSkills([...selectedSkills, value]);
+                            }
+                          }}
+                          disabled={readOnly}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder={t('skills.select_skill_to_add')} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableSkills
+                              .filter(skill => !selectedSkills.includes(skill))
+                              .map(skill => (
+                                <SelectItem key={skill} value={skill}>
+                                  {skill}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
+
+                        {selectedSkills.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {selectedSkills.map(skill => (
+                              <div
+                                key={skill}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
+                              >
+                                <span>{skill}</span>
+                                <button
+                                  onClick={() => {
+                                    if (readOnly) return;
+                                    setSelectedSkills(selectedSkills.filter(s => s !== skill));
+                                  }}
+                                  disabled={readOnly}
+                                  className={`text-text-muted hover:text-text-primary ${readOnly ? 'cursor-not-allowed opacity-50' : ''}`}
+                                >
+                                  <XIcon className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-            </div>
-          )}
+                </div>
+              )}
 
-          {/* MCP Config */}
-          <div className="flex flex-col flex-grow">
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center">
-                <label className="block text-base font-medium text-text-primary">
-                  {t('bot.mcp_config')}
-                </label>
-              </div>
-              <Button size="sm" onClick={() => handleImportMcpConfig()} className="text-xs">
-                {t('bot.import_mcp_button')}
-              </Button>
-            </div>
-            <textarea
-              value={mcpConfig}
-              onChange={e => {
-                const value = e.target.value;
-                setMcpConfig(value);
-                if (!value.trim()) {
-                  setMcpConfigError(false);
-                }
-              }}
-              onBlur={prettifyMcpConfig}
-              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'}`}
-              placeholder={`{
+              {/* MCP Config */}
+              <div className="flex flex-col flex-grow">
+                <div className="flex items-center justify-between mb-1">
+                  <div className="flex items-center">
+                    <label className="block text-base font-medium text-text-primary">
+                      {t('bot.mcp_config')}
+                    </label>
+                  </div>
+                  <Button size="sm" onClick={() => handleImportMcpConfig()} className="text-xs">
+                    {t('bot.import_mcp_button')}
+                  </Button>
+                </div>
+                <textarea
+                  value={mcpConfig}
+                  onChange={e => {
+                    if (readOnly) return;
+                    const value = e.target.value;
+                    setMcpConfig(value);
+                    if (!value.trim()) {
+                      setMcpConfigError(false);
+                    }
+                  }}
+                  onBlur={prettifyMcpConfig}
+                  disabled={readOnly}
+                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                  placeholder={`{
   "github": {
     "command": "docker",
     "args": [
@@ -843,29 +1128,37 @@ const BotEdit: React.FC<BotEditProps> = ({
     }
   }
 }`}
-            />
-          </div>
+                />
+              </div>
+            </>
+          )}
         </div>
 
         {/* Right Prompt area - responsive layout */}
-        <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col min-h-0">
-          <div className="mb-1 flex-shrink-0">
-            <div className="flex items-center">
-              <label className="block text-base font-medium text-text-primary">
-                {t('bot.prompt')}
-              </label>
-              <span className="text-xs text-text-muted ml-2">AI prompt</span>
+        {!isDifyAgent && (
+          <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col min-h-0">
+            <div className="mb-1 flex-shrink-0">
+              <div className="flex items-center">
+                <label className="block text-base font-medium text-text-primary">
+                  {t('bot.prompt')}
+                </label>
+                <span className="text-xs text-text-muted ml-2">AI prompt</span>
+              </div>
             </div>
-          </div>
 
-          {/* textarea occupies all space in the second row */}
-          <textarea
-            value={prompt}
-            onChange={e => setPrompt(e.target.value)}
-            placeholder={t('bot.prompt_placeholder')}
-            className="w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow"
-          />
-        </div>
+            {/* textarea occupies all space in the second row */}
+            <textarea
+              value={prompt}
+              onChange={e => {
+                if (readOnly) return;
+                setPrompt(e.target.value);
+              }}
+              disabled={readOnly}
+              placeholder={t('bot.prompt_placeholder')}
+              className={`w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+            />
+          </div>
+        )}
       </div>
 
       {/* MCP Configuration Import Modal */}
@@ -910,6 +1203,11 @@ const BotEdit: React.FC<BotEditProps> = ({
             .w-full.lg\\:w-2\\/5.xl\\:w-1\\/3 {
               width: 100% !important;
               margin-bottom: 1rem;
+            }
+            
+            /* Ensure Dify full width on mobile */
+            .lg\\:w-full {
+               width: 100% !important;
             }
             .w-full.lg\\:w-3\\/5.xl\\:w-2\\/3 {
               width: 100% !important;

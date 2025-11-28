@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from app.api.endpoints import auth, users, repository, oidc, quota, admin
-from app.api.endpoints.adapter import models, agents, bots, teams, tasks, executors
+from app.api.endpoints.adapter import models, agents, bots, teams, tasks, executors, dify
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
 
@@ -19,4 +19,5 @@ api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(executors.router, prefix="/executors", tags=["executors"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
+api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(k_router)

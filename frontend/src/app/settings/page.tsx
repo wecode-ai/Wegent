@@ -9,12 +9,11 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import { Tab } from '@headlessui/react';
-import { PuzzlePieceIcon, UsersIcon, BellIcon } from '@heroicons/react/24/outline';
-import { RiRobot2Line } from 'react-icons/ri';
+import { PuzzlePieceIcon, UsersIcon, BellIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
-import BotList from '@/features/settings/components/BotList';
 import TeamList from '@/features/settings/components/TeamList';
 import NotificationSettings from '@/features/settings/components/NotificationSettings';
+import ModelList from '@/features/settings/components/ModelList';
 import { UserProvider } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -27,7 +26,7 @@ function DashboardContent() {
   // Tab index to name mapping
   const tabIndexToName = useMemo(
     (): Record<number, string> => ({
-      0: 'bots',
+      0: 'models',
       1: 'team',
       2: 'integrations',
       3: 'notifications',
@@ -38,7 +37,7 @@ function DashboardContent() {
   // Tab name to index mapping
   const tabNameToIndex = useMemo(
     (): Record<string, number> => ({
-      bots: 0,
+      models: 0,
       team: 1,
       integrations: 2,
       notifications: 3,
@@ -73,7 +72,7 @@ function DashboardContent() {
   const handleTabChange = useCallback(
     (idx: number) => {
       setTabIndex(idx);
-      const tabName = tabIndexToName[idx] || 'bots';
+      const tabName = tabIndexToName[idx] || 'models';
       router.replace(`?tab=${tabName}`);
     },
     [router, tabIndexToName]
@@ -111,8 +110,8 @@ function DashboardContent() {
                         }`
                       }
                     >
-                      <RiRobot2Line className="w-4 h-4" />
-                      <span>{t('settings.bot')}</span>
+                      <CpuChipIcon className="w-4 h-4" />
+                      <span>{t('settings.models')}</span>
                     </Tab>
 
                     <Tab
@@ -158,7 +157,7 @@ function DashboardContent() {
                   <div className="flex-1 min-h-0 px-8 py-4 overflow-y-auto min-w-0">
                     <Tab.Panels>
                       <Tab.Panel className="focus:outline-none">
-                        <BotList />
+                        <ModelList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
@@ -186,8 +185,8 @@ function DashboardContent() {
                           }`
                         }
                       >
-                        <RiRobot2Line className="w-3 h-3" />
-                        <span className="hidden xs:inline">{t('settings.bot')}</span>
+                        <CpuChipIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('settings.models')}</span>
                       </Tab>
 
                       <Tab
@@ -234,7 +233,7 @@ function DashboardContent() {
                   <div className="flex-1 min-h-0 px-2 py-2 overflow-y-auto min-w-0">
                     <Tab.Panels>
                       <Tab.Panel className="focus:outline-none">
-                        <BotList />
+                        <ModelList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
