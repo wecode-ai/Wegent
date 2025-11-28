@@ -752,7 +752,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.id == first_bot_id,
                 Kind.user_id == user_id,
                 Kind.kind == "Bot",
-                Kind.is_active == True
+                Kind.is_active.is_(True)
             ).first()
             
             if first_bot:
@@ -762,9 +762,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     Kind.kind == "Shell",
                     Kind.name == bot_crd.spec.shellRef.name,
                     Kind.namespace == bot_crd.spec.shellRef.namespace,
-                    Kind.is_active == True
+                    Kind.is_active.is_(True)
                 ).first()
-                
                 if shell:
                     shell_crd = Shell.model_validate(shell.json)
                     runtime = shell_crd.spec.runtime
@@ -818,7 +817,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             Kind.kind == "Shell",
             Kind.name == bot_crd.spec.shellRef.name,
             Kind.namespace == bot_crd.spec.shellRef.namespace,
-            Kind.is_active == True
+            Kind.is_active.is_(True)
         ).first()
         
         agent_name = ""
@@ -836,7 +835,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.kind == "Model",
                 Kind.name == model_ref_name,
                 Kind.namespace == model_ref_namespace,
-                Kind.is_active == True
+                Kind.is_active.is_(True)
             ).first()
             
             logger.info(f"[_get_bot_summary] Private model found: {model is not None}")
@@ -865,7 +864,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 public_model = db.query(PublicModel).filter(
                     PublicModel.name == model_ref_name,
                     PublicModel.namespace == model_ref_namespace,
-                    PublicModel.is_active == True
+                    PublicModel.is_active.is_(True)
                 ).first()
                 
                 logger.info(f"[_get_bot_summary] Public model found: {public_model is not None}")
@@ -918,7 +917,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 Kind.kind == "Model",
                 Kind.name == bot_crd.spec.modelRef.name,
                 Kind.namespace == bot_crd.spec.modelRef.namespace,
-                Kind.is_active == True
+                Kind.is_active.is_(True)
             ).first()
         
         # Extract data from components

@@ -45,7 +45,6 @@ class ModelKindService(KindBaseService):
         # Call parent method first
         resource_data = super()._extract_resource_data(resource)
         
-        # Encrypt API key if present
         try:
             if 'spec' in resource_data and 'modelConfig' in resource_data['spec']:
                 model_config = resource_data['spec']['modelConfig']
@@ -55,9 +54,10 @@ class ModelKindService(KindBaseService):
                         # Only encrypt if not already encrypted
                         if not is_api_key_encrypted(api_key):
                             resource_data['spec']['modelConfig']['env']['api_key'] = encrypt_api_key(api_key)
-                            logger.info(f"Encrypted API key for Model resource")
-        except Exception as e:
-            logger.error(f"Failed to encrypt API key: {str(e)}")
+                            logger.info("Encrypted API key for Model resource")
+        except ValueError as e:
+            logger.exception("Failed to encrypt API key: %r", e)
+            raise
             raise
         
         return resource_data
@@ -75,8 +75,8 @@ class ModelKindService(KindBaseService):
                     api_key = model_config['env']['api_key']
                     if api_key:
                         result['spec']['modelConfig']['env']['api_key'] = decrypt_api_key(api_key)
-        except Exception as e:
-            logger.warning(f"Failed to decrypt API key: {str(e)}")
+        except (ValueError, KeyError) as e:
+            logger.warning("Failed to decrypt API key: %r", e)
         
         return result
 

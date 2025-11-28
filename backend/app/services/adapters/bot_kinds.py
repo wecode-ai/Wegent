@@ -135,7 +135,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 Kind.kind == "Model",
                 Kind.name == model_name,
                 Kind.namespace == namespace,
-                Kind.is_active == True
+                Kind.is_active.is_(True)
             ).first()
             
             if model:
@@ -148,7 +148,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             public_model = db.query(PublicModel).filter(
                 PublicModel.name == model_name,
                 PublicModel.namespace == namespace,
-                PublicModel.is_active == True
+                PublicModel.is_active.is_(True)
             ).first()
             
             if public_model:
@@ -163,7 +163,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 Kind.kind == "Model",
                 Kind.name == model_name,
                 Kind.namespace == namespace,
-                Kind.is_active == True
+                Kind.is_active.is_(True)
             ).first()
             
             if model:
@@ -174,7 +174,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             public_model = db.query(PublicModel).filter(
                 PublicModel.name == model_name,
                 PublicModel.namespace == namespace,
-                PublicModel.is_active == True
+                PublicModel.is_active.is_(True)
             ).first()
             
             if public_model:
@@ -648,7 +648,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     # 1. model is None (no model at all)
                     # 2. model is a PublicModel (can't be modified)
                     # 3. model is a Kind but not dedicated to this bot (shared model)
-                    logger.info(f"[DEBUG] Creating new private model for custom config")
+                    logger.info("[DEBUG] Creating new private model for custom config")
                     
                     model_json = {
                         "kind": "Model",
@@ -731,8 +731,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if model and hasattr(model, 'id'):
             try:
                 db.refresh(model)
-            except Exception:
-                pass  # PublicModel may not need refresh
+            except (AttributeError, TypeError) as e:
+                logger.debug("Model refresh skipped (PublicModel may not need refresh): %s", e)
         
         return self._convert_to_bot_dict(bot, ghost, shell, model, return_agent_config)
 
@@ -907,7 +907,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             public_model_filter = build_public_model_or_filters(missing_model_keys)
             if public_model_filter is not None:
                 public_models = db.query(PublicModel).filter(
-                    PublicModel.is_active == True
+                    PublicModel.is_active.is_(True)
                 ).filter(public_model_filter).all()
                 
                 for pm in public_models:
@@ -915,7 +915,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         
         return bot_crds, ghost_map, shell_map, model_map
 
-    def _convert_to_bot_dict(self, bot: Kind, ghost: Kind = None, shell: Kind = None, model = None, override_agent_config: Dict[str, Any] = None) -> Dict[str, Any]:
+    def _convert_to_bot_dict(self, bot: Kind, ghost: Kind | None = None, shell: Kind | None = None, model=None, override_agent_config: Dict[str, Any] | None = None) -> Dict[str, Any]:
         """
         Convert kinds to bot-like dictionary.
         

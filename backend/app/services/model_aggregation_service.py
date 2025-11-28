@@ -127,8 +127,8 @@ class ModelAggregationService:
                 "display_name": model_crd.metadata.displayName,
                 "config": model_crd.spec.modelConfig,
             }
-        except Exception as e:
-            logger.warning(f"Failed to extract model info: {e}")
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.warning("Failed to extract model info: %s", e)
             return {"provider": None, "model_id": None, "display_name": None, "config": {}}
 
     def _is_model_compatible_with_agent(
@@ -188,8 +188,8 @@ class ModelAggregationService:
                 shell_crd = Shell.model_validate(shell_row[0])
                 support_model = shell_crd.spec.supportModel or []
                 return [str(x) for x in support_model if x]
-            except Exception as e:
-                logger.warning(f"Failed to parse shell config: {e}")
+            except (ValueError, KeyError, AttributeError) as e:
+                logger.warning("Failed to parse shell config: %s", e)
         
         return []
 
@@ -212,10 +212,11 @@ class ModelAggregationService:
         
         try:
             model_crd = Model.model_validate(model_data)
-            return model_crd.spec.isCustomConfig is True
-        except Exception as e:
-            logger.warning(f"Failed to check if model is custom: {e}")
+        except (ValueError, KeyError, AttributeError) as e:
+            logger.warning("Failed to check if model is custom: %s", e)
             return False
+        else:
+            return model_crd.spec.isCustomConfig is True
 
     def list_available_models(
         self,
