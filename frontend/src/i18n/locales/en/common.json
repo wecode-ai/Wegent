@@ -218,7 +218,9 @@
     "prompts_badge_tooltip": "This bot runs with an extra team-only prompt add-on.",
     "prompts_save_success": "Prompts saved! They will be applied when you save the team.",
     "prompts_update_success": "Prompts updated successfully!",
-    "prompts_update_error": "Failed to update prompts."
+    "prompts_update_error": "Failed to update prompts.",
+    "dify_mode_pipeline_only": "Dify bots only support pipeline execution mode.",
+    "dify_no_members_hint": "Dify bots handle execution independently and do not support team members."
   },
   "team_model": {
     "pipeline": "Pipeline",

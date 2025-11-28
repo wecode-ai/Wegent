@@ -243,9 +243,15 @@ const BotEdit: React.FC<BotEditProps> = ({
 
     fetchAgents();
   }, [toast, t]);
-
-  // Get skills list
+  // Get skills list - only for ClaudeCode agent
   useEffect(() => {
+    // Only fetch skills when agent is ClaudeCode
+    if (agentName !== 'ClaudeCode') {
+      setAvailableSkills([]);
+      setLoadingSkills(false);
+      return;
+    }
+
     const fetchSkills = async () => {
       setLoadingSkills(true);
       try {
@@ -261,7 +267,7 @@ const BotEdit: React.FC<BotEditProps> = ({
       }
     };
     fetchSkills();
-  }, [toast, t]);
+  }, [agentName, toast, t]);
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
@@ -493,7 +499,9 @@ const BotEdit: React.FC<BotEditProps> = ({
 
       {/* Main content area - using responsive layout */}
       <div className="flex flex-col lg:flex-row gap-4 flex-grow mx-2 min-h-0 overflow-hidden">
-        <div className="flex flex-col space-y-3 overflow-y-auto w-full lg:w-2/5 xl:w-1/3 flex-shrink-0">
+        <div
+          className={`flex flex-col space-y-3 overflow-y-auto w-full flex-shrink-0 ${isDifyAgent ? 'lg:w-full' : 'lg:w-2/5 xl:w-1/3'}`}
+        >
           {/* Bot Name */}
           <div className="flex flex-col">
             <div className="flex items-center mb-1">
@@ -638,7 +646,9 @@ const BotEdit: React.FC<BotEditProps> = ({
                     )}
                   </div>
                   <div className="flex items-center">
-                    <span className="text-xs text-text-muted mr-2">{t('bot.use_custom_model')}</span>
+                    <span className="text-xs text-text-muted mr-2">
+                      {t('bot.use_custom_model')}
+                    </span>
                     <Switch
                       checked={isCustomModel}
                       onCheckedChange={(checked: boolean) => {
@@ -740,105 +750,107 @@ const BotEdit: React.FC<BotEditProps> = ({
                 )}
               </div>
 
-          {/* Skills Selection - Only show for ClaudeCode agent */}
-          {agentName === 'ClaudeCode' && (
-            <div className="flex flex-col">
-              <div className="flex items-center justify-between mb-1">
-                <div className="flex items-center">
-                  <label className="block text-base font-medium text-text-primary">
-                    {t('skills.skills_section')}
-                  </label>
-                  <span className="text-xs text-text-muted ml-2">
-                    {t('skills.skills_optional')}
-                  </span>
-                  {/* Help Icon for Skills */}
-                  <a
-                    href="https://www.claude.com/blog/skills"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="ml-2 text-text-muted hover:text-primary transition-colors"
-                    title="Learn more about Claude Skills"
-                  >
-                    <svg
-                      xmlns="http://www.w3.org/2000/svg"
-                      className="h-5 w-5"
-                      fill="none"
-                      viewBox="0 0 24 24"
-                      stroke="currentColor"
+              {/* Skills Selection - Only show for ClaudeCode agent */}
+              {agentName === 'ClaudeCode' && (
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="flex items-center">
+                      <label className="block text-base font-medium text-text-primary">
+                        {t('skills.skills_section')}
+                      </label>
+                      <span className="text-xs text-text-muted ml-2">
+                        {t('skills.skills_optional')}
+                      </span>
+                      {/* Help Icon for Skills */}
+                      <a
+                        href="https://www.claude.com/blog/skills"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="ml-2 text-text-muted hover:text-primary transition-colors"
+                        title="Learn more about Claude Skills"
+                      >
+                        <svg
+                          xmlns="http://www.w3.org/2000/svg"
+                          className="h-5 w-5"
+                          fill="none"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                          />
+                        </svg>
+                      </a>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setSkillManagementModalOpen(true)}
+                      className="text-xs"
                     >
-                      <path
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        strokeWidth={2}
-                        d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                      />
-                    </svg>
-                  </a>
-                </div>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setSkillManagementModalOpen(true)}
-                  className="text-xs"
-                >
-                  <SettingsIcon className="w-3 h-3 mr-1" />
-                  {t('skills.manage_skills_button')}
-                </Button>
-              </div>
-              <div className="bg-base rounded-md p-2 min-h-[80px]">
-                {loadingSkills ? (
-                  <div className="text-sm text-text-muted">{t('skills.loading_skills')}</div>
-                ) : availableSkills.length === 0 ? (
-                  <div className="text-sm text-text-muted">{t('skills.no_skills_available')}</div>
-                ) : (
-                  <div className="space-y-2">
-                    <Select
-                      value=""
-                      onValueChange={value => {
-                        if (value && !selectedSkills.includes(value)) {
-                          setSelectedSkills([...selectedSkills, value]);
-                        }
-                      }}
-                    >
-                      <SelectTrigger className="w-full">
-                        <SelectValue placeholder={t('skills.select_skill_to_add')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {availableSkills
-                          .filter(skill => !selectedSkills.includes(skill))
-                          .map(skill => (
-                            <SelectItem key={skill} value={skill}>
-                              {skill}
-                            </SelectItem>
-                          ))}
-                      </SelectContent>
-                    </Select>
+                      <SettingsIcon className="w-3 h-3 mr-1" />
+                      {t('skills.manage_skills_button')}
+                    </Button>
+                  </div>
+                  <div className="bg-base rounded-md p-2 min-h-[80px]">
+                    {loadingSkills ? (
+                      <div className="text-sm text-text-muted">{t('skills.loading_skills')}</div>
+                    ) : availableSkills.length === 0 ? (
+                      <div className="text-sm text-text-muted">
+                        {t('skills.no_skills_available')}
+                      </div>
+                    ) : (
+                      <div className="space-y-2">
+                        <Select
+                          value=""
+                          onValueChange={value => {
+                            if (value && !selectedSkills.includes(value)) {
+                              setSelectedSkills([...selectedSkills, value]);
+                            }
+                          }}
+                        >
+                          <SelectTrigger className="w-full">
+                            <SelectValue placeholder={t('skills.select_skill_to_add')} />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {availableSkills
+                              .filter(skill => !selectedSkills.includes(skill))
+                              .map(skill => (
+                                <SelectItem key={skill} value={skill}>
+                                  {skill}
+                                </SelectItem>
+                              ))}
+                          </SelectContent>
+                        </Select>
 
-                    {selectedSkills.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5">
-                        {selectedSkills.map(skill => (
-                          <div
-                            key={skill}
-                            className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
-                          >
-                            <span>{skill}</span>
-                            <button
-                              onClick={() =>
-                                setSelectedSkills(selectedSkills.filter(s => s !== skill))
-                              }
-                              className="text-text-muted hover:text-text-primary"
-                            >
-                              <XIcon className="w-3 h-3" />
-                            </button>
+                        {selectedSkills.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5">
+                            {selectedSkills.map(skill => (
+                              <div
+                                key={skill}
+                                className="inline-flex items-center gap-1 px-2 py-1 bg-muted rounded-md text-sm"
+                              >
+                                <span>{skill}</span>
+                                <button
+                                  onClick={() =>
+                                    setSelectedSkills(selectedSkills.filter(s => s !== skill))
+                                  }
+                                  className="text-text-muted hover:text-text-primary"
+                                >
+                                  <XIcon className="w-3 h-3" />
+                                </button>
+                              </div>
+                            ))}
                           </div>
-                        ))}
+                        )}
                       </div>
                     )}
                   </div>
-                )}
-              </div>
-            </div>
-          )}
+                </div>
+              )}
 
               {/* MCP Config */}
               <div className="flex flex-col flex-grow">
@@ -956,6 +968,11 @@ const BotEdit: React.FC<BotEditProps> = ({
             .w-full.lg\\:w-2\\/5.xl\\:w-1\\/3 {
               width: 100% !important;
               margin-bottom: 1rem;
+            }
+            
+            /* Ensure Dify full width on mobile */
+            .lg\\:w-full {
+               width: 100% !important;
             }
             .w-full.lg\\:w-3\\/5.xl\\:w-2\\/3 {
               width: 100% !important;
