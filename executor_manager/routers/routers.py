@@ -161,7 +161,7 @@ async def get_executor_load(http_request: Request):
         logger.info(f"Received request to get executor load from {client_ip}")
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.get_executor_count()
-        result["total"] = int(os.getenv("MAX_CONCURRENT_TASKS", "5"))
+        result["total"] = int(os.getenv("MAX_CONCURRENT_TASKS", "30"))
         return result
     except Exception as e:
         logger.error(f"Error getting executor load: {e}")
