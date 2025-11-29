@@ -12,6 +12,31 @@ from shared.status import TaskStatus
 class TestDifyAgent:
     """Test cases for DifyAgent"""
 
+    @pytest.fixture(autouse=True)
+    def mock_http_requests(self):
+        """
+        Mock all HTTP requests to prevent actual network calls during tests.
+        - requests.get: DifyAgent.__init__ calls _get_app_mode() which makes GET to /v1/info
+        - requests.post: CallbackClient.send_callback() makes POST to callback URL
+        Without these mocks, tests would make real HTTP requests causing long timeouts.
+        """
+        with patch('executor.agents.dify.dify_agent.requests.get') as mock_get, \
+             patch('executor.callback.callback_client.requests.post') as mock_post:
+            # Mock GET response for _get_app_mode()
+            mock_get_response = MagicMock()
+            mock_get_response.status_code = 200
+            mock_get_response.json.return_value = {"mode": "chat"}
+            mock_get.return_value = mock_get_response
+
+            # Mock POST response for callback
+            mock_post_response = MagicMock()
+            mock_post_response.status_code = 200
+            mock_post_response.content = b'{}'
+            mock_post_response.json.return_value = {}
+            mock_post.return_value = mock_post_response
+
+            yield {"get": mock_get, "post": mock_post}
+
     @pytest.fixture
     def task_data(self):
         """Sample task data for testing"""
@@ -28,7 +53,7 @@ class TestDifyAgent:
                     "language": "en-US"
                 }
             }),
-            "team_members": [{
+            "bot": [{
                 "agent_config": {
                     "env": {
                         "DIFY_API_KEY": "app-test-api-key",
@@ -99,7 +124,7 @@ class TestDifyAgent:
 
     def test_validate_config_missing_api_key(self, task_data):
         """Test config validation with missing API key"""
-        task_data["team_members"][0]["agent_config"]["env"]["DIFY_API_KEY"] = ""
+        task_data["bot"][0]["agent_config"]["env"]["DIFY_API_KEY"] = ""
         agent = DifyAgent(task_data)
 
         result = agent._validate_config()
@@ -108,7 +133,7 @@ class TestDifyAgent:
 
     def test_validate_config_missing_base_url(self, task_data):
         """Test config validation with missing base URL"""
-        task_data["team_members"][0]["agent_config"]["env"]["DIFY_BASE_URL"] = ""
+        task_data["bot"][0]["agent_config"]["env"]["DIFY_BASE_URL"] = ""
         agent = DifyAgent(task_data)
 
         result = agent._validate_config()
@@ -116,14 +141,15 @@ class TestDifyAgent:
         assert result is False
 
     def test_validate_config_missing_app_id(self, task_data):
-        """Test config validation with missing app ID"""
-        task_data["team_members"][0]["agent_config"]["env"]["DIFY_APP_ID"] = ""
+        """Test config validation with missing app ID - app_id is now optional"""
+        task_data["bot"][0]["agent_config"]["env"]["DIFY_APP_ID"] = ""
         task_data["bot_prompt"] = ""
         agent = DifyAgent(task_data)
 
         result = agent._validate_config()
 
-        assert result is False
+        # DIFY_APP_ID is no longer required since each API key corresponds to one app
+        assert result is True
 
     @patch('executor.agents.dify.dify_agent.requests.post')
     def test_call_dify_api_success(self, mock_post, task_data):
@@ -233,6 +259,9 @@ class TestDifyAgent:
 
     def test_conversation_id_management(self, task_data):
         """Test conversation ID management"""
+        # Clear any existing conversation state before test
+        DifyAgent.clear_conversation(task_data["task_id"])
+
         agent = DifyAgent(task_data)
 
         # Initially empty
