@@ -2,17 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from typing import Dict, Any
-from pydantic import BaseModel
+from typing import Any, Dict
+
 import requests
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from shared.logger import setup_logger
+from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
+from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.user import User
-from shared.logger import setup_logger
-from shared.utils.crypto import decrypt_sensitive_data, is_data_encrypted
 
 logger = setup_logger("dify_api")
 
@@ -21,6 +22,7 @@ router = APIRouter()
 
 class DifyAppInfoRequest(BaseModel):
     """Request to get Dify app info"""
+
     api_key: str
     base_url: str = "https://api.dify.ai"
 
@@ -29,7 +31,7 @@ class DifyAppInfoRequest(BaseModel):
 def get_dify_app_info(
     request: DifyAppInfoRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user)
+    current_user: User = Depends(security.get_current_user),
 ) -> Dict[str, Any]:
     """
     Get Dify application information using API key
@@ -50,25 +52,23 @@ def get_dify_app_info(
         if api_key and is_data_encrypted(api_key):
             api_key = decrypt_sensitive_data(api_key) or api_key
             logger.info("Decrypted API key for Dify app info request")
-        
+
         api_url = f"{request.base_url}/v1/info"
         headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         logger.info(f"Fetching Dify app info from: {api_url}")
 
-        response = requests.get(
-            api_url,
-            headers=headers,
-            timeout=10
-        )
+        response = requests.get(api_url, headers=headers, timeout=10)
 
         response.raise_for_status()
         data = response.json()
 
-        logger.info(f"Successfully fetched Dify app info: {data.get('name', 'Unknown')}")
+        logger.info(
+            f"Successfully fetched Dify app info: {data.get('name', 'Unknown')}"
+        )
         return data
 
     except requests.exceptions.HTTPError as e:
@@ -97,7 +97,7 @@ def get_dify_app_info(
 def get_dify_app_parameters(
     request: DifyAppInfoRequest,
     db: Session = Depends(get_db),
-    current_user: User = Depends(security.get_current_user)
+    current_user: User = Depends(security.get_current_user),
 ) -> Dict[str, Any]:
     """
     Get parameters schema for a Dify application
@@ -117,20 +117,16 @@ def get_dify_app_parameters(
         if api_key and is_data_encrypted(api_key):
             api_key = decrypt_sensitive_data(api_key) or api_key
             logger.info("Decrypted API key for Dify app parameters request")
-        
+
         api_url = f"{request.base_url}/v1/parameters"
         headers = {
             "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
         }
 
         logger.info(f"Fetching Dify app parameters from: {api_url}")
 
-        response = requests.get(
-            api_url,
-            headers=headers,
-            timeout=10
-        )
+        response = requests.get(api_url, headers=headers, timeout=10)
 
         response.raise_for_status()
         data = response.json()

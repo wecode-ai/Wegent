@@ -86,6 +86,8 @@ echo ""
 # Track check results
 WARNINGS=()
 DOC_REMINDERS=()
+FAILED_CHECKS=()
+FAILED_LOGS=()
 
 # -----------------------------------------------------------------------------
 # Check: Changed files summary
@@ -181,38 +183,58 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
         
         # ESLint
         echo -e "   Running ESLint..."
-        if npm run lint --silent 2>/dev/null; then
+        ESLINT_OUTPUT=$(npm run lint 2>&1)
+        ESLINT_EXIT=$?
+        if [ $ESLINT_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ ESLint: PASSED${NC}"
         else
             echo -e "   ${RED}❌ ESLint: FAILED${NC}"
             CHECK_FAILED=1
+            FAILED_CHECKS+=("Frontend ESLint")
+            FAILED_LOGS+=("=== Frontend ESLint Errors ===
+$ESLINT_OUTPUT")
         fi
         
         # TypeScript type check (using next build --dry-run or tsc if available)
         echo -e "   Running TypeScript check..."
-        if npx tsc --noEmit 2>/dev/null; then
+        TSC_OUTPUT=$(npx tsc --noEmit 2>&1)
+        TSC_EXIT=$?
+        if [ $TSC_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ TypeScript: PASSED${NC}"
         else
             echo -e "   ${RED}❌ TypeScript: FAILED${NC}"
             CHECK_FAILED=1
+            FAILED_CHECKS+=("Frontend TypeScript")
+            FAILED_LOGS+=("=== Frontend TypeScript Errors ===
+$TSC_OUTPUT")
         fi
         
         # Unit tests
         echo -e "   Running unit tests..."
-        if npm test -- --passWithNoTests --silent 2>/dev/null; then
+        TEST_OUTPUT=$(npm test -- --passWithNoTests 2>&1)
+        TEST_EXIT=$?
+        if [ $TEST_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Unit Tests: PASSED${NC}"
         else
             echo -e "   ${RED}❌ Unit Tests: FAILED${NC}"
             CHECK_FAILED=1
+            FAILED_CHECKS+=("Frontend Unit Tests")
+            FAILED_LOGS+=("=== Frontend Unit Test Errors ===
+$TEST_OUTPUT")
         fi
         
         # Build check
         echo -e "   Running build check..."
-        if npm run build 2>/dev/null; then
+        BUILD_OUTPUT=$(npm run build 2>&1)
+        BUILD_EXIT=$?
+        if [ $BUILD_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Build: PASSED${NC}"
         else
             echo -e "   ${RED}❌ Build: FAILED${NC}"
             CHECK_FAILED=1
+            FAILED_CHECKS+=("Frontend Build")
+            FAILED_LOGS+=("=== Frontend Build Errors ===
+$BUILD_OUTPUT")
         fi
         
         cd ..
@@ -235,44 +257,64 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
     if command -v black &> /dev/null || [ -f "venv/bin/black" ]; then
         # Black format check
         echo -e "   Running Black format check..."
-        if black --check app/ 2>/dev/null; then
+        BLACK_OUTPUT=$(black --check app/ 2>&1)
+        BLACK_EXIT=$?
+        if [ $BLACK_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Black: PASSED${NC}"
         else
-            echo -e "   ${RED}❌ Black: FAILED (run 'black app/' to fix)${NC}"
+            echo -e "   ${RED}❌ Black: FAILED (run 'cd backend && black app/' to fix)${NC}"
             CHECK_FAILED=1
+            FAILED_CHECKS+=("Backend Black")
+            FAILED_LOGS+=("=== Backend Black Format Errors ===
+$BLACK_OUTPUT
+Fix: cd backend && black app/")
         fi
         
         # isort check
         echo -e "   Running isort check..."
-        if isort --check-only app/ 2>/dev/null; then
+        ISORT_OUTPUT=$(isort --check-only --diff app/ 2>&1)
+        ISORT_EXIT=$?
+        if [ $ISORT_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ isort: PASSED${NC}"
         else
-            echo -e "   ${RED}❌ isort: FAILED (run 'isort app/' to fix)${NC}"
+            echo -e "   ${RED}❌ isort: FAILED (run 'cd backend && isort app/' to fix)${NC}"
             CHECK_FAILED=1
+            FAILED_CHECKS+=("Backend isort")
+            FAILED_LOGS+=("=== Backend isort Errors ===
+$ISORT_OUTPUT
+Fix: cd backend && isort app/")
         fi
         
         # pytest
         echo -e "   Running pytest..."
-        if pytest tests/ --tb=short -q 2>/dev/null; then
-            echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-        else
-            # Check if tests directory exists
-            if [ -d "tests" ]; then
+        if [ -d "tests" ]; then
+            PYTEST_OUTPUT=$(pytest tests/ --tb=short -q 2>&1)
+            PYTEST_EXIT=$?
+            if [ $PYTEST_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            else
                 echo -e "   ${RED}❌ Pytest: FAILED${NC}"
                 CHECK_FAILED=1
-            else
-                echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
+                FAILED_CHECKS+=("Backend Pytest")
+                FAILED_LOGS+=("=== Backend Pytest Errors ===
+$PYTEST_OUTPUT")
             fi
+        else
+            echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
         fi
         
         # Python syntax check
         echo -e "   Running Python syntax check..."
         SYNTAX_ERROR=0
+        SYNTAX_OUTPUT=""
         for pyfile in $(echo "$CHANGED_FILES" | grep "^backend/.*\.py$"); do
             if [ -f "../$pyfile" ]; then
-                if ! python -m py_compile "../$pyfile" 2>/dev/null; then
+                COMPILE_OUTPUT=$(python -m py_compile "../$pyfile" 2>&1)
+                if [ $? -ne 0 ]; then
                     echo -e "   ${RED}   Syntax error in: $pyfile${NC}"
                     SYNTAX_ERROR=1
+                    SYNTAX_OUTPUT="$SYNTAX_OUTPUT
+$pyfile: $COMPILE_OUTPUT"
                 fi
             fi
         done
@@ -281,6 +323,8 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         else
             echo -e "   ${RED}❌ Syntax Check: FAILED${NC}"
             CHECK_FAILED=1
+            FAILED_CHECKS+=("Backend Syntax")
+            FAILED_LOGS+=("=== Backend Python Syntax Errors ===$SYNTAX_OUTPUT")
         fi
     else
         echo -e "   ${YELLOW}⚠️ Skipping backend checks (black/isort not found)${NC}"
@@ -301,15 +345,20 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     
     if command -v pytest &> /dev/null; then
         echo -e "   Running pytest..."
-        if pytest tests/ --tb=short -q 2>/dev/null; then
-            echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-        else
-            if [ -d "tests" ]; then
+        if [ -d "tests" ]; then
+            PYTEST_OUTPUT=$(pytest tests/ --tb=short -q 2>&1)
+            PYTEST_EXIT=$?
+            if [ $PYTEST_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            else
                 echo -e "   ${RED}❌ Pytest: FAILED${NC}"
                 CHECK_FAILED=1
-            else
-                echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
+                FAILED_CHECKS+=("Executor Pytest")
+                FAILED_LOGS+=("=== Executor Pytest Errors ===
+$PYTEST_OUTPUT")
             fi
+        else
+            echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
         fi
     else
         echo -e "   ${YELLOW}⚠️ Skipping executor checks (pytest not found)${NC}"
@@ -326,18 +375,25 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
     echo -e "${BLUE}🔍 Executor Manager Checks:${NC}"
     
     cd executor_manager
-    
     if command -v pytest &> /dev/null; then
         echo -e "   Running pytest..."
-        if pytest tests/ --tb=short -q 2>/dev/null; then
-            echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-        else
-            if [ -d "tests" ]; then
+        if [ -d "tests" ]; then
+            PYTEST_OUTPUT=$(pytest tests/ --tb=short -q 2>&1)
+            PYTEST_EXIT=$?
+            # Check if tests passed (look for "passed" in output and no "failed")
+            if echo "$PYTEST_OUTPUT" | grep -q "passed" && ! echo "$PYTEST_OUTPUT" | grep -q "[0-9]* failed"; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            elif [ $PYTEST_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+            else
                 echo -e "   ${RED}❌ Pytest: FAILED${NC}"
                 CHECK_FAILED=1
-            else
-                echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
+                FAILED_CHECKS+=("Executor Manager Pytest")
+                FAILED_LOGS+=("=== Executor Manager Pytest Errors ===
+$PYTEST_OUTPUT")
             fi
+        else
+            echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
         fi
     else
         echo -e "   ${YELLOW}⚠️ Skipping executor_manager checks (pytest not found)${NC}"
@@ -356,11 +412,25 @@ echo -e "${CYAN}═════════════════════�
 echo ""
 
 if [ $CHECK_FAILED -eq 1 ]; then
-    echo -e "${RED}${BOLD}❌ Some checks failed. Please fix the issues above before pushing.${NC}"
+    echo -e "${RED}${BOLD}❌ Some checks failed. Please fix the issues before pushing.${NC}"
     echo ""
     echo -e "To skip all pre-push checks (not recommended):"
     echo -e "    ${YELLOW}git push --no-verify${NC}"
     echo ""
+    
+    # Output detailed error logs at the end for AI tail monitoring
+    echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+    echo -e "${RED}${BOLD}FAILED CHECKS DETAIL (for AI monitoring):${NC}"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+    echo ""
+    for i in "${!FAILED_CHECKS[@]}"; do
+        echo -e "${RED}❌ ${FAILED_CHECKS[$i]}${NC}"
+        echo -e "${YELLOW}${FAILED_LOGS[$i]}${NC}"
+        echo ""
+    done
+    echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
+    echo -e "${RED}Total failed: ${#FAILED_CHECKS[@]} check(s)${NC}"
+    echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     exit 1
 fi
 
@@ -381,16 +451,24 @@ fi
 if [ ${#DOC_REMINDERS[@]} -gt 0 ] && [ "$AI_VERIFIED" != "1" ]; then
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "${YELLOW}${BOLD}🔒 Documentation Review Required${NC}"
+    echo -e "${RED}${BOLD}🚫 PUSH BLOCKED - Documentation Review Required${NC}"
     echo ""
-    echo -e "Please review the documentation reminders above."
-    echo -e "If you have verified all items, re-run with:"
+    echo -e "${YELLOW}${BOLD}Your code changes may require documentation updates.${NC}"
+    echo -e "${YELLOW}Please review the documentation reminders listed above.${NC}"
     echo ""
-    echo -e "    ${GREEN}${BOLD}AI_VERIFIED=1 git push${NC}"
+    echo -e "${BOLD}You MUST either:${NC}"
     echo ""
-    echo -e "To skip all pre-push checks (not recommended):"
+    echo -e "  ${GREEN}1. Update the relevant documentation${NC}"
+    echo -e "     Then commit the doc changes and push again."
     echo ""
-    echo -e "    ${YELLOW}git push --no-verify${NC}"
+    echo -e "  ${CYAN}2. ONLY if you are CERTAIN that your changes${NC}"
+    echo -e "     ${CYAN}do NOT require ANY documentation updates, use:${NC}"
+    echo ""
+    echo -e "     ${GREEN}${BOLD}AI_VERIFIED=1 git push${NC}"
+    echo ""
+    echo -e "${RED}${BOLD}⚠️  WARNING: Do NOT use AI_VERIFIED=1 to bypass this check${NC}"
+    echo -e "${RED}   unless you have thoroughly verified that NO documentation${NC}"
+    echo -e "${RED}   updates are needed. Incomplete documentation harms users.${NC}"
     echo ""
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo ""

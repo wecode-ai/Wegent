@@ -2,8 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.api.endpoints import auth, users, repository, oidc, quota, admin
-from app.api.endpoints.adapter import models, agents, bots, teams, tasks, executors, dify
+from app.api.endpoints import admin, auth, oidc, quota, repository, users
+from app.api.endpoints.adapter import (
+    agents,
+    bots,
+    dify,
+    executors,
+    models,
+    tasks,
+    teams,
+)
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
 

@@ -5,14 +5,15 @@
 """
 Skill adapter service for managing Skills using kinds table
 """
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
+
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.skill_binary import SkillBinary
-from app.schemas.kind import Skill, SkillList, SkillSpec, SkillStatus, ObjectMeta
+from app.schemas.kind import ObjectMeta, Skill, SkillList, SkillSpec, SkillStatus
 from app.services.skill_service import SkillValidator
 
 
@@ -27,7 +28,7 @@ class SkillKindsService:
         namespace: str,
         file_content: bytes,
         file_name: str,
-        user_id: int
+        user_id: int,
     ) -> Skill:
         """
         Create a new Skill with ZIP package.
@@ -47,18 +48,22 @@ class SkillKindsService:
             HTTPException: If validation fails or name already exists
         """
         # Check duplicate skill name
-        existing = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Skill",
-            Kind.name == name,
-            Kind.namespace == namespace,
-            Kind.is_active == True
-        ).first()
+        existing = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.name == name,
+                Kind.namespace == namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
         if existing:
             raise HTTPException(
                 status_code=400,
-                detail=f"Skill name '{name}' already exists in namespace '{namespace}'"
+                detail=f"Skill name '{name}' already exists in namespace '{namespace}'",
             )
 
         # Validate ZIP package and extract metadata
@@ -68,21 +73,18 @@ class SkillKindsService:
         skill_json = {
             "apiVersion": "agent.wecode.io/v1",
             "kind": "Skill",
-            "metadata": {
-                "name": name,
-                "namespace": namespace
-            },
+            "metadata": {"name": name, "namespace": namespace},
             "spec": {
                 "description": metadata["description"],
                 "version": metadata.get("version"),
                 "author": metadata.get("author"),
-                "tags": metadata.get("tags")
+                "tags": metadata.get("tags"),
             },
             "status": {
                 "state": "Available",
                 "fileSize": metadata["file_size"],
-                "fileHash": metadata["file_hash"]
-            }
+                "fileHash": metadata["file_hash"],
+            },
         }
 
         skill_kind = Kind(
@@ -91,7 +93,7 @@ class SkillKindsService:
             name=name,
             namespace=namespace,
             json=skill_json,
-            is_active=True
+            is_active=True,
         )
         db.add(skill_kind)
         db.flush()  # Get skill_kind.id
@@ -101,39 +103,51 @@ class SkillKindsService:
             kind_id=skill_kind.id,
             binary_data=file_content,
             file_size=metadata["file_size"],
-            file_hash=metadata["file_hash"]
+            file_hash=metadata["file_hash"],
         )
         db.add(skill_binary)
-        
+
         # Build result before commit to avoid lazy loading issues
         result = self._kind_to_skill(skill_kind)
         db.commit()
 
         return result
 
-    def get_skill_by_id(self, db: Session, *, skill_id: int, user_id: int) -> Optional[Skill]:
+    def get_skill_by_id(
+        self, db: Session, *, skill_id: int, user_id: int
+    ) -> Optional[Skill]:
         """Get Skill by ID"""
-        skill_kind = db.query(Kind).filter(
-            Kind.id == skill_id,
-            Kind.user_id == user_id,
-            Kind.kind == "Skill",
-            Kind.is_active == True
-        ).first()
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
         if not skill_kind:
             return None
 
         return self._kind_to_skill(skill_kind)
 
-    def get_skill_by_name(self, db: Session, *, name: str, namespace: str, user_id: int) -> Optional[Skill]:
+    def get_skill_by_name(
+        self, db: Session, *, name: str, namespace: str, user_id: int
+    ) -> Optional[Skill]:
         """Get Skill by name and namespace"""
-        skill_kind = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Skill",
-            Kind.name == name,
-            Kind.namespace == namespace,
-            Kind.is_active == True
-        ).first()
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.name == name,
+                Kind.namespace == namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
         if not skill_kind:
             return None
@@ -147,22 +161,24 @@ class SkillKindsService:
         user_id: int,
         skip: int = 0,
         limit: int = 100,
-        namespace: str = "default"
+        namespace: str = "default",
     ) -> SkillList:
         """List all Skills for a user"""
-        query = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Skill",
-            Kind.namespace == namespace,
-            Kind.is_active == True
-        ).order_by(Kind.created_at.desc())
+        query = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.namespace == namespace,
+                Kind.is_active == True,
+            )
+            .order_by(Kind.created_at.desc())
+        )
 
         total = query.count()
         skills = query.offset(skip).limit(limit).all()
 
-        return SkillList(
-            items=[self._kind_to_skill(skill) for skill in skills]
-        )
+        return SkillList(items=[self._kind_to_skill(skill) for skill in skills])
 
     def update_skill(
         self,
@@ -171,7 +187,7 @@ class SkillKindsService:
         skill_id: int,
         user_id: int,
         file_content: bytes,
-        file_name: str
+        file_name: str,
     ) -> Skill:
         """
         Update Skill ZIP package.
@@ -189,12 +205,16 @@ class SkillKindsService:
         Raises:
             HTTPException: If skill not found or validation fails
         """
-        skill_kind = db.query(Kind).filter(
-            Kind.id == skill_id,
-            Kind.user_id == user_id,
-            Kind.kind == "Skill",
-            Kind.is_active == True
-        ).first()
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
         if not skill_kind:
             raise HTTPException(status_code=404, detail="Skill not found")
@@ -204,22 +224,23 @@ class SkillKindsService:
 
         # Update skill_kind JSON
         skill_json = skill_kind.json
-        skill_json["spec"].update({
-            "description": metadata["description"],
-            "version": metadata.get("version"),
-            "author": metadata.get("author"),
-            "tags": metadata.get("tags")
-        })
-        skill_json["status"].update({
-            "fileSize": metadata["file_size"],
-            "fileHash": metadata["file_hash"]
-        })
+        skill_json["spec"].update(
+            {
+                "description": metadata["description"],
+                "version": metadata.get("version"),
+                "author": metadata.get("author"),
+                "tags": metadata.get("tags"),
+            }
+        )
+        skill_json["status"].update(
+            {"fileSize": metadata["file_size"], "fileHash": metadata["file_hash"]}
+        )
         skill_kind.json = skill_json
 
         # Update or create SkillBinary
-        skill_binary = db.query(SkillBinary).filter(
-            SkillBinary.kind_id == skill_id
-        ).first()
+        skill_binary = (
+            db.query(SkillBinary).filter(SkillBinary.kind_id == skill_id).first()
+        )
 
         if skill_binary:
             skill_binary.binary_data = file_content
@@ -230,7 +251,7 @@ class SkillKindsService:
                 kind_id=skill_id,
                 binary_data=file_content,
                 file_size=metadata["file_size"],
-                file_hash=metadata["file_hash"]
+                file_hash=metadata["file_hash"],
             )
             db.add(skill_binary)
 
@@ -254,12 +275,16 @@ class SkillKindsService:
         Raises:
             HTTPException: If skill not found or is referenced by Ghosts
         """
-        skill_kind = db.query(Kind).filter(
-            Kind.id == skill_id,
-            Kind.user_id == user_id,
-            Kind.kind == "Skill",
-            Kind.is_active == True
-        ).first()
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
         if not skill_kind:
             raise HTTPException(status_code=404, detail="Skill not found")
@@ -267,11 +292,13 @@ class SkillKindsService:
         skill_name = skill_kind.name
 
         # Check if any Ghost references this Skill
-        ghosts = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Ghost",
-            Kind.is_active == True
-        ).all()
+        ghosts = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id, Kind.kind == "Ghost", Kind.is_active == True
+            )
+            .all()
+        )
 
         referenced_ghosts = []
         for ghost in ghosts:
@@ -282,14 +309,16 @@ class SkillKindsService:
         if referenced_ghosts:
             raise HTTPException(
                 status_code=400,
-                detail=f"Cannot delete Skill '{skill_name}' because it is referenced by Ghosts: {', '.join(referenced_ghosts)}"
+                detail=f"Cannot delete Skill '{skill_name}' because it is referenced by Ghosts: {', '.join(referenced_ghosts)}",
             )
 
         # Soft delete
         skill_kind.is_active = False
         db.commit()
 
-    def get_skill_binary(self, db: Session, *, skill_id: int, user_id: int) -> Optional[bytes]:
+    def get_skill_binary(
+        self, db: Session, *, skill_id: int, user_id: int
+    ) -> Optional[bytes]:
         """
         Get Skill ZIP binary data.
 
@@ -302,20 +331,24 @@ class SkillKindsService:
             ZIP file binary content or None if not found
         """
         # Verify ownership
-        skill_kind = db.query(Kind).filter(
-            Kind.id == skill_id,
-            Kind.user_id == user_id,
-            Kind.kind == "Skill",
-            Kind.is_active == True
-        ).first()
+        skill_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == skill_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.is_active == True,
+            )
+            .first()
+        )
 
         if not skill_kind:
             return None
 
         # Get binary data
-        skill_binary = db.query(SkillBinary).filter(
-            SkillBinary.kind_id == skill_id
-        ).first()
+        skill_binary = (
+            db.query(SkillBinary).filter(SkillBinary.kind_id == skill_id).first()
+        )
 
         if not skill_binary:
             return None
@@ -327,14 +360,14 @@ class SkillKindsService:
         metadata = ObjectMeta(
             name=kind.name,
             namespace=kind.namespace,
-            labels={"id": str(kind.id)}  # Store database ID in labels
+            labels={"id": str(kind.id)},  # Store database ID in labels
         )
         return Skill(
             apiVersion=kind.json.get("apiVersion", "agent.wecode.io/v1"),
             kind="Skill",
             metadata=metadata,
             spec=SkillSpec(**kind.json["spec"]),
-            status=SkillStatus(**kind.json.get("status", {}))
+            status=SkillStatus(**kind.json.get("status", {})),
         )
 
 

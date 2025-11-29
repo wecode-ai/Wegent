@@ -4,12 +4,15 @@
 
 from datetime import datetime
 from enum import Enum as PyEnum
-from sqlalchemy import Column, Integer, String, Text, DateTime, JSON, ForeignKey, Boolean
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
+
+from sqlalchemy import JSON, Boolean, Column, DateTime
 from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import ForeignKey, Integer, String, Text
+from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 
 from app.db.base import Base
+
 
 class SubtaskStatus(str, PyEnum):
     PENDING = "PENDING"
@@ -19,9 +22,11 @@ class SubtaskStatus(str, PyEnum):
     CANCELLED = "CANCELLED"
     DELETE = "DELETE"
 
+
 class SubtaskRole(str, PyEnum):
     USER = "USER"
     ASSISTANT = "ASSISTANT"
+
 
 class Subtask(Base):
     __tablename__ = "subtasks"
@@ -39,7 +44,9 @@ class Subtask(Base):
     prompt = Column(Text)
     message_id = Column(Integer, nullable=False, default=1)
     parent_id = Column(Integer, nullable=True)
-    status = Column(SQLEnum(SubtaskStatus), nullable=False, default=SubtaskStatus.PENDING)
+    status = Column(
+        SQLEnum(SubtaskStatus), nullable=False, default=SubtaskStatus.PENDING
+    )
     progress = Column(Integer, nullable=False, default=0)
     result = Column(JSON)
     error_message = Column(Text)
@@ -48,8 +55,10 @@ class Subtask(Base):
     completed_at = Column(DateTime)
 
     __table_args__ = (
-        {'sqlite_autoincrement': True,
-         'mysql_engine': 'InnoDB',
-         'mysql_charset': 'utf8mb4',
-         'mysql_collate': 'utf8mb4_unicode_ci'},
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
     )
