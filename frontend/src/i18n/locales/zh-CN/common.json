@@ -478,6 +478,7 @@
     "title": "模型管理",
     "description": "管理您的 AI 模型配置",
     "public": "公共",
+    "manage": "模型设置",
     "create": "创建模型",
     "edit": "编辑模型",
     "delete": "删除模型",

@@ -5,8 +5,9 @@
 'use client';
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { CpuChipIcon } from '@heroicons/react/24/outline';
+import { CpuChipIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { Check } from 'lucide-react';
+import { useRouter } from 'next/navigation';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Team, BotSummary } from '@/types/api';
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
@@ -14,6 +15,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { Tag } from '@/components/ui/tag';
 import { cn } from '@/lib/utils';
+import { paths } from '@/config/paths';
 import {
   Command,
   CommandEmpty,
@@ -99,6 +101,7 @@ export default function ModelSelector({
   isLoading: externalLoading,
 }: ModelSelectorProps) {
   const { t } = useTranslation('common');
+  const router = useRouter();
   const isMobile = useMediaQuery('(max-width: 767px)');
   const [models, setModels] = useState<Model[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -410,6 +413,22 @@ export default function ModelSelector({
                     </label>
                   </div>
                 )}
+                {/* Model Settings Link */}
+                <div
+                  className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
+                  onClick={() => router.push(paths.settings.models.getHref())}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      router.push(paths.settings.models.getHref());
+                    }
+                  }}
+                >
+                  <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                  <span className="font-medium group-hover:text-text-primary">{t('models.manage', '模型设置')}</span>
+                </div>
               </Command>
             </PopoverContent>
           </Popover>
