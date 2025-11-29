@@ -97,6 +97,10 @@ def clone_repo_with_token(project_url, branch, project_path, username, token):
         logger.info(
             f"git clone url: {project_url}, code: {result.returncode}"
         )
+        
+        # Setup git hooks after successful clone
+        setup_git_hooks(project_path)
+        
         return True, None
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else str(e)
@@ -150,6 +154,45 @@ def get_project_path_from_url(url):
         path = path[1:]
 
     return path
+
+
+def setup_git_hooks(repo_path):
+    """
+    Setup git hooks for a repository by configuring core.hooksPath
+    to use the .githooks directory if it exists in the repository.
+    
+    This enables pre-push quality checks automatically after cloning.
+    
+    Args:
+        repo_path: Path to the git repository
+        
+    Returns:
+        Tuple (success, message):
+        - On success: (True, None)
+        - On failure: (False, error_message)
+    """
+    import os
+    
+    try:
+        # Check if .githooks directory exists in the repository
+        githooks_path = os.path.join(repo_path, ".githooks")
+        if not os.path.isdir(githooks_path):
+            logger.debug(f"No .githooks directory found in {repo_path}, skipping hooks setup")
+            return True, None
+        
+        # Configure git to use .githooks directory
+        cmd = ["git", "config", "core.hooksPath", ".githooks"]
+        subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
+        
+        logger.info(f"Git hooks configured successfully in {repo_path}: core.hooksPath=.githooks")
+        return True, None
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr if e.stderr else str(e)
+        logger.error(f"Failed to setup git hooks: {error_msg}")
+        return False, error_msg
+    except Exception as e:
+        logger.error(f"Failed to setup git hooks with unexpected error: {e}")
+        return False, str(e)
 
 
 def set_git_config(repo_path, name, email):

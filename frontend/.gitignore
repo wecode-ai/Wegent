@@ -3,3 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 .next/
+
+# Playwright
+e2e/.auth/
+playwright-report/
+test-results/
+e2e-results.json
