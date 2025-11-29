@@ -209,10 +209,132 @@ jobs:
           flags: frontend
           name: frontend-coverage
 
+  test-wectl:
+    name: Test wectl CLI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache Python dependencies
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-wectl-${{ hashFiles('wectl/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-wectl-
+
+      - name: Install dependencies
+        working-directory: ./wectl
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-cov pytest-mock
+
+      - name: Run wectl unit tests
+        working-directory: ./wectl
+        run: |
+          pytest tests/ --ignore=tests/test_integration.py --cov=wectl --cov-report=xml --cov-report=term-missing -v
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          files: ./wectl/coverage.xml
+          flags: wectl
+          name: wectl-coverage
+
+  test-wectl-integration:
+    name: Test wectl CLI Integration
+    runs-on: ubuntu-latest
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test123
+          MYSQL_DATABASE: task_manager
+          MYSQL_USER: task_user
+          MYSQL_PASSWORD: task_pass
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost -u root -ptest123"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+          --health-start-period=30s
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start backend service
+        working-directory: ./backend
+        env:
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "True"
+          DATABASE_URL: mysql+pymysql://task_user:task_pass@localhost:3306/task_manager
+          SECRET_KEY: test-secret-key-for-ci
+          ALGORITHM: HS256
+          ACCESS_TOKEN_EXPIRE_MINUTES: 1440
+          REDIS_URL: redis://localhost:6379/0
+          INIT_DATA_ENABLED: "False"
+        run: |
+          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          echo "Waiting for backend to start..."
+          for i in {1..30}; do
+            if curl -s http://localhost:8000/api/health > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              break
+            fi
+            echo "Waiting... ($i/30)"
+            sleep 2
+          done
+
+      - name: Install wectl dependencies
+        working-directory: ./wectl
+        run: |
+          pip install -r requirements.txt
+          pip install pytest pytest-cov
+
+      - name: Run wectl integration tests
+        working-directory: ./wectl
+        env:
+          WECTL_TEST_SERVER: http://localhost:8000
+        run: |
+          pytest tests/test_integration.py --integration -v
+
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-frontend]
+    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-frontend, test-wectl, test-wectl-integration]
     if: always()
 
     steps:
@@ -223,7 +345,9 @@ jobs:
              [[ "${{ needs.test-executor.result }}" == "failure" ]] || \
              [[ "${{ needs.test-executor-manager.result }}" == "failure" ]] || \
              [[ "${{ needs.test-shared.result }}" == "failure" ]] || \
-             [[ "${{ needs.test-frontend.result }}" == "failure" ]]; then
+             [[ "${{ needs.test-frontend.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-wectl.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-wectl-integration.result }}" == "failure" ]]; then
             echo "One or more test jobs failed"
             exit 1
           fi
