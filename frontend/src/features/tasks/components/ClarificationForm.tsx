@@ -301,7 +301,7 @@ export default function ClarificationForm({
       <div className="flex items-center gap-2 mb-4">
         <span className="text-lg">🤔</span>
         <h3 className="text-base font-semibold text-purple-400">
-          {t('clarification.title') || 'PM Battle - Requirement Clarification'}
+          {t('clarification.title') || 'Spec Clarification'}
         </h3>
       </div>
 

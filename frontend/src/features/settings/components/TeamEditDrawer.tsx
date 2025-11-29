@@ -14,9 +14,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { teamApis } from '@/apis/team';
 import { useTranslation } from 'react-i18next';
 import { Info, Loader2 } from 'lucide-react';
-
 import { Bot, Team, TeamBot } from '@/types/api';
-import BotEdit from './BotEdit';
+import BotEdit, { AgentType } from './BotEdit';
 
 interface TeamEditDrawerProps {
   bots: Bot[];
@@ -36,6 +35,8 @@ interface TeamEditDrawerProps {
   leaderBotId?: number | null;
   unsavedPrompts?: Record<string, string>;
   setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+  /** List of allowed agent types for filtering when creating/editing bots */
+  allowedAgents?: AgentType[];
 }
 
 function PromptEdit({
@@ -355,6 +356,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
                 setVisible(false);
               }}
               toast={toast}
+              allowedAgents={props.allowedAgents}
             />
           )}
           {mode === 'prompt' && (

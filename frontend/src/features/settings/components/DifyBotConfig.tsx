@@ -22,6 +22,8 @@ interface DifyBotConfigProps {
   agentConfig: string;
   onAgentConfigChange: (config: string) => void;
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  /** Whether the component is in read-only mode */
+  readOnly?: boolean;
 }
 
 interface DifyAppInfo {
@@ -43,6 +45,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
   agentConfig,
   onAgentConfigChange,
   toast,
+  readOnly = false,
 }) => {
   const { t } = useTranslation('common');
   const [difyApiKey, setDifyApiKey] = useState<string>('');
@@ -206,9 +209,13 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               id="dify-api-key"
               type="password"
               value={difyApiKey}
-              onChange={e => setDifyApiKey(e.target.value)}
+              onChange={e => {
+                if (readOnly) return;
+                setDifyApiKey(e.target.value);
+              }}
+              disabled={readOnly}
               placeholder="app-xxxxxxxxxxxxxxxxxxxxxxxx"
-              className="w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base font-mono"
+              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base font-mono ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
             <p className="text-xs text-text-muted mt-1">
               {t('bot.dify_api_key_hint') ||
@@ -225,9 +232,13 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
               id="dify-base-url"
               type="url"
               value={difyBaseUrl}
-              onChange={e => setDifyBaseUrl(e.target.value)}
+              onChange={e => {
+                if (readOnly) return;
+                setDifyBaseUrl(e.target.value);
+              }}
+              disabled={readOnly}
               placeholder="https://api.dify.ai"
-              className="w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base font-mono"
+              className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base font-mono ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
             <p className="text-xs text-text-muted mt-1">
               {t('bot.dify_base_url_hint') ||
@@ -239,7 +250,7 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
           <Button
             size="default"
             onClick={validateApiKey}
-            disabled={isValidating || !difyApiKey || !difyBaseUrl}
+            disabled={isValidating || !difyApiKey || !difyBaseUrl || readOnly}
             className="w-full"
           >
             {isValidating ? (
@@ -324,10 +335,15 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                               <select
                                 id={`param-${field.variable}`}
                                 value={difyParams[field.variable] || ''}
-                                onChange={e =>
-                                  setDifyParams({ ...difyParams, [field.variable]: e.target.value })
-                                }
-                                className="w-full px-3 py-2 bg-base rounded-md text-text-primary border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm"
+                                onChange={e => {
+                                  if (readOnly) return;
+                                  setDifyParams({
+                                    ...difyParams,
+                                    [field.variable]: e.target.value,
+                                  });
+                                }}
+                                disabled={readOnly}
+                                className={`w-full px-3 py-2 bg-base rounded-md text-text-primary border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                               >
                                 <option value="">Select...</option>
                                 {field.options.map(option => (
@@ -340,23 +356,33 @@ const DifyBotConfig: React.FC<DifyBotConfigProps> = ({
                               <textarea
                                 id={`param-${field.variable}`}
                                 value={difyParams[field.variable] || ''}
-                                onChange={e =>
-                                  setDifyParams({ ...difyParams, [field.variable]: e.target.value })
-                                }
+                                onChange={e => {
+                                  if (readOnly) return;
+                                  setDifyParams({
+                                    ...difyParams,
+                                    [field.variable]: e.target.value,
+                                  });
+                                }}
+                                disabled={readOnly}
                                 placeholder={field.label?.en || field.label?.['en-US'] || ''}
                                 rows={field.type === 'paragraph' ? 4 : 2}
-                                className="w-full px-3 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm resize-none"
+                                className={`w-full px-3 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm resize-none ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                               />
                             ) : (
                               <input
                                 id={`param-${field.variable}`}
                                 type="text"
                                 value={difyParams[field.variable] || ''}
-                                onChange={e =>
-                                  setDifyParams({ ...difyParams, [field.variable]: e.target.value })
-                                }
+                                onChange={e => {
+                                  if (readOnly) return;
+                                  setDifyParams({
+                                    ...difyParams,
+                                    [field.variable]: e.target.value,
+                                  });
+                                }}
+                                disabled={readOnly}
                                 placeholder={field.label?.en || field.label?.['en-US'] || ''}
-                                className="w-full px-3 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm"
+                                className={`w-full px-3 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted border border-border focus:outline-none focus:ring-2 focus:ring-primary/40 text-sm ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                               />
                             )}
                           </div>

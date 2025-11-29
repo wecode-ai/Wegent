@@ -10,7 +10,7 @@
 Main entry module, starts the task scheduling service and FastAPI server
 Supports two startup modes:
 1. Run directly: python main.py
-2. Use uvicorn: uvicorn main:app --host 0.0.0.0 --port 8080
+2. Use uvicorn: uvicorn main:app --host 0.0.0.0 --port 8001
 """
 
 import threading
@@ -73,7 +73,7 @@ def main():
     try:
         # Start the FastAPI server
         logger.info("Starting FastAPI server...")
-        uvicorn.run(app, host="0.0.0.0", port=8080)
+        uvicorn.run(app, host="0.0.0.0", port=8001)
     except Exception as e:
         logger.error(f"Service startup failed: {e}")
         return 1

@@ -187,6 +187,20 @@ status:
 | `prompt` | string | Yes | Detailed task description and requirements |
 | `teamRef` | object | Yes | Team reference executing the task |
 | `workspaceRef` | object | Yes | Workspace reference |
+| `model_id` | string | No | Model name to override Bot's default model |
+| `force_override_bot_model` | boolean | No | Force use of specified model even if Bot has configured model |
+
+### Per-Task Model Selection
+
+When creating a task through the Web interface, you can select a different model:
+
+1. **Model Selector**: In the chat input area, use the model dropdown to select from available models
+2. **Force Override**: Enable this option to ensure your selected model is used regardless of Bot configuration
+
+**Use cases**:
+- Test different models without modifying Bot configuration
+- Use a more powerful model for complex one-off tasks
+- Use a cheaper/faster model for simple queries
 
 #### status Section
 

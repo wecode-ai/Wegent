@@ -45,6 +45,7 @@ module.exports = {
         ],
       },
       colors: {
+        // Custom project colors
         base: withOpacity('--color-bg-base'),
         surface: withOpacity('--color-bg-surface'),
         muted: withOpacity('--color-bg-muted'),
@@ -70,6 +71,28 @@ module.exports = {
           DEFAULT: withOpacity('--color-tooltip'),
           foreground: withOpacity('--color-tooltip-foreground'),
         },
+        // shadcn/ui standard color aliases (mapped to project colors)
+        background: withOpacity('--color-bg-base'),
+        foreground: withOpacity('--color-text-primary'),
+        card: {
+          DEFAULT: withOpacity('--color-bg-surface'),
+          foreground: withOpacity('--color-text-primary'),
+        },
+        secondary: {
+          DEFAULT: withOpacity('--color-bg-muted'),
+          foreground: withOpacity('--color-text-secondary'),
+        },
+        accent: {
+          DEFAULT: withOpacity('--color-bg-hover'),
+          foreground: withOpacity('--color-text-primary'),
+        },
+        destructive: {
+          DEFAULT: withOpacity('--color-error'),
+          foreground: withOpacity('--color-text-inverted'),
+        },
+        'muted-foreground': withOpacity('--color-text-muted'),
+        input: withOpacity('--color-border'),
+        ring: withOpacity('--color-focus-ring'),
       },
       borderRadius: {
         lg: 'var(--radius)',

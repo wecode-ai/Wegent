@@ -1,0 +1,15 @@
+#!/usr/bin/env sh
+
+# Navigate to project root
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+cd "$PROJECT_ROOT" || exit 1
+
+# Run AI push gate script
+if [ -f "scripts/hooks/ai-push-gate.sh" ]; then
+    bash scripts/hooks/ai-push-gate.sh
+    exit $?
+fi
+
+# If script doesn't exist, just pass
+echo "⚠️ scripts/hooks/ai-push-gate.sh not found, skipping checks."
+exit 0

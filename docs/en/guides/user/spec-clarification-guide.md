@@ -1,8 +1,8 @@
-# PM Battle Mode User Guide
+# Spec Clarification User Guide
 
 ## Overview
 
-"PM Battle" is Wegent's interactive requirement clarification mode that helps users refine vague requirements into clear development tasks through structured Q&A.
+Spec Clarification is Wegent's interactive requirement specification clarification mode that helps users refine vague requirements into clear development tasks through structured Q&A.
 
 ## Quick Start
 
@@ -10,14 +10,14 @@
 
 On first startup, the system automatically creates the following entities:
 
-- **pm-battle-ghost**: Requirement clarification system prompt
-- **pm-battle-bot**: Requirement clarification Bot
-- **pm-battle-team**: Requirement clarification Team
+- **spec-clarification-ghost**: Requirement clarification system prompt
+- **spec-clarification-bot**: Requirement clarification Bot
+- **spec-clarification-team**: Requirement clarification Team
 
 ### 2. Select Team in Frontend
 
 1. Navigate to the Code page
-2. Select **pm-battle-team** in the Team selector
+2. Select **spec-clarification-team** in the Team selector
 3. Enter a vague requirement, e.g., "I want to add a user login feature"
 
 ### 3. Interaction Flow
@@ -61,7 +61,7 @@ MessagesArea.tsx
 ```mermaid
 sequenceDiagram
     User->>+Frontend: Submit vague requirement
-    Frontend->>+Backend: Send message to pm-battle-bot
+    Frontend->>+Backend: Send message to spec-clarification-bot
     Backend->>+Agent: Call requirement clarification Agent
     Agent-->>-Backend: Return clarification questions JSON
     Backend-->>-Frontend: Return subtask result
@@ -163,15 +163,15 @@ The frontend supports parsing both Markdown format and legacy JSON format, ensur
 
 ### Modifying system_prompt
 
-To adjust the style or logic of clarification questions, modify the `systemPrompt` of `pm-battle-ghost`:
+To adjust the style or logic of clarification questions, modify the `systemPrompt` of `spec-clarification-ghost`:
 
-1. Find "pm-battle-ghost" in the settings page
+1. Find "spec-clarification-ghost" in the settings page
 2. Edit the system_prompt
 3. Save changes
 
 ### Creating New Requirement Clarification Bots
 
-1. Create a new Ghost, referencing the system_prompt structure of `pm-battle-ghost`
+1. Create a new Ghost, referencing the system_prompt structure of `spec-clarification-ghost`
 2. Create a new Bot, referencing the new Ghost
 3. Create a new Team, referencing the new Bot
 4. Select the new Team in the frontend
@@ -200,7 +200,7 @@ To adjust the style or logic of clarification questions, modify the `systemPromp
 ### Frontend Usage
 
 1. **Choose Appropriate Team**:
-   - Requirement clarification phase: Select `pm-battle-team`
+   - Requirement clarification phase: Select `spec-clarification-team`
    - Code generation phase: Switch to `dev-team`
 
 2. **Answering Tips**:

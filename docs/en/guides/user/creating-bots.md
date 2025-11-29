@@ -40,7 +40,7 @@ Bot = Ghost (soul) + Shell (container) + Model (AI model)
 | Component | Description | Example |
 |-----------|-------------|---------|
 | **Ghost** | Defines agent's personality and capabilities | "Frontend development expert" |
-| **Shell** | Runtime environment | ClaudeCode, Agno |
+| **Shell** | Runtime environment | ClaudeCode, Agno, Dify |
 | **Model** | AI model configuration | Claude Sonnet 4, GPT-4 |
 
 ### Bot vs Ghost
@@ -103,6 +103,7 @@ Clarify what this Bot will be used for:
 **Choosing Shell**:
 - ClaudeCode: Suitable for code development tasks
 - Agno: Suitable for dialogue and interaction tasks
+- Dify: Suitable for external API integration with Dify platform (supports chat, workflow, chatflow, agent-chat modes)
 
 **Choosing Model**:
 - Sonnet: Balance performance and cost
@@ -158,7 +159,32 @@ status:
 |-------|------|----------|-------------|
 | `ghostRef` | object | Yes | Ghost resource reference |
 | `shellRef` | object | Yes | Shell resource reference |
-| `modelRef` | object | Yes | Model resource reference |
+| `modelRef` | object | No | Model resource reference (optional, can use bind_model instead) |
+
+#### Model Binding Methods
+
+There are two ways to bind a model to a Bot:
+
+**Method 1: Using modelRef (Legacy)**
+```yaml
+spec:
+  modelRef:
+    name: <model-name>
+    namespace: default
+```
+
+**Method 2: Using bind_model in agent_config (Recommended)**
+```yaml
+spec:
+  agent_config:
+    bind_model: "my-custom-model"
+    bind_model_type: "user"  # Optional: 'public' or 'user'
+```
+
+The `bind_model` approach offers more flexibility:
+- Reference models by name without full YAML structure
+- Optionally specify model type to avoid naming conflicts
+- System auto-detects model type if not specified (user models first, then public)
 
 #### Reference Object Format
 
@@ -424,6 +450,9 @@ shellRef: ClaudeCode
 
 # Dialogue interaction tasks
 shellRef: Agno
+
+# External API integration with Dify
+shellRef: Dify
 ```
 
 ### 3. Reuse Strategy

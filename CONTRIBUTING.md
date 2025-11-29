@@ -153,10 +153,55 @@ git checkout -b feature/your-feature-name
 ```bash
 git add .
 git commit -m "feat: add new feature description"
-git push origin feature/your-feature-name
 ```
 
-### 4. Create Pull Request
+### 4. Push Code (Quality Checks Run Here)
+
+#### Pre-push Setup (Required)
+
+Wegent uses pre-commit hooks to ensure code quality before pushing. This is especially important for AI coding agents (Claude Code, Cursor, etc.).
+
+```bash
+# Install pre-commit
+pip install pre-commit
+
+# Install pre-push hooks
+pre-commit install --hook-type pre-push
+```
+
+#### Pre-push Quality Checks
+
+When pushing code, pre-commit automatically runs quality checks:
+
+- Lint & Format (Black, isort, ESLint)
+- Type Check (TypeScript, mypy)
+- Unit Tests (only for changed modules)
+- Build Check (syntax validation)
+- Documentation update reminders
+
+```bash
+# Push to remote (triggers quality checks)
+git push origin feature/your-feature-name
+
+# If documentation reminders shown, verify and push
+AI_VERIFIED=1 git push origin feature/your-feature-name
+
+# Skip checks if needed (not recommended)
+git push --no-verify origin feature/your-feature-name
+```
+
+#### Manual Quality Checks
+
+```bash
+# Run all pre-push checks manually
+pre-commit run --all-files --hook-stage pre-push
+
+# Run specific checks
+pre-commit run black --all-files
+pre-commit run eslint-frontend --all-files
+```
+
+### 5. Create Pull Request
 
 - Fill out complete PR description
 - Link related issues

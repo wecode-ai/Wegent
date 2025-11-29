@@ -64,6 +64,13 @@ def update_bot(
     db: Session = Depends(get_db)
 ):
     """Update Bot information"""
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(f"[DEBUG] update_bot called with bot_id={bot_id}")
+    logger.info(f"[DEBUG] bot_update raw: {bot_update}")
+    logger.info(f"[DEBUG] bot_update.agent_config: {bot_update.agent_config}")
+    logger.info(f"[DEBUG] bot_update.model_dump(exclude_unset=True): {bot_update.model_dump(exclude_unset=True)}")
+    
     bot_dict = bot_kinds_service.update_with_user(
         db=db,
         bot_id=bot_id,

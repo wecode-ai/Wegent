@@ -213,6 +213,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         "taskType": obj_in.task_type, # default: chat, code
                         "autoDeleteExecutor": obj_in.auto_delete_executor, # default: false, true
                         "source": obj_in.source,
+                        # Model selection fields
+                        **({"modelId": obj_in.model_id} if obj_in.model_id else {}),
+                        **({"forceOverrideBotModel": "true"} if obj_in.force_override_bot_model else {}),
                     }
                 },
                 "apiVersion": "agent.wecode.io/v1"
@@ -508,17 +511,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     system_prompt = ghost_crd.spec.systemPrompt
                     mcp_servers = ghost_crd.spec.mcpServers or {}
                 
-                # Get Model data from kinds table
-                model = db.query(Kind).filter(
-                    Kind.user_id == user_id,
-                    Kind.kind == "Model",
-                    Kind.name == bot_crd.spec.modelRef.name,
-                    Kind.namespace == bot_crd.spec.modelRef.namespace,
-                    Kind.is_active == True
-                ).first()
-                if model and model.json:
-                    model_crd = Model.model_validate(model.json)
-                    agent_config = model_crd.spec.modelConfig
+                # Get Model data from kinds table (modelRef is optional)
+                if bot_crd.spec.modelRef:
+                    model = db.query(Kind).filter(
+                        Kind.user_id == user_id,
+                        Kind.kind == "Model",
+                        Kind.name == bot_crd.spec.modelRef.name,
+                        Kind.namespace == bot_crd.spec.modelRef.namespace,
+                        Kind.is_active == True
+                    ).first()
+                    if model and model.json:
+                        model_crd = Model.model_validate(model.json)
+                        agent_config = model_crd.spec.modelConfig
                 
                 # Get Shell data from kinds table
                 shell = db.query(Kind).filter(
