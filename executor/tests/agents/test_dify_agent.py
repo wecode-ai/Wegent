@@ -12,6 +12,20 @@ from shared.status import TaskStatus
 class TestDifyAgent:
     """Test cases for DifyAgent"""
 
+    @pytest.fixture(autouse=True)
+    def mock_requests_get(self):
+        """
+        Mock requests.get to prevent actual HTTP calls during DifyAgent initialization.
+        DifyAgent.__init__ calls _get_app_mode() which makes a GET request to /v1/info.
+        Without this mock, tests would make real HTTP requests causing long timeouts.
+        """
+        with patch('executor.agents.dify.dify_agent.requests.get') as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"mode": "chat"}
+            mock_get.return_value = mock_response
+            yield mock_get
+
     @pytest.fixture
     def task_data(self):
         """Sample task data for testing"""
