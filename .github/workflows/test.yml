@@ -295,6 +295,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Install shared module
+        run: |
+          pip install ./shared || pip install cryptography
+
       - name: Start backend service
         working-directory: ./backend
         env:
@@ -306,6 +310,7 @@ jobs:
           ACCESS_TOKEN_EXPIRE_MINUTES: 1440
           REDIS_URL: redis://localhost:6379/0
           INIT_DATA_ENABLED: "False"
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           uvicorn app.main:app --host 0.0.0.0 --port 8000 &
           echo "Waiting for backend to start..."

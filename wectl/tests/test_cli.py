@@ -2,7 +2,7 @@
 
 import pytest
 from click.testing import CliRunner
-from unittest.mock import patch, Mock
+from unittest.mock import patch, MagicMock
 
 from wectl.cli import cli
 
@@ -15,8 +15,20 @@ def runner():
 
 @pytest.fixture
 def mock_client():
-    """Create mock client."""
-    with patch("wectl.cli.WegentClient") as mock:
+    """Create mock client that is properly injected."""
+    mock = MagicMock()
+    # Properly mock normalize_kind to return valid kinds
+    valid_kinds = ['ghost', 'model', 'shell', 'bot', 'team', 'workspace', 'task', 'skill']
+    def normalize(k):
+        k = k.lower()
+        if k.endswith('s') and k[:-1] in valid_kinds:
+            return k[:-1]
+        if k in valid_kinds:
+            return k
+        raise ValueError(f"Invalid kind: {k}")
+    mock.normalize_kind.side_effect = normalize
+    mock.list_resources.return_value = []
+    with patch("wectl.cli.WegentClient", return_value=mock):
         yield mock
 
 
@@ -55,23 +67,17 @@ class TestGetCommand:
         assert result.exit_code == 0
         assert "Get resources" in result.output
 
-    @patch("wectl.commands.get.WegentClient")
-    def test_get_list(self, mock_client_class, runner):
+    def test_get_list(self, runner, mock_client):
         """Test get list command."""
-        mock_client = Mock()
-        mock_client.normalize_kind.return_value = "ghost"
         mock_client.list_resources.return_value = [
             {
                 "metadata": {"name": "ghost1", "namespace": "default"},
                 "status": {"state": "Available"},
             }
         ]
-        mock_client_class.return_value = mock_client
-
-        with patch("wectl.cli.WegentClient", return_value=mock_client):
-            result = runner.invoke(cli, ["get", "ghosts"])
-            # Should succeed or give reasonable output
-            assert "ghost1" in result.output or result.exit_code == 0
+        result = runner.invoke(cli, ["get", "ghosts"])
+        assert result.exit_code == 0
+        assert "ghost1" in result.output
 
 
 class TestConfigCommand:
@@ -94,3 +100,9 @@ class TestCreateCommand:
         assert result.exit_code == 0
         assert "Ghost" in result.output
         assert "test-ghost" in result.output
+
+    def test_create_invalid_kind(self, runner, mock_client):
+        """Test create with invalid kind."""
+        result = runner.invoke(cli, ["create", "invalidkind", "test", "--dry-run"])
+        assert result.exit_code == 1
+        assert "Invalid kind" in result.output
