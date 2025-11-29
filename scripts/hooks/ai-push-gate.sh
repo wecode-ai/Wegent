@@ -29,30 +29,39 @@ NC='\033[0m' # No Color
 # Get the commits being pushed
 # When run by pre-commit, stdin may not be available, so we detect changes differently
 get_changed_files() {
-    # First try: read from stdin (direct pre-push hook)
-    if [ -t 0 ]; then
-        # No stdin available (pre-commit environment)
-        # Compare current branch with its upstream or origin/main
-        local current_branch=$(git rev-parse --abbrev-ref HEAD)
-        local upstream=$(git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "origin/main")
-        git diff --name-only "$upstream"...HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD 2>/dev/null || true
-    else
-        # Read from stdin (direct git pre-push hook)
-        while read local_ref local_sha remote_ref remote_sha; do
-            if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
-                # Branch is being deleted
-                return
-            fi
+    local files=""
 
-            if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-                # New branch, compare with default branch
-                git diff --name-only "origin/main...$local_sha" 2>/dev/null || true
-            else
-                # Existing branch, compare with remote
-                git diff --name-only "$remote_sha...$local_sha" 2>/dev/null || true
+    # Try to read from stdin first (direct pre-push hook provides ref info)
+    if ! [ -t 0 ]; then
+        # stdin is available (piped), try to read pre-push hook format
+        while read local_ref local_sha remote_ref remote_sha 2>/dev/null; do
+            if [ -n "$local_sha" ] && [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
+                if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+                    # New branch, compare with default branch
+                    files=$(git diff --name-only "origin/main...$local_sha" 2>/dev/null || true)
+                else
+                    # Existing branch, compare with remote
+                    files=$(git diff --name-only "$remote_sha...$local_sha" 2>/dev/null || true)
+                fi
+                if [ -n "$files" ]; then
+                    echo "$files"
+                    return
+                fi
             fi
         done
     fi
+
+    # Fallback: Compare current branch with its upstream or origin/main
+    local upstream=$(git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "origin/main")
+    files=$(git diff --name-only "$upstream"...HEAD 2>/dev/null || true)
+
+    if [ -n "$files" ]; then
+        echo "$files"
+        return
+    fi
+
+    # Last resort: compare with last commit
+    git diff --name-only HEAD~1 HEAD 2>/dev/null || true
 }
 
 # Get list of changed files in the commits being pushed
@@ -86,20 +95,20 @@ echo -e "   Total: $FILE_COUNT file(s)"
 echo ""
 
 # Count by module
-BACKEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^backend/" || echo "0")
-FRONTEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^frontend/" || echo "0")
-EXECUTOR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor/" || echo "0")
-EXECUTOR_MGR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor_manager/" || echo "0")
-SHARED_COUNT=$(echo "$CHANGED_FILES" | grep -c "^shared/" || echo "0")
-OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|shared)/" || echo "0")
+BACKEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^backend/" 2>/dev/null || echo 0)
+FRONTEND_COUNT=$(echo "$CHANGED_FILES" | grep -c "^frontend/" 2>/dev/null || echo 0)
+EXECUTOR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor/" 2>/dev/null || echo 0)
+EXECUTOR_MGR_COUNT=$(echo "$CHANGED_FILES" | grep -c "^executor_manager/" 2>/dev/null || echo 0)
+SHARED_COUNT=$(echo "$CHANGED_FILES" | grep -c "^shared/" 2>/dev/null || echo 0)
+OTHER_COUNT=$(echo "$CHANGED_FILES" | grep -cvE "^(backend|frontend|executor|executor_manager|shared)/" 2>/dev/null || echo 0)
 
 echo -e "   ${BLUE}Modules affected:${NC}"
-[ "$BACKEND_COUNT" != "0" ] && echo -e "   - Backend: $BACKEND_COUNT file(s)"
-[ "$FRONTEND_COUNT" != "0" ] && echo -e "   - Frontend: $FRONTEND_COUNT file(s)"
-[ "$EXECUTOR_COUNT" != "0" ] && echo -e "   - Executor: $EXECUTOR_COUNT file(s)"
-[ "$EXECUTOR_MGR_COUNT" != "0" ] && echo -e "   - Executor Manager: $EXECUTOR_MGR_COUNT file(s)"
-[ "$SHARED_COUNT" != "0" ] && echo -e "   - Shared: $SHARED_COUNT file(s)"
-[ "$OTHER_COUNT" != "0" ] && echo -e "   - Other: $OTHER_COUNT file(s)"
+[ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Backend: $BACKEND_COUNT file(s)"
+[ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Frontend: $FRONTEND_COUNT file(s)"
+[ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Executor: $EXECUTOR_COUNT file(s)"
+[ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Executor Manager: $EXECUTOR_MGR_COUNT file(s)"
+[ "$SHARED_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Shared: $SHARED_COUNT file(s)"
+[ "$OTHER_COUNT" -gt 0 ] 2>/dev/null && echo -e "   - Other: $OTHER_COUNT file(s)"
 echo ""
 
 # -----------------------------------------------------------------------------
