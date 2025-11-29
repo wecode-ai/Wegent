@@ -1,0 +1,156 @@
+name: E2E Tests
+
+on:
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+env:
+  # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
+  NEXT_PUBLIC_API_URL: http://localhost:8000
+  # Use pymysql driver (installed via requirements.txt)
+  DATABASE_URL: mysql+pymysql://root:123456@localhost:3306/task_manager
+  REDIS_URL: redis://localhost:6379
+  ENVIRONMENT: development
+  # Enable auto migration on backend startup
+  DB_AUTO_MIGRATE: 'True'
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: '123456'
+          MYSQL_DATABASE: task_manager
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h localhost"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install backend dependencies
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build frontend
+        working-directory: frontend
+        env:
+          # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npm run build
+
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install chromium --with-deps
+
+      - name: Start backend server
+        working-directory: backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:123456@127.0.0.1:3306/task_manager
+          REDIS_URL: redis://127.0.0.1:6379
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: 'True'
+          INIT_DATA_ENABLED: 'True'
+          INIT_DATA_DIR: ${{ github.workspace }}/backend/init_data
+          # Add project root to PYTHONPATH so 'shared' module can be imported
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          echo "Backend server starting (with auto migration and YAML init enabled)..."
+
+      - name: Start frontend server
+        working-directory: frontend
+        env:
+          # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: |
+          npm start &
+          echo "Frontend server starting..."
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for backend..."
+          for i in {1..60}; do
+            if curl -s http://localhost:8000/api/health > /dev/null 2>&1 || curl -s http://localhost:8000/ > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              break
+            fi
+            echo "Waiting for backend... ($i/60)"
+            sleep 2
+          done
+
+          echo "Waiting for frontend..."
+          for i in {1..30}; do
+            if curl -s http://localhost:3000 > /dev/null 2>&1; then
+              echo "Frontend is ready!"
+              break
+            fi
+            echo "Waiting for frontend... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run E2E tests
+        working-directory: frontend
+        env:
+          E2E_BASE_URL: http://localhost:3000
+          CI: true
+        run: npm run e2e
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results
+          path: |
+            frontend/e2e-results.json
+            frontend/playwright-report/
+            frontend/test-results/
+          retention-days: 7
+
+      - name: Upload failure screenshots
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-failure-screenshots
+          path: frontend/test-results/**/*.png
+          retention-days: 7
