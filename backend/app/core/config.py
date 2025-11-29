@@ -89,6 +89,13 @@ class Settings(BaseSettings):
     WEBHOOK_HEADERS: str = ""
     WEBHOOK_TIMEOUT: int = 30
 
+    # CI Monitor configuration
+    CI_MONITOR_ENABLED: bool = True
+    CI_MAX_RETRIES: int = 5
+    CI_CHECK_TYPES: str = "test,lint,build"  # Comma-separated list of check types to monitor
+    GITHUB_WEBHOOK_SECRET: str = ""  # GitHub webhook signature secret
+    GITLAB_WEBHOOK_TOKEN: str = ""  # GitLab webhook verification token
+
     # YAML initialization configuration
     INIT_DATA_DIR: str = "/app/init_data"
     INIT_DATA_ENABLED: bool = True
