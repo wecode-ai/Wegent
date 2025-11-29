@@ -48,10 +48,13 @@ test.describe('Settings - Git Integration', () => {
 
     await addTokenButton.click()
 
-    // Dialog should open - headlessui Dialog uses role="dialog"
-    // Also check for Dialog.Panel which may have specific styling
-    await expect(
-      page.locator('[role="dialog"]')
-    ).toBeVisible({ timeout: 10000 })
+    // Wait for dialog to open and become visible
+    // headlessui Dialog may render hidden initially, wait for content
+    await page.waitForTimeout(500)
+
+    // Dialog should have data-headlessui-state="open" when visible
+    // Check for the dialog panel content (Dialog.Title has text-xl class)
+    const dialogContent = page.locator('[role="dialog"] .text-xl, [role="dialog"] [class*="DialogTitle"]')
+    await expect(dialogContent.first()).toBeVisible({ timeout: 10000 })
   })
 })

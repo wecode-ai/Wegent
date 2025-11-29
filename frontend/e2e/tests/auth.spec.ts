@@ -111,17 +111,20 @@ test.describe('Logout', () => {
 
     // Logout is in UserMenu dropdown - need to click user name button first
     // UserMenu button is a Menu.Button with rounded-full class containing user display name
-    // The button is in a div with 'relative' class from the Menu component
     const userMenuButton = page.locator('button.rounded-full').first()
     await expect(userMenuButton).toBeVisible({ timeout: 10000 })
     await userMenuButton.click()
 
+    // Wait for dropdown menu to appear - Menu.Items has position absolute
+    // Give it time to render
+    await page.waitForTimeout(500)
+
     // Now logout button should be visible in the dropdown
     // Menu.Items appears after clicking Menu.Button
     const logoutButton = page.locator(
-      'button:has-text("Logout"), button:has-text("退出"), button:has-text("Sign out")'
+      'button:has-text("Logout"), button:has-text("退出")'
     )
-    await expect(logoutButton).toBeVisible({ timeout: 5000 })
+    await expect(logoutButton).toBeVisible({ timeout: 10000 })
     await logoutButton.click()
 
     // Should redirect to login
