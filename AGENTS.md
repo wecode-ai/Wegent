@@ -681,3 +681,4 @@ docker-compose up -d --build [service]
 **Last Updated**: 2025-07
 **Wegent Version**: 1.0.8
 **Maintained by**: WeCode-AI Team
+
