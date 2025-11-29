@@ -1,9 +1,9 @@
-"""Tests for wectl client module."""
+"""Tests for wegent client module."""
 
 import pytest
 from unittest.mock import patch, Mock
 
-from wectl.client import WegentClient, APIError, KIND_ALIASES, VALID_KINDS
+from wegent.client import WegentClient, APIError, KIND_ALIASES, VALID_KINDS
 
 
 class TestWegentClient:
@@ -35,7 +35,7 @@ class TestWegentClient:
             client.normalize_kind("invalid")
         assert "Invalid kind" in str(exc_info.value)
 
-    @patch("wectl.client.requests.request")
+    @patch("wegent.client.requests.request")
     def test_list_resources(self, mock_request):
         """Test listing resources."""
         mock_response = Mock()
@@ -55,7 +55,7 @@ class TestWegentClient:
         assert result[0]["metadata"]["name"] == "ghost1"
         mock_request.assert_called_once()
 
-    @patch("wectl.client.requests.request")
+    @patch("wegent.client.requests.request")
     def test_get_resource(self, mock_request):
         """Test getting a specific resource."""
         mock_response = Mock()
@@ -73,7 +73,7 @@ class TestWegentClient:
         assert result["kind"] == "Ghost"
         assert result["metadata"]["name"] == "my-ghost"
 
-    @patch("wectl.client.requests.request")
+    @patch("wegent.client.requests.request")
     def test_api_error_handling(self, mock_request):
         """Test API error handling."""
         mock_response = Mock()
@@ -88,7 +88,7 @@ class TestWegentClient:
         assert exc_info.value.status_code == 404
         assert "not found" in exc_info.value.message.lower()
 
-    @patch("wectl.client.requests.request")
+    @patch("wegent.client.requests.request")
     def test_connection_error(self, mock_request):
         """Test connection error handling."""
         import requests

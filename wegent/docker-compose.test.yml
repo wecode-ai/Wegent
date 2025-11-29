@@ -1,10 +1,10 @@
-# Docker Compose for wectl integration tests
+# Docker Compose for wegent integration tests
 # This provides a minimal backend environment for testing CLI commands
 
 services:
   mysql:
     image: mysql:8.0
-    container_name: wectl-test-mysql
+    container_name: wegent-test-mysql
     environment:
       MYSQL_ROOT_PASSWORD: test123
       MYSQL_DATABASE: task_manager
@@ -21,11 +21,11 @@ services:
       retries: 10
       start_period: 10s
     networks:
-      - wectl-test-network
+      - wegent-test-network
 
   redis:
     image: redis:7-alpine
-    container_name: wectl-test-redis
+    container_name: wegent-test-redis
     ports:
       - "16379:6379"
     healthcheck:
@@ -34,11 +34,11 @@ services:
       timeout: 3s
       retries: 5
     networks:
-      - wectl-test-network
+      - wegent-test-network
 
   backend:
     image: ghcr.io/wecode-ai/wegent-backend:1.0.11
-    container_name: wectl-test-backend
+    container_name: wegent-test-backend
     ports:
       - "18000:8000"
     environment:
@@ -62,8 +62,8 @@ services:
       retries: 10
       start_period: 30s
     networks:
-      - wectl-test-network
+      - wegent-test-network
 
 networks:
-  wectl-test-network:
+  wegent-test-network:
     driver: bridge

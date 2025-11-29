@@ -34,11 +34,11 @@ def get_cmd(
 
     \b
     Examples:
-      wectl get ghosts              # List all ghosts
-      wectl get ghost my-ghost      # Get specific ghost
-      wectl get bots -n production  # List bots in namespace
-      wectl get teams -o yaml       # Output as YAML
-      wectl get tasks --filter test # Filter by name
+      wegent get ghosts              # List all ghosts
+      wegent get ghost my-ghost      # Get specific ghost
+      wegent get bots -n production  # List bots in namespace
+      wegent get teams -o yaml       # Output as YAML
+      wegent get tasks --filter test # Filter by name
 
     \b
     Resource types (with aliases):

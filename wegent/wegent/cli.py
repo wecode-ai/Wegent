@@ -17,12 +17,12 @@ CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
 
 
 @click.group(context_settings=CONTEXT_SETTINGS)
-@click.version_option(version=__version__, prog_name="wectl")
-@click.option("-s", "--server", envvar="WECTL_SERVER", help="API server URL")
-@click.option("-t", "--token", envvar="WECTL_TOKEN", help="Auth token")
+@click.version_option(version=__version__, prog_name="wegent")
+@click.option("-s", "--server", envvar="WEGENT_SERVER", help="API server URL")
+@click.option("-t", "--token", envvar="WEGENT_TOKEN", help="Auth token")
 @click.pass_context
 def cli(ctx: click.Context, server: str, token: str):
-    """wectl - Wegent command line tool.
+    """wegent - Wegent command line tool.
 
     \b
     A kubectl-style CLI for managing Wegent resources.
@@ -40,17 +40,17 @@ def cli(ctx: click.Context, server: str, token: str):
 
     \b
     Quick start:
-      wectl config set server http://localhost:8000
-      wectl get ghosts
-      wectl apply -f my-resources.yaml
-      wectl describe ghost my-ghost
-      wectl delete ghost my-ghost
+      wegent config set server http://localhost:8000
+      wegent get ghosts
+      wegent apply -f my-resources.yaml
+      wegent describe ghost my-ghost
+      wegent delete ghost my-ghost
 
     \b
     Environment variables:
-      WECTL_SERVER    - API server URL
-      WECTL_NAMESPACE - Default namespace
-      WECTL_TOKEN     - Auth token
+      WEGENT_SERVER    - API server URL
+      WEGENT_NAMESPACE - Default namespace
+      WEGENT_TOKEN     - Auth token
     """
     ctx.ensure_object(dict)
     ctx.obj["client"] = WegentClient(

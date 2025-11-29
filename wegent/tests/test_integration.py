@@ -1,11 +1,11 @@
-"""Integration tests for wectl CLI.
+"""Integration tests for wegent CLI.
 
 These tests require a running Wegent backend service.
 Run with: pytest tests/test_integration.py -v --integration
 
 Environment variables:
-  WECTL_TEST_SERVER: Backend API URL (default: http://localhost:8000)
-  WECTL_TEST_TOKEN: Auth token for API (optional)
+  WEGENT_TEST_SERVER: Backend API URL (default: http://localhost:8000)
+  WEGENT_TEST_TOKEN: Auth token for API (optional)
 """
 
 import os
@@ -13,8 +13,8 @@ import uuid
 import pytest
 from click.testing import CliRunner
 
-from wectl.cli import cli
-from wectl.client import WegentClient, APIError
+from wegent.cli import cli
+from wegent.client import WegentClient, APIError
 
 
 # Skip if not running integration tests
@@ -24,13 +24,13 @@ pytestmark = pytest.mark.integration
 @pytest.fixture(scope="module")
 def server_url():
     """Get test server URL."""
-    return os.environ.get("WECTL_TEST_SERVER", "http://localhost:8000")
+    return os.environ.get("WEGENT_TEST_SERVER", "http://localhost:8000")
 
 
 @pytest.fixture(scope="module")
 def token():
     """Get test token."""
-    return os.environ.get("WECTL_TEST_TOKEN")
+    return os.environ.get("WEGENT_TEST_TOKEN")
 
 
 @pytest.fixture(scope="module")
@@ -43,8 +43,8 @@ def client(server_url, token):
 def runner(server_url, token):
     """Create CLI runner with environment."""
     runner = CliRunner(env={
-        "WECTL_SERVER": server_url,
-        "WECTL_TOKEN": token or "",
+        "WEGENT_SERVER": server_url,
+        "WEGENT_TOKEN": token or "",
     })
     return runner
 

@@ -24,9 +24,9 @@ def describe_cmd(
 
     \b
     Examples:
-      wectl describe ghost my-ghost
-      wectl describe bot my-bot -n production
-      wectl describe task task-001
+      wegent describe ghost my-ghost
+      wegent describe bot my-bot -n production
+      wegent describe task task-001
     """
     client: WegentClient = ctx.obj["client"]
     ns = namespace or get_namespace()

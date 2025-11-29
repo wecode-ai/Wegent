@@ -1,4 +1,4 @@
-"""Setup configuration for wectl CLI."""
+"""Setup configuration for wegent CLI."""
 
 from setuptools import setup, find_packages
 
@@ -6,7 +6,7 @@ with open("README.md", "r", encoding="utf-8") as f:
     long_description = f.read()
 
 setup(
-    name="wectl",
+    name="wegent",
     version="1.0.0",
     description="Wegent command line tool - kubectl-style CLI for managing Wegent resources",
     long_description=long_description,
@@ -23,7 +23,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "wectl=wectl.cli:main",
+            "wegent=wegent.cli:main",
         ],
     },
     classifiers=[

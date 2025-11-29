@@ -1,9 +1,9 @@
-"""Tests for wectl output formatting."""
+"""Tests for wegent output formatting."""
 
 import pytest
 from datetime import datetime, timedelta
 
-from wectl.output import (
+from wegent.output import (
     format_table,
     format_resource_list,
     format_age,

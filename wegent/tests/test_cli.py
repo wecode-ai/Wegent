@@ -1,10 +1,10 @@
-"""Tests for wectl CLI commands."""
+"""Tests for wegent CLI commands."""
 
 import pytest
 from click.testing import CliRunner
 from unittest.mock import patch, MagicMock
 
-from wectl.cli import cli
+from wegent.cli import cli
 
 
 @pytest.fixture
@@ -28,7 +28,7 @@ def mock_client():
         raise ValueError(f"Invalid kind: {k}")
     mock.normalize_kind.side_effect = normalize
     mock.list_resources.return_value = []
-    with patch("wectl.cli.WegentClient", return_value=mock):
+    with patch("wegent.cli.WegentClient", return_value=mock):
         yield mock
 
 
@@ -39,13 +39,13 @@ class TestCLI:
         """Test version command."""
         result = runner.invoke(cli, ["--version"])
         assert result.exit_code == 0
-        assert "wectl" in result.output
+        assert "wegent" in result.output
 
     def test_help(self, runner):
         """Test help command."""
         result = runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
-        assert "wectl" in result.output
+        assert "wegent" in result.output
         assert "get" in result.output
         assert "apply" in result.output
         assert "delete" in result.output

@@ -32,9 +32,9 @@ def delete_cmd(
 
     \b
     Examples:
-      wectl delete ghost my-ghost         # Delete specific ghost
-      wectl delete -f ghost.yaml          # Delete resources from file
-      wectl delete bots --all -y          # Delete all bots (skip confirm)
+      wegent delete ghost my-ghost         # Delete specific ghost
+      wegent delete -f ghost.yaml          # Delete resources from file
+      wegent delete bots --all -y          # Delete all bots (skip confirm)
     """
     client: WegentClient = ctx.obj["client"]
     ns = namespace or get_namespace()
@@ -107,9 +107,9 @@ def delete_cmd(
         else:
             click.echo(
                 "Error: Specify resource to delete:\n"
-                "  wectl delete <kind> <name>\n"
-                "  wectl delete -f <file>\n"
-                "  wectl delete <kind> --all",
+                "  wegent delete <kind> <name>\n"
+                "  wegent delete -f <file>\n"
+                "  wegent delete <kind> --all",
                 err=True,
             )
             raise SystemExit(1)

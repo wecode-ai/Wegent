@@ -36,9 +36,9 @@ def apply_cmd(
 
     \b
     Examples:
-      wectl apply -f ghost.yaml
-      wectl apply -f bot.yaml -f team.yaml
-      wectl apply -f ./resources/ -n production
+      wegent apply -f ghost.yaml
+      wegent apply -f bot.yaml -f team.yaml
+      wegent apply -f ./resources/ -n production
 
     Supports YAML files with single or multiple documents (separated by ---).
     """

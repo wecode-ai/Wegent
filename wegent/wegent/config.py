@@ -1,4 +1,4 @@
-"""Configuration management for wectl CLI."""
+"""Configuration management for wegent CLI."""
 
 import os
 from pathlib import Path
@@ -6,7 +6,7 @@ from typing import Optional
 
 import yaml
 
-CONFIG_DIR = Path.home() / ".wectl"
+CONFIG_DIR = Path.home() / ".wegent"
 CONFIG_FILE = CONFIG_DIR / "config.yaml"
 
 DEFAULT_CONFIG = {
@@ -32,12 +32,12 @@ def load_config() -> dict:
             config.update(file_config)
 
     # Environment variables override file config
-    if os.environ.get("WECTL_SERVER"):
-        config["server"] = os.environ["WECTL_SERVER"]
-    if os.environ.get("WECTL_NAMESPACE"):
-        config["namespace"] = os.environ["WECTL_NAMESPACE"]
-    if os.environ.get("WECTL_TOKEN"):
-        config["token"] = os.environ["WECTL_TOKEN"]
+    if os.environ.get("WEGENT_SERVER"):
+        config["server"] = os.environ["WEGENT_SERVER"]
+    if os.environ.get("WEGENT_NAMESPACE"):
+        config["namespace"] = os.environ["WEGENT_NAMESPACE"]
+    if os.environ.get("WEGENT_TOKEN"):
+        config["token"] = os.environ["WEGENT_TOKEN"]
 
     return config
 

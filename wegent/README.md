@@ -1,11 +1,11 @@
-# wectl - Wegent Command Line Tool
+# wegent - Wegent Command Line Tool
 
 A kubectl-style CLI for managing Wegent resources.
 
 ## Installation
 
 ```bash
-cd wectl
+cd wegent
 pip install -e .
 ```
 
@@ -13,7 +13,7 @@ Or install directly:
 
 ```bash
 pip install -r requirements.txt
-python -m wectl.cli
+python -m wegent.cli
 ```
 
 ## Quick Start
@@ -22,24 +22,24 @@ python -m wectl.cli
 
 ```bash
 # Set API server
-wectl config set server http://localhost:8000
+wegent config set server http://localhost:8000
 
 # Set default namespace
-wectl config set namespace default
+wegent config set namespace default
 
 # Set auth token (optional)
-wectl config set token YOUR_TOKEN
+wegent config set token YOUR_TOKEN
 
 # View configuration
-wectl config view
+wegent config view
 ```
 
 You can also use environment variables:
 
 ```bash
-export WECTL_SERVER=http://localhost:8000
-export WECTL_NAMESPACE=default
-export WECTL_TOKEN=YOUR_TOKEN
+export WEGENT_SERVER=http://localhost:8000
+export WEGENT_NAMESPACE=default
+export WEGENT_TOKEN=YOUR_TOKEN
 ```
 
 ## Commands
@@ -48,80 +48,80 @@ export WECTL_TOKEN=YOUR_TOKEN
 
 ```bash
 # List all resources of a kind
-wectl get ghosts
-wectl get bots
-wectl get tasks
+wegent get ghosts
+wegent get bots
+wegent get tasks
 
 # Get specific resource
-wectl get ghost my-ghost
-wectl get bot my-bot
+wegent get ghost my-ghost
+wegent get bot my-bot
 
 # Output formats
-wectl get ghosts -o yaml
-wectl get ghosts -o json
+wegent get ghosts -o yaml
+wegent get ghosts -o json
 
 # Filter by name
-wectl get tasks --filter test
+wegent get tasks --filter test
 
 # Specify namespace
-wectl get bots -n production
+wegent get bots -n production
 ```
 
 ### Describe Resources
 
 ```bash
 # Show detailed information
-wectl describe ghost my-ghost
-wectl describe task task-001
+wegent describe ghost my-ghost
+wegent describe task task-001
 ```
 
 ### Create Resources
 
 ```bash
 # Create with default template
-wectl create ghost my-ghost
-wectl create bot my-bot -n production
+wegent create ghost my-ghost
+wegent create bot my-bot -n production
 
 # Preview template without creating
-wectl create team my-team --dry-run
+wegent create team my-team --dry-run
 ```
 
 ### Apply Resources
 
 ```bash
 # Apply from file
-wectl apply -f ghost.yaml
+wegent apply -f ghost.yaml
 
 # Apply multiple files
-wectl apply -f ghost.yaml -f bot.yaml
+wegent apply -f ghost.yaml -f bot.yaml
 
 # Apply all YAML files in directory
-wectl apply -f ./resources/
+wegent apply -f ./resources/
 
 # Override namespace
-wectl apply -f bot.yaml -n production
+wegent apply -f bot.yaml -n production
 ```
 
 ### Delete Resources
 
 ```bash
 # Delete specific resource
-wectl delete ghost my-ghost
+wegent delete ghost my-ghost
 
 # Delete from file
-wectl delete -f ghost.yaml
+wegent delete -f ghost.yaml
 
 # Delete all resources of a kind
-wectl delete bots --all
+wegent delete bots --all
 
 # Skip confirmation
-wectl delete ghost my-ghost -y
+wegent delete ghost my-ghost -y
 ```
 
 ### List Resource Types
 
 ```bash
-wectl api-resources
+wegent api-resources
 ```
 
 ## Resource Types

@@ -95,9 +95,9 @@ def create_cmd(
 
     \b
     Examples:
-      wectl create ghost my-ghost
-      wectl create bot my-bot -n production
-      wectl create team my-team --dry-run
+      wegent create ghost my-ghost
+      wegent create bot my-bot -n production
+      wegent create team my-team --dry-run
 
     Use --dry-run to see the template without creating.
     """

@@ -1,4 +1,4 @@
-"""Config command - manage wectl configuration."""
+"""Config command - manage wegent configuration."""
 
 import click
 
@@ -7,14 +7,14 @@ from ..config import CONFIG_FILE, load_config, save_config
 
 @click.group("config")
 def config_cmd():
-    """Manage wectl configuration.
+    """Manage wegent configuration.
 
     \b
     Examples:
-      wectl config view              # View current config
-      wectl config set server URL    # Set API server
-      wectl config set namespace NS  # Set default namespace
-      wectl config set token TOKEN   # Set auth token
+      wegent config view              # View current config
+      wegent config set server URL    # Set API server
+      wegent config set namespace NS  # Set default namespace
+      wegent config set token TOKEN   # Set auth token
     """
     pass
 
