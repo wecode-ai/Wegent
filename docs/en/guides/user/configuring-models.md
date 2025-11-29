@@ -45,8 +45,21 @@ Model determines "how strong the thinking ability is"
 ### Relationship with Database
 
 Model resources are stored in the following database tables:
-- `public_models`: Stores Model configuration information
-- `kinds`: Defines the resource type as `Model`
+- `public_models`: Stores public Model configurations shared across all users
+- `kinds`: Stores user-defined Model configurations (type='user')
+
+### Model Types
+
+Wegent supports two types of models:
+
+| Type | Description | Storage |
+|------|-------------|---------|
+| **Public** | System-provided models shared across all users | `public_models` table |
+| **User** | User-defined private models | `kinds` table |
+
+When binding models to Bots, the system resolves models in this order:
+1. User's private models (type='user')
+2. Public models (type='public')
 
 ---
 
@@ -432,45 +445,52 @@ When using OpenAI GPT models, you need to configure the following environment va
 
 ### Method 1: Configure via Web Interface (Recommended for Beginners)
 
-#### Step 1: Go to Model Configuration Page
+#### Step 1: Go to Model Management Page
 
 1. Log in to Wegent Web interface (http://localhost:3000)
-2. Go to **Resource Management** → **Model Configuration**
-3. Click **Create New Model** button
+2. Go to **Settings** → **Models** tab
+3. You will see a unified model list displaying both public and user-defined models
+4. Click **Create New Model** button to add a new model
 
-<!-- TODO: Add screenshot - Model configuration page -->
+<!-- TODO: Add screenshot - Model management page -->
 
-#### Step 2: Use Preset Template (Recommended)
+#### Step 2: Configure Model Details
 
-Above the JSON configuration input box, you will see a "Quick Configuration" area:
+In the model creation/edit dialog, configure the following:
 
-📋 **Use Preset Templates for Quick Configuration**
+**Basic Information**:
+- **Name**: Give the Model a descriptive name (e.g., `my-claude-sonnet`)
+- **Display Name**: Optional human-readable name shown in the UI
 
-- Click **[Claude Sonnet 4 Template]** button (primary recommendation)
-- Or click **[OpenAI GPT-4 Template]** button (alternative)
+**Provider Configuration**:
+- **Provider Type**: Select `OpenAI` or `Anthropic`
+- **Model ID**: Choose from preset models or enter a custom model ID
+  - OpenAI presets: `gpt-4`, `gpt-4-turbo`, `gpt-3.5-turbo`, `gpt-4o`, `gpt-4o-mini`
+  - Anthropic presets: `claude-sonnet-4-20250514`, `claude-3-7-sonnet-20250219`, `claude-3-5-haiku-20241022`
 
-Clicking will automatically fill the complete JSON configuration into the input box.
+**Authentication**:
+- **API Key**: Enter your API key from the provider
+  - Use the visibility toggle (👁️) to show/hide the key
+- **Base URL**: Optional custom API endpoint (for proxies or self-hosted services)
 
-#### Step 3: Modify API Key
+#### Step 3: Test Connection
 
-⚠️ **Important**: Please replace the API Key in the configuration with your actual key
+Before saving, use the **Test Connection** feature to verify your configuration:
 
-The API Key in the template is a placeholder, you need to:
-1. Find the `ANTHROPIC_AUTH_TOKEN` or `OPENAI_API_KEY` field in the configuration
-2. Replace the value with your real API Key obtained from the official site
-3. If it's an Anthropic model, it's recommended to also modify `ANTHROPIC_API_KEY`
+1. Click the **Test Connection** button
+2. The system will send a minimal test request to verify:
+   - API Key validity
+   - Model availability
+   - Network connectivity
+3. Results:
+   - ✅ "Successfully connected to {model}" - Configuration is valid
+   - ❌ Error message - Check your API key or network settings
 
-#### Step 4: Fill in Other Fields
+#### Step 4: Save Configuration
 
-- **Name**: Give the Model a descriptive name (e.g., `claude-sonnet-4-prod`)
-- **Namespace**: Usually use `default`
-- **JSON Configuration**: Already filled via template, just need to modify API Key
+Click **Save** to create or update the Model.
 
-#### Step 5: Submit Configuration
-
-Click the **Submit** button to create the Model.
-
-The system will validate the configuration format and will prompt if there are errors.
+The model will appear in your model list and can be used in Bot configurations.
 
 ---
 
@@ -487,6 +507,32 @@ Refer to the "Complete Configuration Examples" section below to write the config
 #### Step 3: Import Configuration
 
 Import the YAML configuration via the Web interface or API.
+
+---
+
+## 🔄 Model Selection in Tasks
+
+### Per-Task Model Override
+
+When creating or sending a task, you can override the Bot's default model:
+
+1. In the chat interface, look for the **Model Selector** dropdown
+2. Select a different model from your available models
+3. Optionally enable **Force Override** to ensure this model is used even if the Bot has a configured model
+
+**Use Cases**:
+- Testing with different models without modifying Bot configuration
+- Using a more powerful model for complex tasks
+- Using a faster/cheaper model for simple tasks
+
+### Model Resolution Priority
+
+When a task runs, the model is resolved in this order:
+
+1. **Task-level override** (if force_override_bot_model is true)
+2. **Bot's bind_model** (from agent_config)
+3. **Bot's modelRef** (legacy)
+4. **Default model**
 
 ---
 
