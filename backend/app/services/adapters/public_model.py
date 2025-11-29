@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from app.models.public_model import PublicModel
 from app.models.public_shell import PublicShell
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.model import ModelCreate, ModelUpdate, ModelBulkCreateItem
 from app.schemas.kind import Model, Shell
@@ -199,7 +200,14 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
 
     def list_model_names(self, db: Session, *, current_user: User, agent_name: str) -> List[Dict[str, str]]:
         """
-        List available model names based on shell supportModel filter
+        List available model names based on agent type and shell supportModel filter.
+        Queries both user's own models (kinds table) and public models (public_models table).
+        
+        Agent to model provider mapping:
+        - Agno -> openai
+        - ClaudeCode -> claude
+        
+        Returns list of dicts with 'name' and 'displayName' fields.
         """
         # Get shell configuration from public_shells table
         shell_row = db.query(PublicShell.json).filter(PublicShell.name == agent_name).first()
@@ -215,16 +223,19 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
             supportModel = shell_crd.spec.supportModel or []
             supportModel = [str(x) for x in supportModel if x]
 
-        allow_all = len(supportModel) == 0
-        models = db.query(PublicModel).filter(PublicModel.is_active == True).all()
-
-        if allow_all:
-            return [{"name": m.name} for m in models]
-
+        # Determine required model provider based on agent_name
+        # Agno uses openai protocol, ClaudeCode uses claude protocol
+        agent_provider_map = {
+            "Agno": "openai",
+            "ClaudeCode": "claude"
+        }
+        required_provider = agent_provider_map.get(agent_name)
+        
+        # If supportModel is specified, use it; otherwise filter by agent's required provider
+        use_support_model_filter = len(supportModel) > 0
         allowed = set(supportModel)
         
-        def get_model_provider(m: PublicModel) -> Optional[str]:
-            json_data = getattr(m, "json", None)
+        def get_model_provider(json_data: Optional[Dict]) -> Optional[str]:
             if not isinstance(json_data, dict):
                 return None
             try:
@@ -235,8 +246,56 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
                 return env.get("model")
             except:
                 return None
+        
+        def get_model_display_name(json_data: Optional[Dict]) -> Optional[str]:
+            """Extract displayName from model metadata"""
+            if not isinstance(json_data, dict):
+                return None
+            try:
+                model_crd = Model.model_validate(json_data)
+                return model_crd.metadata.displayName
+            except:
+                return None
 
-        return [{"name": m.name} for m in models if (get_model_provider(m) in allowed)]
+        def is_model_compatible(json_data: Optional[Dict]) -> bool:
+            provider = get_model_provider(json_data)
+            if use_support_model_filter:
+                # Use supportModel filter from shell spec
+                return provider in allowed
+            elif required_provider:
+                # Filter by agent's required provider
+                return provider == required_provider
+            else:
+                # No filter, allow all
+                return True
+
+        # Use dict to store name -> displayName mapping (to handle duplicates)
+        result_models: Dict[str, Optional[str]] = {}
+        
+        # Query user's own models from kinds table
+        user_models = db.query(Kind).filter(
+            Kind.user_id == current_user.id,
+            Kind.kind == "Model",
+            Kind.namespace == "default",
+            Kind.is_active == True
+        ).all()
+        
+        for m in user_models:
+            if is_model_compatible(m.json):
+                display_name = get_model_display_name(m.json)
+                result_models[m.name] = display_name
+        
+        # Query public models from public_models table
+        public_models = db.query(PublicModel).filter(PublicModel.is_active == True).all()
+        
+        for m in public_models:
+            if is_model_compatible(m.json):
+                # Only add if not already present (user models take precedence)
+                if m.name not in result_models:
+                    display_name = get_model_display_name(m.json)
+                    result_models[m.name] = display_name
+
+        return [{"name": name, "displayName": display_name} for name, display_name in sorted(result_models.items())]
 
     def get_by_id(self, db: Session, *, model_id: int, current_user: User) -> Dict[str, Any]:
         """

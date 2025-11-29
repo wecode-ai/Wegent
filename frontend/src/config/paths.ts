@@ -40,5 +40,8 @@ export const paths = {
         team: {
             getHref: () => '/settings?tab=team',
         },
+        models: {
+            getHref: () => '/settings?tab=models',
+        },
     },
 } as const;

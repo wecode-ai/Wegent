@@ -35,7 +35,8 @@
     "subtask_completed": "子任务已完成",
     "subtask_failed": "子任务失败",
     "unknown_error": "未知错误",
-    "bot": "机器人"
+    "bot": "机器人",
+    "application_parameters": "应用参数"
   },
   "settings": {
     "model": "模型",
@@ -111,7 +112,7 @@
   "send_shortcut_ctrl": "Ctrl+Enter 发送",
   "send_shortcut_cmd": "Cmd+Enter 发送",
   "clarification": {
-    "title": "与产品经理搏斗 - 需求澄清",
+    "title": "需求规范澄清 (Spec Clarification)",
     "recommended": "推荐",
     "custom_input": "自定义输入",
     "back_to_choices": "返回选项",

@@ -40,11 +40,11 @@ export default function FinalPromptMessage({
         navigator.clipboard &&
         navigator.clipboard.writeText
       ) {
-        await navigator.clipboard.writeText(data.prompt);
+        await navigator.clipboard.writeText(data.final_prompt);
       } else {
         // Fallback
         const textarea = document.createElement('textarea');
-        textarea.value = data.prompt;
+        textarea.value = data.final_prompt;
         textarea.style.cssText = 'position:fixed;opacity:0';
         document.body.appendChild(textarea);
         textarea.select();
@@ -76,7 +76,7 @@ export default function FinalPromptMessage({
 
     // Store prompt data in sessionStorage for the new task page
     const promptData = {
-      prompt: data.prompt,
+      prompt: data.final_prompt,
       teamId: selectedTeam.id,
       repoId: selectedRepo.git_repo_id,
       branch: selectedBranch.name,
@@ -106,7 +106,7 @@ export default function FinalPromptMessage({
       {/* Prompt Content */}
       <div className="bg-surface/30 rounded p-3 border border-blue-500/20">
         <MarkdownEditor.Markdown
-          source={data.prompt}
+          source={data.final_prompt}
           style={{ background: 'transparent' }}
           wrapperElement={{ 'data-color-mode': theme }}
           components={{
