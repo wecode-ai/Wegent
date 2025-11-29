@@ -25,7 +25,7 @@ test.describe('Settings - Team Management', () => {
     expect(hasTeams || hasEmptyState || true).toBeTruthy() // Page loaded successfully
   })
 
-  test('should open create team dialog', async ({ page }) => {
+  test('should open create team form', async ({ page }) => {
     // "New Team" button should always be visible after page loads
     const createButton = page.locator(
       'button:has-text("New Team"), button:has-text("新建团队")'
@@ -36,9 +36,10 @@ test.describe('Settings - Team Management', () => {
 
     await createButton.click()
 
-    // Dialog should open
+    // TeamEdit component replaces the list (not a dialog)
+    // Check for the team name input and back button
     await expect(
-      page.locator('[role="dialog"], [data-state="open"]')
+      page.locator('input[placeholder*="name"], input[placeholder*="名称"]').first()
     ).toBeVisible({ timeout: 5000 })
   })
 
@@ -52,25 +53,21 @@ test.describe('Settings - Team Management', () => {
     await expect(createButton).toBeVisible({ timeout: 10000 })
     await createButton.click()
 
-    // Wait for dialog
-    const dialog = page.locator('[role="dialog"]')
-    await expect(dialog).toBeVisible({ timeout: 5000 })
-
-    // Fill team name
-    const nameInput = dialog.locator('input[name="name"], input[placeholder*="name"]').first()
-    await expect(nameInput).toBeVisible({ timeout: 3000 })
+    // Wait for TeamEdit component (full-page replacement, not dialog)
+    const nameInput = page.locator('input[placeholder*="name"], input[placeholder*="名称"]').first()
+    await expect(nameInput).toBeVisible({ timeout: 5000 })
     await nameInput.fill(teamName)
 
     // Submit form
-    const submitButton = dialog.locator('button[type="submit"], button:has-text("Save"), button:has-text("Create")').first()
+    const submitButton = page.locator('button:has-text("Save"), button:has-text("保存")').first()
     if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
       await submitButton.click()
 
-      // Wait for dialog to close (success) or stay open (validation error)
+      // Wait for navigation back to list (could fail validation - that's ok for this test)
       await page
-        .waitForSelector('[role="dialog"]', { state: 'detached', timeout: 10000 })
+        .waitForSelector('button:has-text("New Team"), button:has-text("新建团队")', { timeout: 10000 })
         .catch(() => {
-          // Dialog may stay open with validation errors - that's ok for this test
+          // May stay on form with validation errors (leader bot required)
         })
     }
   })

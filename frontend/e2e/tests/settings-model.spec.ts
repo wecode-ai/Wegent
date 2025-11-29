@@ -36,9 +36,9 @@ test.describe('Settings - Model Management', () => {
 
     await createButton.first().click()
 
-    // Model edit is a full page form - check for form fields
-    const modelForm = page.locator('input[name="name"], input[placeholder*="name"], h2:has-text("Model")')
-    await expect(modelForm.first()).toBeVisible({ timeout: 5000 })
+    // Model edit is a full page form - check for the model ID input
+    const modelIdInput = page.locator('input#modelIdName, input[placeholder*="model"]')
+    await expect(modelIdInput.first()).toBeVisible({ timeout: 5000 })
   })
 
   test('should create new model', async ({ page, testPrefix }) => {
@@ -51,30 +51,19 @@ test.describe('Settings - Model Management', () => {
     await expect(createButton.first()).toBeVisible({ timeout: 10000 })
     await createButton.first().click()
 
-    // Model edit is a full page form, wait for name input
-    const nameInput = page.locator(
-      'input[name="name"], input[placeholder*="name"], input[placeholder*="identifier"]'
-    ).first()
+    // Model edit is a full page form, wait for model ID input
+    const nameInput = page.locator('input#modelIdName, input[placeholder*="model"]').first()
     await expect(nameInput).toBeVisible({ timeout: 5000 })
     await nameInput.fill(modelName)
 
-    // Fill other required fields if visible - provider select
-    const providerSelect = page.locator(
-      '[data-testid="provider-select"], select[name="provider"], button:has-text("Select Protocol")'
-    )
-    if (await providerSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await providerSelect.click()
-      await page.locator('[role="option"]:has-text("OpenAI")').first().click()
-    }
-
-    // Fill API key
-    const apiKeyInput = page.locator('input[name="api_key"], input[type="password"]').first()
+    // Fill API key (required field)
+    const apiKeyInput = page.locator('input#api_key, input[type="password"]').first()
     if (await apiKeyInput.isVisible({ timeout: 2000 }).catch(() => false)) {
       await apiKeyInput.fill('test-api-key-for-e2e')
     }
 
     // Submit form
-    const submitButton = page.locator('button[type="submit"], button:has-text("Save"), button:has-text("保存")').first()
+    const submitButton = page.locator('button:has-text("Save"), button:has-text("保存")').first()
     if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
       await submitButton.click()
 
