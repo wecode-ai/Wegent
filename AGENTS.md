@@ -103,6 +103,13 @@ cd <module> && pytest tests/ --cov
 
 ## 💻 Code Style
 
+**⚠️ All code comments MUST be written in English.** This includes:
+- Inline comments
+- Block comments
+- Docstrings
+- TODO/FIXME annotations
+- Type hints descriptions
+
 ### Python (Backend, Executor, Executor Manager, Shared)
 
 **Standards:**
