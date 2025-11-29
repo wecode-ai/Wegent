@@ -67,9 +67,9 @@ test.describe('Settings - Bot Management', () => {
     await createButton.click()
 
     // BotEdit component replaces the list content (not a new dialog)
-    // Check for the bot name input field
+    // Bot name input has placeholder "Code Assistant" or "输入机器人名称"
     await expect(
-      page.locator('[role="dialog"] input[placeholder*="name"], [role="dialog"] input[placeholder*="名称"]').first()
+      page.locator('[role="dialog"] input[placeholder*="Code"], [role="dialog"] input[placeholder*="机器人"]').first()
     ).toBeVisible({ timeout: 5000 })
   })
 
@@ -92,7 +92,8 @@ test.describe('Settings - Bot Management', () => {
     await createButton.click()
 
     // Wait for BotEdit form
-    const nameInput = page.locator('[role="dialog"] input[placeholder*="name"], [role="dialog"] input[placeholder*="名称"]').first()
+    // Bot name input has placeholder "Code Assistant" or "输入机器人名称"
+    const nameInput = page.locator('[role="dialog"] input[placeholder*="Code"], [role="dialog"] input[placeholder*="机器人"]').first()
     await expect(nameInput).toBeVisible({ timeout: 5000 })
     await nameInput.fill(botName)
 

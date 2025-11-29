@@ -37,9 +37,9 @@ test.describe('Settings - Team Management', () => {
     await createButton.click()
 
     // TeamEdit component replaces the list (not a dialog)
-    // Check for the team name input and back button
+    // Team name input has placeholder "Team Name" or "团队名称"
     await expect(
-      page.locator('input[placeholder*="name"], input[placeholder*="名称"]').first()
+      page.locator('input[placeholder*="Team"], input[placeholder*="团队"]').first()
     ).toBeVisible({ timeout: 5000 })
   })
 
@@ -54,7 +54,8 @@ test.describe('Settings - Team Management', () => {
     await createButton.click()
 
     // Wait for TeamEdit component (full-page replacement, not dialog)
-    const nameInput = page.locator('input[placeholder*="name"], input[placeholder*="名称"]').first()
+    // Team name input has placeholder "Team Name" or "团队名称"
+    const nameInput = page.locator('input[placeholder*="Team"], input[placeholder*="团队"]').first()
     await expect(nameInput).toBeVisible({ timeout: 5000 })
     await nameInput.fill(teamName)
 

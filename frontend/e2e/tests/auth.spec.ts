@@ -102,21 +102,26 @@ test.describe('Logout', () => {
     // Wait for login to complete
     await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 30000 })
 
-    // Navigate to any page (logout is in the top navigation UserMenu dropdown)
+    // Navigate to settings page (logout is in the top navigation UserMenu dropdown)
     await page.goto('/settings')
     await page.waitForLoadState('networkidle')
 
+    // Wait for page content to load before looking for UserMenu
+    await page.waitForTimeout(2000)
+
     // Logout is in UserMenu dropdown - need to click user name button first
-    // UserMenu button contains the username and has a rounded-full style
-    const userMenuButton = page.locator('button.rounded-full, [data-testid="user-menu"]')
-    await expect(userMenuButton).toBeVisible({ timeout: 5000 })
+    // UserMenu button is a Menu.Button with rounded-full class containing user display name
+    // The button is in a div with 'relative' class from the Menu component
+    const userMenuButton = page.locator('button.rounded-full').first()
+    await expect(userMenuButton).toBeVisible({ timeout: 10000 })
     await userMenuButton.click()
 
     // Now logout button should be visible in the dropdown
+    // Menu.Items appears after clicking Menu.Button
     const logoutButton = page.locator(
       'button:has-text("Logout"), button:has-text("退出"), button:has-text("Sign out")'
     )
-    await expect(logoutButton).toBeVisible({ timeout: 3000 })
+    await expect(logoutButton).toBeVisible({ timeout: 5000 })
     await logoutButton.click()
 
     // Should redirect to login

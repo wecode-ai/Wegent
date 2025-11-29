@@ -35,6 +35,9 @@ test.describe('Settings - Git Integration', () => {
   })
 
   test('should open add token dialog', async ({ page }) => {
+    // Wait for integrations page to load
+    await expect(page.locator('h2:has-text("Integrations")')).toBeVisible({ timeout: 10000 })
+
     // "New Token" button should always be visible after page loads
     const addTokenButton = page.locator(
       'button:has-text("New Token"), button:has-text("新建")'
@@ -45,9 +48,10 @@ test.describe('Settings - Git Integration', () => {
 
     await addTokenButton.click()
 
-    // Dialog should open
+    // Dialog should open - headlessui Dialog uses role="dialog"
+    // Also check for Dialog.Panel which may have specific styling
     await expect(
-      page.locator('[role="dialog"], [data-state="open"]')
-    ).toBeVisible({ timeout: 5000 })
+      page.locator('[role="dialog"]')
+    ).toBeVisible({ timeout: 10000 })
   })
 })
