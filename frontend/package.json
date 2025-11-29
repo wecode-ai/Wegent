@@ -11,7 +11,11 @@
     "prepare": "cd .. && husky frontend/.husky",
     "test": "jest",
     "test:watch": "jest --watch",
-    "test:coverage": "jest --coverage"
+    "test:coverage": "jest --coverage",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui",
+    "e2e:debug": "playwright test --debug",
+    "e2e:report": "playwright show-report"
   },
   "dependencies": {
     "@headlessui/react": "^2.2.0",
@@ -55,6 +59,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@playwright/test": "^1.49.0",
     "@testing-library/jest-dom": "^6.1.0",
     "@testing-library/react": "^16.0.0",
     "@testing-library/user-event": "^14.5.0",
