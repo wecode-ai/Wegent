@@ -39,7 +39,7 @@ repos:
     hooks:
       - id: black
         name: Black (Python formatter)
-        entry: bash -c 'python -m black --check --diff "$@" 2>/dev/null || echo "Black check completed (install black if not available: pip install black)"' --
+        entry: bash scripts/hooks/run-black.sh
         language: system
         files: ^(backend|executor|executor_manager|shared)/.*\.py$
         types: [python]
@@ -50,7 +50,7 @@ repos:
     hooks:
       - id: isort
         name: isort (Python import sorter)
-        entry: bash -c 'python -m isort --check-only --diff "$@" 2>/dev/null || echo "isort check completed (install isort if not available: pip install isort)"' --
+        entry: bash scripts/hooks/run-isort.sh
         language: system
         files: ^(backend|executor|executor_manager|shared)/.*\.py$
         types: [python]
@@ -147,27 +147,13 @@ repos:
         stages: [pre-push]
 
   # ==========================================================================
-  # General file checks (optional - using local commands)
+  # General file checks (optional - simple checks only)
   # ==========================================================================
   - repo: local
     hooks:
-      - id: check-yaml
-        name: Check YAML syntax
-        entry: bash -c 'python -c "import yaml; yaml.safe_load(open(\"$1\"))" 2>/dev/null || echo "YAML check skipped"' --
-        language: system
-        files: \.(yaml|yml)$
-        stages: [pre-push]
-
-      - id: check-json
-        name: Check JSON syntax
-        entry: bash -c 'python -c "import json; json.load(open(\"$1\"))" 2>/dev/null || echo "JSON check skipped"' --
-        language: system
-        files: \.json$
-        stages: [pre-push]
-
       - id: check-merge-conflict
         name: Check for merge conflicts
-        entry: bash -c 'grep -l "^<<<<<<< " "$@" && echo "Merge conflict markers found!" && exit 1 || exit 0' --
+        entry: bash scripts/hooks/check-merge-conflict.sh
         language: system
         types: [text]
         stages: [pre-push]
@@ -177,4 +163,4 @@ ci:
   autofix_commit_msg: 'style: auto-fix by pre-commit hooks'
   autofix_prs: false
   autoupdate_commit_msg: 'chore: update pre-commit hooks'
-  skip: [ai-push-gate, run-module-tests, frontend-build-check, check-yaml, check-json]
+  skip: [ai-push-gate, run-module-tests, frontend-build-check]
