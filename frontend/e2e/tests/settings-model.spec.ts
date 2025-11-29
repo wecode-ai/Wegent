@@ -9,27 +9,31 @@ test.describe('Settings - Model Management', () => {
   test('should access model management page', async ({ page }) => {
     await expect(page).toHaveURL(/\/settings.*tab=models/)
 
-    // Page should have loaded
-    await page.waitForTimeout(1000)
+    // Wait for settings content to load
+    await page.waitForSelector('main, [data-testid="settings-content"]', {
+      state: 'visible',
+      timeout: 10000,
+    })
   })
 
   test('should display model list', async ({ page }) => {
-    // Wait for content to load
-    await page.waitForTimeout(2000)
-
     // Look for model cards or list items
     const modelList = page.locator(
       '[data-testid="model-list"], .model-card, [data-type="model"]'
     )
 
-    // There should be some models listed (public models)
-    await page.waitForTimeout(1000)
+    // Wait for model list or empty state to be visible
+    await page
+      .waitForSelector(
+        '[data-testid="model-list"], .model-card, [data-type="model"], [data-testid="empty-state"]',
+        { state: 'visible', timeout: 10000 }
+      )
+      .catch(() => {
+        // Page may have different structure
+      })
   })
 
   test('should display public and user models', async ({ page }) => {
-    // Wait for models to load
-    await page.waitForTimeout(2000)
-
     // Check for tab or filter for public/user models
     const publicTab = page.locator(
       'button:has-text("Public"), [data-value="public"]'
@@ -39,7 +43,14 @@ test.describe('Settings - Model Management', () => {
     )
 
     // At least one should be visible or models should be listed
-    await page.waitForTimeout(1000)
+    await page
+      .waitForSelector('main, [data-testid="settings-content"]', {
+        state: 'visible',
+        timeout: 10000,
+      })
+      .catch(() => {
+        // Continue test
+      })
   })
 
   test('should open create model dialog', async ({ page }) => {
@@ -52,9 +63,9 @@ test.describe('Settings - Model Management', () => {
       await createButton.click()
 
       // Dialog should open
-      await page.waitForSelector('[role="dialog"], [data-state="open"]', {
-        timeout: 5000,
-      })
+      await expect(
+        page.locator('[role="dialog"], [data-state="open"]')
+      ).toBeVisible({ timeout: 5000 })
     }
   })
 
@@ -77,9 +88,11 @@ test.describe('Settings - Model Management', () => {
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 })
 
     // Fill model name
-    const nameInput = page.locator(
-      '[role="dialog"] input[name="name"], [role="dialog"] input[placeholder*="name"]'
-    ).first()
+    const nameInput = page
+      .locator(
+        '[role="dialog"] input[name="name"], [role="dialog"] input[placeholder*="name"]'
+      )
+      .first()
 
     if (await nameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
       await nameInput.fill(modelName)
@@ -95,52 +108,69 @@ test.describe('Settings - Model Management', () => {
       }
 
       // Fill API key
-      const apiKeyInput = page.locator(
-        '[role="dialog"] input[name="api_key"], [role="dialog"] input[type="password"]'
-      ).first()
+      const apiKeyInput = page
+        .locator(
+          '[role="dialog"] input[name="api_key"], [role="dialog"] input[type="password"]'
+        )
+        .first()
 
       if (await apiKeyInput.isVisible({ timeout: 2000 }).catch(() => false)) {
         await apiKeyInput.fill('test-api-key-for-e2e')
       }
 
       // Submit form
-      const submitButton = page.locator(
-        '[role="dialog"] button[type="submit"], [role="dialog"] button:has-text("Save")'
-      ).first()
+      const submitButton = page
+        .locator(
+          '[role="dialog"] button[type="submit"], [role="dialog"] button:has-text("Save")'
+        )
+        .first()
 
       if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
         await submitButton.click()
-        await page.waitForTimeout(2000)
+
+        // Wait for dialog to close
+        await page
+          .waitForSelector('[role="dialog"]', {
+            state: 'detached',
+            timeout: 10000,
+          })
+          .catch(() => {
+            // Dialog may stay open with validation errors
+          })
       }
     }
   })
 
   test('should test model connection', async ({ page }) => {
     // Find test connection button
-    const testButton = page.locator(
-      'button:has-text("Test"), button:has-text("测试连接"), [data-testid="test-connection"]'
-    ).first()
+    const testButton = page
+      .locator(
+        'button:has-text("Test"), button:has-text("测试连接"), [data-testid="test-connection"]'
+      )
+      .first()
 
     if (await testButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await testButton.click()
 
-      // Wait for test result
-      await page.waitForTimeout(3000)
-
-      // Check for success/error message
-      const resultMessage = page.locator(
-        '[data-testid="test-result"], .toast, [role="alert"]'
-      )
-
-      await page.waitForTimeout(2000)
+      // Wait for test result (toast or status indicator)
+      await page
+        .waitForSelector(
+          '[data-testid="test-result"], [data-sonner-toast], [role="alert"]',
+          { timeout: 10000 }
+        )
+        .catch(() => {
+          // Result may not show in mock mode
+        })
     }
   })
 
   test('should delete model', async ({ page }) => {
     // Find delete button on a user model (not public)
-    const deleteButton = page.locator(
-      'button:has-text("Delete"), [data-testid="delete-model"], button[aria-label*="delete"]'
-    ).first()
+    const deleteButton = page
+      .locator(
+        'button:has-text("Delete"), [data-testid="delete-model"], button[aria-label*="delete"]'
+      )
+      .first()
 
     if (await deleteButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await deleteButton.click()
@@ -152,7 +182,16 @@ test.describe('Settings - Model Management', () => {
 
       if (await confirmButton.isVisible({ timeout: 3000 }).catch(() => false)) {
         await confirmButton.click()
-        await page.waitForTimeout(2000)
+
+        // Wait for alert dialog to close
+        await page
+          .waitForSelector('[role="alertdialog"]', {
+            state: 'detached',
+            timeout: 5000,
+          })
+          .catch(() => {
+            // May not have alertdialog
+          })
       }
     }
   })

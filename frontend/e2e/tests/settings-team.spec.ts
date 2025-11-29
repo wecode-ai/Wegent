@@ -9,21 +9,28 @@ test.describe('Settings - Team Management', () => {
   test('should access team management page', async ({ page }) => {
     await expect(page).toHaveURL(/\/settings/)
 
-    // Page should have loaded
-    await page.waitForTimeout(1000)
+    // Wait for settings content to load
+    await page.waitForSelector('main, [data-testid="settings-content"]', {
+      state: 'visible',
+      timeout: 10000,
+    })
   })
 
   test('should display team list', async ({ page }) => {
-    // Wait for content to load
-    await page.waitForTimeout(2000)
-
     // Look for team cards or list items
     const teamList = page.locator(
       '[data-testid="team-list"], .team-card, [data-type="team"]'
     )
 
-    // There should be some teams listed (from seed data)
-    await page.waitForTimeout(1000)
+    // Wait for team list or empty state to be visible
+    await page
+      .waitForSelector(
+        '[data-testid="team-list"], .team-card, [data-type="team"], [data-testid="empty-state"]',
+        { state: 'visible', timeout: 10000 }
+      )
+      .catch(() => {
+        // Page may have different structure
+      })
   })
 
   test('should open create team dialog', async ({ page }) => {
@@ -36,9 +43,9 @@ test.describe('Settings - Team Management', () => {
       await createButton.click()
 
       // Dialog should open
-      await page.waitForSelector('[role="dialog"], [data-state="open"]', {
-        timeout: 5000,
-      })
+      await expect(
+        page.locator('[role="dialog"], [data-state="open"]')
+      ).toBeVisible({ timeout: 5000 })
     }
   })
 
@@ -61,38 +68,53 @@ test.describe('Settings - Team Management', () => {
     await page.waitForSelector('[role="dialog"]', { timeout: 5000 })
 
     // Fill team name
-    const nameInput = page.locator(
-      '[role="dialog"] input[name="name"], [role="dialog"] input[placeholder*="name"]'
-    ).first()
+    const nameInput = page
+      .locator(
+        '[role="dialog"] input[name="name"], [role="dialog"] input[placeholder*="name"]'
+      )
+      .first()
 
     if (await nameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
       await nameInput.fill(teamName)
 
       // Submit form
-      const submitButton = page.locator(
-        '[role="dialog"] button[type="submit"], [role="dialog"] button:has-text("Save"), [role="dialog"] button:has-text("Create")'
-      ).first()
+      const submitButton = page
+        .locator(
+          '[role="dialog"] button[type="submit"], [role="dialog"] button:has-text("Save"), [role="dialog"] button:has-text("Create")'
+        )
+        .first()
 
       if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
         await submitButton.click()
-        await page.waitForTimeout(2000)
+
+        // Wait for dialog to close
+        await page
+          .waitForSelector('[role="dialog"]', {
+            state: 'detached',
+            timeout: 10000,
+          })
+          .catch(() => {
+            // Dialog may stay open with validation errors
+          })
       }
     }
   })
 
   test('should edit team and add bot', async ({ page }) => {
     // Find an edit button on a team card
-    const editButton = page.locator(
-      'button:has-text("Edit"), [data-testid="edit-team"], button[aria-label*="edit"]'
-    ).first()
+    const editButton = page
+      .locator(
+        'button:has-text("Edit"), [data-testid="edit-team"], button[aria-label*="edit"]'
+      )
+      .first()
 
     if (await editButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await editButton.click()
 
       // Wait for edit dialog or page
-      await page.waitForSelector('[role="dialog"], [data-state="open"]', {
-        timeout: 5000,
-      })
+      await expect(
+        page.locator('[role="dialog"], [data-state="open"]')
+      ).toBeVisible({ timeout: 5000 })
 
       // Look for bot selection
       const botSelector = page.locator(
@@ -113,9 +135,9 @@ test.describe('Settings - Team Management', () => {
 
   test('should edit team and remove bot', async ({ page }) => {
     // Find an edit button on a team card
-    const editButton = page.locator(
-      'button:has-text("Edit"), [data-testid="edit-team"]'
-    ).first()
+    const editButton = page
+      .locator('button:has-text("Edit"), [data-testid="edit-team"]')
+      .first()
 
     if (await editButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await editButton.click()
@@ -124,22 +146,32 @@ test.describe('Settings - Team Management', () => {
       await page.waitForSelector('[role="dialog"]', { timeout: 5000 })
 
       // Look for remove bot button
-      const removeButton = page.locator(
-        '[role="dialog"] button:has-text("Remove"), [role="dialog"] [data-testid="remove-bot"]'
-      ).first()
+      const removeButton = page
+        .locator(
+          '[role="dialog"] button:has-text("Remove"), [role="dialog"] [data-testid="remove-bot"]'
+        )
+        .first()
 
       if (await removeButton.isVisible({ timeout: 3000 }).catch(() => false)) {
         await removeButton.click()
-        await page.waitForTimeout(1000)
+
+        // Wait for UI to update
+        await page
+          .waitForSelector('[role="dialog"]', { state: 'visible' })
+          .catch(() => {
+            // Continue
+          })
       }
     }
   })
 
   test('should delete team', async ({ page }) => {
     // Find delete button
-    const deleteButton = page.locator(
-      'button:has-text("Delete"), [data-testid="delete-team"], button[aria-label*="delete"]'
-    ).first()
+    const deleteButton = page
+      .locator(
+        'button:has-text("Delete"), [data-testid="delete-team"], button[aria-label*="delete"]'
+      )
+      .first()
 
     if (await deleteButton.isVisible({ timeout: 5000 }).catch(() => false)) {
       await deleteButton.click()
@@ -151,7 +183,16 @@ test.describe('Settings - Team Management', () => {
 
       if (await confirmButton.isVisible({ timeout: 3000 }).catch(() => false)) {
         await confirmButton.click()
-        await page.waitForTimeout(2000)
+
+        // Wait for alert dialog to close
+        await page
+          .waitForSelector('[role="alertdialog"]', {
+            state: 'detached',
+            timeout: 5000,
+          })
+          .catch(() => {
+            // May not have alertdialog
+          })
       }
     }
   })

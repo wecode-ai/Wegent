@@ -13,7 +13,7 @@ test.describe('Chat Task', () => {
     // Should be on chat page
     await expect(page).toHaveURL(/\/chat/)
 
-    // Chat interface should be visible
+    // Wait for page to load
     await page.waitForLoadState('networkidle')
   })
 
@@ -26,9 +26,11 @@ test.describe('Chat Task', () => {
       '[data-testid="team-selector"], [role="combobox"], select'
     )
 
-    // Should have some form of team selection
+    // Assert team selector is visible (may not exist if only one team)
     const count = await teamSelector.count()
-    expect(count).toBeGreaterThanOrEqual(0) // May not exist if only one team
+    if (count > 0) {
+      await expect(teamSelector.first()).toBeVisible({ timeout: 10000 })
+    }
   })
 
   test('should create new chat task', async ({ page }) => {
@@ -63,24 +65,35 @@ test.describe('Chat Task', () => {
     await page.waitForLoadState('networkidle')
 
     // Find message input
-    const messageInput = page.locator(
-      'textarea, input[type="text"][placeholder*="message"], [data-testid="message-input"]'
-    ).first()
+    const messageInput = page
+      .locator(
+        'textarea, input[type="text"][placeholder*="message"], [data-testid="message-input"]'
+      )
+      .first()
 
     if (await messageInput.isVisible({ timeout: 5000 }).catch(() => false)) {
       // Type message
       await messageInput.fill('Hello, this is a test message')
 
       // Find and click send button
-      const sendButton = page.locator(
-        'button[type="submit"], button:has-text("Send"), button:has-text("发送"), [data-testid="send-button"]'
-      ).first()
+      const sendButton = page
+        .locator(
+          'button[type="submit"], button:has-text("Send"), button:has-text("发送"), [data-testid="send-button"]'
+        )
+        .first()
 
       if (await sendButton.isEnabled({ timeout: 3000 }).catch(() => false)) {
         await sendButton.click()
 
-        // Wait for response (with mock, should be instant)
-        await page.waitForTimeout(2000)
+        // Wait for response message to appear or loading to complete
+        await page
+          .waitForSelector(
+            '[data-testid="message"], .message, [data-role="assistant"]',
+            { timeout: 15000 }
+          )
+          .catch(() => {
+            // Response may not appear in mock mode
+          })
       }
     }
   })
@@ -91,10 +104,17 @@ test.describe('Chat Task', () => {
 
     // Task list or conversation list should be visible
     const taskList = page.locator(
-      '[data-testid="task-list"], [data-testid="conversation-list"], .task-list, .chat-list'
+      '[data-testid="task-list"], [data-testid="conversation-list"], .task-list, .chat-list, aside'
     )
 
-    // Give it some time to load
-    await page.waitForTimeout(2000)
+    // Wait for sidebar/task list area
+    await page
+      .waitForSelector(
+        '[data-testid="task-list"], [data-testid="conversation-list"], aside',
+        { state: 'visible', timeout: 10000 }
+      )
+      .catch(() => {
+        // Sidebar may be collapsed or hidden
+      })
   })
 })

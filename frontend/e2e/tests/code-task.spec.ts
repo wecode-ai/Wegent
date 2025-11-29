@@ -25,8 +25,11 @@ test.describe('Code Task', () => {
       '[data-testid="team-selector"], [role="combobox"]'
     )
 
-    // Team selector should exist
-    await page.waitForTimeout(2000)
+    // Assert team selector is visible if it exists
+    const count = await teamSelector.count()
+    if (count > 0) {
+      await expect(teamSelector.first()).toBeVisible({ timeout: 10000 })
+    }
   })
 
   test('should display repository selector', async ({ page }) => {
@@ -38,8 +41,11 @@ test.describe('Code Task', () => {
       '[data-testid="repo-selector"], [placeholder*="repo"], [placeholder*="仓库"]'
     )
 
-    // Give time for the page to fully load
-    await page.waitForTimeout(2000)
+    // Assert repository selector is visible if it exists
+    const count = await repoSelector.count()
+    if (count > 0) {
+      await expect(repoSelector.first()).toBeVisible({ timeout: 10000 })
+    }
   })
 
   test('should create new code task', async ({ page }) => {
@@ -66,8 +72,8 @@ test.describe('Code Task', () => {
       'textarea, input[type="text"][placeholder*="message"], [data-testid="message-input"]'
     )
 
-    // Give time for the page to fully load
-    await page.waitForTimeout(3000)
+    // Assert message input is visible
+    await expect(messageInput.first()).toBeVisible({ timeout: 10000 })
   })
 
   test('should send code task message', async ({ page }) => {
@@ -75,22 +81,30 @@ test.describe('Code Task', () => {
     await page.waitForLoadState('networkidle')
 
     // Find message input
-    const messageInput = page.locator(
-      'textarea, input[type="text"]'
-    ).first()
+    const messageInput = page.locator('textarea, input[type="text"]').first()
 
     if (await messageInput.isVisible({ timeout: 5000 }).catch(() => false)) {
       // Type message
       await messageInput.fill('Please help me refactor this code')
 
       // Find send button
-      const sendButton = page.locator(
-        'button[type="submit"], button:has-text("Send"), button:has-text("发送")'
-      ).first()
+      const sendButton = page
+        .locator(
+          'button[type="submit"], button:has-text("Send"), button:has-text("发送")'
+        )
+        .first()
 
       if (await sendButton.isEnabled({ timeout: 3000 }).catch(() => false)) {
         await sendButton.click()
-        await page.waitForTimeout(2000)
+
+        // Wait for response message to appear
+        await page
+          .waitForSelector('[data-testid="message"], .message', {
+            timeout: 15000,
+          })
+          .catch(() => {
+            // Response may not appear in mock mode
+          })
       }
     }
   })

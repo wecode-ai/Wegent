@@ -1,7 +1,7 @@
 import { test as setup, expect } from '@playwright/test'
 import { login, TEST_USER } from '../utils/auth'
-import * as fs from 'fs'
 import * as path from 'path'
+import { promises as fsPromises } from 'fs'
 
 const authFile = path.join(__dirname, '../.auth/user.json')
 
@@ -10,10 +10,12 @@ const authFile = path.join(__dirname, '../.auth/user.json')
  * Authenticates and saves storage state for reuse
  */
 setup('authenticate', async ({ page }) => {
-  // Ensure .auth directory exists
+  // Ensure .auth directory exists using async operations
   const authDir = path.dirname(authFile)
-  if (!fs.existsSync(authDir)) {
-    fs.mkdirSync(authDir, { recursive: true })
+  try {
+    await fsPromises.access(authDir)
+  } catch {
+    await fsPromises.mkdir(authDir, { recursive: true })
   }
 
   // Perform login

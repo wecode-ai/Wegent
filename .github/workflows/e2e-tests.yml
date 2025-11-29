@@ -7,10 +7,12 @@ on:
 
 env:
   NEXT_PUBLIC_API_URL: http://localhost:8000/api
-  DATABASE_URL: mysql://root:123456@localhost:3306/task_manager
+  # Use pymysql driver (installed via requirements.txt)
+  DATABASE_URL: mysql+pymysql://root:123456@localhost:3306/task_manager
   REDIS_URL: redis://localhost:6379
   ENVIRONMENT: development
-  DB_AUTO_MIGRATE: 'false'
+  # Enable auto migration on backend startup
+  DB_AUTO_MIGRATE: 'True'
 
 jobs:
   e2e-tests:
@@ -58,52 +60,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Wait for MySQL to be ready
-        run: |
-          for i in {1..30}; do
-            if mysqladmin ping -h 127.0.0.1 -u root -p123456 --silent 2>/dev/null; then
-              echo "MySQL is ready!"
-              break
-            fi
-            echo "Waiting for MySQL... ($i/30)"
-            sleep 2
-          done
-
-      - name: Run database migrations
-        working-directory: backend
-        env:
-          DATABASE_URL: mysql://root:123456@127.0.0.1:3306/task_manager
-        run: |
-          alembic upgrade head
-
-      - name: Initialize seed data
-        working-directory: backend
-        env:
-          DATABASE_URL: mysql://root:123456@127.0.0.1:3306/task_manager
-          REDIS_URL: redis://127.0.0.1:6379
-        run: |
-          python -c "
-          import asyncio
-          from app.main import app
-          from app.database import engine
-          from app.services.init_data import init_data_service
-
-          async def init():
-              await init_data_service.initialize()
-              print('Seed data initialized')
-
-          asyncio.run(init())
-          " || echo "Seed data initialization completed (may have existing data)"
-
-      - name: Start backend server
-        working-directory: backend
-        env:
-          DATABASE_URL: mysql://root:123456@127.0.0.1:3306/task_manager
-          REDIS_URL: redis://127.0.0.1:6379
-        run: |
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-          echo "Backend server starting..."
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
@@ -121,6 +77,21 @@ jobs:
           NEXT_PUBLIC_API_URL: http://localhost:8000/api
         run: npm run build
 
+      - name: Install Playwright browsers
+        working-directory: frontend
+        run: npx playwright install chromium --with-deps
+
+      - name: Start backend server
+        working-directory: backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:123456@127.0.0.1:3306/task_manager
+          REDIS_URL: redis://127.0.0.1:6379
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: 'True'
+        run: |
+          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          echo "Backend server starting (with auto migration enabled)..."
+
       - name: Start frontend server
         working-directory: frontend
         env:
@@ -132,12 +103,12 @@ jobs:
       - name: Wait for services to be ready
         run: |
           echo "Waiting for backend..."
-          for i in {1..30}; do
-            if curl -s http://localhost:8000/api/health > /dev/null 2>&1 || curl -s http://localhost:8000/health > /dev/null 2>&1; then
+          for i in {1..60}; do
+            if curl -s http://localhost:8000/api/health > /dev/null 2>&1 || curl -s http://localhost:8000/ > /dev/null 2>&1; then
               echo "Backend is ready!"
               break
             fi
-            echo "Waiting for backend... ($i/30)"
+            echo "Waiting for backend... ($i/60)"
             sleep 2
           done
 
@@ -150,10 +121,6 @@ jobs:
             echo "Waiting for frontend... ($i/30)"
             sleep 2
           done
-
-      - name: Install Playwright browsers
-        working-directory: frontend
-        run: npx playwright install chromium --with-deps
 
       - name: Run E2E tests
         working-directory: frontend
