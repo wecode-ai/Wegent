@@ -27,24 +27,36 @@ BOLD='\033[1m'
 NC='\033[0m' # No Color
 
 # Get the commits being pushed
-# pre-push hook receives: <local ref> <local sha> <remote ref> <remote sha>
-while read local_ref local_sha remote_ref remote_sha; do
-    if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
-        # Branch is being deleted
-        exit 0
-    fi
-
-    if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
-        # New branch, compare with default branch
-        RANGE="origin/main...$local_sha"
+# When run by pre-commit, stdin may not be available, so we detect changes differently
+get_changed_files() {
+    # First try: read from stdin (direct pre-push hook)
+    if [ -t 0 ]; then
+        # No stdin available (pre-commit environment)
+        # Compare current branch with its upstream or origin/main
+        local current_branch=$(git rev-parse --abbrev-ref HEAD)
+        local upstream=$(git rev-parse --abbrev-ref "@{upstream}" 2>/dev/null || echo "origin/main")
+        git diff --name-only "$upstream"...HEAD 2>/dev/null || git diff --name-only HEAD~1 HEAD 2>/dev/null || true
     else
-        # Existing branch, compare with remote
-        RANGE="$remote_sha...$local_sha"
+        # Read from stdin (direct git pre-push hook)
+        while read local_ref local_sha remote_ref remote_sha; do
+            if [ "$local_sha" = "0000000000000000000000000000000000000000" ]; then
+                # Branch is being deleted
+                return
+            fi
+
+            if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+                # New branch, compare with default branch
+                git diff --name-only "origin/main...$local_sha" 2>/dev/null || true
+            else
+                # Existing branch, compare with remote
+                git diff --name-only "$remote_sha...$local_sha" 2>/dev/null || true
+            fi
+        done
     fi
-done
+}
 
 # Get list of changed files in the commits being pushed
-CHANGED_FILES=$(git diff --name-only $RANGE 2>/dev/null || git diff --name-only HEAD~1 HEAD 2>/dev/null || true)
+CHANGED_FILES=$(get_changed_files)
 
 if [ -z "$CHANGED_FILES" ]; then
     echo -e "${GREEN}✅ No files changed, skipping checks${NC}"
