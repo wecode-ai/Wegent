@@ -102,23 +102,24 @@ test.describe('Logout', () => {
     // Wait for login to complete
     await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 30000 })
 
-    // Navigate to settings page with logout option
+    // Navigate to any page (logout is in the top navigation UserMenu dropdown)
     await page.goto('/settings')
     await page.waitForLoadState('networkidle')
 
-    // Find and click logout button
+    // Logout is in UserMenu dropdown - need to click user name button first
+    // UserMenu button contains the username and has a rounded-full style
+    const userMenuButton = page.locator('button.rounded-full, [data-testid="user-menu"]')
+    await expect(userMenuButton).toBeVisible({ timeout: 5000 })
+    await userMenuButton.click()
+
+    // Now logout button should be visible in the dropdown
     const logoutButton = page.locator(
       'button:has-text("Logout"), button:has-text("退出"), button:has-text("Sign out")'
     )
+    await expect(logoutButton).toBeVisible({ timeout: 3000 })
+    await logoutButton.click()
 
-    if (await logoutButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await logoutButton.click()
-
-      // Should redirect to login
-      await page.waitForURL(/\/login/, { timeout: 10000 })
-    } else {
-      // If logout button is not found, the test should pass anyway (UI may differ)
-      test.skip()
-    }
+    // Should redirect to login
+    await page.waitForURL(/\/login/, { timeout: 10000 })
   })
 })
