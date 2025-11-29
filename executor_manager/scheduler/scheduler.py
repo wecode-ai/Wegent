@@ -42,7 +42,7 @@ class TaskScheduler:
         self.api_client = TaskApiClient()
         self.task_processor = TaskProcessor()
         self.running = False
-        self.max_concurrent_tasks = int(os.getenv("MAX_CONCURRENT_TASKS", "5"))
+        self.max_concurrent_tasks = int(os.getenv("MAX_CONCURRENT_TASKS", "30"))
         self.max_offline_concurrent_tasks = int(os.getenv("MAX_OFFLINE_CONCURRENT_TASKS", "10"))
         
         # Configure APScheduler

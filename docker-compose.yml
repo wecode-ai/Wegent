@@ -105,7 +105,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - TASK_API_DOMAIN=http://backend:8000
-      - MAX_CONCURRENT_TASKS=5
+      - MAX_CONCURRENT_TASKS=30
       - PORT=8001
       - CALLBACK_HOST=http://executor_manager:8001
       - NETWORK=wegent-network
