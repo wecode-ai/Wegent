@@ -96,7 +96,7 @@ export default function TeamSelector({
         setSelectedTeam(null);
       }
     }
-  }, [selectedTaskDetail, teams, selectedTeam, setSelectedTeam]);
+  }, [selectedTaskDetail, teams]);
 
   const handleChange = (value: string) => {
     const team = teams.find(t => t.id === Number(value));
