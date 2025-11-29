@@ -178,7 +178,15 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
     echo -e "${BLUE}🔍 Frontend Checks:${NC}"
     
     # Check if we're in the right directory and node_modules exists
-    if [ -d "frontend/node_modules" ]; then
+    if [ ! -d "frontend/node_modules" ]; then
+        echo -e "   ${RED}❌ FAILED: node_modules not found${NC}"
+        echo -e "   ${RED}   Run 'cd frontend && npm install' to install dependencies${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Frontend Dependencies")
+        FAILED_LOGS+=("=== Frontend Dependencies Missing ===
+node_modules directory not found in frontend/
+Fix: cd frontend && npm install")
+    else
         cd frontend
         
         # ESLint
@@ -238,9 +246,6 @@ $BUILD_OUTPUT")
         fi
         
         cd ..
-    else
-        echo -e "   ${YELLOW}⚠️ Skipping frontend checks (node_modules not found)${NC}"
-        echo -e "   ${YELLOW}   Run 'cd frontend && npm install' to enable checks${NC}"
     fi
     echo ""
 fi
@@ -254,7 +259,16 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
     cd backend
     
     # Check if virtual environment or Python packages are available
-    if command -v black &> /dev/null || [ -f "venv/bin/black" ]; then
+    if ! command -v black &> /dev/null && [ ! -f "venv/bin/black" ]; then
+        echo -e "   ${RED}❌ FAILED: black not found${NC}"
+        echo -e "   ${RED}   Run 'pip install black isort pytest' to install dependencies${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Backend Dependencies (black)")
+        FAILED_LOGS+=("=== Backend Dependencies Missing ===
+black command not found
+Fix: pip install black isort pytest")
+        cd ..
+    else
         # Black format check
         echo -e "   Running Black format check..."
         BLACK_OUTPUT=$(black --check app/ 2>&1)
@@ -271,36 +285,59 @@ Fix: cd backend && black app/")
         fi
         
         # isort check
-        echo -e "   Running isort check..."
-        ISORT_OUTPUT=$(isort --check-only --diff app/ 2>&1)
-        ISORT_EXIT=$?
-        if [ $ISORT_EXIT -eq 0 ]; then
-            echo -e "   ${GREEN}✅ isort: PASSED${NC}"
-        else
-            echo -e "   ${RED}❌ isort: FAILED (run 'cd backend && isort app/' to fix)${NC}"
+        if ! command -v isort &> /dev/null; then
+            echo -e "   ${RED}❌ FAILED: isort not found${NC}"
             CHECK_FAILED=1
-            FAILED_CHECKS+=("Backend isort")
-            FAILED_LOGS+=("=== Backend isort Errors ===
+            FAILED_CHECKS+=("Backend Dependencies (isort)")
+            FAILED_LOGS+=("=== Backend Dependencies Missing ===
+isort command not found
+Fix: pip install isort")
+        else
+            echo -e "   Running isort check..."
+            ISORT_OUTPUT=$(isort --check-only --diff app/ 2>&1)
+            ISORT_EXIT=$?
+            if [ $ISORT_EXIT -eq 0 ]; then
+                echo -e "   ${GREEN}✅ isort: PASSED${NC}"
+            else
+                echo -e "   ${RED}❌ isort: FAILED (run 'cd backend && isort app/' to fix)${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Backend isort")
+                FAILED_LOGS+=("=== Backend isort Errors ===
 $ISORT_OUTPUT
 Fix: cd backend && isort app/")
+            fi
         fi
         
         # pytest
-        echo -e "   Running pytest..."
-        if [ -d "tests" ]; then
-            PYTEST_OUTPUT=$(pytest tests/ --tb=short -q 2>&1)
-            PYTEST_EXIT=$?
-            if [ $PYTEST_EXIT -eq 0 ]; then
-                echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
-            else
-                echo -e "   ${RED}❌ Pytest: FAILED${NC}"
-                CHECK_FAILED=1
-                FAILED_CHECKS+=("Backend Pytest")
-                FAILED_LOGS+=("=== Backend Pytest Errors ===
-$PYTEST_OUTPUT")
-            fi
+        if ! command -v pytest &> /dev/null; then
+            echo -e "   ${RED}❌ FAILED: pytest not found${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Backend Dependencies (pytest)")
+            FAILED_LOGS+=("=== Backend Dependencies Missing ===
+pytest command not found
+Fix: pip install pytest")
         else
-            echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
+            echo -e "   Running pytest..."
+            if [ -d "tests" ]; then
+                PYTEST_OUTPUT=$(pytest tests/ --tb=short -q 2>&1)
+                PYTEST_EXIT=$?
+                if [ $PYTEST_EXIT -eq 0 ]; then
+                    echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
+                else
+                    echo -e "   ${RED}❌ Pytest: FAILED${NC}"
+                    CHECK_FAILED=1
+                    FAILED_CHECKS+=("Backend Pytest")
+                    FAILED_LOGS+=("=== Backend Pytest Errors ===
+$PYTEST_OUTPUT")
+                fi
+            else
+                echo -e "   ${RED}❌ FAILED: tests directory not found${NC}"
+                CHECK_FAILED=1
+                FAILED_CHECKS+=("Backend Tests Directory")
+                FAILED_LOGS+=("=== Backend Tests Directory Missing ===
+tests/ directory not found in backend/
+Fix: Create tests/ directory with test files")
+            fi
         fi
         
         # Python syntax check
@@ -326,12 +363,9 @@ $pyfile: $COMPILE_OUTPUT"
             FAILED_CHECKS+=("Backend Syntax")
             FAILED_LOGS+=("=== Backend Python Syntax Errors ===$SYNTAX_OUTPUT")
         fi
-    else
-        echo -e "   ${YELLOW}⚠️ Skipping backend checks (black/isort not found)${NC}"
-        echo -e "   ${YELLOW}   Run 'pip install black isort pytest' to enable checks${NC}"
+        
+        cd ..
     fi
-    
-    cd ..
     echo ""
 fi
 
@@ -343,7 +377,15 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     
     cd executor
     
-    if command -v pytest &> /dev/null; then
+    if ! command -v pytest &> /dev/null; then
+        echo -e "   ${RED}❌ FAILED: pytest not found${NC}"
+        echo -e "   ${RED}   Run 'pip install pytest' to install dependencies${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Executor Dependencies (pytest)")
+        FAILED_LOGS+=("=== Executor Dependencies Missing ===
+pytest command not found
+Fix: pip install pytest")
+    else
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
             PYTEST_OUTPUT=$(pytest tests/ --tb=short -q 2>&1)
@@ -358,10 +400,13 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
 $PYTEST_OUTPUT")
             fi
         else
-            echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
+            echo -e "   ${RED}❌ FAILED: tests directory not found${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Executor Tests Directory")
+            FAILED_LOGS+=("=== Executor Tests Directory Missing ===
+tests/ directory not found in executor/
+Fix: Create tests/ directory with test files")
         fi
-    else
-        echo -e "   ${YELLOW}⚠️ Skipping executor checks (pytest not found)${NC}"
     fi
     
     cd ..
@@ -375,7 +420,15 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
     echo -e "${BLUE}🔍 Executor Manager Checks:${NC}"
     
     cd executor_manager
-    if command -v pytest &> /dev/null; then
+    if ! command -v pytest &> /dev/null; then
+        echo -e "   ${RED}❌ FAILED: pytest not found${NC}"
+        echo -e "   ${RED}   Run 'pip install pytest' to install dependencies${NC}"
+        CHECK_FAILED=1
+        FAILED_CHECKS+=("Executor Manager Dependencies (pytest)")
+        FAILED_LOGS+=("=== Executor Manager Dependencies Missing ===
+pytest command not found
+Fix: pip install pytest")
+    else
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
             PYTEST_OUTPUT=$(pytest tests/ --tb=short -q 2>&1)
@@ -393,10 +446,13 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
 $PYTEST_OUTPUT")
             fi
         else
-            echo -e "   ${YELLOW}⚠️ Pytest: SKIPPED (no tests directory)${NC}"
+            echo -e "   ${RED}❌ FAILED: tests directory not found${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Executor Manager Tests Directory")
+            FAILED_LOGS+=("=== Executor Manager Tests Directory Missing ===
+tests/ directory not found in executor_manager/
+Fix: Create tests/ directory with test files")
         fi
-    else
-        echo -e "   ${YELLOW}⚠️ Skipping executor_manager checks (pytest not found)${NC}"
     fi
     
     cd ..
@@ -451,24 +507,37 @@ fi
 if [ ${#DOC_REMINDERS[@]} -gt 0 ] && [ "$AI_VERIFIED" != "1" ]; then
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo ""
-    echo -e "${RED}${BOLD}🚫 PUSH BLOCKED - Documentation Review Required${NC}"
+    echo -e "${RED}${BOLD}🚫 PUSH BLOCKED - Documentation Update Required${NC}"
     echo ""
-    echo -e "${YELLOW}${BOLD}Your code changes may require documentation updates.${NC}"
-    echo -e "${YELLOW}Please review the documentation reminders listed above.${NC}"
+    echo -e "${RED}${BOLD}⚠️  CRITICAL: THIS IS YOUR ONLY CHANCE TO UPDATE DOCUMENTATION${NC}"
+    echo ""
+    echo -e "${YELLOW}${BOLD}Your code changes require documentation updates.${NC}"
+    echo -e "${YELLOW}After this push, there will be NO further opportunity to update docs.${NC}"
+    echo -e "${YELLOW}The documentation must be complete and accurate IN THIS COMMIT.${NC}"
+    echo ""
+    echo -e "${BLUE}Documentation reminders:${NC}"
+    for reminder in "${DOC_REMINDERS[@]}"; do
+        echo -e "   ${YELLOW}• $reminder${NC}"
+    done
     echo ""
     echo -e "${BOLD}You MUST either:${NC}"
     echo ""
-    echo -e "  ${GREEN}1. Update the relevant documentation${NC}"
-    echo -e "     Then commit the doc changes and push again."
+    echo -e "  ${GREEN}1. Update the relevant documentation NOW${NC}"
+    echo -e "     Add doc changes to this commit, then push again."
+    echo -e "     ${CYAN}This is the recommended approach.${NC}"
     echo ""
-    echo -e "  ${CYAN}2. ONLY if you are CERTAIN that your changes${NC}"
-    echo -e "     ${CYAN}do NOT require ANY documentation updates, use:${NC}"
+    echo -e "  ${YELLOW}2. ONLY if you have THOROUGHLY VERIFIED that your changes${NC}"
+    echo -e "     ${YELLOW}do NOT require ANY documentation updates:${NC}"
     echo ""
     echo -e "     ${GREEN}${BOLD}AI_VERIFIED=1 git push${NC}"
     echo ""
-    echo -e "${RED}${BOLD}⚠️  WARNING: Do NOT use AI_VERIFIED=1 to bypass this check${NC}"
-    echo -e "${RED}   unless you have thoroughly verified that NO documentation${NC}"
-    echo -e "${RED}   updates are needed. Incomplete documentation harms users.${NC}"
+    echo -e "${RED}${BOLD}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${RED}${BOLD}⚠️  WARNING: INCOMPLETE DOCUMENTATION IS NOT ACCEPTABLE${NC}"
+    echo -e "${RED}${BOLD}════════════════════════════════════════════════════════════${NC}"
+    echo -e "${RED}   • Users depend on accurate documentation${NC}"
+    echo -e "${RED}   • Outdated docs cause confusion and support burden${NC}"
+    echo -e "${RED}   • You will NOT get another chance to update docs for this change${NC}"
+    echo -e "${RED}   • Do NOT use AI_VERIFIED=1 to bypass - update docs instead${NC}"
     echo ""
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo ""
