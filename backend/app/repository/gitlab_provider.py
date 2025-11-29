@@ -859,3 +859,110 @@ class GitLabProvider(RepositoryProvider):
 
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=502, detail=f"GitLab API error: {str(e)}")
+
+    async def get_pipeline_jobs_logs(
+        self,
+        user: User,
+        repo_name: str,
+        pipeline_id: int,
+        git_domain: str,
+    ) -> str:
+        """
+        Get logs for all jobs in a GitLab pipeline
+
+        Args:
+            user: User object
+            repo_name: Repository name (namespace/project format)
+            pipeline_id: Pipeline ID
+            git_domain: Git domain
+
+        Returns:
+            Log content as string
+        """
+        git_info = self._pick_git_info(user, git_domain)
+        git_token = git_info["git_token"]
+
+        if not git_token:
+            raise HTTPException(status_code=400, detail="Git token not configured")
+
+        api_base_url = self._get_api_base_url(git_domain)
+        encoded_repo_name = requests.utils.quote(repo_name, safe="")
+
+        try:
+            # Get pipeline jobs
+            jobs_response = self._make_request_with_auth_retry(
+                method="GET",
+                url=f"{api_base_url}/projects/{encoded_repo_name}/pipelines/{pipeline_id}/jobs",
+                token=git_token,
+            )
+            jobs_data = jobs_response.json()
+
+            logs = []
+            for job in jobs_data:
+                job_id = job.get("id")
+                job_name = job.get("name", "unknown")
+                job_status = job.get("status", "unknown")
+
+                # Only get logs for failed or completed jobs
+                if job_status not in ("failed", "success"):
+                    continue
+
+                # Get job trace (log)
+                try:
+                    trace_response = self._make_request_with_auth_retry(
+                        method="GET",
+                        url=f"{api_base_url}/projects/{encoded_repo_name}/jobs/{job_id}/trace",
+                        token=git_token,
+                    )
+                    if trace_response.status_code == 200:
+                        logs.append(f"=== Job: {job_name} (status: {job_status}) ===\n")
+                        logs.append(trace_response.text)
+                        logs.append("\n\n")
+                except Exception as e:
+                    logs.append(f"=== Job: {job_name} - Failed to get logs: {str(e)} ===\n\n")
+
+            return "".join(logs)
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to get pipeline jobs logs: {str(e)}")
+            return f"Failed to retrieve logs: {str(e)}"
+
+    async def get_job_trace(
+        self,
+        user: User,
+        repo_name: str,
+        job_id: int,
+        git_domain: str,
+    ) -> str:
+        """
+        Get trace (log) for a specific GitLab job
+
+        Args:
+            user: User object
+            repo_name: Repository name (namespace/project format)
+            job_id: Job ID
+            git_domain: Git domain
+
+        Returns:
+            Job trace as string
+        """
+        git_info = self._pick_git_info(user, git_domain)
+        git_token = git_info["git_token"]
+
+        if not git_token:
+            raise HTTPException(status_code=400, detail="Git token not configured")
+
+        api_base_url = self._get_api_base_url(git_domain)
+        encoded_repo_name = requests.utils.quote(repo_name, safe="")
+
+        try:
+            response = self._make_request_with_auth_retry(
+                method="GET",
+                url=f"{api_base_url}/projects/{encoded_repo_name}/jobs/{job_id}/trace",
+                token=git_token,
+            )
+            return response.text
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to get job trace: {str(e)}")
+            return f"Failed to retrieve job trace: {str(e)}"

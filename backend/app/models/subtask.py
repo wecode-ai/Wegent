@@ -17,6 +17,7 @@ from app.db.base import Base
 class SubtaskStatus(str, PyEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    WAITING = "WAITING"  # Agent completed, waiting for external event (e.g., CI)
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"

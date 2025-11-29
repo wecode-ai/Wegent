@@ -25,6 +25,7 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 class SubtaskStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    WAITING = "WAITING"  # Agent completed, waiting for external event (e.g., CI)
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"

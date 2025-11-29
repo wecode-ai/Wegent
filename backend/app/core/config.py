@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     INIT_DATA_DIR: str = "/app/init_data"
     INIT_DATA_ENABLED: bool = True
 
+    # CI Monitor configuration (Async Team Mode)
+    CI_MONITOR_ENABLED: bool = True
+    CI_MAX_RETRIES: int = 5
+    CI_LOG_MAX_LENGTH: int = 50000
+    GITHUB_WEBHOOK_SECRET: str = ""
+    GITLAB_WEBHOOK_TOKEN: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

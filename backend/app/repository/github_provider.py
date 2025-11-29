@@ -823,3 +823,143 @@ class GitHubProvider(RepositoryProvider):
 
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")
+
+    async def get_workflow_run_logs(
+        self,
+        user: User,
+        repo_name: str,
+        run_id: int,
+        git_domain: str,
+    ) -> str:
+        """
+        Get logs for a GitHub Actions workflow run
+
+        Args:
+            user: User object
+            repo_name: Repository name (owner/repo format)
+            run_id: Workflow run ID
+            git_domain: Git domain
+
+        Returns:
+            Log content as string
+        """
+        git_info = self._pick_git_info(user, git_domain)
+        git_token = git_info["git_token"]
+
+        if not git_token:
+            raise HTTPException(status_code=400, detail="Git token not configured")
+
+        api_base_url = self._get_api_base_url(git_domain)
+
+        try:
+            headers = {
+                "Authorization": f"token {git_token}",
+                "Accept": "application/vnd.github.v3+json",
+            }
+
+            # Get workflow run jobs
+            jobs_response = requests.get(
+                f"{api_base_url}/repos/{repo_name}/actions/runs/{run_id}/jobs",
+                headers=headers,
+            )
+            jobs_response.raise_for_status()
+            jobs_data = jobs_response.json()
+
+            logs = []
+            for job in jobs_data.get("jobs", []):
+                job_id = job.get("id")
+                job_name = job.get("name", "unknown")
+                job_conclusion = job.get("conclusion", "unknown")
+
+                # Get job logs
+                try:
+                    log_headers = {
+                        "Authorization": f"token {git_token}",
+                        "Accept": "application/vnd.github.v3+json",
+                    }
+                    log_response = requests.get(
+                        f"{api_base_url}/repos/{repo_name}/actions/jobs/{job_id}/logs",
+                        headers=log_headers,
+                        allow_redirects=True,
+                    )
+                    if log_response.status_code == 200:
+                        logs.append(f"=== Job: {job_name} (conclusion: {job_conclusion}) ===\n")
+                        logs.append(log_response.text)
+                        logs.append("\n\n")
+                except Exception as e:
+                    logs.append(f"=== Job: {job_name} - Failed to get logs: {str(e)} ===\n\n")
+
+            return "".join(logs)
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to get workflow run logs: {str(e)}")
+            return f"Failed to retrieve logs: {str(e)}"
+
+    async def get_check_run_annotations(
+        self,
+        user: User,
+        repo_name: str,
+        check_run_id: int,
+        git_domain: str,
+    ) -> str:
+        """
+        Get annotations/output for a GitHub check run
+
+        Args:
+            user: User object
+            repo_name: Repository name (owner/repo format)
+            check_run_id: Check run ID
+            git_domain: Git domain
+
+        Returns:
+            Annotations and output as string
+        """
+        git_info = self._pick_git_info(user, git_domain)
+        git_token = git_info["git_token"]
+
+        if not git_token:
+            raise HTTPException(status_code=400, detail="Git token not configured")
+
+        api_base_url = self._get_api_base_url(git_domain)
+
+        try:
+            headers = {
+                "Authorization": f"token {git_token}",
+                "Accept": "application/vnd.github.v3+json",
+            }
+
+            # Get check run details
+            response = requests.get(
+                f"{api_base_url}/repos/{repo_name}/check-runs/{check_run_id}",
+                headers=headers,
+            )
+            response.raise_for_status()
+            check_run = response.json()
+
+            output = check_run.get("output", {})
+            annotations = output.get("annotations", [])
+
+            result = []
+            result.append(f"Check Run: {check_run.get('name', 'unknown')}\n")
+            result.append(f"Status: {check_run.get('status', 'unknown')}\n")
+            result.append(f"Conclusion: {check_run.get('conclusion', 'unknown')}\n\n")
+
+            if output.get("title"):
+                result.append(f"Title: {output.get('title')}\n")
+            if output.get("summary"):
+                result.append(f"Summary:\n{output.get('summary')}\n\n")
+            if output.get("text"):
+                result.append(f"Details:\n{output.get('text')}\n\n")
+
+            if annotations:
+                result.append("Annotations:\n")
+                for ann in annotations:
+                    result.append(f"  - [{ann.get('annotation_level', 'unknown')}] ")
+                    result.append(f"{ann.get('path', '')}:{ann.get('start_line', '')}: ")
+                    result.append(f"{ann.get('message', '')}\n")
+
+            return "".join(result)
+
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to get check run annotations: {str(e)}")
+            return f"Failed to retrieve annotations: {str(e)}"
