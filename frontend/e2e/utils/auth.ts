@@ -21,28 +21,52 @@ export async function login(
 ): Promise<void> {
   await page.goto('/login')
 
-  // Wait for the login form to be visible
-  await page.waitForSelector('input[name="username"], input[type="text"]', {
-    state: 'visible',
-  })
-
-  // Fill in credentials
-  const usernameInput = page.locator(
-    'input[name="username"], input[type="text"]'
-  )
-  const passwordInput = page.locator(
-    'input[name="password"], input[type="password"]'
+  // Wait for the login form to be visible (field name is user_name)
+  await page.waitForSelector(
+    'input[name="user_name"], input[name="username"], input[type="text"]',
+    {
+      state: 'visible',
+      timeout: 30000,
+    }
   )
 
+  // Fill in credentials - the form field name is user_name
+  const usernameInput = page
+    .locator('input[name="user_name"], input[name="username"], input[type="text"]')
+    .first()
+  const passwordInput = page
+    .locator('input[name="password"], input[type="password"]')
+    .first()
+
+  // Clear and fill username
+  await usernameInput.clear()
   await usernameInput.fill(username)
+
+  // Clear and fill password
+  await passwordInput.clear()
   await passwordInput.fill(password)
 
   // Click login button
   const loginButton = page.locator('button[type="submit"]')
   await loginButton.click()
 
-  // Wait for navigation to complete (redirect to /chat or dashboard)
-  await page.waitForURL(/\/(chat|$)/, { timeout: 15000 })
+  // Wait for login to complete - either redirect away from /login or see an error
+  // The app redirects to /chat after successful login
+  await Promise.race([
+    // Successful login - redirected away from login page
+    page.waitForURL((url) => !url.pathname.includes('/login'), {
+      timeout: 30000,
+    }),
+    // Or wait for error message
+    page
+      .waitForSelector('[role="alert"], .error, [data-error]', {
+        state: 'visible',
+        timeout: 30000,
+      })
+      .then(() => {
+        throw new Error('Login failed - error message appeared')
+      }),
+  ])
 }
 
 /**
@@ -57,9 +81,9 @@ export async function logout(page: Page): Promise<void> {
   const logoutButton = page.locator(
     'button:has-text("Logout"), button:has-text("退出登录"), button:has-text("Sign out")'
   )
-  if (await logoutButton.isVisible()) {
+  if (await logoutButton.isVisible({ timeout: 5000 }).catch(() => false)) {
     await logoutButton.click()
-    await page.waitForURL(/\/login/)
+    await page.waitForURL(/\/login/, { timeout: 10000 })
   }
 }
 
@@ -70,7 +94,14 @@ export async function logout(page: Page): Promise<void> {
 export async function isLoggedIn(page: Page): Promise<boolean> {
   try {
     await page.goto('/')
-    await page.waitForTimeout(1000)
+    // Wait for either redirect to login or content load
+    await Promise.race([
+      page.waitForURL(/\/login/, { timeout: 5000 }),
+      page.waitForSelector('main, [data-testid="app-content"]', {
+        state: 'visible',
+        timeout: 5000,
+      }),
+    ])
     const currentUrl = page.url()
     return !currentUrl.includes('/login')
   } catch {
