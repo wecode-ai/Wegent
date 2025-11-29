@@ -318,7 +318,12 @@ Wegent uses git hooks to ensure code quality for AI coding agents (Claude Code, 
 **Auto-enabled in Executor:**
 When the executor clones a repository, git hooks are automatically configured via `core.hooksPath=.githooks`. No manual installation required.
 
-**Manual Installation (for local development):**
+**Local Development (via npm install):**
+```bash
+cd frontend && npm install  # Husky automatically configures pre-push hook
+```
+
+**Manual Installation (alternative):**
 ```bash
 # Configure git to use .githooks directory
 git config core.hooksPath .githooks
