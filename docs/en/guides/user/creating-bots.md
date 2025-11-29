@@ -40,7 +40,7 @@ Bot = Ghost (soul) + Shell (container) + Model (AI model)
 | Component | Description | Example |
 |-----------|-------------|---------|
 | **Ghost** | Defines agent's personality and capabilities | "Frontend development expert" |
-| **Shell** | Runtime environment | ClaudeCode, Agno |
+| **Shell** | Runtime environment | ClaudeCode, Agno, Dify |
 | **Model** | AI model configuration | Claude Sonnet 4, GPT-4 |
 
 ### Bot vs Ghost
@@ -103,6 +103,7 @@ Clarify what this Bot will be used for:
 **Choosing Shell**:
 - ClaudeCode: Suitable for code development tasks
 - Agno: Suitable for dialogue and interaction tasks
+- Dify: Suitable for external API integration with Dify platform (supports chat, workflow, chatflow, agent-chat modes)
 
 **Choosing Model**:
 - Sonnet: Balance performance and cost
@@ -449,6 +450,9 @@ shellRef: ClaudeCode
 
 # Dialogue interaction tasks
 shellRef: Agno
+
+# External API integration with Dify
+shellRef: Dify
 ```
 
 ### 3. Reuse Strategy
