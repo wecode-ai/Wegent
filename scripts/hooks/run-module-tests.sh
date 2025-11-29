@@ -156,10 +156,10 @@ fi
 echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"
 echo ""
 
-# Exit with failure if any tests failed (but allow --no-verify to skip)
+# Exit with failure if any tests failed (mandatory check, cannot be skipped)
 if [ $TESTS_FAILED -gt 0 ]; then
-    echo -e "${YELLOW}⚠️ Some tests failed. Use 'git push --no-verify' to skip.${NC}"
-    exit 0  # Changed to 0 to not block, just warn
+    echo -e "${RED}❌ Some tests failed. Please fix the failing tests before pushing.${NC}"
+    exit 1  # Block push when tests fail
 fi
 
 exit 0

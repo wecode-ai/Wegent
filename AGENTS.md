@@ -335,13 +335,7 @@ git config core.hooksPath .githooks
 # Normal workflow - checks run automatically before push
 git add .
 git commit -m "feat: your feature"
-git push  # <- Quality checks run here
-
-# If documentation reminders shown, verify and push
-AI_VERIFIED=1 git push
-
-# Skip all checks (not recommended)
-git push --no-verify
+git push  # <- Quality checks run here (mandatory, cannot be skipped)
 ```
 
 **Quality Checks:**
@@ -354,10 +348,9 @@ git push --no-verify
 ```bash
 # Run checks manually
 bash scripts/hooks/ai-push-gate.sh
-
-# Skip all checks (not recommended)
-git push --no-verify
 ```
+
+**Note:** All quality checks are mandatory and cannot be skipped. This ensures code quality and documentation consistency.
 
 **Check Output Example:**
 ```

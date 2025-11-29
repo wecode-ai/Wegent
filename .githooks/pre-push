@@ -7,8 +7,8 @@
 #
 # Usage:
 #   git push                    (runs all checks)
-#   AI_VERIFIED=1 git push      (skip doc reminders after review)
-#   git push --no-verify        (skip all checks - not recommended)
+#
+# Note: All checks are mandatory and cannot be skipped.
 # =============================================================================
 
 # Get the directory where this script is located

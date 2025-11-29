@@ -7,12 +7,12 @@
 # - Runs all quality checks (lint, type, test, build)
 # - Generates a comprehensive report
 # - Blocks push if critical checks fail
-# - Documentation reminders can be skipped with AI_VERIFIED=1
+# - All checks are mandatory and cannot be skipped
 #
 # Usage:
 #   git push                    (runs all checks)
-#   AI_VERIFIED=1 git push      (skip doc reminders after review)
-#   git push --no-verify        (skip all checks - not recommended)
+#
+# Note: All checks are mandatory and cannot be skipped.
 # =============================================================================
 
 # Don't exit on error - we want to run all checks and report at the end
@@ -470,10 +470,7 @@ echo ""
 if [ $CHECK_FAILED -eq 1 ]; then
     echo -e "${RED}${BOLD}❌ Some checks failed. Please fix the issues before pushing.${NC}"
     echo ""
-    echo -e "To skip all pre-push checks (not recommended):"
-    echo -e "    ${YELLOW}git push --no-verify${NC}"
-    echo ""
-    
+
     # Output detailed error logs at the end for AI tail monitoring
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo -e "${RED}${BOLD}FAILED CHECKS DETAIL (for AI monitoring):${NC}"
@@ -502,9 +499,9 @@ if [ ${#WARNINGS[@]} -gt 0 ]; then
 fi
 
 # -----------------------------------------------------------------------------
-# Check AI_VERIFIED for documentation reminders
+# Check documentation reminders - mandatory, cannot be skipped
 # -----------------------------------------------------------------------------
-if [ ${#DOC_REMINDERS[@]} -gt 0 ] && [ "$AI_VERIFIED" != "1" ]; then
+if [ ${#DOC_REMINDERS[@]} -gt 0 ]; then
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo ""
     echo -e "${RED}${BOLD}🚫 PUSH BLOCKED - Documentation Update Required${NC}"
@@ -520,16 +517,10 @@ if [ ${#DOC_REMINDERS[@]} -gt 0 ] && [ "$AI_VERIFIED" != "1" ]; then
         echo -e "   ${YELLOW}• $reminder${NC}"
     done
     echo ""
-    echo -e "${BOLD}You MUST either:${NC}"
+    echo -e "${BOLD}You MUST:${NC}"
     echo ""
-    echo -e "  ${GREEN}1. Update the relevant documentation NOW${NC}"
-    echo -e "     Add doc changes to this commit, then push again."
-    echo -e "     ${CYAN}This is the recommended approach.${NC}"
-    echo ""
-    echo -e "  ${YELLOW}2. ONLY if you have THOROUGHLY VERIFIED that your changes${NC}"
-    echo -e "     ${YELLOW}do NOT require ANY documentation updates:${NC}"
-    echo ""
-    echo -e "     ${GREEN}${BOLD}AI_VERIFIED=1 git push${NC}"
+    echo -e "  ${GREEN}Update the relevant documentation NOW${NC}"
+    echo -e "  Add doc changes to this commit, then push again."
     echo ""
     echo -e "${RED}${BOLD}════════════════════════════════════════════════════════════${NC}"
     echo -e "${RED}${BOLD}⚠️  WARNING: INCOMPLETE DOCUMENTATION IS NOT ACCEPTABLE${NC}"
@@ -537,19 +528,11 @@ if [ ${#DOC_REMINDERS[@]} -gt 0 ] && [ "$AI_VERIFIED" != "1" ]; then
     echo -e "${RED}   • Users depend on accurate documentation${NC}"
     echo -e "${RED}   • Outdated docs cause confusion and support burden${NC}"
     echo -e "${RED}   • You will NOT get another chance to update docs for this change${NC}"
-    echo -e "${RED}   • Do NOT use AI_VERIFIED=1 to bypass - update docs instead${NC}"
+    echo -e "${RED}   • This check is mandatory and cannot be skipped${NC}"
     echo ""
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo ""
     exit 1
-fi
-
-# If AI_VERIFIED=1 or no doc reminders, proceed
-if [ "$AI_VERIFIED" = "1" ]; then
-    echo -e "${GREEN}══════════════════════════════════════════════════════════${NC}"
-    echo -e "${GREEN}✅ AI Verified - Proceeding with push${NC}"
-    echo -e "${GREEN}══════════════════════════════════════════════════════════${NC}"
-    echo ""
 fi
 
 exit 0
