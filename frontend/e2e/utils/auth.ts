@@ -50,23 +50,23 @@ export async function login(
   const loginButton = page.locator('button[type="submit"]')
   await loginButton.click()
 
-  // Wait for login to complete - either redirect away from /login or see an error
+  // Wait for login to complete - redirect away from /login page
   // The app redirects to /chat after successful login
-  await Promise.race([
-    // Successful login - redirected away from login page
-    page.waitForURL((url) => !url.pathname.includes('/login'), {
+  try {
+    await page.waitForURL((url) => !url.pathname.includes('/login'), {
       timeout: 30000,
-    }),
-    // Or wait for error message
-    page
-      .waitForSelector('[role="alert"], .error, [data-error]', {
-        state: 'visible',
-        timeout: 30000,
-      })
-      .then(() => {
-        throw new Error('Login failed - error message appeared')
-      }),
-  ])
+    })
+  } catch (error) {
+    // Check if there's an error message on the page
+    const errorMessage = await page
+      .locator('.error, [data-error], [role="alert"]:not([data-sonner-toaster])')
+      .textContent()
+      .catch(() => null)
+    if (errorMessage) {
+      throw new Error(`Login failed: ${errorMessage}`)
+    }
+    throw error
+  }
 }
 
 /**
