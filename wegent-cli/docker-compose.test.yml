@@ -1,0 +1,69 @@
+# Docker Compose for wegent integration tests
+# This provides a minimal backend environment for testing CLI commands
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: wegent-test-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: test123
+      MYSQL_DATABASE: task_manager
+      MYSQL_USER: task_user
+      MYSQL_PASSWORD: task_pass
+    ports:
+      - "13306:3306"
+    tmpfs:
+      - /var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-ptest123"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks:
+      - wegent-test-network
+
+  redis:
+    image: redis:7-alpine
+    container_name: wegent-test-redis
+    ports:
+      - "16379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - wegent-test-network
+
+  backend:
+    image: ghcr.io/wecode-ai/wegent-backend:1.0.11
+    container_name: wegent-test-backend
+    ports:
+      - "18000:8000"
+    environment:
+      ENVIRONMENT: development
+      DB_AUTO_MIGRATE: "True"
+      DATABASE_URL: mysql+pymysql://task_user:task_pass@mysql:3306/task_manager
+      SECRET_KEY: test-secret-key-for-ci
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: 1440
+      REDIS_URL: redis://redis:6379/0
+      INIT_DATA_ENABLED: "False"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks:
+      - wegent-test-network
+
+networks:
+  wegent-test-network:
+    driver: bridge
