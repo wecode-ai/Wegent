@@ -311,6 +311,77 @@ const form = useForm({ resolver: zodResolver(schema) })
 
 ## 🔄 Git Workflow
 
+### AI Code Quality Check (Pre-push)
+
+Wegent uses git hooks to ensure code quality for AI coding agents (Claude Code, Cursor, etc.). All quality checks run **before push**, allowing multiple commits locally without interruption.
+
+**Auto-enabled in Executor:**
+When the executor clones a repository, git hooks are automatically configured via `core.hooksPath=.githooks`. No manual installation required.
+
+**Local Development (via npm install):**
+```bash
+cd frontend && npm install  # Husky automatically configures pre-push hook
+```
+
+**Manual Installation (alternative):**
+```bash
+# Configure git to use .githooks directory
+git config core.hooksPath .githooks
+```
+
+**Usage:**
+
+```bash
+# Normal workflow - checks run automatically before push
+git add .
+git commit -m "feat: your feature"
+git push  # <- Quality checks run here
+
+# If documentation reminders shown, verify and push
+AI_VERIFIED=1 git push
+
+# Skip all checks (not recommended)
+git push --no-verify
+```
+
+**Quality Checks:**
+
+| Check | Tools | Scope |
+|-------|-------|-------|
+| Doc Reminders | Custom script | API, Schema changes |
+
+**Manual Commands:**
+```bash
+# Run checks manually
+bash scripts/hooks/ai-push-gate.sh
+
+# Skip all checks (not recommended)
+git push --no-verify
+```
+
+**Check Output Example:**
+```
+══════════════════════════════════════════════════════════
+📋 AI Code Quality Check Report (Pre-push)
+══════════════════════════════════════════════════════════
+
+📁 Files to be pushed:
+   Total: 6 file(s)
+   Modules affected:
+   - Backend: 3 file(s)
+   - Frontend: 2 file(s)
+
+✅ Lint & Format: PASSED
+✅ Type Check: PASSED
+✅ Unit Tests: PASSED (backend: 42 passed)
+✅ Build Check: PASSED
+
+⚠️ Documentation Reminders:
+   - backend/app/api/ changed → Check docs/ for updates
+
+══════════════════════════════════════════════════════════
+```
+
 ### Branch Naming
 
 **Pattern:** `<type>/<description>`
@@ -611,3 +682,4 @@ docker-compose up -d --build [service]
 **Last Updated**: 2025-07
 **Wegent Version**: 1.0.8
 **Maintained by**: WeCode-AI Team
+
