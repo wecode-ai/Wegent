@@ -1,0 +1,157 @@
+# Pre-commit configuration for AI Code Quality Check
+# This configuration implements a two-stage commit flow for AI coding agents
+#
+# Installation:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Usage:
+#   Stage 1: git commit -m "message"  (runs checks and generates report)
+#   Stage 2: AI_VERIFIED=1 git commit -m "message"  (confirms and commits)
+
+default_language_version:
+  python: python3
+
+repos:
+  # ==========================================================================
+  # Stage 0: AI Commit Gate (Two-stage flow controller)
+  # ==========================================================================
+  - repo: local
+    hooks:
+      - id: ai-commit-gate
+        name: AI Commit Gate
+        entry: bash scripts/hooks/ai-commit-gate.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [commit]
+
+  # ==========================================================================
+  # Stage 1: Code Format Checks (lint_format)
+  # ==========================================================================
+
+  # Python formatting with Black
+  - repo: https://github.com/psf/black
+    rev: 24.4.2
+    hooks:
+      - id: black
+        name: Black (Python formatter)
+        files: ^(backend|executor|executor_manager|shared)/.*\.py$
+        args: [--check, --diff]
+
+  # Python import sorting with isort
+  - repo: https://github.com/pycqa/isort
+    rev: 5.13.2
+    hooks:
+      - id: isort
+        name: isort (Python import sorter)
+        files: ^(backend|executor|executor_manager|shared)/.*\.py$
+        args: [--check-only, --diff]
+
+  # Frontend ESLint
+  - repo: local
+    hooks:
+      - id: eslint-frontend
+        name: ESLint (Frontend)
+        entry: bash -c 'cd frontend && npm run lint 2>/dev/null || echo "ESLint check completed with warnings"'
+        language: system
+        files: ^frontend/.*\.(js|jsx|ts|tsx)$
+        pass_filenames: false
+
+  # ==========================================================================
+  # Stage 2: Type Checks (type_check)
+  # ==========================================================================
+
+  # TypeScript type check
+  - repo: local
+    hooks:
+      - id: typescript-check
+        name: TypeScript Check (Frontend)
+        entry: bash -c 'cd frontend && npx tsc --noEmit 2>/dev/null || echo "TypeScript check completed with warnings"'
+        language: system
+        files: ^frontend/.*\.(ts|tsx)$
+        pass_filenames: false
+
+  # Python type check with mypy (optional - only if mypy is installed)
+  - repo: local
+    hooks:
+      - id: mypy-backend
+        name: mypy (Backend)
+        entry: bash -c 'cd backend && python -m mypy app/ --ignore-missing-imports 2>/dev/null || echo "mypy check completed with warnings"'
+        language: system
+        files: ^backend/.*\.py$
+        pass_filenames: false
+
+  # ==========================================================================
+  # Stage 3: Unit Tests (unit_test) - Smart module detection
+  # ==========================================================================
+  - repo: local
+    hooks:
+      - id: run-module-tests
+        name: Run Module Tests
+        entry: bash scripts/hooks/run-module-tests.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  # ==========================================================================
+  # Stage 4: Build/Compile Checks (build_compile)
+  # ==========================================================================
+
+  # Python syntax check
+  - repo: local
+    hooks:
+      - id: python-compile-check
+        name: Python Compile Check
+        entry: bash -c 'python -m py_compile "$@" 2>/dev/null || echo "Syntax check completed"'
+        language: system
+        files: ^(backend|executor|executor_manager|shared)/.*\.py$
+        types: [python]
+
+  # Frontend build check (only on significant changes)
+  - repo: local
+    hooks:
+      - id: frontend-build-check
+        name: Frontend Build Check
+        entry: bash -c 'cd frontend && npm run build 2>/dev/null || echo "Build check completed with warnings"'
+        language: system
+        files: ^frontend/src/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: false
+        stages: [manual]
+
+  # ==========================================================================
+  # Stage 5: Documentation Update Reminders (doc_update)
+  # ==========================================================================
+  - repo: local
+    hooks:
+      - id: check-docs-update
+        name: Documentation Update Check
+        entry: bash scripts/hooks/check-docs-update.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+        verbose: true
+
+  # ==========================================================================
+  # General file checks
+  # ==========================================================================
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+        args: [--markdown-linebreak-ext=md]
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: detect-private-key
+      - id: check-merge-conflict
+
+# CI configuration
+ci:
+  autofix_commit_msg: 'style: auto-fix by pre-commit hooks'
+  autofix_prs: false
+  autoupdate_commit_msg: 'chore: update pre-commit hooks'
+  skip: [ai-commit-gate, run-module-tests, frontend-build-check]

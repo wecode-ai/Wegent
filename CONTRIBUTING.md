@@ -150,10 +150,55 @@ git checkout -b feature/your-feature-name
 
 ### 3. Commit Code
 
+#### Pre-commit Setup (Recommended for AI Agents)
+
+Wegent uses pre-commit hooks to ensure code quality. This is especially important for AI coding agents (Claude Code, Cursor, etc.).
+
 ```bash
+# Install pre-commit
+pip install pre-commit
+
+# Install git hooks
+pre-commit install
+```
+
+#### Two-Stage Commit Flow
+
+When committing code, pre-commit runs automated quality checks:
+
+1. **Stage 1 - Quality Check**: Run `git commit -m "message"`
+   - Runs lint, type check, unit tests, and build checks
+   - Generates a quality report
+   - Shows documentation update reminders
+
+2. **Stage 2 - Verified Commit**: Run `AI_VERIFIED=1 git commit -m "message"`
+   - Confirms all checks reviewed
+   - Proceeds with commit
+
+```bash
+# Normal commit (triggers checks)
 git add .
 git commit -m "feat: add new feature description"
+
+# If documentation reminders shown, verify and commit
+AI_VERIFIED=1 git commit -m "feat: add new feature description"
+
+# Skip checks if needed (not recommended)
+git commit --no-verify -m "feat: add new feature description"
+
+# Push to remote
 git push origin feature/your-feature-name
+```
+
+#### Manual Quality Checks
+
+```bash
+# Run all pre-commit checks
+pre-commit run --all-files
+
+# Run specific checks
+pre-commit run black --all-files
+pre-commit run eslint-frontend --all-files
 ```
 
 ### 4. Create Pull Request

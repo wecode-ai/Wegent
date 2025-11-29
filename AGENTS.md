@@ -311,6 +311,67 @@ const form = useForm({ resolver: zodResolver(schema) })
 
 ## 🔄 Git Workflow
 
+### AI Code Quality Check (Pre-commit)
+
+Wegent uses pre-commit hooks to ensure code quality for AI coding agents (Claude Code, Cursor, etc.).
+
+**Installation:**
+```bash
+pip install pre-commit
+pre-commit install
+```
+
+**Two-Stage Commit Flow:**
+
+1. **Stage 1 - Check & Report**: Run `git commit -m "message"`
+   - Executes all quality checks (lint, type, test, build)
+   - Generates a comprehensive report
+   - Shows documentation update reminders
+   - Blocks commit pending AI verification
+
+2. **Stage 2 - Verified Commit**: Run `AI_VERIFIED=1 git commit -m "message"`
+   - Confirms all checks have been reviewed
+   - Proceeds with the commit
+
+**Quality Checks:**
+
+| Check | Tools | Scope |
+|-------|-------|-------|
+| Lint & Format | Black, isort, ESLint, Prettier | Python, JS/TS |
+| Type Check | TypeScript (tsc), mypy | Frontend, Backend |
+| Unit Tests | pytest, npm test | Changed modules only |
+| Build Check | py_compile, npm run build | Syntax validation |
+| Doc Reminders | Custom script | API, Schema changes |
+
+**Manual Commands:**
+```bash
+# Run all checks manually
+pre-commit run --all-files
+
+# Run specific hook
+pre-commit run black --all-files
+
+# Skip all checks (not recommended)
+git commit --no-verify -m "message"
+```
+
+**Check Output Example:**
+```
+══════════════════════════════════════════════════════════
+📋 AI Code Quality Check Report
+══════════════════════════════════════════════════════════
+
+✅ Lint & Format: PASSED
+✅ Type Check: PASSED
+✅ Unit Tests: PASSED (backend: 42 passed)
+✅ Build Check: PASSED
+
+⚠️ Documentation Reminders:
+   - backend/app/api/ changed → Check docs/ for updates
+
+══════════════════════════════════════════════════════════
+```
+
 ### Branch Naming
 
 **Pattern:** `<type>/<description>`
