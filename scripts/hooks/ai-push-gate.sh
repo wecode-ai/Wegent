@@ -7,12 +7,11 @@
 # - Runs all quality checks (lint, type, test, build)
 # - Generates a comprehensive report
 # - Blocks push if critical checks fail
-# - Documentation reminders can be skipped with AI_VERIFIED=1
+# - Documentation reminders require verification with AI_VERIFIED=1
 #
 # Usage:
 #   git push                    (runs all checks)
-#   AI_VERIFIED=1 git push      (skip doc reminders after review)
-#   git push --no-verify        (skip all checks - not recommended)
+#   AI_VERIFIED=1 git push      (confirm docs checked and no updates needed)
 # =============================================================================
 
 # Don't exit on error - we want to run all checks and report at the end
@@ -181,11 +180,13 @@ if [ "$FRONTEND_COUNT" -gt 0 ] 2>/dev/null; then
     if [ ! -d "frontend/node_modules" ]; then
         echo -e "   ${RED}❌ FAILED: node_modules not found${NC}"
         echo -e "   ${RED}   Run 'cd frontend && npm install' to install dependencies${NC}"
+        echo -e "   ${YELLOW}⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.${NC}"
         CHECK_FAILED=1
         FAILED_CHECKS+=("Frontend Dependencies")
         FAILED_LOGS+=("=== Frontend Dependencies Missing ===
 node_modules directory not found in frontend/
-Fix: cd frontend && npm install")
+Fix: cd frontend && npm install
+⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.")
     else
         cd frontend
         
@@ -262,11 +263,13 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
     if ! command -v black &> /dev/null && [ ! -f "venv/bin/black" ]; then
         echo -e "   ${RED}❌ FAILED: black not found${NC}"
         echo -e "   ${RED}   Run 'pip install black isort pytest' to install dependencies${NC}"
+        echo -e "   ${YELLOW}⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.${NC}"
         CHECK_FAILED=1
         FAILED_CHECKS+=("Backend Dependencies (black)")
         FAILED_LOGS+=("=== Backend Dependencies Missing ===
 black command not found
-Fix: pip install black isort pytest")
+Fix: pip install black isort pytest
+⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.")
         cd ..
     else
         # Black format check
@@ -287,11 +290,14 @@ Fix: cd backend && black app/")
         # isort check
         if ! command -v isort &> /dev/null; then
             echo -e "   ${RED}❌ FAILED: isort not found${NC}"
+            echo -e "   ${RED}   Run 'pip install isort' to install dependencies${NC}"
+            echo -e "   ${YELLOW}⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.${NC}"
             CHECK_FAILED=1
             FAILED_CHECKS+=("Backend Dependencies (isort)")
             FAILED_LOGS+=("=== Backend Dependencies Missing ===
 isort command not found
-Fix: pip install isort")
+Fix: pip install isort
+⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.")
         else
             echo -e "   Running isort check..."
             ISORT_OUTPUT=$(isort --check-only --diff app/ 2>&1)
@@ -311,11 +317,14 @@ Fix: cd backend && isort app/")
         # pytest
         if ! command -v pytest &> /dev/null; then
             echo -e "   ${RED}❌ FAILED: pytest not found${NC}"
+            echo -e "   ${RED}   Run 'pip install pytest' to install dependencies${NC}"
+            echo -e "   ${YELLOW}⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.${NC}"
             CHECK_FAILED=1
             FAILED_CHECKS+=("Backend Dependencies (pytest)")
             FAILED_LOGS+=("=== Backend Dependencies Missing ===
 pytest command not found
-Fix: pip install pytest")
+Fix: pip install pytest
+⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.")
         else
             echo -e "   Running pytest..."
             if [ -d "tests" ]; then
@@ -380,11 +389,13 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     if ! command -v pytest &> /dev/null; then
         echo -e "   ${RED}❌ FAILED: pytest not found${NC}"
         echo -e "   ${RED}   Run 'pip install pytest' to install dependencies${NC}"
+        echo -e "   ${YELLOW}⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.${NC}"
         CHECK_FAILED=1
         FAILED_CHECKS+=("Executor Dependencies (pytest)")
         FAILED_LOGS+=("=== Executor Dependencies Missing ===
 pytest command not found
-Fix: pip install pytest")
+Fix: pip install pytest
+⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.")
     else
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
@@ -423,11 +434,13 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
     if ! command -v pytest &> /dev/null; then
         echo -e "   ${RED}❌ FAILED: pytest not found${NC}"
         echo -e "   ${RED}   Run 'pip install pytest' to install dependencies${NC}"
+        echo -e "   ${YELLOW}⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.${NC}"
         CHECK_FAILED=1
         FAILED_CHECKS+=("Executor Manager Dependencies (pytest)")
         FAILED_LOGS+=("=== Executor Manager Dependencies Missing ===
 pytest command not found
-Fix: pip install pytest")
+Fix: pip install pytest
+⚠️  Please install dependencies and re-run 'git push'. Do NOT skip checks.")
     else
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
@@ -469,9 +482,6 @@ echo ""
 
 if [ $CHECK_FAILED -eq 1 ]; then
     echo -e "${RED}${BOLD}❌ Some checks failed. Please fix the issues before pushing.${NC}"
-    echo ""
-    echo -e "To skip all pre-push checks (not recommended):"
-    echo -e "    ${YELLOW}git push --no-verify${NC}"
     echo ""
     
     # Output detailed error logs at the end for AI tail monitoring
@@ -530,6 +540,7 @@ if [ ${#DOC_REMINDERS[@]} -gt 0 ] && [ "$AI_VERIFIED" != "1" ]; then
     echo -e "     ${YELLOW}do NOT require ANY documentation updates:${NC}"
     echo ""
     echo -e "     ${GREEN}${BOLD}AI_VERIFIED=1 git push${NC}"
+    echo -e "     ${CYAN}(This confirms you have checked all relevant docs and no updates are needed)${NC}"
     echo ""
     echo -e "${RED}${BOLD}════════════════════════════════════════════════════════════${NC}"
     echo -e "${RED}${BOLD}⚠️  WARNING: INCOMPLETE DOCUMENTATION IS NOT ACCEPTABLE${NC}"
@@ -537,7 +548,7 @@ if [ ${#DOC_REMINDERS[@]} -gt 0 ] && [ "$AI_VERIFIED" != "1" ]; then
     echo -e "${RED}   • Users depend on accurate documentation${NC}"
     echo -e "${RED}   • Outdated docs cause confusion and support burden${NC}"
     echo -e "${RED}   • You will NOT get another chance to update docs for this change${NC}"
-    echo -e "${RED}   • Do NOT use AI_VERIFIED=1 to bypass - update docs instead${NC}"
+    echo -e "${RED}   • AI_VERIFIED=1 means you CONFIRM docs are already up-to-date${NC}"
     echo ""
     echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
     echo ""
