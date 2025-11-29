@@ -44,7 +44,7 @@ graph TB
     subgraph "🤖 智能体层"
         Claude["🧠 Claude Code<br/>代码智能体"]
         Agno["💻 Agno<br/>对话智能体"]
-        DifyPlanned["✨ Dify<br/>计划中"]
+        Dify["✨ Dify<br/>外部 API 智能体"]
     end
 
 
@@ -60,8 +60,8 @@ graph TB
 
     %% AI 程序集成
     Executor1 --> Claude
-    Executor2 --> Claude
-    ExecutorN --> Agno
+    Executor2 --> Agno
+    ExecutorN --> Dify
 
     %% 样式
     classDef platform fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
@@ -72,7 +72,7 @@ graph TB
     class Frontend,Backend,API platform
     class MySQL,Redis data
     class ExecutorManager,Executor1,Executor2,ExecutorN execution
-    class Claude,Agno,DifyPlanned agent
+    class Claude,Agno,Dify agent
 ```
 
 ### 架构层次说明
@@ -82,7 +82,7 @@ graph TB
 | **管理平台层** | 用户交互、资源管理、API 服务 | Next.js 15, FastAPI, React 19 |
 | **数据层** | 数据持久化、缓存管理 | MySQL 9.4, Redis 7 |
 | **执行层** | 任务调度、容器编排、资源隔离 | Docker, Python |
-| **智能体层** | AI 能力提供、代码执行、对话处理 | Claude Code, Agno |
+| **智能体层** | AI 能力提供、代码执行、对话处理、外部 API 集成 | Claude Code, Agno, Dify |
 
 ---
 
@@ -206,7 +206,7 @@ EXECUTOR_IMAGE: wegent-executor:1.0.5 # 执行器镜像
 
 **技术栈**：
 - **容器**: Docker
-- **运行时**: Claude Code, Agno
+- **运行时**: Claude Code, Agno, Dify
 - **版本控制**: Git
 
 **核心特性**：
@@ -389,8 +389,8 @@ container:
 
 executor_engines:
   - "Claude Code (Anthropic)"
-  - "Agno (experimental)"
-  - "Dify (planned)"
+  - "Agno"
+  - "Dify"
 ```
 
 ---

@@ -44,7 +44,7 @@ graph TB
     subgraph "🤖 Agent Layer"
         Claude["🧠 Claude Code<br/>Coding Agent"]
         Agno["💻 Agno<br/>Chat Agent"]
-        DifyPlanned["✨ Dify<br/>Planned"]
+        Dify["✨ Dify<br/>External API Agent"]
     end
 
 
@@ -60,8 +60,8 @@ graph TB
 
     %% AI Program Integration
     Executor1 --> Claude
-    Executor2 --> Claude
-    ExecutorN --> Agno
+    Executor2 --> Agno
+    ExecutorN --> Dify
 
     %% Styling
     classDef platform fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
@@ -72,7 +72,7 @@ graph TB
     class Frontend,Backend,API platform
     class MySQL,Redis data
     class ExecutorManager,Executor1,Executor2,ExecutorN execution
-    class Claude,Agno,DifyPlanned agent
+    class Claude,Agno,Dify agent
 ```
 
 ### Architecture Layers
@@ -82,7 +82,7 @@ graph TB
 | **Management Platform Layer** | User interaction, resource management, API services | Next.js 15, FastAPI, React 19 |
 | **Data Layer** | Data persistence, cache management | MySQL 9.4, Redis 7 |
 | **Execution Layer** | Task scheduling, container orchestration, resource isolation | Docker, Python |
-| **Agent Layer** | AI capabilities, code execution, chat processing | Claude Code, Agno |
+| **Agent Layer** | AI capabilities, code execution, chat processing, external API integration | Claude Code, Agno, Dify |
 
 ---
 
@@ -206,7 +206,7 @@ EXECUTOR_IMAGE: wegent-executor:1.0.5 # Executor image
 
 **Technology Stack**:
 - **Container**: Docker
-- **Runtime**: Claude Code, Agno
+- **Runtime**: Claude Code, Agno, Dify
 - **Version Control**: Git
 
 **Core Features**:
@@ -389,8 +389,8 @@ container:
 
 executor_engines:
   - "Claude Code (Anthropic)"
-  - "Agno (experimental)"
-  - "Dify (planned)"
+  - "Agno"
+  - "Dify"
 ```
 
 ---

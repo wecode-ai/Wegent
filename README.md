@@ -160,6 +160,7 @@ graph LR
 
    - **Claude Code Shell**: Uses `ANTHROPIC_AUTH_TOKEN`
    - **Agno Shell**: Uses `ANTHROPIC_API_KEY`
+   - **Dify Shell**: Uses `DIFY_API_KEY` and `DIFY_BASE_URL`
 
    Please set the correct variable based on your Shell configuration. Check the Shell's documentation or the `executor/agents/` code for specific requirements.
 
@@ -190,11 +191,11 @@ graph TB
     
     subgraph "🤖 Agent Layer"
         Claude["🧠 Claude Code"]
-        Ango["💻 Agno"]
-        DifyPlanned["✨ Dify (Planned)"]
+        Agno["💻 Agno"]
+        Dify["✨ Dify"]
     end
-  
-    
+
+
     %% System Interactions
     Frontend --> API
     API --> Backend
@@ -203,11 +204,11 @@ graph TB
     ExecutorManager --> Executor1
     ExecutorManager --> Executor2
     ExecutorManager --> ExecutorN
-    
-    %% AI Program Integration (Currently only supports Claude Code)
+
+    %% AI Program Integration
     Executor1 --> Claude
-    Executor2 --> Claude
-    ExecutorN --> Ango
+    Executor2 --> Agno
+    ExecutorN --> Dify
 ```
 
 ## 🛠️ Development
