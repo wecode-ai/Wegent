@@ -116,28 +116,34 @@ echo ""
 # -----------------------------------------------------------------------------
 echo -e "${BLUE}📝 Documentation Check:${NC}"
 
-# API files changed
-API_FILES=$(echo "$CHANGED_FILES" | grep -E "^backend/app/api/.*\.py$" || true)
-if [ -n "$API_FILES" ]; then
-    DOC_REMINDERS+=("API files changed → Check docs/ for API documentation updates")
+# Backend API/Services changed → User guides (creating-bots, creating-teams, etc.)
+BACKEND_API=$(echo "$CHANGED_FILES" | grep -E "^backend/app/(api|services)/.*\.py$" || true)
+if [ -n "$BACKEND_API" ]; then
+    DOC_REMINDERS+=("Backend API/Services changed → Check docs/*/guides/user/ for user guide updates")
 fi
 
-# Models/Schemas changed
-MODEL_FILES=$(echo "$CHANGED_FILES" | grep -E "^backend/app/(models|schemas)/.*\.py$" || true)
-if [ -n "$MODEL_FILES" ]; then
-    DOC_REMINDERS+=("Models/Schemas changed → Check API documentation for schema updates")
+# Backend Models/Schemas changed → YAML specification reference
+BACKEND_MODELS=$(echo "$CHANGED_FILES" | grep -E "^backend/app/(models|schemas)/.*\.py$" || true)
+if [ -n "$BACKEND_MODELS" ]; then
+    DOC_REMINDERS+=("Backend Models/Schemas changed → Check docs/*/reference/yaml-specification.md")
 fi
 
-# Project config changed
+# Executor/Agent changed → Architecture and concepts docs
+EXECUTOR_CODE=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.py$" || true)
+if [ -n "$EXECUTOR_CODE" ]; then
+    DOC_REMINDERS+=("Executor changed → Check docs/*/concepts/architecture.md")
+fi
+
+# Project config changed → Getting started and installation docs
 CONFIG_FILES=$(echo "$CHANGED_FILES" | grep -E "(docker-compose|Dockerfile|requirements\.txt|package\.json)" || true)
 if [ -n "$CONFIG_FILES" ]; then
-    DOC_REMINDERS+=("Project configuration changed → Consider updating AGENTS.md")
+    DOC_REMINDERS+=("Project config changed → Check docs/*/getting-started/ for installation/setup updates")
 fi
 
-# Agent files changed
-AGENT_FILES=$(echo "$CHANGED_FILES" | grep -E "^executor/agents/.*\.py$" || true)
-if [ -n "$AGENT_FILES" ]; then
-    DOC_REMINDERS+=("Executor agents changed → Check AGENTS.md for agent documentation")
+# Any code change → Consider updating AGENTS.md and README
+ANY_CODE=$(echo "$CHANGED_FILES" | grep -E "^(backend|frontend|executor|executor_manager|shared)/.*\.(py|ts|tsx)$" || true)
+if [ -n "$ANY_CODE" ]; then
+    DOC_REMINDERS+=("Code changed → Consider updating AGENTS.md and README.md/README_zh.md if needed")
 fi
 
 if [ ${#DOC_REMINDERS[@]} -eq 0 ]; then
