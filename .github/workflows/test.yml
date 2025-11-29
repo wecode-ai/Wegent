@@ -210,7 +210,7 @@ jobs:
           flags: frontend
           name: frontend-coverage
 
-  test-wegent:
+  test-wegent-cli:
     name: Test wegent CLI
     runs-on: ubuntu-latest
 
@@ -227,30 +227,30 @@ jobs:
         uses: actions/cache@v3
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-wegent-${{ hashFiles('wegent/requirements.txt') }}
+          key: ${{ runner.os }}-pip-wegent-cli-${{ hashFiles('wegent-cli/requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-wegent-
+            ${{ runner.os }}-pip-wegent-cli-
 
       - name: Install dependencies
-        working-directory: ./wegent
+        working-directory: ./wegent-cli
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
           pip install pytest pytest-cov pytest-mock
 
       - name: Run wegent unit tests
-        working-directory: ./wegent
+        working-directory: ./wegent-cli
         run: |
           pytest tests/ --ignore=tests/test_integration.py --cov=wegent --cov-report=xml --cov-report=term-missing -v
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
         with:
-          files: ./wegent/coverage.xml
-          flags: wegent
-          name: wegent-coverage
+          files: ./wegent-cli/coverage.xml
+          flags: wegent-cli
+          name: wegent-cli-coverage
 
-  test-wegent-integration:
+  test-wegent-cli-integration:
     name: Test wegent CLI Integration
     runs-on: ubuntu-latest
 
@@ -325,13 +325,13 @@ jobs:
           done
 
       - name: Install wegent dependencies
-        working-directory: ./wegent
+        working-directory: ./wegent-cli
         run: |
           pip install -r requirements.txt
           pip install pytest pytest-cov
 
       - name: Run wegent integration tests
-        working-directory: ./wegent
+        working-directory: ./wegent-cli
         env:
           WEGENT_TEST_SERVER: http://localhost:8000
         run: |
@@ -340,7 +340,7 @@ jobs:
   test-summary:
     name: Test Summary
     runs-on: ubuntu-latest
-    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-frontend, test-wegent, test-wegent-integration]
+    needs: [test-backend, test-executor, test-executor-manager, test-shared, test-frontend, test-wegent-cli, test-wegent-cli-integration]
     if: always()
 
     steps:
@@ -352,8 +352,8 @@ jobs:
              [[ "${{ needs.test-executor-manager.result }}" == "failure" ]] || \
              [[ "${{ needs.test-shared.result }}" == "failure" ]] || \
              [[ "${{ needs.test-frontend.result }}" == "failure" ]] || \
-             [[ "${{ needs.test-wegent.result }}" == "failure" ]] || \
-             [[ "${{ needs.test-wegent-integration.result }}" == "failure" ]]; then
+             [[ "${{ needs.test-wegent-cli.result }}" == "failure" ]] || \
+             [[ "${{ needs.test-wegent-cli-integration.result }}" == "failure" ]]; then
             echo "One or more test jobs failed"
             exit 1
           fi

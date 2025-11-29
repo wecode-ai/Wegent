@@ -11,6 +11,7 @@ from .commands.delete import delete_cmd
 from .commands.describe import describe_cmd
 from .commands.config import config_cmd
 from .commands.create import create_cmd
+from .commands.login import login_cmd, logout_cmd
 
 
 CONTEXT_SETTINGS = dict(help_option_names=["-h", "--help"])
@@ -66,6 +67,8 @@ cli.add_command(delete_cmd)
 cli.add_command(describe_cmd)
 cli.add_command(config_cmd)
 cli.add_command(create_cmd)
+cli.add_command(login_cmd)
+cli.add_command(logout_cmd)
 
 
 @cli.command("api-resources")

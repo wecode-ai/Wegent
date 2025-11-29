@@ -5,7 +5,7 @@ A kubectl-style CLI for managing Wegent resources.
 ## Installation
 
 ```bash
-cd wegent
+cd wegent-cli
 pip install -e .
 ```
 
@@ -18,6 +18,22 @@ python -m wegent.cli
 
 ## Quick Start
 
+### Login
+
+```bash
+# Interactive login (recommended)
+wegent login
+
+# Login with credentials
+wegent login -u admin -p yourpassword
+
+# Login to specific server
+wegent login -s http://api.example.com
+
+# Logout
+wegent logout
+```
+
 ### Configure Server
 
 ```bash
@@ -27,7 +43,7 @@ wegent config set server http://localhost:8000
 # Set default namespace
 wegent config set namespace default
 
-# Set auth token (optional)
+# Set auth token (manual, alternative to login)
 wegent config set token YOUR_TOKEN
 
 # View configuration
