@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import pytest
+from unittest.mock import patch, MagicMock
 from executor.agents.factory import AgentFactory
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.agno.agno_agent import AgnoAgent
@@ -11,6 +12,19 @@ from executor.agents.dify.dify_agent import DifyAgent
 
 class TestAgentFactory:
     """Test cases for AgentFactory"""
+
+    @pytest.fixture(autouse=True)
+    def mock_requests_get(self):
+        """
+        Mock requests.get to prevent actual HTTP calls during DifyAgent initialization.
+        DifyAgent.__init__ calls _get_app_mode() which makes a GET request to /v1/info.
+        """
+        with patch('executor.agents.dify.dify_agent.requests.get') as mock_get:
+            mock_response = MagicMock()
+            mock_response.status_code = 200
+            mock_response.json.return_value = {"mode": "chat"}
+            mock_get.return_value = mock_response
+            yield mock_get
 
     @pytest.fixture
     def task_data(self):
