@@ -90,6 +90,8 @@ jobs:
           DB_AUTO_MIGRATE: 'True'
           INIT_DATA_ENABLED: 'True'
           INIT_DATA_DIR: ${{ github.workspace }}/backend/init_data
+          # Add project root to PYTHONPATH so 'shared' module can be imported
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           uvicorn app.main:app --host 0.0.0.0 --port 8000 &
           echo "Backend server starting (with auto migration and YAML init enabled)..."
