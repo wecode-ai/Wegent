@@ -13,18 +13,29 @@ class TestDifyAgent:
     """Test cases for DifyAgent"""
 
     @pytest.fixture(autouse=True)
-    def mock_requests_get(self):
+    def mock_http_requests(self):
         """
-        Mock requests.get to prevent actual HTTP calls during DifyAgent initialization.
-        DifyAgent.__init__ calls _get_app_mode() which makes a GET request to /v1/info.
-        Without this mock, tests would make real HTTP requests causing long timeouts.
+        Mock all HTTP requests to prevent actual network calls during tests.
+        - requests.get: DifyAgent.__init__ calls _get_app_mode() which makes GET to /v1/info
+        - requests.post: CallbackClient.send_callback() makes POST to callback URL
+        Without these mocks, tests would make real HTTP requests causing long timeouts.
         """
-        with patch('executor.agents.dify.dify_agent.requests.get') as mock_get:
-            mock_response = MagicMock()
-            mock_response.status_code = 200
-            mock_response.json.return_value = {"mode": "chat"}
-            mock_get.return_value = mock_response
-            yield mock_get
+        with patch('executor.agents.dify.dify_agent.requests.get') as mock_get, \
+             patch('executor.callback.callback_client.requests.post') as mock_post:
+            # Mock GET response for _get_app_mode()
+            mock_get_response = MagicMock()
+            mock_get_response.status_code = 200
+            mock_get_response.json.return_value = {"mode": "chat"}
+            mock_get.return_value = mock_get_response
+
+            # Mock POST response for callback
+            mock_post_response = MagicMock()
+            mock_post_response.status_code = 200
+            mock_post_response.content = b'{}'
+            mock_post_response.json.return_value = {}
+            mock_post.return_value = mock_post_response
+
+            yield {"get": mock_get, "post": mock_post}
 
     @pytest.fixture
     def task_data(self):
