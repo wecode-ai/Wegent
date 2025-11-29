@@ -313,12 +313,15 @@ const form = useForm({ resolver: zodResolver(schema) })
 
 ### AI Code Quality Check (Pre-push)
 
-Wegent uses pre-commit hooks to ensure code quality for AI coding agents (Claude Code, Cursor, etc.). All quality checks run **before push**, allowing multiple commits locally without interruption.
+Wegent uses git hooks to ensure code quality for AI coding agents (Claude Code, Cursor, etc.). All quality checks run **before push**, allowing multiple commits locally without interruption.
 
-**Installation:**
+**Auto-enabled in Executor:**
+When the executor clones a repository, git hooks are automatically configured via `core.hooksPath=.githooks`. No manual installation required.
+
+**Manual Installation (for local development):**
 ```bash
-pip install pre-commit
-pre-commit install --hook-type pre-push
+# Configure git to use .githooks directory
+git config core.hooksPath .githooks
 ```
 
 **Usage:**
@@ -340,19 +343,12 @@ git push --no-verify
 
 | Check | Tools | Scope |
 |-------|-------|-------|
-| Lint & Format | Black, isort, ESLint, Prettier | Python, JS/TS |
-| Type Check | TypeScript (tsc), mypy | Frontend, Backend |
-| Unit Tests | pytest, npm test | Changed modules only |
-| Build Check | py_compile, npm run build | Syntax validation |
 | Doc Reminders | Custom script | API, Schema changes |
 
 **Manual Commands:**
 ```bash
-# Run all checks manually
-pre-commit run --all-files --hook-stage pre-push
-
-# Run specific hook
-pre-commit run black --all-files
+# Run checks manually
+bash scripts/hooks/ai-push-gate.sh
 
 # Skip all checks (not recommended)
 git push --no-verify
