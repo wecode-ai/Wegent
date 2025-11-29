@@ -39,27 +39,30 @@ test.describe('Settings - Bot Management', () => {
   })
 
   test('should open create bot dialog', async ({ page }) => {
-    // Find create button
+    // Find create button - uses "New Bot" text from translations
     const createButton = page.locator(
-      'button:has-text("Create"), button:has-text("新建"), button:has-text("Add"), [data-testid="create-bot"]'
+      'button:has-text("New Bot"), button:has-text("新建Bot"), button:has-text("Create"), button:has-text("新建")'
     )
 
-    if (await createButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createButton.click()
-
-      // Dialog should open
-      await expect(
-        page.locator('[role="dialog"], [data-state="open"]')
-      ).toBeVisible({ timeout: 5000 })
+    if (!(await createButton.isVisible({ timeout: 5000 }).catch(() => false))) {
+      test.skip()
+      return
     }
+
+    await createButton.click()
+
+    // Dialog should open
+    await expect(
+      page.locator('[role="dialog"], [data-state="open"]')
+    ).toBeVisible({ timeout: 5000 })
   })
 
   test('should create new bot', async ({ page, testPrefix }) => {
     const botName = TestData.uniqueName(`${testPrefix}-bot`)
 
-    // Find and click create button
+    // Find and click create button - uses "New Bot" text from translations
     const createButton = page.locator(
-      'button:has-text("Create"), button:has-text("新建"), button:has-text("Add Bot")'
+      'button:has-text("New Bot"), button:has-text("新建Bot"), button:has-text("新建")'
     )
 
     if (!(await createButton.isVisible({ timeout: 5000 }).catch(() => false))) {

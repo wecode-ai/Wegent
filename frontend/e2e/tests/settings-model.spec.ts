@@ -59,9 +59,9 @@ test.describe('Settings - Model Management', () => {
   })
 
   test('should open create model dialog', async ({ page }) => {
-    // Find create button with various possible text
+    // Find create button - uses "Create Model" text from translations
     const createButton = page.locator(
-      'button:has-text("Create"), button:has-text("新建"), button:has-text("Add Model"), button:has-text("Add"), [data-testid="create-model"]'
+      'button:has-text("Create Model"), button:has-text("新建模型"), button:has-text("Create"), button:has-text("新建")'
     )
 
     if (!(await createButton.first().isVisible({ timeout: 5000 }).catch(() => false))) {
@@ -72,24 +72,19 @@ test.describe('Settings - Model Management', () => {
 
     await createButton.first().click()
 
-    // Dialog/drawer/sheet should open - wait with flexible selector
-    const dialog = page.locator('[role="dialog"], [data-state="open"], [role="presentation"], .drawer, .sheet, [data-radix-dialog-content]')
+    // Model edit is a full page, not a dialog - check for form fields
+    const modelForm = page.locator('input[name="name"], input[placeholder*="name"], h2:has-text("Model")')
 
-    // If dialog doesn't appear, skip the test (UI might work differently)
-    if (!(await dialog.isVisible({ timeout: 5000 }).catch(() => false))) {
-      test.skip()
-      return
-    }
-
-    await expect(dialog).toBeVisible()
+    // Wait for either dialog or form to appear
+    await expect(modelForm.first()).toBeVisible({ timeout: 5000 })
   })
 
   test('should create new model', async ({ page, testPrefix }) => {
     const modelName = TestData.uniqueName(`${testPrefix}-model`)
 
-    // Find and click create button
+    // Find and click create button - uses "Create Model" text from translations
     const createButton = page.locator(
-      'button:has-text("Create"), button:has-text("Add Model"), button:has-text("Add"), button:has-text("新建")'
+      'button:has-text("Create Model"), button:has-text("新建模型"), button:has-text("Create"), button:has-text("新建")'
     )
 
     if (!(await createButton.first().isVisible({ timeout: 5000 }).catch(() => false))) {
@@ -99,65 +94,53 @@ test.describe('Settings - Model Management', () => {
 
     await createButton.first().click()
 
-    // Wait for dialog with flexible selector
-    const dialog = page.locator('[role="dialog"], [data-state="open"], [role="presentation"], .drawer, .sheet')
-    if (!(await dialog.isVisible({ timeout: 5000 }).catch(() => false))) {
-      // Skip if dialog doesn't appear (UI might work differently)
+    // Model edit is a full page form, wait for name input
+    const nameInput = page
+      .locator(
+        'input[name="name"], input[placeholder*="name"], input[placeholder*="identifier"]'
+      )
+      .first()
+
+    if (!(await nameInput.isVisible({ timeout: 5000 }).catch(() => false))) {
       test.skip()
       return
     }
 
-    // Fill model name
-    const nameInput = page
-      .locator(
-        '[role="dialog"] input[name="name"], [role="dialog"] input[placeholder*="name"], input[name="name"], input[placeholder*="name"]'
-      )
+    await nameInput.fill(modelName)
+
+    // Fill other required fields if visible - provider select
+    const providerSelect = page.locator(
+      '[data-testid="provider-select"], select[name="provider"], button:has-text("Select Protocol")'
+    )
+
+    if (await providerSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await providerSelect.click()
+      await page.locator('[role="option"]:has-text("OpenAI")').first().click()
+    }
+
+    // Fill API key
+    const apiKeyInput = page
+      .locator('input[name="api_key"], input[type="password"]')
       .first()
 
-    if (await nameInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await nameInput.fill(modelName)
+    if (await apiKeyInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await apiKeyInput.fill('test-api-key-for-e2e')
+    }
 
-      // Fill other required fields if visible
-      const providerSelect = page.locator(
-        '[role="dialog"] [data-testid="provider-select"], [role="dialog"] select[name="provider"]'
-      )
+    // Submit form
+    const submitButton = page
+      .locator('button[type="submit"], button:has-text("Save"), button:has-text("保存")')
+      .first()
 
-      if (await providerSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await providerSelect.click()
-        await page.locator('[role="option"]:has-text("OpenAI")').first().click()
-      }
+    if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await submitButton.click()
 
-      // Fill API key
-      const apiKeyInput = page
-        .locator(
-          '[role="dialog"] input[name="api_key"], [role="dialog"] input[type="password"]'
-        )
-        .first()
-
-      if (await apiKeyInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await apiKeyInput.fill('test-api-key-for-e2e')
-      }
-
-      // Submit form
-      const submitButton = page
-        .locator(
-          '[role="dialog"] button[type="submit"], [role="dialog"] button:has-text("Save")'
-        )
-        .first()
-
-      if (await submitButton.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await submitButton.click()
-
-        // Wait for dialog to close
-        await page
-          .waitForSelector('[role="dialog"]', {
-            state: 'detached',
-            timeout: 10000,
-          })
-          .catch(() => {
-            // Dialog may stay open with validation errors
-          })
-      }
+      // Wait for navigation back to list
+      await page
+        .waitForURL(/\/settings/, { timeout: 10000 })
+        .catch(() => {
+          // May stay on form with validation errors
+        })
     }
   })
 

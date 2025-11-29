@@ -39,27 +39,30 @@ test.describe('Settings - Team Management', () => {
   })
 
   test('should open create team dialog', async ({ page }) => {
-    // Find create button
+    // Find create button - uses "New Team" text from translations
     const createButton = page.locator(
-      'button:has-text("Create Team"), button:has-text("新建团队"), button:has-text("Add Team"), [data-testid="create-team"]'
+      'button:has-text("New Team"), button:has-text("新建团队"), button:has-text("Create Team"), button:has-text("新建")'
     )
 
-    if (await createButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await createButton.click()
-
-      // Dialog should open
-      await expect(
-        page.locator('[role="dialog"], [data-state="open"]')
-      ).toBeVisible({ timeout: 5000 })
+    if (!(await createButton.isVisible({ timeout: 5000 }).catch(() => false))) {
+      test.skip()
+      return
     }
+
+    await createButton.click()
+
+    // Dialog should open
+    await expect(
+      page.locator('[role="dialog"], [data-state="open"]')
+    ).toBeVisible({ timeout: 5000 })
   })
 
   test('should create new team', async ({ page, testPrefix }) => {
     const teamName = TestData.uniqueName(`${testPrefix}-team`)
 
-    // Find and click create button
+    // Find and click create button - uses "New Team" text from translations
     const createButton = page.locator(
-      'button:has-text("Create"), button:has-text("新建"), button:has-text("Add Team")'
+      'button:has-text("New Team"), button:has-text("新建团队"), button:has-text("新建")'
     )
 
     if (!(await createButton.isVisible({ timeout: 5000 }).catch(() => false))) {
