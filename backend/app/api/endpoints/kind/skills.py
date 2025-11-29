@@ -5,10 +5,11 @@
 """
 Skills API endpoints for managing Claude Code Skills
 """
-from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException, Query
+import io
+
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-import io
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -25,7 +26,7 @@ async def upload_skill(
     name: str = Form(..., description="Skill name (unique)"),
     namespace: str = Form("default", description="Namespace"),
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Upload and create a new Skill.
@@ -54,11 +55,8 @@ async def upload_skill(
     - SKILL.md must be located inside the skill folder
     """
     # Validate file type
-    if not file.filename.endswith('.zip'):
-        raise HTTPException(
-            status_code=400,
-            detail="File must be a ZIP package (.zip)"
-        )
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
 
     # Read file content
     file_content = await file.read()
@@ -70,7 +68,7 @@ async def upload_skill(
         namespace=namespace,
         file_content=file_content,
         file_name=file.filename,
-        user_id=current_user.id
+        user_id=current_user.id,
     )
 
     return skill
@@ -83,7 +81,7 @@ def list_skills(
     namespace: str = Query("default", description="Namespace filter"),
     name: str = Query(None, description="Filter by skill name"),
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Get current user's Skill list.
@@ -93,20 +91,13 @@ def list_skills(
     if name:
         # Query by name
         skill = skill_kinds_service.get_skill_by_name(
-            db=db,
-            name=name,
-            namespace=namespace,
-            user_id=current_user.id
+            db=db, name=name, namespace=namespace, user_id=current_user.id
         )
         return SkillList(items=[skill] if skill else [])
 
     # List all skills
     skills = skill_kinds_service.list_skills(
-        db=db,
-        user_id=current_user.id,
-        skip=skip,
-        limit=limit,
-        namespace=namespace
+        db=db, user_id=current_user.id, skip=skip, limit=limit, namespace=namespace
     )
     return skills
 
@@ -115,13 +106,11 @@ def list_skills(
 def get_skill(
     skill_id: int,
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """Get Skill details by ID"""
     skill = skill_kinds_service.get_skill_by_id(
-        db=db,
-        skill_id=skill_id,
-        user_id=current_user.id
+        db=db, skill_id=skill_id, user_id=current_user.id
     )
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
@@ -132,7 +121,7 @@ def get_skill(
 def download_skill(
     skill_id: int,
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Download Skill ZIP package.
@@ -141,18 +130,14 @@ def download_skill(
     """
     # Get skill metadata
     skill = skill_kinds_service.get_skill_by_id(
-        db=db,
-        skill_id=skill_id,
-        user_id=current_user.id
+        db=db, skill_id=skill_id, user_id=current_user.id
     )
     if not skill:
         raise HTTPException(status_code=404, detail="Skill not found")
 
     # Get binary data
     binary_data = skill_kinds_service.get_skill_binary(
-        db=db,
-        skill_id=skill_id,
-        user_id=current_user.id
+        db=db, skill_id=skill_id, user_id=current_user.id
     )
     if not binary_data:
         raise HTTPException(status_code=404, detail="Skill binary not found")
@@ -163,7 +148,7 @@ def download_skill(
         media_type="application/zip",
         headers={
             "Content-Disposition": f"attachment; filename={skill.metadata.name}.zip"
-        }
+        },
     )
 
 
@@ -172,7 +157,7 @@ async def update_skill(
     skill_id: int,
     file: UploadFile = File(..., description="New Skill ZIP package (max 10MB)"),
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Update Skill by uploading a new ZIP package.
@@ -188,11 +173,8 @@ async def update_skill(
     The Skill name and namespace cannot be changed.
     """
     # Validate file type
-    if not file.filename.endswith('.zip'):
-        raise HTTPException(
-            status_code=400,
-            detail="File must be a ZIP package (.zip)"
-        )
+    if not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="File must be a ZIP package (.zip)")
 
     # Read file content
     file_content = await file.read()
@@ -203,7 +185,7 @@ async def update_skill(
         skill_id=skill_id,
         user_id=current_user.id,
         file_content=file_content,
-        file_name=file.filename
+        file_name=file.filename,
     )
 
     return skill
@@ -213,16 +195,12 @@ async def update_skill(
 def delete_skill(
     skill_id: int,
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Delete Skill.
 
     Returns 400 error if the Skill is referenced by any Ghost.
     """
-    skill_kinds_service.delete_skill(
-        db=db,
-        skill_id=skill_id,
-        user_id=current_user.id
-    )
+    skill_kinds_service.delete_skill(db=db, skill_id=skill_id, user_id=current_user.id)
     return None

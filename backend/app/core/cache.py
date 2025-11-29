@@ -2,16 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import Any, Optional
-import logging
 import asyncio
+import logging
+from typing import Any, Optional
 
-from redis.asyncio import Redis
 import orjson
+from redis.asyncio import Redis
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
+
 
 class RedisCache:
     """Redis-based cache manager for GitHub repositories"""
@@ -25,9 +26,9 @@ class RedisCache:
             "max_connections": 10,
             "socket_timeout": 5.0,
             "socket_connect_timeout": 2.0,
-            "retry_on_timeout": True
+            "retry_on_timeout": True,
         }
-        
+
     async def _get_client(self) -> Redis:
         """
         Get Redis client, simply and directly create new connection
@@ -59,7 +60,9 @@ class RedisCache:
             logger.error(f"Error getting cache key {key}: {str(e)}")
             return None
 
-    async def set(self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME) -> bool:
+    async def set(
+        self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME
+    ) -> bool:
         """Set value to cache with expiration (seconds)"""
         try:
             client = await self._get_client()
@@ -73,7 +76,9 @@ class RedisCache:
             logger.error(f"Error setting cache key {key}: {str(e)}")
             return False
 
-    async def setnx(self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME) -> bool:
+    async def setnx(
+        self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME
+    ) -> bool:
         """Set value to cache only if key doesn't exist (SETNX operation)"""
         try:
             client = await self._get_client()
@@ -86,7 +91,7 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Error setting cache key {key} with SETNX: {str(e)}")
             return False
-    
+
     async def delete(self, key: str) -> bool:
         """Delete key from cache"""
         try:
@@ -123,10 +128,14 @@ class RedisCache:
             result = await self.get(build_key)
             return result is True
         except Exception as e:
-            logger.error(f"Error checking building status for user {user_id}, domain {git_domain}: {str(e)}")
+            logger.error(
+                f"Error checking building status for user {user_id}, domain {git_domain}: {str(e)}"
+            )
             return False
 
-    async def set_building(self, user_id: int, git_domain: str, building: bool = True) -> bool:
+    async def set_building(
+        self, user_id: int, git_domain: str, building: bool = True
+    ) -> bool:
         """Set building status for user repositories"""
         try:
             build_key = f"building:{user_id}:{git_domain}"
@@ -135,8 +144,11 @@ class RedisCache:
             else:
                 return await self.delete(build_key)
         except Exception as e:
-            logger.error(f"Error setting building status for user {user_id}, domain {git_domain}: {str(e)}")
+            logger.error(
+                f"Error setting building status for user {user_id}, domain {git_domain}: {str(e)}"
+            )
             return False
+
 
 # Global cache instance
 cache_manager = RedisCache(settings.REDIS_URL)

@@ -7,16 +7,19 @@ Utility functions for Shell type detection and classification
 """
 
 from typing import Optional
+
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.schemas.kind import Shell
 
 
-def get_shell_type(db: Session, shell_name: str, shell_namespace: str, user_id: int) -> Optional[str]:
+def get_shell_type(
+    db: Session, shell_name: str, shell_namespace: str, user_id: int
+) -> Optional[str]:
     """
     Get the shell type (local_engine or external_api) for a given shell
-    
+
     Shell type is stored in metadata.labels.type
 
     Args:
@@ -28,13 +31,17 @@ def get_shell_type(db: Session, shell_name: str, shell_namespace: str, user_id: 
     Returns:
         "local_engine", "external_api", or None if shell not found
     """
-    shell = db.query(Kind).filter(
-        Kind.user_id == user_id,
-        Kind.kind == "Shell",
-        Kind.name == shell_name,
-        Kind.namespace == shell_namespace,
-        Kind.is_active == True
-    ).first()
+    shell = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Shell",
+            Kind.name == shell_name,
+            Kind.namespace == shell_namespace,
+            Kind.is_active == True,
+        )
+        .first()
+    )
 
     if not shell:
         return None
@@ -48,7 +55,9 @@ def get_shell_type(db: Session, shell_name: str, shell_namespace: str, user_id: 
     return "local_engine"
 
 
-def is_external_api_shell(db: Session, shell_name: str, shell_namespace: str, user_id: int) -> bool:
+def is_external_api_shell(
+    db: Session, shell_name: str, shell_namespace: str, user_id: int
+) -> bool:
     """
     Check if a shell is an external API type
 
@@ -65,7 +74,9 @@ def is_external_api_shell(db: Session, shell_name: str, shell_namespace: str, us
     return shell_type == "external_api"
 
 
-def is_local_engine_shell(db: Session, shell_name: str, shell_namespace: str, user_id: int) -> bool:
+def is_local_engine_shell(
+    db: Session, shell_name: str, shell_namespace: str, user_id: int
+) -> bool:
     """
     Check if a shell is a local engine type
 

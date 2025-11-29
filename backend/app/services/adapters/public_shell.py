@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import List, Optional, Dict, Any
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -18,7 +18,7 @@ class AgentAdapter:
     """
     Adapter to convert PublicShell to Agent-like object for API compatibility
     """
-    
+
     @staticmethod
     def to_agent_dict(public_shell: PublicShell) -> Dict[str, Any]:
         """
@@ -29,9 +29,9 @@ class AgentAdapter:
         if isinstance(public_shell.json, dict):
             shell_crd = Shell.model_validate(public_shell.json)
             mode_filter = shell_crd.spec.supportModel or []
-        
+
         config = {"mode_filter": mode_filter}
-        
+
         return {
             "id": public_shell.id,
             "name": public_shell.name,
@@ -45,7 +45,7 @@ class MockAgent:
     """
     Mock Agent class that behaves like the original Agent for API compatibility
     """
-    
+
     def __init__(self, data: Dict[str, Any]):
         for key, value in data.items():
             setattr(self, key, value)
@@ -56,15 +56,18 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
     Public Shell service class - adapter for public_shells table
     """
 
-    def create_agent(self, db: Session, *, obj_in: AgentCreate, current_user: User) -> Dict[str, Any]:
+    def create_agent(
+        self, db: Session, *, obj_in: AgentCreate, current_user: User
+    ) -> Dict[str, Any]:
         """
         Create a Public Shell entry
         """
         # Ensure unique name in default namespace
-        existed = db.query(PublicShell).filter(
-            PublicShell.name == obj_in.name,
-            PublicShell.namespace == 'default'
-        ).first()
+        existed = (
+            db.query(PublicShell)
+            .filter(PublicShell.name == obj_in.name, PublicShell.namespace == "default")
+            .first()
+        )
         if existed:
             raise HTTPException(status_code=400, detail="Agent name already exists")
 
@@ -78,23 +81,15 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         # Convert to JSON format matching kinds table structure
         json_data = {
             "kind": "Shell",
-            "spec": {
-                "runtime": obj_in.name,
-                "supportModel": supportModel
-            },
-            "status": {
-                "state": "Available"
-            },
-            "metadata": {
-                "name": obj_in.name,
-                "namespace": "default"
-            },
-            "apiVersion": "agent.wecode.io/v1"
+            "spec": {"runtime": obj_in.name, "supportModel": supportModel},
+            "status": {"state": "Available"},
+            "metadata": {"name": obj_in.name, "namespace": "default"},
+            "apiVersion": "agent.wecode.io/v1",
         }
 
         db_obj = PublicShell(
             name=obj_in.name,
-            namespace='default',
+            namespace="default",
             json=json_data,
             is_active=True,
         )
@@ -123,16 +118,23 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         """
         Count all active public shells
         """
-        return db.query(PublicShell).filter(PublicShell.is_active == True).count()  # noqa: E712
+        return (
+            db.query(PublicShell).filter(PublicShell.is_active == True).count()
+        )  # noqa: E712
 
-    def get_by_id(self, db: Session, *, agent_id: int, current_user: User) -> Dict[str, Any]:
+    def get_by_id(
+        self, db: Session, *, agent_id: int, current_user: User
+    ) -> Dict[str, Any]:
         """
         Get public shell by ID
         """
-        shell = db.query(PublicShell).filter(
-            PublicShell.id == agent_id,
-            PublicShell.is_active == True  # noqa: E712
-        ).first()
+        shell = (
+            db.query(PublicShell)
+            .filter(
+                PublicShell.id == agent_id, PublicShell.is_active == True  # noqa: E712
+            )
+            .first()
+        )
         if not shell:
             raise HTTPException(status_code=404, detail="Agent not found")
         return AgentAdapter.to_agent_dict(shell)
@@ -144,10 +146,13 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         Update public shell by ID
         """
         # Get the actual PublicShell object for update
-        shell = db.query(PublicShell).filter(
-            PublicShell.id == agent_id,
-            PublicShell.is_active == True  # noqa: E712
-        ).first()
+        shell = (
+            db.query(PublicShell)
+            .filter(
+                PublicShell.id == agent_id, PublicShell.is_active == True  # noqa: E712
+            )
+            .first()
+        )
         if not shell:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -155,10 +160,14 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
 
         # If updating name, ensure uniqueness
         if "name" in update_data and update_data["name"] != shell.name:
-            existed = db.query(PublicShell).filter(
-                PublicShell.name == update_data["name"],
-                PublicShell.namespace == 'default'
-            ).first()
+            existed = (
+                db.query(PublicShell)
+                .filter(
+                    PublicShell.name == update_data["name"],
+                    PublicShell.namespace == "default",
+                )
+                .first()
+            )
             if existed:
                 raise HTTPException(status_code=400, detail="Agent name already exists")
 
@@ -179,7 +188,7 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
                     mode_filter = value.get("mode_filter", [])
                     if isinstance(mode_filter, list):
                         supportModel = mode_filter
-                
+
                 if isinstance(shell.json, dict):
                     shell_crd = Shell.model_validate(shell.json)
                     shell_crd.spec.supportModel = supportModel
@@ -197,10 +206,13 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         Delete public shell
         """
         # Get the actual PublicShell object for deletion
-        shell = db.query(PublicShell).filter(
-            PublicShell.id == agent_id,
-            PublicShell.is_active == True  # noqa: E712
-        ).first()
+        shell = (
+            db.query(PublicShell)
+            .filter(
+                PublicShell.id == agent_id, PublicShell.is_active == True  # noqa: E712
+            )
+            .first()
+        )
         if not shell:
             raise HTTPException(status_code=404, detail="Agent not found")
         db.delete(shell)

@@ -7,17 +7,18 @@ YAML initialization module for loading initial data from YAML files.
 This module scans a directory for YAML files and creates initial resources.
 """
 
-import os
 import logging
+import os
 from pathlib import Path
-from typing import List, Dict, Any
+from typing import Any, Dict, List
+
 import yaml
+from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.services.k_batch import batch_service
-from app.models.user import User
 from app.models.public_shell import PublicShell
-from sqlalchemy.orm import Session
+from app.models.user import User
+from app.services.k_batch import batch_service
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +34,7 @@ def load_yaml_documents(file_path: Path) -> List[Dict[str, Any]]:
         List of parsed YAML documents
     """
     try:
-        with open(file_path, 'r', encoding='utf-8') as f:
+        with open(file_path, "r", encoding="utf-8") as f:
             documents = list(yaml.safe_load_all(f))
             # Filter out None/empty documents
             documents = [doc for doc in documents if doc]
@@ -65,7 +66,7 @@ def ensure_default_user(db: Session) -> int:
             password_hash="$2b$12$5jQMrJGO8NMXmF90f/xnKeLtM/Deh912k4GRPx.q3nTGOg1e1IJzW",
             email="admin@example.com",
             git_info=[],
-            is_active=True
+            is_active=True,
         )
         db.add(admin_user)
         db.commit()
@@ -77,7 +78,9 @@ def ensure_default_user(db: Session) -> int:
     return admin_user.id
 
 
-def apply_yaml_resources(user_id: int, resources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def apply_yaml_resources(
+    user_id: int, resources: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     """
     Apply YAML resources - only create new resources, skip existing ones.
     This ensures user modifications are preserved after restart.
@@ -94,8 +97,8 @@ def apply_yaml_resources(user_id: int, resources: List[Dict[str, Any]]) -> List[
         return []
 
     try:
-        from app.services.kind import kind_service
         from app.core.exceptions import ValidationException
+        from app.services.kind import kind_service
 
         results = []
         created_count = 0
@@ -103,54 +106,66 @@ def apply_yaml_resources(user_id: int, resources: List[Dict[str, Any]]) -> List[
 
         for resource in resources:
             try:
-                kind = resource.get('kind')
+                kind = resource.get("kind")
                 if not kind:
                     raise ValidationException("Resource must have 'kind' field")
 
                 if kind not in batch_service.supported_kinds:
                     raise ValidationException(f"Unsupported resource kind: {kind}")
 
-                namespace = resource['metadata']['namespace']
-                name = resource['metadata']['name']
+                namespace = resource["metadata"]["namespace"]
+                name = resource["metadata"]["name"]
 
                 # Check if resource already exists
                 existing = kind_service.get_resource(user_id, kind, namespace, name)
 
                 if existing:
                     # Skip existing resources to preserve user modifications
-                    logger.info(f"Skipping existing {kind}/{name} in namespace {namespace}")
-                    results.append({
-                        'kind': kind,
-                        'name': name,
-                        'namespace': namespace,
-                        'operation': 'skipped',
-                        'success': True,
-                        'reason': 'already_exists'
-                    })
+                    logger.info(
+                        f"Skipping existing {kind}/{name} in namespace {namespace}"
+                    )
+                    results.append(
+                        {
+                            "kind": kind,
+                            "name": name,
+                            "namespace": namespace,
+                            "operation": "skipped",
+                            "success": True,
+                            "reason": "already_exists",
+                        }
+                    )
                     skipped_count += 1
                 else:
                     # Create new resource
                     resource_id = kind_service.create_resource(user_id, kind, resource)
-                    logger.info(f"Created {kind}/{name} in namespace {namespace} (id={resource_id})")
-                    results.append({
-                        'kind': kind,
-                        'name': name,
-                        'namespace': namespace,
-                        'operation': 'created',
-                        'success': True
-                    })
+                    logger.info(
+                        f"Created {kind}/{name} in namespace {namespace} (id={resource_id})"
+                    )
+                    results.append(
+                        {
+                            "kind": kind,
+                            "name": name,
+                            "namespace": namespace,
+                            "operation": "created",
+                            "success": True,
+                        }
+                    )
                     created_count += 1
 
             except Exception as e:
                 logger.error(f"Failed to process resource: {e}")
-                results.append({
-                    'kind': kind if 'kind' in locals() else 'unknown',
-                    'name': resource.get('metadata', {}).get('name', 'unknown'),
-                    'namespace': resource.get('metadata', {}).get('namespace', 'default'),
-                    'operation': 'failed',
-                    'success': False,
-                    'error': str(e)
-                })
+                results.append(
+                    {
+                        "kind": kind if "kind" in locals() else "unknown",
+                        "name": resource.get("metadata", {}).get("name", "unknown"),
+                        "namespace": resource.get("metadata", {}).get(
+                            "namespace", "default"
+                        ),
+                        "operation": "failed",
+                        "success": False,
+                        "error": str(e),
+                    }
+                )
 
         logger.info(
             f"YAML initialization complete: {created_count} created, "
@@ -163,7 +178,9 @@ def apply_yaml_resources(user_id: int, resources: List[Dict[str, Any]]) -> List[
         return []
 
 
-def apply_public_shells(db: Session, resources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def apply_public_shells(
+    db: Session, resources: List[Dict[str, Any]]
+) -> List[Dict[str, Any]]:
     """
     Apply public shell resources to the public_shells table.
     Only creates new shells, skips existing ones (create-only mode).
@@ -185,71 +202,83 @@ def apply_public_shells(db: Session, resources: List[Dict[str, Any]]) -> List[Di
 
     for resource in resources:
         try:
-            metadata = resource.get('metadata', {})
-            name = metadata.get('name')
-            namespace = metadata.get('namespace', 'default')
+            metadata = resource.get("metadata", {})
+            name = metadata.get("name")
+            namespace = metadata.get("namespace", "default")
 
             if not name:
                 logger.error("Public shell missing name in metadata")
-                results.append({
-                    'kind': 'Shell',
-                    'name': 'unknown',
-                    'namespace': namespace,
-                    'operation': 'failed',
-                    'success': False,
-                    'error': 'Missing name in metadata'
-                })
+                results.append(
+                    {
+                        "kind": "Shell",
+                        "name": "unknown",
+                        "namespace": namespace,
+                        "operation": "failed",
+                        "success": False,
+                        "error": "Missing name in metadata",
+                    }
+                )
                 continue
 
             # Check if public shell already exists
-            existing = db.query(PublicShell).filter(
-                PublicShell.name == name,
-                PublicShell.namespace == namespace
-            ).first()
+            existing = (
+                db.query(PublicShell)
+                .filter(PublicShell.name == name, PublicShell.namespace == namespace)
+                .first()
+            )
 
             if existing:
                 # Skip existing public shells to preserve modifications
-                logger.info(f"Skipping existing public shell {name} in namespace {namespace}")
-                results.append({
-                    'kind': 'Shell',
-                    'name': name,
-                    'namespace': namespace,
-                    'operation': 'skipped',
-                    'success': True,
-                    'reason': 'already_exists'
-                })
+                logger.info(
+                    f"Skipping existing public shell {name} in namespace {namespace}"
+                )
+                results.append(
+                    {
+                        "kind": "Shell",
+                        "name": name,
+                        "namespace": namespace,
+                        "operation": "skipped",
+                        "success": True,
+                        "reason": "already_exists",
+                    }
+                )
                 skipped_count += 1
             else:
                 # Create new public shell
                 new_shell = PublicShell(
-                    name=name,
-                    namespace=namespace,
-                    json=resource,
-                    is_active=True
+                    name=name, namespace=namespace, json=resource, is_active=True
                 )
                 db.add(new_shell)
                 db.commit()
                 db.refresh(new_shell)
-                logger.info(f"Created public shell {name} in namespace {namespace} (id={new_shell.id})")
-                results.append({
-                    'kind': 'Shell',
-                    'name': name,
-                    'namespace': namespace,
-                    'operation': 'created',
-                    'success': True
-                })
+                logger.info(
+                    f"Created public shell {name} in namespace {namespace} (id={new_shell.id})"
+                )
+                results.append(
+                    {
+                        "kind": "Shell",
+                        "name": name,
+                        "namespace": namespace,
+                        "operation": "created",
+                        "success": True,
+                    }
+                )
                 created_count += 1
 
         except Exception as e:
             logger.error(f"Failed to process public shell: {e}")
-            results.append({
-                'kind': 'Shell',
-                'name': resource.get('metadata', {}).get('name', 'unknown'),
-                'namespace': resource.get('metadata', {}).get('namespace', 'default'),
-                'operation': 'failed',
-                'success': False,
-                'error': str(e)
-            })
+            results.append(
+                {
+                    "kind": "Shell",
+                    "name": resource.get("metadata", {}).get("name", "unknown"),
+                    "namespace": resource.get("metadata", {}).get(
+                        "namespace", "default"
+                    ),
+                    "operation": "failed",
+                    "success": False,
+                    "error": str(e),
+                }
+            )
 
     logger.info(
         f"Public shells initialization complete: {created_count} created, "
@@ -258,7 +287,9 @@ def apply_public_shells(db: Session, resources: List[Dict[str, Any]]) -> List[Di
     return results
 
 
-def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) -> Dict[str, Any]:
+def scan_and_apply_yaml_directory(
+    user_id: int, directory: Path, db: Session
+) -> Dict[str, Any]:
     """
     Scan a directory for YAML files and apply all resources.
 
@@ -271,7 +302,7 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
         Summary of operations
     """
     logger.info(f"[scan_and_apply_yaml_directory] Starting with directory: {directory}")
-    
+
     if not directory.exists():
         logger.warning(f"Initialization directory does not exist: {directory}")
         return {"status": "skipped", "reason": "directory not found"}
@@ -288,7 +319,9 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
         logger.info(f"No YAML files found in {directory}")
         return {"status": "skipped", "reason": "no yaml files"}
 
-    logger.info(f"Found {len(yaml_files)} YAML files in {directory}: {[f.name for f in yaml_files]}")
+    logger.info(
+        f"Found {len(yaml_files)} YAML files in {directory}: {[f.name for f in yaml_files]}"
+    )
 
     user_resources = []  # Resources for kinds table (user-owned)
     public_shell_resources = []  # Resources for public_shells table
@@ -302,14 +335,14 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
 
         # Filter and categorize valid resource documents
         for doc in documents:
-            if not isinstance(doc, dict) or 'kind' not in doc or 'metadata' not in doc:
+            if not isinstance(doc, dict) or "kind" not in doc or "metadata" not in doc:
                 continue
 
-            kind = doc.get('kind')
-            metadata = doc.get('metadata', {})
+            kind = doc.get("kind")
+            metadata = doc.get("metadata", {})
 
             # Check if this is a public shell (no user_id in metadata)
-            if kind == 'Shell' and 'user_id' not in metadata:
+            if kind == "Shell" and "user_id" not in metadata:
                 public_shell_resources.append(doc)
                 logger.info(f"  Added public shell: {metadata.get('name')}")
             else:
@@ -320,12 +353,16 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
         if documents:
             files_processed.append(yaml_file.name)
 
-    logger.info(f"[scan_and_apply_yaml_directory] Total resources: {len(user_resources)} user, {len(public_shell_resources)} public shells")
+    logger.info(
+        f"[scan_and_apply_yaml_directory] Total resources: {len(user_resources)} user, {len(public_shell_resources)} public shells"
+    )
 
     # Apply user resources (goes to kinds table)
     user_results = []
     if user_resources:
-        logger.info(f"Applying {len(user_resources)} user resources for user_id={user_id}...")
+        logger.info(
+            f"Applying {len(user_resources)} user resources for user_id={user_id}..."
+        )
         user_results = apply_yaml_resources(user_id, user_resources)
         logger.info(f"User resources applied: {len(user_results)} results")
 
@@ -337,8 +374,8 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
         logger.info(f"Public shells applied: {len(public_shell_results)} results")
 
     # Combine results
-    user_success = sum(1 for r in user_results if r.get('success'))
-    shell_success = sum(1 for r in public_shell_results if r.get('success'))
+    user_success = sum(1 for r in user_results if r.get("success"))
+    shell_success = sum(1 for r in public_shell_results if r.get("success"))
     total_resources = len(user_resources) + len(public_shell_resources)
     total_success = user_success + shell_success
 
@@ -350,7 +387,7 @@ def scan_and_apply_yaml_directory(user_id: int, directory: Path, db: Session) ->
         "resources_applied": total_success,
         "resources_failed": total_resources - total_success,
         "user_resources": len(user_resources),
-        "public_shells": len(public_shell_resources)
+        "public_shells": len(public_shell_resources),
     }
 
 

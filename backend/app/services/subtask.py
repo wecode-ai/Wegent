@@ -2,8 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import List, Optional
 import logging
+from typing import List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
@@ -35,7 +35,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             executor_namespace=obj_in.executor_namespace,
             executor_name=obj_in.executor_name,
             message_id=obj_in.message_id,
-            status=SubtaskStatus.PENDING
+            status=SubtaskStatus.PENDING,
         )
         db.add(db_obj)
         db.commit()
@@ -48,20 +48,35 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         """
         Get user's Subtask list
         """
-        return db.query(Subtask).filter(
-            Subtask.user_id == user_id
-        ).order_by(Subtask.created_at.desc()).offset(skip).limit(limit).all()
+        return (
+            db.query(Subtask)
+            .filter(Subtask.user_id == user_id)
+            .order_by(Subtask.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
     def get_by_task(
-        self, db: Session, *, task_id: int, user_id: int, skip: int = 0, limit: int = 100
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100,
     ) -> List[Subtask]:
         """
         Get subtasks by task ID, sorted by message_id
         """
-        return db.query(Subtask).filter(
-            Subtask.task_id == task_id,
-            Subtask.user_id == user_id
-        ).order_by(Subtask.message_id.asc(), Subtask.created_at.asc()).offset(skip).limit(limit).all()
+        return (
+            db.query(Subtask)
+            .filter(Subtask.task_id == task_id, Subtask.user_id == user_id)
+            .order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
     def get_subtask_by_id(
         self, db: Session, *, subtask_id: int, user_id: int
@@ -69,15 +84,13 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         """
         Get Subtask by ID and user ID
         """
-        subtask = db.query(Subtask).filter(
-            Subtask.id == subtask_id,
-            Subtask.user_id == user_id
-        ).first()
+        subtask = (
+            db.query(Subtask)
+            .filter(Subtask.id == subtask_id, Subtask.user_id == user_id)
+            .first()
+        )
         if not subtask:
-            raise HTTPException(
-                status_code=404,
-                detail="Subtask not found"
-            )
+            raise HTTPException(status_code=404, detail="Subtask not found")
         return subtask
 
     def update_subtask(
@@ -88,35 +101,28 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         """
         subtask = self.get_subtask_by_id(db, subtask_id=subtask_id, user_id=user_id)
         if not subtask:
-            raise HTTPException(
-                status_code=404,
-                detail="Subtask not found"
-            )
-        
+            raise HTTPException(status_code=404, detail="Subtask not found")
+
         update_data = obj_in.model_dump(exclude_unset=True)
-        
+
         for field, value in update_data.items():
             setattr(subtask, field, value)
-        
+
         db.add(subtask)
         db.commit()
         db.refresh(subtask)
         return subtask
 
-    def delete_subtask(
-        self, db: Session, *, subtask_id: int, user_id: int
-    ) -> None:
+    def delete_subtask(self, db: Session, *, subtask_id: int, user_id: int) -> None:
         """
         Delete user Subtask
         """
         subtask = self.get_subtask_by_id(db, subtask_id=subtask_id, user_id=user_id)
         if not subtask:
-            raise HTTPException(
-                status_code=404,
-                detail="Subtask not found"
-            )
-        
+            raise HTTPException(status_code=404, detail="Subtask not found")
+
         db.delete(subtask)
         db.commit()
+
 
 subtask_service = SubtaskService(Subtask)

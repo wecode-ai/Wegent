@@ -10,10 +10,10 @@ from app.core import security
 from app.models.user import User
 from app.schemas.agent import (
     AgentCreate,
-    AgentUpdate,
+    AgentDetail,
     AgentInDB,
     AgentListResponse,
-    AgentDetail,
+    AgentUpdate,
 )
 from app.services.adapters import public_shell_service
 
@@ -31,9 +31,11 @@ def list_agents(
     Get Agent list (paginated)
     """
     skip = (page - 1) * limit
-    items = public_shell_service.get_agents(db=db, skip=skip, limit=limit, current_user=current_user)
+    items = public_shell_service.get_agents(
+        db=db, skip=skip, limit=limit, current_user=current_user
+    )
     total = public_shell_service.count_agents(db=db, current_user=current_user)
-    
+
     return {"total": total, "items": items}
 
 
@@ -46,7 +48,9 @@ def create_agent(
     """
     Create new Agent
     """
-    return public_shell_service.create_agent(db=db, obj_in=agent_create, current_user=current_user)
+    return public_shell_service.create_agent(
+        db=db, obj_in=agent_create, current_user=current_user
+    )
 
 
 @router.get("/{agent_id}", response_model=AgentDetail)
@@ -58,7 +62,9 @@ def get_agent(
     """
     Get specified Agent details
     """
-    return public_shell_service.get_by_id(db=db, agent_id=agent_id, current_user=current_user)
+    return public_shell_service.get_by_id(
+        db=db, agent_id=agent_id, current_user=current_user
+    )
 
 
 @router.put("/{agent_id}", response_model=AgentInDB)
@@ -71,7 +77,9 @@ def update_agent(
     """
     Update Agent information
     """
-    return public_shell_service.update_agent(db=db, agent_id=agent_id, obj_in=agent_update, current_user=current_user)
+    return public_shell_service.update_agent(
+        db=db, agent_id=agent_id, obj_in=agent_update, current_user=current_user
+    )
 
 
 @router.delete("/{agent_id}")
@@ -83,5 +91,7 @@ def delete_agent(
     """
     Delete Agent
     """
-    public_shell_service.delete_agent(db=db, agent_id=agent_id, current_user=current_user)
+    public_shell_service.delete_agent(
+        db=db, agent_id=agent_id, current_user=current_user
+    )
     return {"message": "Agent deleted successfully"}

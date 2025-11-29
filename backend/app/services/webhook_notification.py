@@ -4,16 +4,20 @@
 
 import json
 import logging
+from typing import Any, Dict, Optional
+
 import httpx
 import requests
-from typing import Dict, Any, Optional
 from pydantic import BaseModel
+
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+
 class Notification(BaseModel):
     """Notification data model"""
+
     user_name: str
     event: str
     id: str
@@ -22,6 +26,7 @@ class Notification(BaseModel):
     description: str
     status: str
     detail_url: str
+
 
 class WebhookNotificationService:
     """Webhook notification service for task events"""
@@ -57,7 +62,9 @@ class WebhookNotificationService:
             auth_headers["X-Auth-Token"] = self.auth_token
         return auth_headers
 
-    def _replace_username_placeholder(self, headers: Dict[str, str], user_name: str) -> Dict[str, str]:
+    def _replace_username_placeholder(
+        self, headers: Dict[str, str], user_name: str
+    ) -> Dict[str, str]:
         """Replace username placeholder in headers with actual user name"""
         replaced_headers = {}
         for key, value in headers.items():
@@ -80,8 +87,8 @@ class WebhookNotificationService:
                 "end_time": notification.end_time,
                 "description": notification.description,
                 "status": notification.status,
-                "detail_url": notification.detail_url
-            }
+                "detail_url": notification.detail_url,
+            },
         }
 
         return payload
@@ -96,27 +103,27 @@ class WebhookNotificationService:
             payload = self._build_notification_payload(notification)
             headers = {**self.headers, **self._get_auth_headers()}
             # Replace username placeholder in headers
-            headers = self._replace_username_placeholder(headers, notification.user_name)
+            headers = self._replace_username_placeholder(
+                headers, notification.user_name
+            )
 
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 if self.http_method == "POST":
                     response = await client.post(
-                        self.endpoint_url,
-                        json=payload,
-                        headers=headers
+                        self.endpoint_url, json=payload, headers=headers
                     )
                 elif self.http_method == "PUT":
                     response = await client.put(
-                        self.endpoint_url,
-                        json=payload,
-                        headers=headers
+                        self.endpoint_url, json=payload, headers=headers
                     )
                 else:
                     logger.error(f"Unsupported HTTP method: {self.http_method}")
                     return False
 
                 response.raise_for_status()
-                logger.info(f"Webhook notification sent successfully for {notification.event} id={notification.id}")
+                logger.info(
+                    f"Webhook notification sent successfully for {notification.event} id={notification.id}"
+                )
                 return True
 
         except httpx.HTTPError as e:
@@ -136,7 +143,9 @@ class WebhookNotificationService:
             payload = self._build_notification_payload(notification)
             headers = {**self.headers, **self._get_auth_headers()}
             # Replace username placeholder in headers
-            headers = self._replace_username_placeholder(headers, notification.user_name)
+            headers = self._replace_username_placeholder(
+                headers, notification.user_name
+            )
 
             logger.info(f"Sending webhook notification to {self.endpoint_url}")
             logger.info(f"Payload: {payload}")
@@ -146,21 +155,23 @@ class WebhookNotificationService:
                     self.endpoint_url,
                     json=payload,
                     headers=headers,
-                    timeout=self.timeout
+                    timeout=self.timeout,
                 )
             elif self.http_method == "PUT":
                 response = requests.put(
                     self.endpoint_url,
                     json=payload,
                     headers=headers,
-                    timeout=self.timeout
+                    timeout=self.timeout,
                 )
             else:
                 logger.error(f"Unsupported HTTP method: {self.http_method}")
                 return False
 
             response.raise_for_status()
-            logger.info(f"Webhook notification sent successfully for {notification.event} id={notification.id}")
+            logger.info(
+                f"Webhook notification sent successfully for {notification.event} id={notification.id}"
+            )
             return True
 
         except httpx.HTTPError as e:
@@ -169,6 +180,7 @@ class WebhookNotificationService:
         except Exception as e:
             logger.error(f"Error sending webhook notification: {str(e)}")
             return False
+
 
 # Global webhook notification service instance
 webhook_notification_service = WebhookNotificationService()

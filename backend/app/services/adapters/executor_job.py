@@ -2,21 +2,20 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from datetime import datetime, timedelta, timezone
-from typing import List, Set
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
+from typing import List, Set
 
-from app.services.adapters.executor_kinds import executor_kinds_service
-
-from sqlalchemy.orm import Session
 from sqlalchemy import and_
+from sqlalchemy.orm import Session
 
-from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskStatus, SubtaskRole
-from app.schemas.kind import Task
-from app.services.base import BaseService
 from app.core.config import settings
+from app.models.kind import Kind
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.schemas.kind import Task
+from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.base import BaseService
 
 logger = logging.getLogger(__name__)
 
@@ -37,25 +36,40 @@ class JobService(BaseService[Kind, None, None]):
         After successful deletion, set executor_deleted_at.
         """
         try:
-            cutoff = datetime.now() - timedelta(hours=settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS)
-            logging.info("[executor_job] Starting scheduled deletion of expired executors, cutoff: {}".format(cutoff))
-            
+            cutoff = datetime.now() - timedelta(
+                hours=settings.CHAT_TASK_EXECUTOR_DELETE_AFTER_HOURS
+            )
+            logging.info(
+                "[executor_job] Starting scheduled deletion of expired executors, cutoff: {}".format(
+                    cutoff
+                )
+            )
+
             # Query candidates using kinds table
             # Join with kinds table to check task status
-            candidates: List[Subtask] = db.query(Subtask).join(
-                Kind, Subtask.task_id == Kind.id
-            ).filter(
-                and_(
-                    Subtask.status.in_([SubtaskStatus.COMPLETED, SubtaskStatus.FAILED, SubtaskStatus.CANCELLED]),
-                    Subtask.updated_at <= cutoff,
-                    Kind.kind == "Task",
-                    Kind.is_active == True,
-                    Kind.updated_at <= cutoff,
-                    Subtask.executor_name.isnot(None),
-                    Subtask.executor_name != "",
-                    Subtask.executor_deleted_at == False
+            candidates: List[Subtask] = (
+                db.query(Subtask)
+                .join(Kind, Subtask.task_id == Kind.id)
+                .filter(
+                    and_(
+                        Subtask.status.in_(
+                            [
+                                SubtaskStatus.COMPLETED,
+                                SubtaskStatus.FAILED,
+                                SubtaskStatus.CANCELLED,
+                            ]
+                        ),
+                        Subtask.updated_at <= cutoff,
+                        Kind.kind == "Task",
+                        Kind.is_active == True,
+                        Kind.updated_at <= cutoff,
+                        Subtask.executor_name.isnot(None),
+                        Subtask.executor_name != "",
+                        Subtask.executor_deleted_at == False,
+                    )
                 )
-            ).all()
+                .all()
+            )
 
             if not candidates:
                 logger.info("[executor_job] No expired executor to clean up")
@@ -65,21 +79,31 @@ class JobService(BaseService[Kind, None, None]):
             valid_candidates = []
             for subtask in candidates:
                 # Get task from kinds table
-                task = db.query(Kind).filter(
-                    Kind.id == subtask.task_id,
-                    Kind.kind == "Task",
-                    Kind.is_active == True
-                ).first()
-                
+                task = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.id == subtask.task_id,
+                        Kind.kind == "Task",
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+
                 if not task:
                     continue
-                
+
                 task_crd = Task.model_validate(task.json)
                 task_status = task_crd.status.status if task_crd.status else "PENDING"
-                
-                task_type = task_crd.metadata.labels and task_crd.metadata.labels.get("taskType") or "chat"
-                if task_type == 'code':
-                    if (datetime.now() - subtask.updated_at).total_seconds() < settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS * 3600:
+
+                task_type = (
+                    task_crd.metadata.labels
+                    and task_crd.metadata.labels.get("taskType")
+                    or "chat"
+                )
+                if task_type == "code":
+                    if (
+                        datetime.now() - subtask.updated_at
+                    ).total_seconds() < settings.CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS * 3600:
                         continue
 
                 # Check if task status is in COMPLETED, FAILED, or CANCELLED
@@ -87,7 +111,9 @@ class JobService(BaseService[Kind, None, None]):
                     valid_candidates.append(subtask)
 
             if not valid_candidates:
-                logger.info("[executor_job] No valid expired executor to clean up after task status check")
+                logger.info(
+                    "[executor_job] No valid expired executor to clean up after task status check"
+                )
                 return
 
             # Deduplicate by (namespace, name)
@@ -102,20 +128,26 @@ class JobService(BaseService[Kind, None, None]):
             # Use sync version to avoid event loop issues
             for ns, name in unique_executor_keys:
                 try:
-                    logger.info(f"[executor_job] Scheduled deleting executor task ns={ns} name={name}")
+                    logger.info(
+                        f"[executor_job] Scheduled deleting executor task ns={ns} name={name}"
+                    )
                     res = executor_kinds_service.delete_executor_task_sync(name, ns)
                     # Mark all subtasks with this (namespace, name) accordingly
                     db.query(Subtask).filter(
                         Subtask.executor_namespace == ns,
                         Subtask.executor_name == name,
-                        Subtask.executor_deleted_at == False
-                    ).update({
-                        Subtask.executor_deleted_at: True,
-                    })
+                        Subtask.executor_deleted_at == False,
+                    ).update(
+                        {
+                            Subtask.executor_deleted_at: True,
+                        }
+                    )
                     db.commit()
                 except Exception as e:
                     # Log but continue
-                    logger.warning(f"[executor_job] Failed to scheduled delete executor task ns={ns} name={name}: {e}")
+                    logger.warning(
+                        f"[executor_job] Failed to scheduled delete executor task ns={ns} name={name}: {e}"
+                    )
         except Exception as e:
             logger.error(f"[executor_job] cleanup_stale_executors error: {e}")
 

@@ -4,13 +4,14 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Any, Optional, List
+from typing import Any, List, Optional
 
 from pydantic import BaseModel
 
-from app.schemas.user import UserInDB
-from app.schemas.team import TeamInDB
 from app.schemas.subtask import SubtaskWithBot
+from app.schemas.team import TeamInDB
+from app.schemas.user import UserInDB
+
 
 class TaskStatus(str, Enum):
     PENDING = "PENDING"
@@ -21,8 +22,10 @@ class TaskStatus(str, Enum):
     CANCELLING = "CANCELLING"
     DELETE = "DELETE"
 
+
 class TaskBase(BaseModel):
     """Task base model"""
+
     title: Optional[str] = None
     type: Optional[str] = None
     task_type: Optional[str] = None
@@ -38,8 +41,10 @@ class TaskBase(BaseModel):
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
 
+
 class TaskCreate(BaseModel):
     """Task creation model"""
+
     title: Optional[str] = None
     team_id: Optional[int] = None
     team_name: Optional[str] = None
@@ -50,9 +55,9 @@ class TaskCreate(BaseModel):
     git_domain: Optional[str] = ""
     branch_name: Optional[str] = ""
     prompt: str
-    type: Optional[str] = "online" # online、offline
-    task_type: Optional[str] = "chat" # chat、code
-    auto_delete_executor: Optional[str] = "false" # true、fasle
+    type: Optional[str] = "online"  # online、offline
+    task_type: Optional[str] = "chat"  # chat、code
+    auto_delete_executor: Optional[str] = "false"  # true、fasle
     source: Optional[str] = "web"
     # Model selection fields
     model_id: Optional[str] = None  # Model name (not database ID)
@@ -61,6 +66,7 @@ class TaskCreate(BaseModel):
 
 class TaskUpdate(BaseModel):
     """Task update model"""
+
     title: Optional[str] = None
     prompt: Optional[str] = None
     status: Optional[TaskStatus] = None
@@ -72,8 +78,10 @@ class TaskUpdate(BaseModel):
     git_url: Optional[str] = None
     git_repo_id: Optional[int] = None
 
+
 class TaskExcecutorUpdate(BaseModel):
     """Task update model"""
+
     task_id: int
     title: Optional[str] = None
     status: Optional[TaskStatus] = None
@@ -82,8 +90,11 @@ class TaskExcecutorUpdate(BaseModel):
     executor_name: Optional[str] = None
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
+
+
 class TaskInDB(TaskBase):
     """Database task model"""
+
     id: int
     user_id: int
     user_name: str
@@ -94,8 +105,10 @@ class TaskInDB(TaskBase):
     class Config:
         from_attributes = True
 
+
 class TaskDetail(BaseModel):
     """Detailed task model with related entities"""
+
     id: int
     title: str
     git_url: str
@@ -121,11 +134,14 @@ class TaskDetail(BaseModel):
 
 class TaskListResponse(BaseModel):
     """Task paginated response model"""
+
     total: int
     items: list[TaskInDB]
 
+
 class TaskLite(BaseModel):
     """Lightweight task model for list display"""
+
     id: int
     title: str
     status: TaskStatus
@@ -139,7 +155,9 @@ class TaskLite(BaseModel):
     class Config:
         from_attributes = True
 
+
 class TaskLiteListResponse(BaseModel):
     """Lightweight task paginated response model"""
+
     total: int
     items: list[TaskLite]

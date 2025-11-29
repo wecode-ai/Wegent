@@ -3,11 +3,13 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON
-from sqlalchemy.sql import func
+
+from sqlalchemy import JSON, Boolean, Column, DateTime, Integer, String
 from sqlalchemy.orm import relationship
+from sqlalchemy.sql import func
 
 from app.db.base import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -22,8 +24,10 @@ class User(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     __table_args__ = (
-        {'sqlite_autoincrement': True,
-         'mysql_engine': 'InnoDB',
-         'mysql_charset': 'utf8mb4',
-         'mysql_collate': 'utf8mb4_unicode_ci'},
+        {
+            "sqlite_autoincrement": True,
+            "mysql_engine": "InnoDB",
+            "mysql_charset": "utf8mb4",
+            "mysql_collate": "utf8mb4_unicode_ci",
+        },
     )

@@ -5,6 +5,7 @@
 import logging
 import sys
 
+
 def setup_logging() -> None:
     """Configure simple logging format"""
     logging.basicConfig(
@@ -13,11 +14,11 @@ def setup_logging() -> None:
         stream=sys.stdout,
         level=logging.INFO,
     )
-    
+
     # Set third-party library log levels
     for name in ["uvicorn", "uvicorn.error", "fastapi"]:
         logging.getLogger(name).handlers.clear()
         logging.getLogger(name).propagate = True
-    
+
     logging.getLogger("uvicorn.access").handlers.clear()
     logging.getLogger("uvicorn.access").propagate = False

@@ -7,8 +7,8 @@ Kubernetes-style API endpoints
 """
 from fastapi import APIRouter
 
-from app.api.endpoints.kind.kinds import router as kinds_router
 from app.api.endpoints.kind.batch import router as batch_router
+from app.api.endpoints.kind.kinds import router as kinds_router
 from app.api.endpoints.kind.skills import router as skills_router
 
 # Create main kind API router

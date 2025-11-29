@@ -4,6 +4,7 @@
 
 from pydantic_settings import BaseSettings
 
+
 class Settings(BaseSettings):
     # Project configuration
     PROJECT_NAME: str = "Task Manager Backend"
@@ -22,18 +23,22 @@ class Settings(BaseSettings):
     DB_AUTO_MIGRATE: bool = True
 
     # Executor configuration
-    EXECUTOR_DELETE_TASK_URL: str = "http://localhost:8001/executor-manager/executor/delete"
-    EXECUTOR_CANCEL_TASK_URL: str = "http://localhost:8001/executor-manager/tasks/cancel"
+    EXECUTOR_DELETE_TASK_URL: str = (
+        "http://localhost:8001/executor-manager/executor/delete"
+    )
+    EXECUTOR_CANCEL_TASK_URL: str = (
+        "http://localhost:8001/executor-manager/tasks/cancel"
+    )
 
     # JWT configuration
     SECRET_KEY: str = "secret-key"
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 7*24*60  # 7 days in minutes
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 7 * 24 * 60  # 7 days in minutes
 
     # OIDC state configuration
     OIDC_STATE_SECRET_KEY: str = "test"
-    OIDC_STATE_EXPIRE_SECONDS: int = 10*60  # 10 minutes, unit: seconds
-    
+    OIDC_STATE_EXPIRE_SECONDS: int = 10 * 60  # 10 minutes, unit: seconds
+
     # Cache configuration
     REPO_CACHE_EXPIRED_TIME: int = 7200  # 2 hour in seconds
     REPO_UPDATE_INTERVAL_SECONDS: int = 3600  # 1 hour in seconds
@@ -68,9 +73,11 @@ class Settings(BaseSettings):
     # Team sharing configuration
     TEAM_SHARE_BASE_URL: str = "http://localhost:3000"
     TEAM_SHARE_QUERY_PARAM: str = "teamShare"
-    
+
     # AES encryption configuration for share tokens
-    SHARE_TOKEN_AES_KEY: str = "12345678901234567890123456789012"  # 32 bytes for AES-256
+    SHARE_TOKEN_AES_KEY: str = (
+        "12345678901234567890123456789012"  # 32 bytes for AES-256
+    )
     SHARE_TOKEN_AES_IV: str = "1234567890123456"  # 16 bytes for AES IV
 
     # Webhook notification configuration
@@ -90,6 +97,7 @@ class Settings(BaseSettings):
         env_file = ".env"
         env_file_encoding = "utf-8"
         extra = "ignore"
+
 
 # Global configuration instance
 settings = Settings()
