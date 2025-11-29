@@ -150,58 +150,58 @@ git checkout -b feature/your-feature-name
 
 ### 3. Commit Code
 
-#### Pre-commit Setup (Recommended for AI Agents)
+```bash
+git add .
+git commit -m "feat: add new feature description"
+```
 
-Wegent uses pre-commit hooks to ensure code quality. This is especially important for AI coding agents (Claude Code, Cursor, etc.).
+### 4. Push Code (Quality Checks Run Here)
+
+#### Pre-push Setup (Required)
+
+Wegent uses pre-commit hooks to ensure code quality before pushing. This is especially important for AI coding agents (Claude Code, Cursor, etc.).
 
 ```bash
 # Install pre-commit
 pip install pre-commit
 
-# Install git hooks
-pre-commit install
+# Install pre-push hooks
+pre-commit install --hook-type pre-push
 ```
 
-#### Two-Stage Commit Flow
+#### Pre-push Quality Checks
 
-When committing code, pre-commit runs automated quality checks:
+When pushing code, pre-commit automatically runs quality checks:
 
-1. **Stage 1 - Quality Check**: Run `git commit -m "message"`
-   - Runs lint, type check, unit tests, and build checks
-   - Generates a quality report
-   - Shows documentation update reminders
-
-2. **Stage 2 - Verified Commit**: Run `AI_VERIFIED=1 git commit -m "message"`
-   - Confirms all checks reviewed
-   - Proceeds with commit
+- Lint & Format (Black, isort, ESLint)
+- Type Check (TypeScript, mypy)
+- Unit Tests (only for changed modules)
+- Build Check (syntax validation)
+- Documentation update reminders
 
 ```bash
-# Normal commit (triggers checks)
-git add .
-git commit -m "feat: add new feature description"
+# Push to remote (triggers quality checks)
+git push origin feature/your-feature-name
 
-# If documentation reminders shown, verify and commit
-AI_VERIFIED=1 git commit -m "feat: add new feature description"
+# If documentation reminders shown, verify and push
+AI_VERIFIED=1 git push origin feature/your-feature-name
 
 # Skip checks if needed (not recommended)
-git commit --no-verify -m "feat: add new feature description"
-
-# Push to remote
-git push origin feature/your-feature-name
+git push --no-verify origin feature/your-feature-name
 ```
 
 #### Manual Quality Checks
 
 ```bash
-# Run all pre-commit checks
-pre-commit run --all-files
+# Run all pre-push checks manually
+pre-commit run --all-files --hook-stage pre-push
 
 # Run specific checks
 pre-commit run black --all-files
 pre-commit run eslint-frontend --all-files
 ```
 
-### 4. Create Pull Request
+### 5. Create Pull Request
 
 - Fill out complete PR description
 - Link related issues

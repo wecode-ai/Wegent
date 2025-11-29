@@ -1,9 +1,9 @@
 #!/bin/bash
 # =============================================================================
-# Smart Module Test Runner
+# Smart Module Test Runner (Pre-push)
 # =============================================================================
 # This script detects which modules have changed and runs their tests.
-# Only runs tests for modules that have staged changes.
+# Runs tests for modules with changes in commits being pushed.
 #
 # Supported modules:
 # - backend: pytest tests/
@@ -22,11 +22,31 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Get list of staged files
-STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null || true)
+# Get the range of commits being pushed
+# For pre-push, we need to detect changes differently
+get_changed_files() {
+    # Try to get files from commits being pushed
+    # First, check if we have stdin from pre-push hook
+    if [ -t 0 ]; then
+        # No stdin, use HEAD comparison
+        git diff --name-only HEAD~1 HEAD 2>/dev/null || git diff --name-only HEAD 2>/dev/null || true
+    else
+        # Read from pre-push hook stdin
+        while read local_ref local_sha remote_ref remote_sha; do
+            if [ "$remote_sha" = "0000000000000000000000000000000000000000" ]; then
+                # New branch
+                git diff --name-only origin/main...$local_sha 2>/dev/null || git diff --name-only HEAD 2>/dev/null || true
+            else
+                git diff --name-only $remote_sha...$local_sha 2>/dev/null || true
+            fi
+        done
+    fi
+}
 
-if [ -z "$STAGED_FILES" ]; then
-    echo -e "${GREEN}✅ No staged files to test${NC}"
+CHANGED_FILES=$(get_changed_files)
+
+if [ -z "$CHANGED_FILES" ]; then
+    echo -e "${GREEN}✅ No changed files to test${NC}"
     exit 0
 fi
 
@@ -82,37 +102,37 @@ PROJECT_ROOT=$(git rev-parse --show-toplevel)
 
 echo ""
 echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"
-echo -e "${BLUE}🧪 Running Module Tests${NC}"
+echo -e "${BLUE}🧪 Running Module Tests (Pre-push)${NC}"
 echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"
 echo ""
 
 # Check each module for changes and run tests
 # Backend
-BACKEND_CHANGES=$(echo "$STAGED_FILES" | grep -E "^backend/.*\.py$" || true)
+BACKEND_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^backend/.*\.py$" || true)
 if [ -n "$BACKEND_CHANGES" ]; then
     run_module_tests "backend" "pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/backend"
 fi
 
 # Frontend
-FRONTEND_CHANGES=$(echo "$STAGED_FILES" | grep -E "^frontend/.*\.(ts|tsx|js|jsx)$" || true)
+FRONTEND_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^frontend/.*\.(ts|tsx|js|jsx)$" || true)
 if [ -n "$FRONTEND_CHANGES" ]; then
     run_module_tests "frontend" "npm test -- --passWithNoTests --watchAll=false 2>/dev/null || true" "$PROJECT_ROOT/frontend"
 fi
 
 # Executor
-EXECUTOR_CHANGES=$(echo "$STAGED_FILES" | grep -E "^executor/.*\.py$" || true)
+EXECUTOR_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.py$" || true)
 if [ -n "$EXECUTOR_CHANGES" ]; then
     run_module_tests "executor" "pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/executor"
 fi
 
 # Executor Manager
-EXECUTOR_MANAGER_CHANGES=$(echo "$STAGED_FILES" | grep -E "^executor_manager/.*\.py$" || true)
+EXECUTOR_MANAGER_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^executor_manager/.*\.py$" || true)
 if [ -n "$EXECUTOR_MANAGER_CHANGES" ]; then
     run_module_tests "executor_manager" "pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/executor_manager"
 fi
 
 # Shared
-SHARED_CHANGES=$(echo "$STAGED_FILES" | grep -E "^shared/.*\.py$" || true)
+SHARED_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^shared/.*\.py$" || true)
 if [ -n "$SHARED_CHANGES" ]; then
     run_module_tests "shared" "pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/shared"
 fi
@@ -138,7 +158,7 @@ echo ""
 
 # Exit with failure if any tests failed (but allow --no-verify to skip)
 if [ $TESTS_FAILED -gt 0 ]; then
-    echo -e "${YELLOW}⚠️ Some tests failed. Use 'git commit --no-verify' to skip.${NC}"
+    echo -e "${YELLOW}⚠️ Some tests failed. Use 'git push --no-verify' to skip.${NC}"
     exit 0  # Changed to 0 to not block, just warn
 fi
 

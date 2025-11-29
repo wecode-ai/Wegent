@@ -311,27 +311,30 @@ const form = useForm({ resolver: zodResolver(schema) })
 
 ## 🔄 Git Workflow
 
-### AI Code Quality Check (Pre-commit)
+### AI Code Quality Check (Pre-push)
 
-Wegent uses pre-commit hooks to ensure code quality for AI coding agents (Claude Code, Cursor, etc.).
+Wegent uses pre-commit hooks to ensure code quality for AI coding agents (Claude Code, Cursor, etc.). All quality checks run **before push**, allowing multiple commits locally without interruption.
 
 **Installation:**
 ```bash
 pip install pre-commit
-pre-commit install
+pre-commit install --hook-type pre-push
 ```
 
-**Two-Stage Commit Flow:**
+**Usage:**
 
-1. **Stage 1 - Check & Report**: Run `git commit -m "message"`
-   - Executes all quality checks (lint, type, test, build)
-   - Generates a comprehensive report
-   - Shows documentation update reminders
-   - Blocks commit pending AI verification
+```bash
+# Normal workflow - checks run automatically before push
+git add .
+git commit -m "feat: your feature"
+git push  # <- Quality checks run here
 
-2. **Stage 2 - Verified Commit**: Run `AI_VERIFIED=1 git commit -m "message"`
-   - Confirms all checks have been reviewed
-   - Proceeds with the commit
+# If documentation reminders shown, verify and push
+AI_VERIFIED=1 git push
+
+# Skip all checks (not recommended)
+git push --no-verify
+```
 
 **Quality Checks:**
 
@@ -346,20 +349,26 @@ pre-commit install
 **Manual Commands:**
 ```bash
 # Run all checks manually
-pre-commit run --all-files
+pre-commit run --all-files --hook-stage pre-push
 
 # Run specific hook
 pre-commit run black --all-files
 
 # Skip all checks (not recommended)
-git commit --no-verify -m "message"
+git push --no-verify
 ```
 
 **Check Output Example:**
 ```
 ══════════════════════════════════════════════════════════
-📋 AI Code Quality Check Report
+📋 AI Code Quality Check Report (Pre-push)
 ══════════════════════════════════════════════════════════
+
+📁 Files to be pushed:
+   Total: 6 file(s)
+   Modules affected:
+   - Backend: 3 file(s)
+   - Frontend: 2 file(s)
 
 ✅ Lint & Format: PASSED
 ✅ Type Check: PASSED
