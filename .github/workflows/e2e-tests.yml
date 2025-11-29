@@ -6,7 +6,8 @@ on:
   workflow_dispatch:
 
 env:
-  NEXT_PUBLIC_API_URL: http://localhost:8000/api
+  # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
+  NEXT_PUBLIC_API_URL: http://localhost:8000
   # Use pymysql driver (installed via requirements.txt)
   DATABASE_URL: mysql+pymysql://root:123456@localhost:3306/task_manager
   REDIS_URL: redis://localhost:6379
@@ -74,7 +75,8 @@ jobs:
       - name: Build frontend
         working-directory: frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000/api
+          # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
+          NEXT_PUBLIC_API_URL: http://localhost:8000
         run: npm run build
 
       - name: Install Playwright browsers
@@ -99,7 +101,8 @@ jobs:
       - name: Start frontend server
         working-directory: frontend
         env:
-          NEXT_PUBLIC_API_URL: http://localhost:8000/api
+          # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
+          NEXT_PUBLIC_API_URL: http://localhost:8000
         run: |
           npm start &
           echo "Frontend server starting..."
