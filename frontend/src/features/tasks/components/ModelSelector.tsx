@@ -207,11 +207,6 @@ export default function ModelSelector({
     setForceOverride(checked === true);
   };
 
-  // Get provider label
-  const getProviderLabel = (provider: string) => {
-    return provider === 'openai' ? 'OpenAI' : 'Anthropic';
-  };
-
   // Reset search when popover closes
   useEffect(() => {
     if (!isOpen) {
@@ -374,17 +369,12 @@ export default function ModelSelector({
                                     </Tag>
                                   )}
                                 </div>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  <Tag variant="default" className="text-[10px] capitalize">
-                                    {getProviderLabel(model.provider)}
-                                  </Tag>
-                                  <span
-                                    className="text-[10px] text-text-muted truncate"
-                                    title={model.modelId}
-                                  >
-                                    {model.modelId}
-                                  </span>
-                                </div>
+                                <span
+                                  className="text-[10px] text-text-muted truncate mt-0.5"
+                                  title={model.modelId}
+                                >
+                                  {model.modelId}
+                                </span>
                               </div>
                             </div>
                           </CommandItem>
@@ -427,7 +417,9 @@ export default function ModelSelector({
                   }}
                 >
                   <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-                  <span className="font-medium group-hover:text-text-primary">{t('models.manage', '模型设置')}</span>
+                  <span className="font-medium group-hover:text-text-primary">
+                    {t('models.manage', '模型设置')}
+                  </span>
                 </div>
               </Command>
             </PopoverContent>
