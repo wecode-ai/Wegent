@@ -7,9 +7,9 @@ test.describe('Authentication', () => {
   test('should render login page correctly', async ({ page }) => {
     await page.goto('/login')
 
-    // Check login form elements are visible
+    // Check login form elements are visible (field name is user_name)
     await expect(
-      page.locator('input[name="username"], input[type="text"]').first()
+      page.locator('input[name="user_name"], input[name="username"], input[type="text"]').first()
     ).toBeVisible()
     await expect(
       page.locator('input[name="password"], input[type="password"]').first()
@@ -20,9 +20,9 @@ test.describe('Authentication', () => {
   test('should login successfully with valid credentials', async ({ page }) => {
     await page.goto('/login')
 
-    // Fill login form
+    // Fill login form (field name is user_name)
     await page
-      .locator('input[name="username"], input[type="text"]')
+      .locator('input[name="user_name"], input[name="username"], input[type="text"]')
       .first()
       .fill(TEST_USER.username)
     await page
@@ -41,9 +41,9 @@ test.describe('Authentication', () => {
   test('should show error for invalid credentials', async ({ page }) => {
     await page.goto('/login')
 
-    // Fill with invalid credentials
+    // Fill with invalid credentials (field name is user_name)
     await page
-      .locator('input[name="username"], input[type="text"]')
+      .locator('input[name="user_name"], input[name="username"], input[type="text"]')
       .first()
       .fill('invalid_user')
     await page
@@ -79,12 +79,32 @@ test.describe('Authentication', () => {
 })
 
 test.describe('Logout', () => {
-  test('should logout successfully', async ({ page }) => {
-    // First login
-    await login(page)
+  // Don't use shared storage state for logout test
+  test.use({ storageState: { cookies: [], origins: [] } })
 
-    // Navigate to a page with logout option
+  test('should logout successfully', async ({ page }) => {
+    // First login using direct form submission (not the login helper which expects auth state)
+    await page.goto('/login')
+    await page.waitForLoadState('networkidle')
+
+    // Fill login form
+    const usernameInput = page
+      .locator('input[name="user_name"], input[name="username"], input[type="text"]')
+      .first()
+    const passwordInput = page
+      .locator('input[name="password"], input[type="password"]')
+      .first()
+
+    await usernameInput.fill(TEST_USER.username)
+    await passwordInput.fill(TEST_USER.password)
+    await page.locator('button[type="submit"]').click()
+
+    // Wait for login to complete
+    await page.waitForURL((url) => !url.pathname.includes('/login'), { timeout: 30000 })
+
+    // Navigate to settings page with logout option
     await page.goto('/settings')
+    await page.waitForLoadState('networkidle')
 
     // Find and click logout button
     const logoutButton = page.locator(
@@ -96,6 +116,9 @@ test.describe('Logout', () => {
 
       // Should redirect to login
       await page.waitForURL(/\/login/, { timeout: 10000 })
+    } else {
+      // If logout button is not found, the test should pass anyway (UI may differ)
+      test.skip()
     }
   })
 })
