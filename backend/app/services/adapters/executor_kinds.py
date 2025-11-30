@@ -395,7 +395,7 @@ class ExecutorKindsService(
                     .first()
                 )
 
-                # Get shell for agent name
+                # Get shell for agent name - first check user's custom shells, then public shells
                 shell = (
                     db.query(Kind)
                     .filter(
@@ -407,6 +407,28 @@ class ExecutorKindsService(
                     )
                     .first()
                 )
+
+                # If user shell not found, try public shells
+                shell_base_image = None
+                if not shell:
+                    from app.models.public_shell import PublicShell
+
+                    public_shell = (
+                        db.query(PublicShell)
+                        .filter(
+                            PublicShell.name == bot_crd.spec.shellRef.name,
+                            PublicShell.is_active == True,
+                        )
+                        .first()
+                    )
+                    if public_shell and public_shell.json:
+                        shell_crd_temp = Shell.model_validate(public_shell.json)
+                        shell_base_image = shell_crd_temp.spec.baseImage
+                        # Create a mock shell object for compatibility
+                        class MockShell:
+                            def __init__(self, json_data):
+                                self.json = json_data
+                        shell = MockShell(public_shell.json)
 
                 # Get model for agent config (modelRef is optional)
                 model = None
@@ -442,6 +464,9 @@ class ExecutorKindsService(
                 if shell and shell.json:
                     shell_crd = Shell.model_validate(shell.json)
                     agent_name = shell_crd.spec.runtime
+                    # Extract baseImage from shell (user-defined shell overrides public shell)
+                    if shell_crd.spec.baseImage:
+                        shell_base_image = shell_crd.spec.baseImage
 
                 if model and model.json:
                     model_crd = Model.model_validate(model.json)
@@ -593,6 +618,7 @@ class ExecutorKindsService(
                         "mcp_servers": mcp_servers,
                         "skills": skills,
                         "role": team_member_info.role if team_member_info else "",
+                        "base_image": shell_base_image,  # Custom base image for executor
                     }
                 )
 

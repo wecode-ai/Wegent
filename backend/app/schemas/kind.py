@@ -112,6 +112,8 @@ class ShellSpec(BaseModel):
 
     runtime: str
     supportModel: Optional[List[str]] = None
+    baseImage: Optional[str] = None  # Custom base image address for user-defined shells
+    baseShellRef: Optional[str] = None  # Reference to base public shell (e.g., "ClaudeCode")
 
 
 class ShellStatus(Status):

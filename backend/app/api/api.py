@@ -9,6 +9,7 @@ from app.api.endpoints.adapter import (
     dify,
     executors,
     models,
+    shells,
     tasks,
     teams,
 )
@@ -21,6 +22,7 @@ api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["public-models"])
+api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])

@@ -14,6 +14,7 @@ metadata:
 spec:
   runtime: ClaudeCode
   supportModel: []
+  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
 status:
   state: Available
 ---
@@ -27,6 +28,7 @@ metadata:
 spec:
   runtime: Agno
   supportModel: []
+  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
 status:
   state: Available
 ---

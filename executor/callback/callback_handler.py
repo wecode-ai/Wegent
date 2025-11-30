@@ -118,6 +118,7 @@ def send_task_completed_callback(
     message: str = "Task executed successfully",
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Send task completed callback
@@ -130,11 +131,12 @@ def send_task_completed_callback(
         message (str, optional): Message. Defaults to "Task executed successfully".
         executor_name (str, optional): Executor name
         executor_namespace (str, optional): Executor namespace
+        result (dict, optional): Result data to include in callback
 
     Returns:
         Dict[str, Any]: Callback response
     """
-    return send_status_callback(
+    return callback_client.send_callback(
         task_id=task_id,
         subtask_id=subtask_id,
         task_title=task_title,
@@ -144,6 +146,7 @@ def send_task_completed_callback(
         progress=100,
         executor_name=executor_name,
         executor_namespace=executor_namespace,
+        result=result,
     )
 
 
