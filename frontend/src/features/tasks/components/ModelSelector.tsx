@@ -235,8 +235,8 @@ export default function ModelSelector({
     <div className="flex items-center gap-0">
       {/* Model selector with integrated checkbox in dropdown */}
       <div
-        className="flex items-center space-x-2 min-w-0"
-        style={{ maxWidth: isMobile ? 140 : 180 }}
+        className="flex items-center space-x-2 min-w-0 flex-shrink"
+        style={{ maxWidth: isMobile ? 140 : 180, minWidth: isMobile ? 50 : 70 }}
       >
         <CpuChipIcon
           className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading || externalLoading ? 'animate-pulse' : ''}`}

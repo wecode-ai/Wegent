@@ -26,6 +26,8 @@ import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
+// Threshold for combined team name + model name length to trigger compact quota mode
+const COMPACT_QUOTA_NAME_THRESHOLD = 22;
 
 interface ChatAreaProps {
   teams: Team[];
@@ -160,6 +162,15 @@ export default function ChatArea({
 
     return selectedTeam.name.trim().length > SHOULD_HIDE_QUOTA_NAME_LIMIT;
   }, [selectedTeam, isMobile]);
+
+  // Determine if compact quota mode should be used (icon only)
+  // On mobile, when combined team + model name exceeds threshold, use compact mode
+  const shouldUseCompactQuota = React.useMemo(() => {
+    if (!isMobile) return false;
+    const teamNameLength = selectedTeam?.name?.trim().length || 0;
+    const modelNameLength = selectedModel?.name?.trim().length || 0;
+    return teamNameLength + modelNameLength > COMPACT_QUOTA_NAME_THRESHOLD;
+  }, [isMobile, selectedTeam?.name, selectedModel?.name]);
 
   const handleTeamChange = (team: Team | null) => {
     console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null');
@@ -529,7 +540,9 @@ export default function ChatArea({
                       )}
                     </div>
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-                      {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
+                      {!shouldHideQuotaUsage && (
+                        <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+                      )}
                       {selectedTaskDetail?.status === 'PENDING' ? (
                         <Button
                           variant="ghost"
@@ -669,7 +682,9 @@ export default function ChatArea({
                     )}
                   </div>
                   <div className="ml-auto flex items-center gap-2 flex-shrink-0">
-                    {!shouldHideQuotaUsage && <QuotaUsage className="flex-shrink-0" />}
+                    {!shouldHideQuotaUsage && (
+                      <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
+                    )}
                     {selectedTaskDetail?.status === 'PENDING' ? (
                       <Button
                         variant="ghost"
