@@ -20,6 +20,7 @@ from shared.logger import setup_logger
 from shared.status import TaskStatus
 from executor.tasks import process
 from executor.services.agent_service import AgentService
+from executor.callback.startup_reporter import check_startup_allowed
 
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
@@ -28,11 +29,29 @@ logger = setup_logger("task_executor")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Run task at startup if TASK_INFO is available
+    Run task at startup if TASK_INFO is available.
+    Checks restart limit before execution.
     """
     try:
         if os.getenv("TASK_INFO"):
-            logger.info("TASK_INFO environment variable found, attempting to run task")
+            logger.info("TASK_INFO environment variable found, checking startup allowed")
+
+            # Check if restart is allowed before executing task
+            allowed, startup_result = check_startup_allowed()
+            if not allowed:
+                logger.error(
+                    f"Executor startup not allowed: {startup_result.get('message', 'Restart limit exceeded')}. "
+                    f"Restart count: {startup_result.get('restart_count', 0)}/{startup_result.get('max_restart', 0)}"
+                )
+                # Exit with non-zero code to indicate failure
+                logger.info("Exiting executor due to restart limit exceeded")
+                os._exit(1)
+
+            logger.info(
+                f"Startup allowed: restart_count={startup_result.get('restart_count', 0)}/"
+                f"{startup_result.get('max_restart', 0)}, proceeding with task execution"
+            )
+
             status = run_task()
             logger.info(f"Task execution status: {status}")
         else:
@@ -41,9 +60,9 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.exception(f"Error running task at startup: {str(e)}")
-    
+
     yield  # Application runs here
-    
+
     # Shutdown logic can be added here if needed
 
 # Create FastAPI app

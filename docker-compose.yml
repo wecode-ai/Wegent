@@ -113,10 +113,13 @@ services:
       - EXECUTOR_PORT_RANGE_MIN=10001
       - EXECUTOR_PORT_RANGE_MAX=10100
       - EXECUTOR_WORKSPCE=${HOME}/wecode-bot
+      - REDIS_URL=redis://redis:6379/0
+      - MAX_EXECUTOR_RESTART=3
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - backend
+      - redis
     networks:
       - wegent-network
 

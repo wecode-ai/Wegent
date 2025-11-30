@@ -22,7 +22,9 @@ from executor_manager.tasks.task_processor import TaskProcessor
 from executor_manager.clients.task_api_client import TaskApiClient
 from shared.models.task import TasksRequest
 from executor_manager.executors.dispatcher import ExecutorDispatcher
-from typing import Optional, Dict, Any
+from executor_manager.services.restart_limiter import get_restart_limiter
+from executor_manager.executors.docker.utils import delete_container
+from typing import Optional, Dict, Any, List
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -99,6 +101,17 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
         )
         if not success:
             logger.warning(f"Failed to update status for task {request.task_id}: {result}")
+
+        # Clear restart count when task reaches final state
+        final_states = ["COMPLETED", "FAILED", "CANCELLED"]
+        if request.status and request.status.upper() in final_states:
+            try:
+                restart_limiter = get_restart_limiter()
+                restart_limiter.clear_restart_count(request.subtask_id)
+                logger.info(f"Cleared restart count for subtask {request.subtask_id} (status: {request.status})")
+            except Exception as e:
+                logger.warning(f"Failed to clear restart count for subtask {request.subtask_id}: {e}")
+
         logger.info(f"Successfully processed callback for task {request.task_id}")
         return {
             "status": "success",
@@ -202,3 +215,115 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class ExecutorStartupRequest(BaseModel):
+    """Request model for executor startup notification"""
+    subtask_id: int
+    task_id: int
+    executor_name: str
+
+
+class ExecutorStartupResponse(BaseModel):
+    """Response model for executor startup check"""
+    allowed: bool
+    restart_count: int
+    max_restart: int
+    message: str = ""
+
+
+@app.post("/executor-manager/executor/startup", response_model=ExecutorStartupResponse)
+async def executor_startup(request: ExecutorStartupRequest, http_request: Request):
+    """
+    Executor startup notification endpoint.
+
+    Called by executor containers at startup to check if restart is allowed.
+    Increments the restart counter and returns whether execution should proceed.
+
+    Args:
+        request: ExecutorStartupRequest containing subtask_id, task_id, executor_name
+
+    Returns:
+        ExecutorStartupResponse: Contains allowed status, restart count, and max limit
+    """
+    client_ip = http_request.client.host if http_request.client else "unknown"
+    logger.info(
+        f"Received executor startup notification: subtask_id={request.subtask_id}, "
+        f"task_id={request.task_id}, executor_name={request.executor_name} from {client_ip}"
+    )
+
+    try:
+        restart_limiter = get_restart_limiter()
+        check_result = restart_limiter.check_and_increment(request.subtask_id)
+
+        if check_result.allowed:
+            logger.info(
+                f"Executor startup allowed for subtask {request.subtask_id}: "
+                f"count={check_result.restart_count}/{check_result.max_restart}"
+            )
+            return ExecutorStartupResponse(
+                allowed=True,
+                restart_count=check_result.restart_count,
+                max_restart=check_result.max_restart,
+                message=check_result.message
+            )
+        else:
+            # Restart limit exceeded - mark task as failed and clean up
+            logger.warning(
+                f"Executor restart limit exceeded for subtask {request.subtask_id}: "
+                f"count={check_result.restart_count}/{check_result.max_restart}"
+            )
+
+            # Mark subtask as failed via backend API
+            error_message = f"Executor restart limit exceeded (max: {check_result.max_restart} times)"
+            try:
+                success, result = api_client.update_task_status_by_fields(
+                    task_id=request.task_id,
+                    subtask_id=request.subtask_id,
+                    progress=100,
+                    executor_name=request.executor_name,
+                    status="FAILED",
+                    error_message=error_message,
+                )
+                if success:
+                    logger.info(f"Marked subtask {request.subtask_id} as FAILED due to restart limit")
+                else:
+                    logger.warning(f"Failed to mark subtask {request.subtask_id} as FAILED: {result}")
+            except Exception as e:
+                logger.error(f"Error updating task status for subtask {request.subtask_id}: {e}")
+
+            # Delete the executor container
+            try:
+                delete_result = delete_container(request.executor_name)
+                if delete_result.get("status") == "success":
+                    logger.info(f"Deleted executor container {request.executor_name}")
+                else:
+                    logger.warning(
+                        f"Failed to delete executor container {request.executor_name}: "
+                        f"{delete_result.get('error_msg', 'Unknown error')}"
+                    )
+            except Exception as e:
+                logger.error(f"Error deleting executor container {request.executor_name}: {e}")
+
+            # Clear the restart count since we're failing the task
+            try:
+                restart_limiter.clear_restart_count(request.subtask_id)
+            except Exception as e:
+                logger.warning(f"Failed to clear restart count for subtask {request.subtask_id}: {e}")
+
+            return ExecutorStartupResponse(
+                allowed=False,
+                restart_count=check_result.restart_count,
+                max_restart=check_result.max_restart,
+                message=error_message
+            )
+
+    except Exception as e:
+        logger.error(f"Error processing executor startup: {e}")
+        # Fail-open: allow execution if there's an error checking restart count
+        return ExecutorStartupResponse(
+            allowed=True,
+            restart_count=0,
+            max_restart=3,
+            message=f"Error checking restart limit, allowing execution: {str(e)}"
+        )
