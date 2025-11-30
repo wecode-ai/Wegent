@@ -206,6 +206,11 @@ class ClaudeCodeAgent(Agent):
 
         The REPO_PROXY_CONFIG environment variable should contain JSON with domains
         as keys and proxy definitions (http_proxy/https_proxy) as values.
+        
+        This method configures:
+        1. Git global proxy settings (http.proxy, https.proxy)
+        2. System environment variables (HTTP_PROXY, HTTPS_PROXY, http_proxy, https_proxy)
+           so that all child processes (npm, pip, curl, etc.) inherit proxy settings.
         """
         proxy_config_raw = os.getenv("REPO_PROXY_CONFIG")
         if not proxy_config_raw:
@@ -223,30 +228,92 @@ class ClaudeCodeAgent(Agent):
             logger.info(f"No proxy configuration found for domain {git_domain}")
             return
 
-        proxy_values = {
-            key.lower(): value
-            for key, value in domain_config.items()
-            if key.lower() in {"http.proxy", "https.proxy"} and value
-        }
+        # Extract proxy values from config
+        # Support both git-style keys (http.proxy) and standard keys (http_proxy)
+        proxy_values = {}
+        for key, value in domain_config.items():
+            key_lower = key.lower()
+            if key_lower in {"http.proxy", "http_proxy"} and value:
+                proxy_values["http"] = value
+            elif key_lower in {"https.proxy", "https_proxy"} and value:
+                proxy_values["https"] = value
+            elif key_lower == "no_proxy" and value:
+                proxy_values["no_proxy"] = value
 
         if not proxy_values:
             logger.info(f"Proxy configuration for domain {git_domain} is empty, skipping.")
             return
 
-        for proxy_key, proxy_value in proxy_values.items():
-            cmd = f'git config --global {proxy_key} {proxy_value}'
-            try:
-                subprocess.run(
-                    cmd,
-                    shell=True,
-                    capture_output=True,
-                    text=True,
-                    check=True,
-                )
-                logger.info(f"Configured environment {proxy_key} for domain {git_domain}")
-            except subprocess.CalledProcessError as e:
-                stderr = e.stderr.strip() if e.stderr else str(e)
-                logger.warning(f"Proxy configuration failed: {stderr}")
+        # Configure git global proxy settings
+        git_proxy_mapping = {
+            "http": "http.proxy",
+            "https": "https.proxy"
+        }
+        
+        for proxy_type, proxy_value in proxy_values.items():
+            if proxy_type in git_proxy_mapping:
+                git_key = git_proxy_mapping[proxy_type]
+                cmd = f'git config --global {git_key} {proxy_value}'
+                try:
+                    subprocess.run(
+                        cmd,
+                        shell=True,
+                        capture_output=True,
+                        text=True,
+                        check=True,
+                    )
+                    logger.info(f"Configured git {git_key} = {proxy_value} for domain {git_domain}")
+                except subprocess.CalledProcessError as e:
+                    stderr = e.stderr.strip() if e.stderr else str(e)
+                    logger.warning(f"Git proxy configuration failed for {git_key}: {stderr}")
+
+        # Set system environment variables for all child processes
+        # This ensures npm, pip, curl, wget, and other tools use the proxy
+        self._set_system_proxy_env(proxy_values, git_domain)
+
+    def _set_system_proxy_env(self, proxy_values: Dict[str, str], git_domain: str) -> None:
+        """
+        Set system-level proxy environment variables.
+        
+        This sets both uppercase and lowercase variants to ensure compatibility
+        with different tools:
+        - HTTP_PROXY / http_proxy: Used by most HTTP clients
+        - HTTPS_PROXY / https_proxy: Used for HTTPS connections
+        - NO_PROXY / no_proxy: Hosts to bypass proxy
+        - ALL_PROXY / all_proxy: Fallback for tools that use this
+        
+        Args:
+            proxy_values: Dictionary with proxy settings (http, https, no_proxy)
+            git_domain: The git domain for logging purposes
+        """
+        env_vars_set = []
+        
+        # HTTP proxy
+        if "http" in proxy_values:
+            http_proxy = proxy_values["http"]
+            os.environ["HTTP_PROXY"] = http_proxy
+            os.environ["http_proxy"] = http_proxy
+            env_vars_set.append(f"HTTP_PROXY={http_proxy}")
+        
+        # HTTPS proxy
+        if "https" in proxy_values:
+            https_proxy = proxy_values["https"]
+            os.environ["HTTPS_PROXY"] = https_proxy
+            os.environ["https_proxy"] = https_proxy
+            env_vars_set.append(f"HTTPS_PROXY={https_proxy}")
+            # Also set ALL_PROXY for tools that prefer it
+            os.environ["ALL_PROXY"] = https_proxy
+            os.environ["all_proxy"] = https_proxy
+        
+        # No proxy (bypass list)
+        if "no_proxy" in proxy_values:
+            no_proxy = proxy_values["no_proxy"]
+            os.environ["NO_PROXY"] = no_proxy
+            os.environ["no_proxy"] = no_proxy
+            env_vars_set.append(f"NO_PROXY={no_proxy}")
+        
+        if env_vars_set:
+            logger.info(f"Set system proxy environment variables for domain {git_domain}: {', '.join(env_vars_set)}")
 
     def _get_git_token(self, git_domain: str, task_data: Dict[str, Any]) -> Optional[str]:
         user_cfg = task_data.get("user", {})
