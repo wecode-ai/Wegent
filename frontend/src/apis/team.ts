@@ -12,6 +12,8 @@ export interface CreateTeamRequest {
   bots?: TeamBot[];
   workflow?: Record<string, unknown>;
   is_active?: boolean;
+  icon?: string; // Lucide icon name
+  is_recommended?: boolean; // Whether this team is recommended
 }
 
 export interface TeamListResponse {
@@ -81,5 +83,17 @@ export const teamApis = {
   },
   async getTeamInputParameters(teamId: number): Promise<TeamInputParametersResponse> {
     return apiClient.get(`/teams/${teamId}/input-parameters`);
+  },
+  async addTeamToFavorites(teamId: number): Promise<{ message: string; is_favorited: boolean }> {
+    return apiClient.post(`/teams/${teamId}/favorite`);
+  },
+  async removeTeamFromFavorites(teamId: number): Promise<{ message: string; is_favorited: boolean }> {
+    return apiClient.delete(`/teams/${teamId}/favorite`);
+  },
+  async getRecommendedTeams(limit: number = 6): Promise<Team[]> {
+    return apiClient.get(`/teams/showcase/recommended?limit=${limit}`);
+  },
+  async getFavoriteTeams(limit: number = 6): Promise<Team[]> {
+    return apiClient.get(`/teams/showcase/favorites?limit=${limit}`);
   },
 };

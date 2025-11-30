@@ -183,6 +183,13 @@
     "copy_success": "Copied successfully",
     "share_instructions_content1": "Copy and send this link to others, they can use your shared team to complete tasks directly through the link.",
     "share_instructions_content2": "After sharing the team, you can still manage and edit this team, and others can apply the latest team configuration but cannot edit the team settings.",
+    "recommended": "Recommended Apps",
+    "favorites": "My Favorites",
+    "set_recommended": "Set as Recommended",
+    "add_favorite": "Add to Favorites",
+    "remove_favorite": "Remove from Favorites",
+    "favorite_failed": "Failed to toggle favorite",
+    "select_icon": "Select Icon",
     "share": {
       "title": "Team Share",
       "confirm_message": "Do you want to use {{userName}}'s {{teamName}} to execute tasks?",

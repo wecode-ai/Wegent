@@ -136,7 +136,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Create Team JSON
         team_json = {
             "kind": "Team",
-            "spec": {"members": members, "collaborationModel": collaboration_model},
+            "spec": {
+                "members": members,
+                "collaborationModel": collaboration_model,
+                "icon": getattr(obj_in, "icon", None),
+                "isRecommended": getattr(obj_in, "is_recommended", False),
+            },
             "status": {"state": "Available"},
             "metadata": {"name": obj_in.name, "namespace": "default"},
             "apiVersion": "agent.wecode.io/v1",
@@ -510,6 +515,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 collaboration_model = update_data["workflow"]["mode"]
 
             team_crd.spec.collaborationModel = collaboration_model
+
+        # Handle icon update
+        if "icon" in update_data:
+            team_crd.spec.icon = update_data["icon"]
+
+        # Handle is_recommended update
+        if "is_recommended" in update_data:
+            team_crd.spec.isRecommended = update_data["is_recommended"]
 
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
@@ -886,6 +899,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "created_at": team.created_at,
             "updated_at": team.updated_at,
             "agent_type": agent_type,  # Add agent_type field
+            "icon": team_crd.spec.icon,  # Lucide icon name
+            "is_recommended": team_crd.spec.isRecommended,  # Whether this team is recommended
         }
 
     def _get_bot_summary(self, bot: Kind, db: Session, user_id: int) -> Dict[str, Any]:

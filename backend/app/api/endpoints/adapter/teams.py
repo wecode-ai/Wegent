@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
@@ -24,6 +26,7 @@ from app.schemas.team import (
 )
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.shared_team import shared_team_service
+from app.services.team_favorite import team_favorite_service
 
 router = APIRouter()
 
@@ -40,6 +43,14 @@ def list_teams(
     items = team_kinds_service.get_user_teams(
         db=db, user_id=current_user.id, skip=skip, limit=limit
     )
+
+    # Add is_favorited field to each team
+    favorite_team_ids = team_favorite_service.get_user_favorite_team_ids(
+        db=db, user_id=current_user.id
+    )
+    for item in items:
+        item["is_favorited"] = item["id"] in favorite_team_ids
+
     if page == 1 and len(items) < limit:
         total = len(items)
     else:
@@ -139,3 +150,94 @@ def join_shared_team(
     return shared_team_service.join_shared_team(
         db=db, share_token=request.share_token, user_id=current_user.id
     )
+
+
+@router.post("/{team_id}/favorite")
+def add_team_to_favorites(
+    team_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Add a team to user's favorites"""
+    return team_favorite_service.add_favorite(
+        db=db, team_id=team_id, user_id=current_user.id
+    )
+
+
+@router.delete("/{team_id}/favorite")
+def remove_team_from_favorites(
+    team_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Remove a team from user's favorites"""
+    return team_favorite_service.remove_favorite(
+        db=db, team_id=team_id, user_id=current_user.id
+    )
+
+
+@router.get("/showcase/recommended", response_model=List[Dict[str, Any]])
+def get_recommended_teams(
+    limit: int = Query(6, ge=1, le=20, description="Max teams to return"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get recommended teams (is_recommended=true)"""
+    from app.schemas.kind import Team
+
+    # Get all teams where isRecommended is true
+    teams = db.query(Kind).filter(Kind.kind == "Team", Kind.is_active == True).all()
+
+    recommended_teams = []
+    favorite_team_ids = team_favorite_service.get_user_favorite_team_ids(
+        db=db, user_id=current_user.id
+    )
+
+    for team in teams:
+        team_crd = Team.model_validate(team.json)
+        if team_crd.spec.isRecommended:
+            team_dict = team_kinds_service._convert_to_team_dict(team, db, team.user_id)
+            team_dict["is_favorited"] = team.id in favorite_team_ids
+            recommended_teams.append(team_dict)
+            if len(recommended_teams) >= limit:
+                break
+
+    return recommended_teams
+
+
+@router.get("/showcase/favorites", response_model=List[Dict[str, Any]])
+def get_favorite_teams(
+    limit: int = Query(6, ge=1, le=20, description="Max teams to return"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """Get user's favorite teams"""
+    from app.models.user_team_favorite import UserTeamFavorite
+
+    # Get user's favorite team IDs
+    favorites = (
+        db.query(UserTeamFavorite)
+        .filter(UserTeamFavorite.user_id == current_user.id)
+        .order_by(UserTeamFavorite.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    favorite_teams = []
+    for favorite in favorites:
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.id == favorite.team_id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if team:
+            team_dict = team_kinds_service._convert_to_team_dict(team, db, team.user_id)
+            team_dict["is_favorited"] = True
+            favorite_teams.append(team_dict)
+
+    return favorite_teams
