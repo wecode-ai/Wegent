@@ -136,6 +136,7 @@ export default function TeamSelector({
           noMatchText={t('teams.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
           contentClassName="max-w-[320px]"
+          title={t('teams.select_team')}
           renderTriggerValue={item => {
             if (!item) return null;
             const team = teams.find(t => t.id.toString() === item.value);

@@ -1204,7 +1204,7 @@ const BotEdit: React.FC<BotEditProps> = ({
               width: 100% !important;
               margin-bottom: 1rem;
             }
-            
+
             /* Ensure Dify full width on mobile */
             .lg\\:w-full {
                width: 100% !important;
@@ -1221,96 +1221,11 @@ const BotEdit: React.FC<BotEditProps> = ({
               border-radius: 0.5rem !important;
               max-width: 100vw !important;
               overflow-x: hidden !important;
-              height: 100vh !important;
-              min-height: 100vh !important;
-              max-height: 100vh !important;
             }
 
             /* Prevent horizontal scroll on mobile */
             body, html {
               overflow-x: hidden !important;
-            }
-
-            /* Ensure container doesn't cause horizontal scroll */
-            .max-w-full {
-              max-width: 100vw !important;
-              overflow-x: hidden !important;
-            }
-
-            .overflow-hidden {
-              overflow-x: hidden !important;
-              overflow-y: auto !important;
-            }
-
-            /* Fix main container height on mobile */
-            .flex.flex-col.w-full.bg-surface.rounded-lg {
-              height: 100vh !important;
-              min-height: 100vh !important;
-            }
-
-            /* Fix content area to fill remaining height */
-            .flex.flex-col.lg\\:flex-row.gap-4.flex-grow.mx-2.min-h-0.overflow-hidden {
-              height: calc(100vh - 120px) !important;
-              min-height: calc(100vh - 120px) !important;
-            }
-
-            /* Adjust input and textarea sizes for mobile */
-            input[type="text"] {
-              font-size: 16px !important;
-              padding: 0.75rem 1rem !important;
-              height: auto !important;
-              max-width: 100% !important;
-              box-sizing: border-box !important;
-            }
-
-            textarea {
-              font-size: 16px !important;
-              padding: 0.75rem 1rem !important;
-              min-height: 150px !important;
-              max-width: 100% !important;
-              box-sizing: border-box !important;
-              resize: vertical !important;
-              white-space: pre-wrap !important;
-              word-wrap: break-word !important;
-            }
-
-            /* Adjust button sizes */
-            .ant-btn {
-              min-height: 40px !important;
-              font-size: 14px !important;
-              max-width: 100% !important;
-              white-space: nowrap !important;
-              overflow: hidden !important;
-              text-overflow: ellipsis !important;
-            }
-
-            /* Adjust select component */
-            .ant-select {
-              max-width: 100% !important;
-            }
-
-            .ant-select-selector {
-              min-height: 40px !important;
-              font-size: 16px !important;
-              max-width: 100% !important;
-              box-sizing: border-box !important;
-            }
-
-            .ant-select-dropdown {
-              max-width: 90vw !important;
-              min-width: 200px !important;
-            }
-
-            /* Adjust labels */
-            label {
-              font-size: 16px !important;
-              max-width: 100% !important;
-              word-wrap: break-word !important;
-            }
-
-            /* Reduce spacing on mobile */
-            .space-y-3 > * + * {
-              margin-top: 0.75rem !important;
             }
 
             /* Fix overflow issues */
@@ -1329,27 +1244,6 @@ const BotEdit: React.FC<BotEditProps> = ({
               min-width: 0 !important;
               max-width: 100% !important;
               flex: 1 !important;
-            }
-
-            /* Fix grid and layout overflow */
-            .grid {
-              max-width: 100% !important;
-              overflow-x: hidden !important;
-            }
-
-            /* Fix text overflow in containers */
-            .truncate {
-              overflow: hidden !important;
-              text-overflow: ellipsis !important;
-              white-space: nowrap !important;
-              max-width: 100% !important;
-            }
-
-            /* Fix long text in tooltips */
-            .ant-tooltip-inner {
-              max-width: 80vw !important;
-              word-wrap: break-word !important;
-              white-space: normal !important;
             }
           }
         `,

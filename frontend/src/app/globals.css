@@ -475,3 +475,56 @@ button:focus-visible {
 .repository-selector.ant-select-open .ant-select-arrow {
   opacity: 1;
 }
+
+/* iOS Safari auto-zoom prevention - ensure input font-size is at least 16px on mobile */
+@media screen and (max-width: 767px) {
+  /* Prevent iOS Safari from zooming on input focus */
+  input[type='text'],
+  input[type='email'],
+  input[type='number'],
+  input[type='password'],
+  input[type='search'],
+  input[type='tel'],
+  input[type='url'],
+  input:not([type]),
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+
+  /* Fix select trigger buttons that may have small font size */
+  button[role='combobox'],
+  [data-radix-collection-item] {
+    font-size: 16px !important;
+  }
+
+  /* Ensure CommandInput also has proper font size */
+  [cmdk-input] {
+    font-size: 16px !important;
+  }
+
+  /* Fix for Headless UI Tab elements on mobile */
+  [role='tab'] {
+    font-size: 14px !important;
+    min-height: 40px;
+    touch-action: manipulation;
+  }
+
+  /* Prevent page width overflow on mobile */
+  html,
+  body {
+    overflow-x: hidden !important;
+    max-width: 100vw !important;
+  }
+
+  /* Fix drawer content width on mobile */
+  [data-vaul-drawer-content] {
+    max-width: 100vw !important;
+  }
+
+  /* Ensure tab list doesn't overflow */
+  [role='tablist'] {
+    max-width: 100% !important;
+    overflow-x: auto !important;
+  }
+}

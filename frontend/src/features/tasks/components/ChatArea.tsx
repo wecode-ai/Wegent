@@ -518,7 +518,9 @@ export default function ChatArea({
                   <div
                     className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
                   >
-                    <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
+                    <div
+                      className={`flex-1 min-w-0 overflow-hidden flex items-center ${isMobile ? 'gap-2' : 'gap-3'}`}
+                    >
                       {teams.length > 0 && (
                         <TeamSelector
                           selectedTeam={selectedTeam}
@@ -528,7 +530,8 @@ export default function ChatArea({
                           isLoading={isTeamsLoading}
                         />
                       )}
-                      {selectedTeam && (
+                      {/* Hide ModelSelector for Dify agent type */}
+                      {selectedTeam && selectedTeam.agent_type?.toLowerCase() !== 'dify' && (
                         <ModelSelector
                           selectedModel={selectedModel}
                           setSelectedModel={setSelectedModel}
@@ -660,7 +663,9 @@ export default function ChatArea({
                 <div
                   className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
                 >
-                  <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
+                  <div
+                    className={`flex-1 min-w-0 overflow-hidden flex items-center ${isMobile ? 'gap-2' : 'gap-3'}`}
+                  >
                     {teams.length > 0 && (
                       <TeamSelector
                         selectedTeam={selectedTeam}
@@ -670,7 +675,8 @@ export default function ChatArea({
                         isLoading={isTeamsLoading}
                       />
                     )}
-                    {selectedTeam && (
+                    {/* Hide ModelSelector for Dify agent type */}
+                    {selectedTeam && selectedTeam.agent_type?.toLowerCase() !== 'dify' && (
                       <ModelSelector
                         selectedModel={selectedModel}
                         setSelectedModel={setSelectedModel}
