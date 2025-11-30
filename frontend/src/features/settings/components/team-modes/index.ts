@@ -10,7 +10,7 @@ export { default as LeaderModeEditor } from './LeaderModeEditor';
 export { default as BotTransfer } from './BotTransfer';
 export * from './types';
 
-export type TeamMode = 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate';
+export type TeamMode = 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate' | 'async';
 
 /**
  * Agent types supported by the system
@@ -22,6 +22,7 @@ export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify';
  * - solo: All agent types (ClaudeCode, Agno, Dify)
  * - pipeline: ClaudeCode and Agno only (no Dify)
  * - route/coordinate/collaborate: Agno only (multi-agent collaboration modes)
+ * - async: ClaudeCode only (external event-driven multi-turn conversation)
  */
 const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
   solo: null, // null means all agents are allowed
@@ -29,6 +30,7 @@ const MODE_AGENT_FILTER: Record<TeamMode, AgentType[] | null> = {
   route: ['Agno'],
   coordinate: ['Agno'],
   collaborate: ['Agno'],
+  async: ['ClaudeCode'], // async mode only supports ClaudeCode for single-bot external event-driven workflow
 };
 
 /**

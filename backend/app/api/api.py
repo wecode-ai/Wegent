@@ -13,6 +13,11 @@ from app.api.endpoints.adapter import (
     teams,
 )
 from app.api.endpoints.kind import k_router
+from app.api.endpoints.webhooks import (
+    github_router,
+    gitlab_router,
+    callback_router,
+)
 from app.api.router import api_router
 
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
@@ -29,3 +34,8 @@ api_router.include_router(executors.router, prefix="/executors", tags=["executor
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(k_router)
+
+# Webhook endpoints for async team mode
+api_router.include_router(github_router, prefix="/webhooks", tags=["webhooks"])
+api_router.include_router(gitlab_router, prefix="/webhooks", tags=["webhooks"])
+api_router.include_router(callback_router, prefix="/webhooks", tags=["webhooks"])

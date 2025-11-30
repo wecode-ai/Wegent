@@ -25,6 +25,7 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 class SubtaskStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    WAITING = "WAITING"  # New: waiting for external event
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
@@ -53,6 +54,12 @@ class SubtaskBase(BaseModel):
     progress: int = 0
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
+    # Async mode fields
+    waiting_for: Optional[str] = None
+    waiting_since: Optional[datetime] = None
+    waiting_timeout: Optional[int] = None
+    resume_count: int = 0
+    max_resume_count: int = 5
 
 
 class SubtaskCreate(SubtaskBase):
@@ -74,6 +81,12 @@ class SubtaskUpdate(BaseModel):
     result: Optional[dict[str, Any]] = None
     error_message: Optional[str] = None
     executor_deleted_at: Optional[bool] = False
+    # Async mode fields
+    waiting_for: Optional[str] = None
+    waiting_since: Optional[datetime] = None
+    waiting_timeout: Optional[int] = None
+    resume_count: Optional[int] = None
+    max_resume_count: Optional[int] = None
 
 
 class SubtaskInDB(SubtaskBase):

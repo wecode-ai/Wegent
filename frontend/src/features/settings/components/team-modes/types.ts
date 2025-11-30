@@ -4,7 +4,7 @@
 
 import { Bot, Team } from '@/types/api';
 
-export type TeamMode = 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate';
+export type TeamMode = 'solo' | 'pipeline' | 'route' | 'coordinate' | 'collaborate' | 'async';
 
 export interface TeamModeEditorProps {
   bots: Bot[];

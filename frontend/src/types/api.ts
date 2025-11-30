@@ -120,6 +120,7 @@ export interface TeamBot {
 export type TaskStatus =
   | 'PENDING'
   | 'RUNNING'
+  | 'WAITING'  // New: waiting for external event (async mode)
   | 'COMPLETED'
   | 'FAILED'
   | 'CANCELLED'

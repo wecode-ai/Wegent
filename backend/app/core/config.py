@@ -93,6 +93,13 @@ class Settings(BaseSettings):
     INIT_DATA_DIR: str = "/app/init_data"
     INIT_DATA_ENABLED: bool = True
 
+    # Async team mode configuration
+    ASYNC_MODE_ENABLED: bool = True
+    DEFAULT_MAX_RESUME_COUNT: int = 5
+    DEFAULT_WAITING_TIMEOUT: int = 3600  # Default timeout in seconds, 0 means no timeout
+    GITHUB_WEBHOOK_SECRET: str = ""
+    GITLAB_WEBHOOK_TOKEN: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
