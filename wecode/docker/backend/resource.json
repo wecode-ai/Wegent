@@ -1,19 +1,6 @@
 [
   {
     "apiVersion": "agent.wecode.io/v1",
-    "kind": "Model",
-    "metadata": {
-      "name": "sina-glm-4.5",
-      "namespace": "default"
-    },
-    "spec": {
-      "modelConfig": {
-        "private_model": "sina-glm-4.5(内网)"
-      }
-    }
-  },
-  {
-    "apiVersion": "agent.wecode.io/v1",
     "kind": "Ghost",
     "metadata": {
       "name": "新闻搜索bot(示例)-ghost",
@@ -75,7 +62,7 @@
         "namespace": "default"
       },
       "modelRef": {
-        "name": "sina-glm-4.5",
+        "name": "sina-glm-4.5(内网)",
         "namespace": "default"
       }
     }
@@ -131,7 +118,7 @@
         "namespace": "default"
       },
       "modelRef": {
-        "name": "sina-glm-4.5",
+        "name": "sina-glm-4.5(内网)",
         "namespace": "default"
       }
     }
@@ -165,7 +152,7 @@
         "namespace": "default"
       },
       "modelRef": {
-        "name": "sina-glm-4.5",
+        "name": "sina-glm-4.5(内网)",
         "namespace": "default"
       }
     }
@@ -205,19 +192,6 @@
         }
       ],
       "collaborationModel": "coordinate"
-    }
-  },
-{
-    "apiVersion": "agent.wecode.io/v1",
-    "kind": "Model",
-    "metadata": {
-      "name": "wecode-claude-sonnet-4-5",
-      "namespace": "default"
-    },
-    "spec": {
-      "modelConfig": {
-        "private_model": "wecode-claude-sonnet-4-5(海外)"
-      }
     }
   },
   {
@@ -263,7 +237,7 @@
         "namespace": "default"
       },
       "modelRef": {
-        "name": "wecode-claude-sonnet-4-5",
+        "name": "wecode-claude-sonnet-4-5(海外)",
         "namespace": "default"
       }
     }
@@ -286,41 +260,7 @@
           "role": "leader"
         }
       ],
-      "collaborationModel": "pipeline"
-    }
-  },
-  {
-    "apiVersion": "agent.wecode.io/v1",
-    "kind": "Team",
-    "metadata": {
-      "name": "开发团队(示例)",
-      "namespace": "default"
-    },
-    "spec": {
-      "members": [
-        {
-          "botRef": {
-            "name": "开发bot(示例)",
-            "namespace": "default"
-          },
-          "prompt": "",
-          "role": "leader"
-        }
-      ],
-      "collaborationModel": "pipeline"
-    }
-  },
-  {
-    "apiVersion": "agent.wecode.io/v1",
-    "kind": "Model",
-    "metadata": {
-      "name": "wecode-claude-sina-glm-4.5",
-      "namespace": "default"
-    },
-    "spec": {
-      "modelConfig": {
-        "private_model": "wecode-claude-sina-glm-4.5(内网)"
-      }
+      "collaborationModel": "solo"
     }
   },
   {
@@ -366,9 +306,30 @@
         "namespace": "default"
       },
       "modelRef": {
-        "name": "wecode-claude-sina-glm-4.5",
+        "name": "wecode-claude-sina-glm-4.5(内网)",
         "namespace": "default"
       }
+    }
+  },
+  {
+    "apiVersion": "agent.wecode.io/v1",
+    "kind": "Team",
+    "metadata": {
+      "name": "开发团队(示例)",
+      "namespace": "default"
+    },
+    "spec": {
+      "members": [
+        {
+          "botRef": {
+            "name": "开发bot(示例)",
+            "namespace": "default"
+          },
+          "prompt": "",
+          "role": "leader"
+        }
+      ],
+      "collaborationModel": "solo"
     }
   }
 ]
