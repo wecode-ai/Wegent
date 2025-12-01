@@ -32,6 +32,7 @@ export interface Model {
   name: string;
   provider: string; // 'openai' | 'claude'
   modelId: string;
+  displayName?: string | null; // Human-readable display name
   type?: ModelTypeEnum; // 'public' | 'user' - identifies model source
 }
 
@@ -67,8 +68,14 @@ function unifiedToModel(unified: UnifiedModel): Model {
     name: unified.name,
     provider: unified.provider || 'claude',
     modelId: unified.modelId || '',
+    displayName: unified.displayName,
     type: unified.type,
   };
+}
+
+// Helper function to get display text for a model: displayName(modelId) or name(modelId)
+function getModelDisplayText(model: Model): string {
+  return model.displayName ? `${model.displayName}(${model.name})` : model.name;
 }
 
 // Helper function to check if all bots in a team have predefined models
@@ -300,10 +307,11 @@ export default function ModelSelector({
     if (selectedModel.name === DEFAULT_MODEL_NAME) {
       return t('task_submit.default_model', '默认');
     }
+    const displayText = getModelDisplayText(selectedModel);
     if (forceOverride && !isMixedTeam) {
-      return `${selectedModel.name}(${t('task_submit.override_short', '覆盖')})`;
+      return `${displayText}(${t('task_submit.override_short', '覆盖')})`;
     }
-    return selectedModel.name;
+    return displayText;
   };
 
   return (
@@ -409,7 +417,7 @@ export default function ModelSelector({
                         {filteredModels.map(model => (
                           <CommandItem
                             key={getModelKey(model)}
-                            value={`${model.name} ${model.provider} ${model.modelId} ${model.type}`}
+                            value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
                             onSelect={() => handleModelSelect(getModelKey(model))}
                             className={cn(
                               'group cursor-pointer select-none',
@@ -435,9 +443,9 @@ export default function ModelSelector({
                                 <div className="flex items-center gap-1.5">
                                   <span
                                     className="font-medium text-xs text-text-secondary truncate"
-                                    title={model.name}
+                                    title={getModelDisplayText(model)}
                                   >
-                                    {model.name}
+                                    {getModelDisplayText(model)}
                                   </span>
                                   {model.type === 'public' && (
                                     <Tag variant="info" className="text-[10px]">
@@ -445,12 +453,14 @@ export default function ModelSelector({
                                     </Tag>
                                   )}
                                 </div>
-                                <span
-                                  className="text-[10px] text-text-muted truncate mt-0.5"
-                                  title={model.modelId}
-                                >
-                                  {model.modelId}
-                                </span>
+                                {model.modelId && (
+                                  <span
+                                    className="text-[10px] text-text-muted truncate"
+                                    title={model.modelId}
+                                  >
+                                    {model.modelId}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </CommandItem>
