@@ -2,28 +2,30 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import FastAPI, Request
-import time
 import logging
-import uuid
 import sys
+import time
+import uuid
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.api import api_router
 from app.core.config import settings
 from app.core.exceptions import (
-    http_exception_handler,
-    validation_exception_handler,
-    python_exception_handler,
     CustomHTTPException,
-    RequestValidationError
+    RequestValidationError,
+    http_exception_handler,
+    python_exception_handler,
+    validation_exception_handler,
 )
 from app.core.logging import setup_logging
-from app.db.session import engine, SessionLocal
-from app.db.base import Base
-from app.services.jobs import start_background_jobs, stop_background_jobs
 from app.core.yaml_init import run_yaml_initialization
+from app.db.base import Base
+from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
+from app.services.jobs import start_background_jobs, stop_background_jobs
+
 
 def create_app():
     # Toggle API docs/OpenAPI via environment (settings.ENABLE_API_DOCS, default True)
@@ -40,10 +42,11 @@ def create_app():
         docs_url=docs_url,
         redoc_url=redoc_url,
     )
-    
+
     # Initialize logging
     setup_logging()
     logger = logging.getLogger(__name__)
+
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         # Skip logging for health check/probe requests (root path)
@@ -51,30 +54,37 @@ def create_app():
             return await call_next(request)
 
         # Generate a unique request ID
-        request_id = str(uuid.uuid4())[:8]  # Use first 8 characters of UUID as request ID
+        request_id = str(uuid.uuid4())[
+            :8
+        ]  # Use first 8 characters of UUID as request ID
         request.state.request_id = request_id
-        
+
         start_time = time.time()
-        
+
         # Extract username from Authorization header
         from app.core.security import get_username_from_request
+
         username = get_username_from_request(request)
-        
+
         client_ip = request.client.host if request.client else "Unknown"
-        
+
         # Pre-request logging with request ID
-        logger.info(f"request : {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}]")
-        
+        logger.info(
+            f"request : {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}]"
+        )
+
         # Process request
         response = await call_next(request)
         process_time = (time.time() - start_time) * 1000
-        
+
         # Post-request logging with request ID
-        logger.info(f"response: {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms")
-        
+        logger.info(
+            f"response: {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms"
+        )
+
         # Add request ID to response headers for client-side tracking
         response.headers["X-Request-ID"] = request_id
-        
+
         return response
 
     # Setup CORS
@@ -99,25 +109,29 @@ def create_app():
     def startup():
         # Run database migrations
         if settings.ENVIRONMENT == "development" and settings.DB_AUTO_MIGRATE:
-            logger.info("Running database migrations automatically (development mode)...")
+            logger.info(
+                "Running database migrations automatically (development mode)..."
+            )
             try:
-                import subprocess
                 import os
+                import subprocess
 
                 # Get the alembic.ini path
-                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                
+                backend_dir = os.path.dirname(
+                    os.path.dirname(os.path.abspath(__file__))
+                )
+
                 logger.info("Executing Alembic upgrade to head...")
-                
+
                 # Run Alembic as subprocess to avoid output buffering issues
                 result = subprocess.run(
                     ["alembic", "upgrade", "head"],
                     cwd=backend_dir,
                     capture_output=False,  # Let output go directly to stdout/stderr
                     text=True,
-                    check=True
+                    check=True,
                 )
-                
+
                 logger.info("✓ Alembic migrations completed successfully")
             except subprocess.CalledProcessError as e:
                 logger.error(f"✗ Error running Alembic migrations: {e}")
@@ -132,13 +146,16 @@ def create_app():
             )
             # Check migration status
             try:
-                from alembic import command
-                from alembic.config import Config as AlembicConfig
-                from alembic.script import ScriptDirectory
-                from alembic.runtime.migration import MigrationContext
                 import os
 
-                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                from alembic import command
+                from alembic.config import Config as AlembicConfig
+                from alembic.runtime.migration import MigrationContext
+                from alembic.script import ScriptDirectory
+
+                backend_dir = os.path.dirname(
+                    os.path.dirname(os.path.abspath(__file__))
+                )
                 alembic_ini_path = os.path.join(backend_dir, "alembic.ini")
 
                 alembic_cfg = AlembicConfig(alembic_ini_path)
@@ -176,7 +193,7 @@ def create_app():
         logger.info("Starting background jobs...")
         start_background_jobs(app)
         logger.info("✓ Background jobs started")
-        
+
         logger.info("=" * 60)
         logger.info("Application startup completed successfully!")
         logger.info("=" * 60)
@@ -190,7 +207,9 @@ def create_app():
 
     return app
 
+
 app = create_app()
+
 
 # Root path
 @app.get("/")

@@ -116,9 +116,9 @@ export default function TeamSelector({
 
   return (
     <div
-      className="flex items-center space-x-2 min-w-0"
+      className="flex items-center space-x-2 min-w-0 flex-shrink"
       data-tour="team-selector"
-      style={{ maxWidth: isMobile ? 200 : 260 }}
+      style={{ maxWidth: isMobile ? 200 : 260, minWidth: isMobile ? 60 : 80 }}
     >
       <FaUsers
         className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}

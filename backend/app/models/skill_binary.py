@@ -5,17 +5,22 @@
 """
 Skill binary storage model for Claude Code Skills ZIP packages
 """
-from sqlalchemy import Column, Integer, ForeignKey, LargeBinary, String, DateTime
 from datetime import datetime
+
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String
+
 from app.db.base import Base
 
 
 class SkillBinary(Base):
     """Skill binary data storage for ZIP packages"""
+
     __tablename__ = "skill_binaries"
 
     id = Column(Integer, primary_key=True, index=True)
-    kind_id = Column(Integer, ForeignKey("kinds.id", ondelete="CASCADE"), nullable=False, unique=True)
+    kind_id = Column(
+        Integer, ForeignKey("kinds.id", ondelete="CASCADE"), nullable=False, unique=True
+    )
     binary_data = Column(LargeBinary, nullable=False)  # ZIP package binary data
     file_size = Column(Integer, nullable=False)  # File size in bytes
     file_hash = Column(String(64), nullable=False)  # SHA256 hash

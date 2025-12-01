@@ -103,6 +103,13 @@ cd <module> && pytest tests/ --cov
 
 ## 💻 Code Style
 
+**⚠️ All code comments MUST be written in English.** This includes:
+- Inline comments
+- Block comments
+- Docstrings
+- TODO/FIXME annotations
+- Type hints descriptions
+
 ### Python (Backend, Executor, Executor Manager, Shared)
 
 **Standards:**
@@ -314,6 +321,26 @@ const form = useForm({ resolver: zodResolver(schema) })
 ### AI Code Quality Check (Pre-push)
 
 Wegent uses git hooks to ensure code quality for AI coding agents (Claude Code, Cursor, etc.). All quality checks run **before push**, allowing multiple commits locally without interruption.
+
+**⚠️ CRITICAL: AI Agents MUST Comply with Git Hook Output**
+
+When pushing code, pre-push hooks will run quality checks and may output warnings or errors. **AI coding agents MUST strictly follow the git hook output**:
+
+1. **If quality checks fail** (lint, type check, tests, build):
+   - DO NOT use `--no-verify` to bypass
+   - FIX all reported issues before pushing again
+   - Read the error details in "FAILED CHECKS DETAIL" section
+
+2. **If documentation reminders appear**:
+   - STOP and review whether documentation updates are needed
+   - If docs need updating: Update relevant documentation files first, then push
+   - If docs are already up-to-date: Use `AI_VERIFIED=1 git push` ONLY after thorough verification
+   - DO NOT blindly use `AI_VERIFIED=1` to skip - this defeats the purpose of the check
+
+3. **Response to hook output**:
+   - Treat hook warnings as mandatory action items
+   - Include any required documentation updates in the same commit/push
+   - Report hook check results to the user when relevant
 
 **Auto-enabled in Executor:**
 When the executor clones a repository, git hooks are automatically configured via `core.hooksPath=.githooks`. No manual installation required.

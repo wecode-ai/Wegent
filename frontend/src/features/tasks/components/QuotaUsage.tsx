@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Coins } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -9,9 +10,11 @@ import { useToast } from '@/hooks/use-toast';
 
 type QuotaUsageProps = {
   className?: string;
+  // When true, display only an icon instead of full text (for mobile space constraints)
+  compact?: boolean;
 };
 
-export default function QuotaUsage({ className }: QuotaUsageProps) {
+export default function QuotaUsage({ className, compact = false }: QuotaUsageProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [quota, setQuota] = useState<QuotaData | null>(null);
@@ -108,6 +111,30 @@ export default function QuotaUsage({ className }: QuotaUsageProps) {
       </div>
     </div>
   );
+
+  // Compact mode: show only icon with tooltip
+  if (compact) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            variant="ghost"
+            size="icon"
+            className={`h-6 w-6 flex-shrink-0 ${className ?? ''}`}
+            style={{
+              padding: 0,
+            }}
+          >
+            <Coins className="w-4 h-4 text-text-muted hover:text-text-primary" />
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="bottom">
+          <div className="text-xs mb-1">{brief}</div>
+          {detail}
+        </TooltipContent>
+      </Tooltip>
+    );
+  }
 
   return (
     <Tooltip>

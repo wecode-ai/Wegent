@@ -116,6 +116,17 @@ export default function ModelSelector({
   const showDefaultOption = useMemo(() => {
     return allBotsHavePredefinedModel(selectedTeam);
   }, [selectedTeam]);
+
+  // Get compatible provider based on team agent_type
+  // agent_type 'agno' -> provider 'openai', agent_type 'claude'/'claudecode' -> provider 'claude'
+  const compatibleProvider = useMemo((): string | null => {
+    if (!selectedTeam?.agent_type) return null;
+    const agentType = selectedTeam.agent_type.toLowerCase();
+    if (agentType === 'agno') return 'openai';
+    if (agentType === 'claude' || agentType === 'claudecode') return 'claude';
+    return null;
+  }, [selectedTeam?.agent_type]);
+
   // Fetch all models using unified API
   const fetchModels = useCallback(async () => {
     setIsLoading(true);
@@ -133,6 +144,26 @@ export default function ModelSelector({
     }
   }, [t]);
 
+  // Filter models by compatible provider when team is selected
+  const filteredModels = useMemo(() => {
+    if (!compatibleProvider) return models;
+    return models.filter(model => model.provider === compatibleProvider);
+  }, [models, compatibleProvider]);
+
+  // Reset selected model when team changes and current selection is not compatible
+  useEffect(() => {
+    if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME && compatibleProvider) {
+      // Check if current selected model is still in filtered list
+      const isStillCompatible = filteredModels.some(
+        m => m.name === selectedModel.name && m.type === selectedModel.type
+      );
+      if (!isStillCompatible) {
+        // Reset selection - will be handled by the next useEffect
+        setSelectedModel(null);
+      }
+    }
+  }, [compatibleProvider, filteredModels, selectedModel, setSelectedModel]);
+
   // Load models on mount
   useEffect(() => {
     fetchModels();
@@ -140,7 +171,16 @@ export default function ModelSelector({
 
   // Restore last selected model from localStorage or set default
   useEffect(() => {
-    if (models.length > 0 && !selectedModel) {
+    // When team changes or all bots have predefined models, auto-select default
+    if (showDefaultOption) {
+      // If all bots have predefined models, auto-select "Default"
+      if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
+        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      }
+      return;
+    }
+
+    if (filteredModels.length > 0 && !selectedModel) {
       const lastSelectedId = localStorage.getItem(LAST_SELECTED_MODEL_KEY);
       const lastSelectedType = localStorage.getItem(
         LAST_SELECTED_MODEL_TYPE_KEY
@@ -151,8 +191,8 @@ export default function ModelSelector({
           setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
           return;
         }
-        // Find model by name and type (if type was saved)
-        const foundModel = models.find(m => {
+        // Find model by name and type (if type was saved) in filtered list
+        const foundModel = filteredModels.find(m => {
           if (lastSelectedType) {
             return m.name === lastSelectedId && m.type === lastSelectedType;
           }
@@ -163,12 +203,9 @@ export default function ModelSelector({
           return;
         }
       }
-      // If showDefaultOption is true and no previous selection, default to "Default"
-      if (showDefaultOption) {
-        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-      }
+      // No previous selection and no default option, leave unselected
     }
-  }, [models, selectedModel, setSelectedModel, showDefaultOption]);
+  }, [filteredModels, selectedModel, setSelectedModel, showDefaultOption]);
 
   // Save selected model to localStorage
   useEffect(() => {
@@ -195,7 +232,7 @@ export default function ModelSelector({
     }
     // Parse value format: "modelName:modelType"
     const [modelName, modelType] = value.split(':');
-    const model = models.find(m => m.name === modelName && m.type === modelType);
+    const model = filteredModels.find(m => m.name === modelName && m.type === modelType);
     if (model) {
       setSelectedModel(model);
     }
@@ -205,11 +242,6 @@ export default function ModelSelector({
   // Handle force override checkbox
   const handleForceOverrideChange = (checked: boolean | 'indeterminate') => {
     setForceOverride(checked === true);
-  };
-
-  // Get provider label
-  const getProviderLabel = (provider: string) => {
-    return provider === 'openai' ? 'OpenAI' : 'Anthropic';
   };
 
   // Reset search when popover closes
@@ -240,8 +272,8 @@ export default function ModelSelector({
     <div className="flex items-center gap-0">
       {/* Model selector with integrated checkbox in dropdown */}
       <div
-        className="flex items-center space-x-2 min-w-0"
-        style={{ maxWidth: isMobile ? 140 : 180 }}
+        className="flex items-center space-x-2 min-w-0 flex-shrink"
+        style={{ maxWidth: isMobile ? 140 : 180, minWidth: isMobile ? 50 : 70 }}
       >
         <CpuChipIcon
           className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading || externalLoading ? 'animate-pulse' : ''}`}
@@ -289,7 +321,7 @@ export default function ModelSelector({
                 <CommandList className="max-h-[300px] overflow-y-auto">
                   {error ? (
                     <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
-                  ) : models.length === 0 ? (
+                  ) : filteredModels.length === 0 ? (
                     <CommandEmpty className="py-4 text-center text-sm text-text-muted">
                       {isLoading ? 'Loading...' : t('models.no_models')}
                     </CommandEmpty>
@@ -335,7 +367,7 @@ export default function ModelSelector({
                             </div>
                           </CommandItem>
                         )}
-                        {models.map(model => (
+                        {filteredModels.map(model => (
                           <CommandItem
                             key={getModelKey(model)}
                             value={`${model.name} ${model.provider} ${model.modelId} ${model.type}`}
@@ -374,17 +406,12 @@ export default function ModelSelector({
                                     </Tag>
                                   )}
                                 </div>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                  <Tag variant="default" className="text-[10px] capitalize">
-                                    {getProviderLabel(model.provider)}
-                                  </Tag>
-                                  <span
-                                    className="text-[10px] text-text-muted truncate"
-                                    title={model.modelId}
-                                  >
-                                    {model.modelId}
-                                  </span>
-                                </div>
+                                <span
+                                  className="text-[10px] text-text-muted truncate mt-0.5"
+                                  title={model.modelId}
+                                >
+                                  {model.modelId}
+                                </span>
                               </div>
                             </div>
                           </CommandItem>
@@ -427,7 +454,9 @@ export default function ModelSelector({
                   }}
                 >
                   <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-                  <span className="font-medium group-hover:text-text-primary">{t('models.manage', '模型设置')}</span>
+                  <span className="font-medium group-hover:text-text-primary">
+                    {t('models.manage', '模型设置')}
+                  </span>
                 </div>
               </Command>
             </PopoverContent>
