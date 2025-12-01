@@ -7,18 +7,19 @@ Gitee repository provider implementation
 """
 import asyncio
 import logging
-from typing import List, Dict, Any, Optional
-import requests
 from functools import lru_cache
-from fastapi import HTTPException
+from typing import Any, Dict, List, Optional
 
-from app.repository.interfaces.repository_provider import RepositoryProvider
-from app.models.user import User
-from app.schemas.github import Repository, Branch
-from app.core.cache import cache_manager
-from app.core.config import settings
+import requests
+from fastapi import HTTPException
 from shared.utils.sensitive_data_masker import mask_string
 from shared.utils.url_util import build_url
+
+from app.core.cache import cache_manager
+from app.core.config import settings
+from app.models.user import User
+from app.repository.interfaces.repository_provider import RepositoryProvider
+from app.schemas.github import Branch, Repository
 
 
 class GiteeProvider(RepositoryProvider):
@@ -32,7 +33,9 @@ class GiteeProvider(RepositoryProvider):
         self.domain = "gitee.com"
         self.type = "gitee"
 
-    def _get_git_infos(self, user: User, git_domain: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _get_git_infos(
+        self, user: User, git_domain: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Collect Gitee related entries from user's git_info (may contain multiple entries)
 
@@ -48,32 +51,33 @@ class GiteeProvider(RepositoryProvider):
         """
         if not user.git_info:
             raise HTTPException(
-                status_code=400,
-                detail="Git information not configured"
+                status_code=400, detail="Git information not configured"
             )
 
         entries: List[Dict[str, Any]] = []
         for info in user.git_info:
             if info.get("type") == self.type:
-                entries.append({
-                    "git_domain": info.get("git_domain", ""),
-                    "git_token": info.get("git_token", ""),
-                    "type": info.get("type", "")
-                })
+                entries.append(
+                    {
+                        "git_domain": info.get("git_domain", ""),
+                        "git_token": info.get("git_token", ""),
+                        "type": info.get("type", ""),
+                    }
+                )
 
         if git_domain:
             filtered = [e for e in entries if e.get("git_domain") == git_domain]
             if not filtered:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Git information for {git_domain} not configured"
+                    detail=f"Git information for {git_domain} not configured",
                 )
             return filtered
 
         if not entries:
             raise HTTPException(
                 status_code=400,
-                detail=f"Git information for {self.domain} not configured"
+                detail=f"Git information for {self.domain} not configured",
             )
         return entries
 
@@ -96,10 +100,7 @@ class GiteeProvider(RepositoryProvider):
             return build_url(git_domain, "/api/v5")
 
     async def get_repositories(
-        self,
-        user: User,
-        page: int = 1,
-        limit: int = 100
+        self, user: User, page: int = 1, limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
         Get user's Gitee repository list
@@ -135,17 +136,20 @@ class GiteeProvider(RepositoryProvider):
                 start_idx = (page - 1) * limit
                 end_idx = start_idx + limit
                 paginated_repos = full_cached[start_idx:end_idx]
-                all_repos.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo["full_name"],
-                        clone_url=repo["clone_url"],
-                        git_domain=git_domain,
-                        type="gitee",
-                        private=repo["private"]
-                    ).model_dump() for repo in paginated_repos
-                ])
+                all_repos.extend(
+                    [
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo["full_name"],
+                            clone_url=repo["clone_url"],
+                            git_domain=git_domain,
+                            type="gitee",
+                            private=repo["private"],
+                        ).model_dump()
+                        for repo in paginated_repos
+                    ]
+                )
                 continue
 
             try:
@@ -157,30 +161,39 @@ class GiteeProvider(RepositoryProvider):
                         "per_page": limit,
                         "page": page,
                         "sort": "updated",
-                        "affiliation": "owner,collaborator"
-                    }
+                        "affiliation": "owner,collaborator",
+                    },
                 )
                 response.raise_for_status()
 
                 repos = response.json()
 
                 if len(repos) < limit:
-                    cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
-                    await cache_manager.set(cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
+                    cache_key = cache_manager.generate_full_cache_key(
+                        user.id, git_domain
+                    )
+                    await cache_manager.set(
+                        cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME
+                    )
                 else:
-                    asyncio.create_task(self._fetch_all_repositories_async(user, git_token, git_domain))
+                    asyncio.create_task(
+                        self._fetch_all_repositories_async(user, git_token, git_domain)
+                    )
 
-                all_repos.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo["full_name"],
-                        clone_url=repo.get("html_url", ""),
-                        git_domain=git_domain,
-                        type="gitee",
-                        private=repo.get("private", False)
-                    ).model_dump() for repo in repos
-                ])
+                all_repos.extend(
+                    [
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo["full_name"],
+                            clone_url=repo.get("html_url", ""),
+                            git_domain=git_domain,
+                            type="gitee",
+                            private=repo.get("private", False),
+                        ).model_dump()
+                        for repo in repos
+                    ]
+                )
             except requests.exceptions.RequestException:
                 # skip failed domain, continue others
                 continue
@@ -188,10 +201,7 @@ class GiteeProvider(RepositoryProvider):
         return all_repos
 
     async def get_branches(
-        self,
-        user: User,
-        repo_name: str,
-        git_domain: str
+        self, user: User, repo_name: str, git_domain: str
     ) -> List[Dict[str, Any]]:
         """
         Get branch list for specified repository
@@ -212,17 +222,16 @@ class GiteeProvider(RepositoryProvider):
         git_domain = git_info["git_domain"]
 
         if not git_token:
-            raise HTTPException(
-                status_code=400,
-                detail="Git token not configured"
-            )
+            raise HTTPException(status_code=400, detail="Git token not configured")
 
         # Get API base URL based on git domain
         api_base_url = self._get_api_base_url(git_domain)
 
         try:
             # Get the actual default branch name
-            default_branch_name = self._get_default_branch(repo_name, git_domain, git_token)
+            default_branch_name = self._get_default_branch(
+                repo_name, git_domain, git_token
+            )
 
             all_branches = []
             page = 1
@@ -234,8 +243,8 @@ class GiteeProvider(RepositoryProvider):
                     params={
                         "access_token": git_token,
                         "per_page": per_page,
-                        "page": page
-                    }
+                        "page": page,
+                    },
                 )
                 response.raise_for_status()
 
@@ -254,45 +263,40 @@ class GiteeProvider(RepositoryProvider):
                 Branch(
                     name=branch["name"],
                     protected=branch.get("protected", False),
-                    default=branch.get("default", False) or branch["name"] == default_branch_name
-                ).model_dump() for branch in all_branches
+                    default=branch.get("default", False)
+                    or branch["name"] == default_branch_name,
+                ).model_dump()
+                for branch in all_branches
             ]
         except requests.exceptions.RequestException as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Gitee API error: {str(e)}"
-            )
+            raise HTTPException(status_code=502, detail=f"Gitee API error: {str(e)}")
 
     @lru_cache(maxsize=100)
     def _get_default_branch(
-        self,
-        repo_name: str,
-        git_domain: str,
-        git_token: str
+        self, repo_name: str, git_domain: str, git_token: str
     ) -> str:
         api_base_url = self._get_api_base_url(git_domain)
 
         try:
             response = requests.get(
-                f"{api_base_url}/repos/{repo_name}",
-                params={"access_token": git_token}
+                f"{api_base_url}/repos/{repo_name}", params={"access_token": git_token}
             )
             response.raise_for_status()
 
             repo_data = response.json()
             return repo_data.get("default_branch", "master")
         except requests.exceptions.RequestException as e:
-            self.logger.warning(f"Failed to get default branch for {repo_name}: {str(e)}")
+            self.logger.warning(
+                f"Failed to get default branch for {repo_name}: {str(e)}"
+            )
             return "master"
         except (ValueError, KeyError) as e:
-            self.logger.warning(f"Failed to parse default branch for {repo_name}: {str(e)}")
+            self.logger.warning(
+                f"Failed to parse default branch for {repo_name}: {str(e)}"
+            )
             return "master"
 
-    def validate_token(
-        self,
-        token: str,
-        git_domain: str = None
-    ) -> Dict[str, Any]:
+    def validate_token(self, token: str, git_domain: str = None) -> Dict[str, Any]:
         """
         Validate Gitee token
 
@@ -307,22 +311,20 @@ class GiteeProvider(RepositoryProvider):
             HTTPException: Raised when validation fails
         """
         if not token:
-            raise HTTPException(
-                status_code=400,
-                detail="Git token is required"
-            )
+            raise HTTPException(status_code=400, detail="Git token is required")
 
         # Use custom domain if provided, otherwise use default
         api_base_url = self._get_api_base_url(git_domain)
 
         try:
             response = requests.get(
-                f"{api_base_url}/user",
-                params={"access_token": token}
+                f"{api_base_url}/user", params={"access_token": token}
             )
 
             if response.status_code == 401:
-                self.logger.warning(f"Gitee token validation failed: 401 Unauthorized, git_domain: {git_domain}, token: {mask_string(token)}")
+                self.logger.warning(
+                    f"Gitee token validation failed: 401 Unauthorized, git_domain: {git_domain}, token: {mask_string(token)}"
+                )
                 return {
                     "valid": False,
                 }
@@ -338,34 +340,23 @@ class GiteeProvider(RepositoryProvider):
                     "login": user_data["login"],
                     "name": user_data.get("name"),
                     "avatar_url": user_data.get("avatar_url"),
-                    "email": user_data.get("email")
-                }
+                    "email": user_data.get("email"),
+                },
             }
 
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Gitee API request failed: {str(e)}")
             if "401" in str(e):
-                raise HTTPException(
-                    status_code=401,
-                    detail="Invalid Gitee token"
-                )
-            raise HTTPException(
-                status_code=502,
-                detail=f"Gitee API error: {str(e)}"
-            )
+                raise HTTPException(status_code=401, detail="Invalid Gitee token")
+            raise HTTPException(status_code=502, detail=f"Gitee API error: {str(e)}")
         except Exception as e:
             self.logger.error(f"Unexpected error during token validation: {str(e)}")
             raise HTTPException(
-                status_code=500,
-                detail=f"Token validation failed: {str(e)}"
+                status_code=500, detail=f"Token validation failed: {str(e)}"
             )
 
     async def search_repositories(
-        self,
-        user: User,
-        query: str,
-        timeout: int = 30,
-        fullmatch: bool = False
+        self, user: User, query: str, timeout: int = 30, fullmatch: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Search user's Gitee repositories across all configured Gitee domains
@@ -401,25 +392,32 @@ class GiteeProvider(RepositoryProvider):
             if full_cached:
                 if fullmatch:
                     filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                        repo
+                        for repo in full_cached
+                        if query_lower == repo["name"].lower()
+                        or query_lower == repo["full_name"].lower()
                     ]
                 else:
                     filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                        repo
+                        for repo in full_cached
+                        if query_lower in repo["name"].lower()
+                        or query_lower in repo["full_name"].lower()
                     ]
-                all_results.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo["full_name"],
-                        clone_url=repo["clone_url"],
-                        git_domain=git_domain,
-                        type="gitee",
-                        private=repo["private"]
-                    ).model_dump() for repo in filtered_repos
-                ])
+                all_results.extend(
+                    [
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo["full_name"],
+                            clone_url=repo["clone_url"],
+                            git_domain=git_domain,
+                            type="gitee",
+                            private=repo["private"],
+                        ).model_dump()
+                        for repo in filtered_repos
+                    ]
+                )
                 continue
 
             # 2) If cache is being built for this domain, wait (with timeout)
@@ -430,34 +428,43 @@ class GiteeProvider(RepositoryProvider):
                     if asyncio.get_event_loop().time() - start_time > timeout:
                         raise HTTPException(
                             status_code=408,
-                            detail="Timeout waiting for repository data to be ready"
+                            detail="Timeout waiting for repository data to be ready",
                         )
                     await asyncio.sleep(1)
 
                 # try cache again
-                full_cached = await self._get_all_repositories_from_cache(user, git_domain)
+                full_cached = await self._get_all_repositories_from_cache(
+                    user, git_domain
+                )
                 if full_cached:
                     if fullmatch:
                         filtered_repos = [
-                            repo for repo in full_cached
-                            if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                            repo
+                            for repo in full_cached
+                            if query_lower == repo["name"].lower()
+                            or query_lower == repo["full_name"].lower()
                         ]
                     else:
                         filtered_repos = [
-                            repo for repo in full_cached
-                            if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                            repo
+                            for repo in full_cached
+                            if query_lower in repo["name"].lower()
+                            or query_lower in repo["full_name"].lower()
                         ]
-                    all_results.extend([
-                        Repository(
-                            id=repo["id"],
-                            name=repo["name"],
-                            full_name=repo["full_name"],
-                            clone_url=repo["clone_url"],
-                            git_domain=git_domain,
-                            type="gitee",
-                            private=repo["private"]
-                        ).model_dump() for repo in filtered_repos
-                    ])
+                    all_results.extend(
+                        [
+                            Repository(
+                                id=repo["id"],
+                                name=repo["name"],
+                                full_name=repo["full_name"],
+                                clone_url=repo["clone_url"],
+                                git_domain=git_domain,
+                                type="gitee",
+                                private=repo["private"],
+                            ).model_dump()
+                            for repo in filtered_repos
+                        ]
+                    )
                     continue
 
             # 3) No cache and not building (or build finished but still no cache), trigger domain-level full retrieval
@@ -468,25 +475,32 @@ class GiteeProvider(RepositoryProvider):
             if full_cached:
                 if fullmatch:
                     filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                        repo
+                        for repo in full_cached
+                        if query_lower == repo["name"].lower()
+                        or query_lower == repo["full_name"].lower()
                     ]
                 else:
                     filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                        repo
+                        for repo in full_cached
+                        if query_lower in repo["name"].lower()
+                        or query_lower in repo["full_name"].lower()
                     ]
-                all_results.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo["full_name"],
-                        clone_url=repo["clone_url"],
-                        git_domain=git_domain,
-                        type="gitee",
-                        private=repo["private"]
-                    ).model_dump() for repo in filtered_repos
-                ])
+                all_results.extend(
+                    [
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo["full_name"],
+                            clone_url=repo["clone_url"],
+                            git_domain=git_domain,
+                            type="gitee",
+                            private=repo["private"],
+                        ).model_dump()
+                        for repo in filtered_repos
+                    ]
+                )
                 continue
 
             # 5) Fallback: fetch first page for this domain only (avoid cross-domain aggregation)
@@ -499,8 +513,8 @@ class GiteeProvider(RepositoryProvider):
                         "per_page": 100,
                         "page": 1,
                         "sort": "updated",
-                        "affiliation": "owner,collaborator"
-                    }
+                        "affiliation": "owner,collaborator",
+                    },
                 )
                 response.raise_for_status()
                 repos = response.json()
@@ -512,31 +526,38 @@ class GiteeProvider(RepositoryProvider):
                         "clone_url": repo.get("html_url", ""),
                         "git_domain": git_domain,
                         "type": "gitee",
-                        "private": repo.get("private", False)
+                        "private": repo.get("private", False),
                     }
                     for repo in repos
                 ]
                 if fullmatch:
                     filtered_repos = [
-                        r for r in mapped
-                        if query_lower == r["name"].lower() or query_lower == r["full_name"].lower()
+                        r
+                        for r in mapped
+                        if query_lower == r["name"].lower()
+                        or query_lower == r["full_name"].lower()
                     ]
                 else:
                     filtered_repos = [
-                        r for r in mapped
-                        if query_lower in r["name"].lower() or query_lower in r["full_name"].lower()
+                        r
+                        for r in mapped
+                        if query_lower in r["name"].lower()
+                        or query_lower in r["full_name"].lower()
                     ]
-                all_results.extend([
-                    Repository(
-                        id=r["id"],
-                        name=r["name"],
-                        full_name=r["full_name"],
-                        clone_url=r["clone_url"],
-                        git_domain=git_domain,
-                        type="gitee",
-                        private=r["private"]
-                    ).model_dump() for r in filtered_repos
-                ])
+                all_results.extend(
+                    [
+                        Repository(
+                            id=r["id"],
+                            name=r["name"],
+                            full_name=r["full_name"],
+                            clone_url=r["clone_url"],
+                            git_domain=git_domain,
+                            type="gitee",
+                            private=r["private"],
+                        ).model_dump()
+                        for r in filtered_repos
+                    ]
+                )
             except requests.exceptions.RequestException:
                 # skip this domain on error
                 continue
@@ -544,10 +565,7 @@ class GiteeProvider(RepositoryProvider):
         return all_results
 
     async def _fetch_all_repositories_async(
-        self,
-        user: User,
-        git_token: str,
-        git_domain: str
+        self, user: User, git_token: str, git_domain: str
     ) -> None:
         """
         Asynchronously fetch all user's Gitee repositories and cache them
@@ -572,7 +590,9 @@ class GiteeProvider(RepositoryProvider):
             page = 1
             per_page = 100
 
-            self.logger.info(f"Fetching gitee all repositories for user {user.user_name}")
+            self.logger.info(
+                f"Fetching gitee all repositories for user {user.user_name}"
+            )
 
             while True:
                 response = await asyncio.to_thread(
@@ -583,8 +603,8 @@ class GiteeProvider(RepositoryProvider):
                         "per_page": per_page,
                         "page": page,
                         "sort": "updated",
-                        "affiliation": "owner,collaborator"
-                    }
+                        "affiliation": "owner,collaborator",
+                    },
                 )
                 response.raise_for_status()
 
@@ -593,15 +613,18 @@ class GiteeProvider(RepositoryProvider):
                     break
 
                 # Map Gitee API response to standard format
-                mapped_repos = [{
-                    "id": repo["id"],
-                    "name": repo["name"],
-                    "full_name": repo["full_name"],
-                    "clone_url": repo.get("html_url", ""),
-                    "git_domain": git_domain,
-                    "type": "gitee",
-                    "private": repo.get("private", False)
-                } for repo in repos]
+                mapped_repos = [
+                    {
+                        "id": repo["id"],
+                        "name": repo["name"],
+                        "full_name": repo["full_name"],
+                        "clone_url": repo.get("html_url", ""),
+                        "git_domain": git_domain,
+                        "type": "gitee",
+                        "private": repo.get("private", False),
+                    }
+                    for repo in repos
+                ]
                 all_repos.extend(mapped_repos)
 
                 # If the number of retrieved repos is less than per_page, we've reached the end
@@ -612,18 +635,25 @@ class GiteeProvider(RepositoryProvider):
 
                 # Prevent infinite loop, set maximum page limit
                 if page > 50:  # Maximum 5000 repositories
-                    self.logger.warning(f"Reached maximum page limit (50) for user {user.id}")
+                    self.logger.warning(
+                        f"Reached maximum page limit (50) for user {user.id}"
+                    )
                     break
 
             # Cache complete repository list
             cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
-            await cache_manager.set(cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
-            self.logger.info(f"Cache complete repository list for user gitee {user.user_name}")
-
+            await cache_manager.set(
+                cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME
+            )
+            self.logger.info(
+                f"Cache complete repository list for user gitee {user.user_name}"
+            )
 
         except Exception as e:
             # Background task fails silently
-            self.logger.error(f"Failed to fetch gitee repositories for user {user.user_name}: {str(e)}")
+            self.logger.error(
+                f"Failed to fetch gitee repositories for user {user.user_name}: {str(e)}"
+            )
             pass
         finally:
             # Always clear build status
@@ -631,9 +661,7 @@ class GiteeProvider(RepositoryProvider):
             self.logger.info(f"Repository fetch completed for user {user.user_name}")
 
     async def _get_all_repositories_from_cache(
-        self,
-        user: User,
-        git_domain: str
+        self, user: User, git_domain: str
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Get all repositories from cache
@@ -658,7 +686,7 @@ class GiteeProvider(RepositoryProvider):
         repo_name: str,
         source_branch: str,
         target_branch: str,
-        git_domain: str
+        git_domain: str,
     ) -> Dict[str, Any]:
         """
         Get diff between two branches for a Gitee repository
@@ -677,10 +705,7 @@ class GiteeProvider(RepositoryProvider):
         git_token = git_info["git_token"]
 
         if not git_token:
-            raise HTTPException(
-                status_code=400,
-                detail="Git token not configured"
-            )
+            raise HTTPException(status_code=400, detail="Git token not configured")
 
         # Get API base URL based on git domain
         api_base_url = self._get_api_base_url(git_domain)
@@ -688,17 +713,21 @@ class GiteeProvider(RepositoryProvider):
         try:
             # Get compare API response
             # Gitee API format: base...head (same as GitHub)
-            self.logger.info(f"Comparing {repo_name}: {target_branch}...{source_branch}")
+            self.logger.info(
+                f"Comparing {repo_name}: {target_branch}...{source_branch}"
+            )
             response = requests.get(
                 f"{api_base_url}/repos/{repo_name}/compare/{target_branch}...{source_branch}",
-                params={"access_token": git_token}
+                params={"access_token": git_token},
             )
             response.raise_for_status()
 
             compare_data = response.json()
 
             # Log for debugging
-            self.logger.info(f"Compare API response commits: {len(compare_data.get('commits', []))}")
+            self.logger.info(
+                f"Compare API response commits: {len(compare_data.get('commits', []))}"
+            )
             self.logger.info(f"Files count: {len(compare_data.get('files', []))}")
 
             # Process files and their diffs
@@ -733,7 +762,4 @@ class GiteeProvider(RepositoryProvider):
             }
 
         except requests.exceptions.RequestException as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Gitee API error: {str(e)}"
-            )
+            raise HTTPException(status_code=502, detail=f"Gitee API error: {str(e)}")

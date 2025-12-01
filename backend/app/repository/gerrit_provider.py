@@ -10,18 +10,19 @@ import base64
 import hashlib
 import logging
 import re
-from typing import List, Dict, Any, Optional
-import requests
-from requests.auth import HTTPDigestAuth
-from fastapi import HTTPException
+from typing import Any, Dict, List, Optional
 
-from app.repository.interfaces.repository_provider import RepositoryProvider
-from app.models.user import User
-from app.schemas.github import Repository, Branch
-from app.core.cache import cache_manager
-from app.core.config import settings
+import requests
+from fastapi import HTTPException
+from requests.auth import HTTPDigestAuth
 from shared.utils.sensitive_data_masker import mask_string
 from shared.utils.url_util import build_url
+
+from app.core.cache import cache_manager
+from app.core.config import settings
+from app.models.user import User
+from app.repository.interfaces.repository_provider import RepositoryProvider
+from app.schemas.github import Branch, Repository
 
 
 class GerritProvider(RepositoryProvider):
@@ -35,7 +36,9 @@ class GerritProvider(RepositoryProvider):
         self.domain = "gerrit"
         self.type = "gerrit"
 
-    def _get_git_infos(self, user: User, git_domain: Optional[str] = None) -> List[Dict[str, Any]]:
+    def _get_git_infos(
+        self, user: User, git_domain: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
         """
         Collect Gerrit related entries from user's git_info (may contain multiple entries)
 
@@ -51,33 +54,33 @@ class GerritProvider(RepositoryProvider):
         """
         if not user.git_info:
             raise HTTPException(
-                status_code=400,
-                detail="Git information not configured"
+                status_code=400, detail="Git information not configured"
             )
 
         entries: List[Dict[str, Any]] = []
         for info in user.git_info:
             if info.get("type") == self.type:
-                entries.append({
-                    "git_domain": info.get("git_domain", ""),
-                    "git_token": info.get("git_token", ""),
-                    "user_name": info.get("user_name", ""),
-                    "type": info.get("type", "")
-                })
+                entries.append(
+                    {
+                        "git_domain": info.get("git_domain", ""),
+                        "git_token": info.get("git_token", ""),
+                        "user_name": info.get("user_name", ""),
+                        "type": info.get("type", ""),
+                    }
+                )
 
         if git_domain:
             filtered = [e for e in entries if e.get("git_domain") == git_domain]
             if not filtered:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Git information for {git_domain} not configured"
+                    detail=f"Git information for {git_domain} not configured",
                 )
             return filtered
 
         if not entries:
             raise HTTPException(
-                status_code=400,
-                detail="Gerrit information not configured"
+                status_code=400, detail="Gerrit information not configured"
             )
         return entries
 
@@ -99,10 +102,7 @@ class GerritProvider(RepositoryProvider):
             API base URL
         """
         if not git_domain:
-            raise HTTPException(
-                status_code=400,
-                detail="Gerrit domain is required"
-            )
+            raise HTTPException(status_code=400, detail="Gerrit domain is required")
         return build_url(git_domain, "/a")
 
     def _strip_xssi_prefix(self, response_text: str) -> str:
@@ -129,11 +129,11 @@ class GerritProvider(RepositoryProvider):
         http_password: str,
         params: Dict[str, Any] = None,
         json_data: Dict[str, Any] = None,
-        **kwargs
+        **kwargs,
     ) -> requests.Response:
         """
         Make HTTP request with HTTP Digest Authentication
-        
+
         Gerrit uses HTTP Digest Authentication by default. The /a/ prefix in the URL
         indicates authenticated access.
 
@@ -155,10 +155,7 @@ class GerritProvider(RepositoryProvider):
         # Use HTTP Digest Authentication (Gerrit default)
         auth = HTTPDigestAuth(username, http_password)
 
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
         response = requests.request(
             method,
@@ -167,7 +164,7 @@ class GerritProvider(RepositoryProvider):
             headers=headers,
             params=params,
             json=json_data,
-            **kwargs
+            **kwargs,
         )
         response.raise_for_status()
         return response
@@ -180,7 +177,7 @@ class GerritProvider(RepositoryProvider):
         http_password: str,
         params: Dict[str, Any] = None,
         json_data: Dict[str, Any] = None,
-        **kwargs
+        **kwargs,
     ) -> requests.Response:
         """
         Async version of _make_request with HTTP Digest Authentication
@@ -200,10 +197,7 @@ class GerritProvider(RepositoryProvider):
         # Use HTTP Digest Authentication (Gerrit default)
         auth = HTTPDigestAuth(username, http_password)
 
-        headers = {
-            "Accept": "application/json",
-            "Content-Type": "application/json"
-        }
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
 
         response = await asyncio.to_thread(
             requests.request,
@@ -213,16 +207,13 @@ class GerritProvider(RepositoryProvider):
             headers=headers,
             params=params,
             json=json_data,
-            **kwargs
+            **kwargs,
         )
         response.raise_for_status()
         return response
 
     async def get_repositories(
-        self,
-        user: User,
-        page: int = 1,
-        limit: int = 100
+        self, user: User, page: int = 1, limit: int = 100
     ) -> List[Dict[str, Any]]:
         """
         Get user's Gerrit project list
@@ -260,17 +251,20 @@ class GerritProvider(RepositoryProvider):
                 start_idx = (page - 1) * limit
                 end_idx = start_idx + limit
                 paginated_repos = full_cached[start_idx:end_idx]
-                all_repos.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo["full_name"],
-                        clone_url=repo["clone_url"],
-                        git_domain=git_domain,
-                        type="gerrit",
-                        private=repo["private"]
-                    ).model_dump() for repo in paginated_repos
-                ])
+                all_repos.extend(
+                    [
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo["full_name"],
+                            clone_url=repo["clone_url"],
+                            git_domain=git_domain,
+                            type="gerrit",
+                            private=repo["private"],
+                        ).model_dump()
+                        for repo in paginated_repos
+                    ]
+                )
                 continue
 
             try:
@@ -281,68 +275,80 @@ class GerritProvider(RepositoryProvider):
                     url=f"{api_base_url}/projects/",
                     username=user_name,
                     http_password=git_token,
-                    params={"d": ""}  # Include descriptions
+                    params={"d": ""},  # Include descriptions
                 )
 
                 # Parse response and strip XSSI prefix
                 response_text = self._strip_xssi_prefix(response.text)
-                projects = requests.models.complexjson.loads(response_text) if response_text else {}
+                projects = (
+                    requests.models.complexjson.loads(response_text)
+                    if response_text
+                    else {}
+                )
 
                 # Convert Gerrit projects to standard format
                 repos = []
                 for project_name, project_info in projects.items():
                     # Generate a numeric ID based on project name hash
-                    project_id = abs(hash(project_name)) % (10 ** 10)
+                    project_id = abs(hash(project_name)) % (10**10)
 
                     # Build clone URL
                     clone_url = build_url(git_domain, f"/{project_name}.git")
 
-                    repos.append({
-                        "id": project_id,
-                        "name": project_name.split("/")[-1],  # Get last part as name
-                        "full_name": project_name,
-                        "clone_url": clone_url,
-                        "git_domain": git_domain,
-                        "type": "gerrit",
-                        "private": True  # Gerrit doesn't expose public/private flag, assume private
-                    })
+                    repos.append(
+                        {
+                            "id": project_id,
+                            "name": project_name.split("/")[
+                                -1
+                            ],  # Get last part as name
+                            "full_name": project_name,
+                            "clone_url": clone_url,
+                            "git_domain": git_domain,
+                            "type": "gerrit",
+                            "private": True,  # Gerrit doesn't expose public/private flag, assume private
+                        }
+                    )
 
                 # Sort by project name
                 repos.sort(key=lambda x: x["full_name"])
 
                 # Cache if all projects are retrieved (Gerrit returns all in one call)
                 cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
-                await cache_manager.set(cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
+                await cache_manager.set(
+                    cache_key, repos, expire=settings.REPO_CACHE_EXPIRED_TIME
+                )
 
                 # Apply pagination
                 start_idx = (page - 1) * limit
                 end_idx = start_idx + limit
                 paginated_repos = repos[start_idx:end_idx]
 
-                all_repos.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo["full_name"],
-                        clone_url=repo["clone_url"],
-                        git_domain=git_domain,
-                        type="gerrit",
-                        private=repo["private"]
-                    ).model_dump() for repo in paginated_repos
-                ])
+                all_repos.extend(
+                    [
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo["full_name"],
+                            clone_url=repo["clone_url"],
+                            git_domain=git_domain,
+                            type="gerrit",
+                            private=repo["private"],
+                        ).model_dump()
+                        for repo in paginated_repos
+                    ]
+                )
 
             except requests.exceptions.RequestException as e:
-                self.logger.error(f"Failed to fetch Gerrit projects from {git_domain}: {str(e)}")
+                self.logger.error(
+                    f"Failed to fetch Gerrit projects from {git_domain}: {str(e)}"
+                )
                 # Skip failed domain, continue others
                 continue
 
         return all_repos
 
     async def get_branches(
-        self,
-        user: User,
-        repo_name: str,
-        git_domain: str
+        self, user: User, repo_name: str, git_domain: str
     ) -> List[Dict[str, Any]]:
         """
         Get branch list for specified Gerrit project
@@ -364,8 +370,7 @@ class GerritProvider(RepositoryProvider):
 
         if not git_token or not user_name:
             raise HTTPException(
-                status_code=400,
-                detail="Gerrit credentials not configured"
+                status_code=400, detail="Gerrit credentials not configured"
             )
 
         # Get API base URL based on git domain
@@ -373,7 +378,7 @@ class GerritProvider(RepositoryProvider):
 
         try:
             # URL encode project name (replace / with %2F)
-            encoded_project = requests.utils.quote(repo_name, safe='')
+            encoded_project = requests.utils.quote(repo_name, safe="")
 
             # Get branches from Gerrit API
             # GET /projects/{project-name}/branches/
@@ -381,15 +386,21 @@ class GerritProvider(RepositoryProvider):
                 method="GET",
                 url=f"{api_base_url}/projects/{encoded_project}/branches/",
                 username=user_name,
-                http_password=git_token
+                http_password=git_token,
             )
 
             # Parse response and strip XSSI prefix
             response_text = self._strip_xssi_prefix(response.text)
-            branches_data = requests.models.complexjson.loads(response_text) if response_text else []
+            branches_data = (
+                requests.models.complexjson.loads(response_text)
+                if response_text
+                else []
+            )
 
             # Get default branch (HEAD ref)
-            default_branch_name = self._get_default_branch(repo_name, git_domain, user_name, git_token)
+            default_branch_name = self._get_default_branch(
+                repo_name, git_domain, user_name, git_token
+            )
 
             branches = []
             for branch in branches_data:
@@ -399,7 +410,7 @@ class GerritProvider(RepositoryProvider):
                         Branch(
                             name=branch_name,
                             protected=False,  # Gerrit doesn't expose protected flag in branch list
-                            default=branch_name == default_branch_name
+                            default=branch_name == default_branch_name,
                         ).model_dump()
                     )
 
@@ -407,17 +418,10 @@ class GerritProvider(RepositoryProvider):
 
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Failed to get branches for {repo_name}: {str(e)}")
-            raise HTTPException(
-                status_code=502,
-                detail=f"Gerrit API error: {str(e)}"
-            )
+            raise HTTPException(status_code=502, detail=f"Gerrit API error: {str(e)}")
 
     def _get_default_branch(
-        self,
-        repo_name: str,
-        git_domain: str,
-        user_name: str,
-        git_token: str
+        self, repo_name: str, git_domain: str, user_name: str, git_token: str
     ) -> str:
         """
         Get default branch for a Gerrit project
@@ -432,7 +436,7 @@ class GerritProvider(RepositoryProvider):
             Default branch name (e.g., "master" or "main")
         """
         api_base_url = self._get_api_base_url(git_domain)
-        encoded_project = requests.utils.quote(repo_name, safe='')
+        encoded_project = requests.utils.quote(repo_name, safe="")
 
         try:
             # Get HEAD reference
@@ -440,7 +444,7 @@ class GerritProvider(RepositoryProvider):
                 method="GET",
                 url=f"{api_base_url}/projects/{encoded_project}/HEAD",
                 username=user_name,
-                http_password=git_token
+                http_password=git_token,
             )
 
             # Parse response and strip XSSI prefix
@@ -454,14 +458,13 @@ class GerritProvider(RepositoryProvider):
             return "master"  # Fallback
 
         except Exception as e:
-            self.logger.warning(f"Failed to get default branch for {repo_name}: {str(e)}")
+            self.logger.warning(
+                f"Failed to get default branch for {repo_name}: {str(e)}"
+            )
             return "master"  # Fallback to master
 
     def validate_token(
-        self,
-        token: str,
-        git_domain: str = None,
-        user_name: str = None
+        self, token: str, git_domain: str = None, user_name: str = None
     ) -> Dict[str, Any]:
         """
         Validate Gerrit HTTP password
@@ -480,7 +483,7 @@ class GerritProvider(RepositoryProvider):
         if not token or not git_domain or not user_name:
             raise HTTPException(
                 status_code=400,
-                detail="Gerrit credentials (token, domain, user_name) are required"
+                detail="Gerrit credentials (token, domain, user_name) are required",
             )
 
         api_base_url = self._get_api_base_url(git_domain)
@@ -493,12 +496,16 @@ class GerritProvider(RepositoryProvider):
                 method="GET",
                 url=f"{api_base_url}/accounts/self",
                 username=user_name,
-                http_password=decrypt_token
+                http_password=decrypt_token,
             )
 
             # Parse response and strip XSSI prefix
             response_text = self._strip_xssi_prefix(response.text)
-            user_data = requests.models.complexjson.loads(response_text) if response_text else {}
+            user_data = (
+                requests.models.complexjson.loads(response_text)
+                if response_text
+                else {}
+            )
 
             return {
                 "valid": True,
@@ -507,34 +514,28 @@ class GerritProvider(RepositoryProvider):
                     "login": user_data.get("user_name", user_name),
                     "name": user_data.get("name", ""),
                     "avatar_url": "",  # Gerrit doesn't provide avatar URL in account API
-                    "email": user_data.get("email", "")
-                }
+                    "email": user_data.get("email", ""),
+                },
             }
 
         except requests.exceptions.RequestException as e:
             self.logger.error(f"Gerrit API request failed: {str(e)}")
-            if hasattr(e, 'response') and e.response and e.response.status_code == 401:
-                self.logger.warning(f"Gerrit token validation failed: 401 Unauthorized, git_domain: {git_domain}, user_name: {user_name}")
+            if hasattr(e, "response") and e.response and e.response.status_code == 401:
+                self.logger.warning(
+                    f"Gerrit token validation failed: 401 Unauthorized, git_domain: {git_domain}, user_name: {user_name}"
+                )
                 return {
                     "valid": False,
                 }
-            raise HTTPException(
-                status_code=502,
-                detail=f"Gerrit API error: {str(e)}"
-            )
+            raise HTTPException(status_code=502, detail=f"Gerrit API error: {str(e)}")
         except Exception as e:
             self.logger.error(f"Unexpected error during token validation: {str(e)}")
             raise HTTPException(
-                status_code=500,
-                detail=f"Token validation failed: {str(e)}"
+                status_code=500, detail=f"Token validation failed: {str(e)}"
             )
 
     async def search_repositories(
-        self,
-        user: User,
-        query: str,
-        timeout: int = 30,
-        fullmatch: bool = False
+        self, user: User, query: str, timeout: int = 30, fullmatch: bool = False
     ) -> List[Dict[str, Any]]:
         """
         Search user's Gerrit projects across all configured Gerrit domains
@@ -572,25 +573,32 @@ class GerritProvider(RepositoryProvider):
             if full_cached:
                 if fullmatch:
                     filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                        repo
+                        for repo in full_cached
+                        if query_lower == repo["name"].lower()
+                        or query_lower == repo["full_name"].lower()
                     ]
                 else:
                     filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                        repo
+                        for repo in full_cached
+                        if query_lower in repo["name"].lower()
+                        or query_lower in repo["full_name"].lower()
                     ]
-                all_results.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo["full_name"],
-                        clone_url=repo["clone_url"],
-                        git_domain=git_domain,
-                        type="gerrit",
-                        private=repo["private"]
-                    ).model_dump() for repo in filtered_repos
-                ])
+                all_results.extend(
+                    [
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo["full_name"],
+                            clone_url=repo["clone_url"],
+                            git_domain=git_domain,
+                            type="gerrit",
+                            private=repo["private"],
+                        ).model_dump()
+                        for repo in filtered_repos
+                    ]
+                )
                 continue
 
             # 2) If cache is being built for this domain, wait (with timeout)
@@ -601,24 +609,69 @@ class GerritProvider(RepositoryProvider):
                     if asyncio.get_event_loop().time() - start_time > timeout:
                         raise HTTPException(
                             status_code=408,
-                            detail="Timeout waiting for repository data to be ready"
+                            detail="Timeout waiting for repository data to be ready",
                         )
                     await asyncio.sleep(1)
 
                 # Try cache again
-                full_cached = await self._get_all_repositories_from_cache(user, git_domain)
+                full_cached = await self._get_all_repositories_from_cache(
+                    user, git_domain
+                )
                 if full_cached:
                     if fullmatch:
                         filtered_repos = [
-                            repo for repo in full_cached
-                            if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                            repo
+                            for repo in full_cached
+                            if query_lower == repo["name"].lower()
+                            or query_lower == repo["full_name"].lower()
                         ]
                     else:
                         filtered_repos = [
-                            repo for repo in full_cached
-                            if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
+                            repo
+                            for repo in full_cached
+                            if query_lower in repo["name"].lower()
+                            or query_lower in repo["full_name"].lower()
                         ]
-                    all_results.extend([
+                    all_results.extend(
+                        [
+                            Repository(
+                                id=repo["id"],
+                                name=repo["name"],
+                                full_name=repo["full_name"],
+                                clone_url=repo["clone_url"],
+                                git_domain=git_domain,
+                                type="gerrit",
+                                private=repo["private"],
+                            ).model_dump()
+                            for repo in filtered_repos
+                        ]
+                    )
+                    continue
+
+            # 3) No cache and not building, trigger domain-level full retrieval
+            await self._fetch_all_repositories_async(
+                user, git_token, user_name, git_domain
+            )
+
+            # 4) Try cache after building
+            full_cached = await self._get_all_repositories_from_cache(user, git_domain)
+            if full_cached:
+                if fullmatch:
+                    filtered_repos = [
+                        repo
+                        for repo in full_cached
+                        if query_lower == repo["name"].lower()
+                        or query_lower == repo["full_name"].lower()
+                    ]
+                else:
+                    filtered_repos = [
+                        repo
+                        for repo in full_cached
+                        if query_lower in repo["name"].lower()
+                        or query_lower in repo["full_name"].lower()
+                    ]
+                all_results.extend(
+                    [
                         Repository(
                             id=repo["id"],
                             name=repo["name"],
@@ -626,47 +679,16 @@ class GerritProvider(RepositoryProvider):
                             clone_url=repo["clone_url"],
                             git_domain=git_domain,
                             type="gerrit",
-                            private=repo["private"]
-                        ).model_dump() for repo in filtered_repos
-                    ])
-                    continue
-
-            # 3) No cache and not building, trigger domain-level full retrieval
-            await self._fetch_all_repositories_async(user, git_token, user_name, git_domain)
-
-            # 4) Try cache after building
-            full_cached = await self._get_all_repositories_from_cache(user, git_domain)
-            if full_cached:
-                if fullmatch:
-                    filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower == repo["name"].lower() or query_lower == repo["full_name"].lower()
+                            private=repo["private"],
+                        ).model_dump()
+                        for repo in filtered_repos
                     ]
-                else:
-                    filtered_repos = [
-                        repo for repo in full_cached
-                        if query_lower in repo["name"].lower() or query_lower in repo["full_name"].lower()
-                    ]
-                all_results.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo["full_name"],
-                        clone_url=repo["clone_url"],
-                        git_domain=git_domain,
-                        type="gerrit",
-                        private=repo["private"]
-                    ).model_dump() for repo in filtered_repos
-                ])
+                )
 
         return all_results
 
     async def _fetch_all_repositories_async(
-        self,
-        user: User,
-        git_token: str,
-        user_name: str,
-        git_domain: str
+        self, user: User, git_token: str, user_name: str, git_domain: str
     ) -> None:
         """
         Asynchronously fetch all user's Gerrit projects and cache them
@@ -695,40 +717,52 @@ class GerritProvider(RepositoryProvider):
                 url=f"{api_base_url}/projects/",
                 username=user_name,
                 http_password=git_token,
-                params={"d": ""}  # Include descriptions
+                params={"d": ""},  # Include descriptions
             )
 
             # Parse response and strip XSSI prefix
             response_text = self._strip_xssi_prefix(response.text)
-            projects = requests.models.complexjson.loads(response_text) if response_text else {}
+            projects = (
+                requests.models.complexjson.loads(response_text)
+                if response_text
+                else {}
+            )
 
             # Convert to standard format
             all_repos = []
             for project_name, project_info in projects.items():
-                project_id = abs(hash(project_name)) % (10 ** 10)
+                project_id = abs(hash(project_name)) % (10**10)
                 clone_url = build_url(git_domain, f"/{project_name}.git")
 
-                all_repos.append({
-                    "id": project_id,
-                    "name": project_name.split("/")[-1],
-                    "full_name": project_name,
-                    "clone_url": clone_url,
-                    "git_domain": git_domain,
-                    "type": "gerrit",
-                    "private": True
-                })
+                all_repos.append(
+                    {
+                        "id": project_id,
+                        "name": project_name.split("/")[-1],
+                        "full_name": project_name,
+                        "clone_url": clone_url,
+                        "git_domain": git_domain,
+                        "type": "gerrit",
+                        "private": True,
+                    }
+                )
 
             # Sort by project name
             all_repos.sort(key=lambda x: x["full_name"])
 
             # Cache complete repository list
             cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
-            await cache_manager.set(cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME)
-            self.logger.info(f"Cache complete repository list for user gerrit {user.user_name}")
+            await cache_manager.set(
+                cache_key, all_repos, expire=settings.REPO_CACHE_EXPIRED_TIME
+            )
+            self.logger.info(
+                f"Cache complete repository list for user gerrit {user.user_name}"
+            )
 
         except Exception as e:
             # Background task fails silently
-            self.logger.error(f"Failed to fetch gerrit projects for user {user.user_name}: {str(e)}")
+            self.logger.error(
+                f"Failed to fetch gerrit projects for user {user.user_name}: {str(e)}"
+            )
             pass
         finally:
             # Always clear build status
@@ -736,9 +770,7 @@ class GerritProvider(RepositoryProvider):
             self.logger.info(f"Repository fetch completed for user {user.user_name}")
 
     async def _get_all_repositories_from_cache(
-        self,
-        user: User,
-        git_domain: str
+        self, user: User, git_domain: str
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Get all repositories from cache
@@ -763,7 +795,7 @@ class GerritProvider(RepositoryProvider):
         repo_name: str,
         source_branch: str,
         target_branch: str,
-        git_domain: str
+        git_domain: str,
     ) -> Dict[str, Any]:
         """
         Get diff between two branches for a Gerrit project
@@ -788,8 +820,7 @@ class GerritProvider(RepositoryProvider):
 
         if not git_token or not user_name:
             raise HTTPException(
-                status_code=400,
-                detail="Gerrit credentials not configured"
+                status_code=400, detail="Gerrit credentials not configured"
             )
 
         # Get API base URL based on git domain
@@ -797,7 +828,7 @@ class GerritProvider(RepositoryProvider):
 
         try:
             # URL encode project name
-            encoded_project = requests.utils.quote(repo_name, safe='')
+            encoded_project = requests.utils.quote(repo_name, safe="")
 
             # Get commits in source branch that are not in target branch
             # This is a simplified implementation
@@ -814,18 +845,21 @@ class GerritProvider(RepositoryProvider):
                 "total_commits": 0,
                 "files": [],
                 "diff_url": "",
-                "html_url": build_url(git_domain, f"/q/project:{repo_name}+branch:{source_branch}"),
-                "permalink_url": build_url(git_domain, f"/q/project:{repo_name}+branch:{source_branch}"),
-                "message": "Gerrit branch comparison is not fully supported. Please use Gerrit web interface for detailed diff."
+                "html_url": build_url(
+                    git_domain, f"/q/project:{repo_name}+branch:{source_branch}"
+                ),
+                "permalink_url": build_url(
+                    git_domain, f"/q/project:{repo_name}+branch:{source_branch}"
+                ),
+                "message": "Gerrit branch comparison is not fully supported. Please use Gerrit web interface for detailed diff.",
             }
 
         except requests.exceptions.RequestException as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Gerrit API error: {str(e)}"
-            )
+            raise HTTPException(status_code=502, detail=f"Gerrit API error: {str(e)}")
 
-    def generate_change_id(self, commit_message: str, project_name: str, branch: str) -> str:
+    def generate_change_id(
+        self, commit_message: str, project_name: str, branch: str
+    ) -> str:
         """
         Generate Change-Id for Gerrit commit
 
@@ -842,7 +876,7 @@ class GerritProvider(RepositoryProvider):
         """
         # Generate SHA-1 hash based on message, project, and branch
         # This is a simplified implementation
-        data = f"{commit_message}{project_name}{branch}".encode('utf-8')
+        data = f"{commit_message}{project_name}{branch}".encode("utf-8")
         sha1_hash = hashlib.sha1(data).hexdigest()
         return f"I{sha1_hash}"
 
@@ -853,7 +887,7 @@ class GerritProvider(RepositoryProvider):
         branch: str,
         subject: str,
         git_domain: str,
-        topic: str = None
+        topic: str = None,
     ) -> Dict[str, Any]:
         """
         Create a new Change in Gerrit (equivalent to Pull Request)
@@ -880,8 +914,7 @@ class GerritProvider(RepositoryProvider):
 
         if not git_token or not user_name:
             raise HTTPException(
-                status_code=400,
-                detail="Gerrit credentials not configured"
+                status_code=400, detail="Gerrit credentials not configured"
             )
 
         # Get API base URL based on git domain
@@ -894,7 +927,7 @@ class GerritProvider(RepositoryProvider):
                 "project": repo_name,
                 "branch": branch,
                 "subject": subject,
-                "status": "DRAFT"  # Create as draft
+                "status": "DRAFT",  # Create as draft
             }
 
             if topic:
@@ -905,12 +938,16 @@ class GerritProvider(RepositoryProvider):
                 url=f"{api_base_url}/changes/",
                 username=user_name,
                 http_password=git_token,
-                json_data=change_input
+                json_data=change_input,
             )
 
             # Parse response and strip XSSI prefix
             response_text = self._strip_xssi_prefix(response.text)
-            change_data = requests.models.complexjson.loads(response_text) if response_text else {}
+            change_data = (
+                requests.models.complexjson.loads(response_text)
+                if response_text
+                else {}
+            )
 
             return {
                 "id": change_data.get("id", ""),
@@ -920,11 +957,8 @@ class GerritProvider(RepositoryProvider):
                 "status": change_data.get("status", ""),
                 "created": change_data.get("created", ""),
                 "updated": change_data.get("updated", ""),
-                "url": build_url(git_domain, f"/c/{change_data.get('_number', 0)}")
+                "url": build_url(git_domain, f"/c/{change_data.get('_number', 0)}"),
             }
 
         except requests.exceptions.RequestException as e:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Gerrit API error: {str(e)}"
-            )
+            raise HTTPException(status_code=502, detail=f"Gerrit API error: {str(e)}")

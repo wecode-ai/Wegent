@@ -2,18 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from typing import List, Optional, Dict, Any
 import json
+from typing import Any, Dict, List, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.public_model import PublicModel
 from app.models.public_shell import PublicShell
-from app.models.kind import Kind
 from app.models.user import User
-from app.schemas.model import ModelCreate, ModelUpdate, ModelBulkCreateItem
 from app.schemas.kind import Model, Shell
+from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
 from app.services.base import BaseService
 
 
@@ -21,7 +21,7 @@ class ModelAdapter:
     """
     Adapter to convert PublicModel to Model-like object for API compatibility
     """
-    
+
     @staticmethod
     def to_model_dict(public_model: PublicModel) -> Dict[str, Any]:
         """
@@ -32,7 +32,7 @@ class ModelAdapter:
         if isinstance(public_model.json, dict):
             model_crd = Model.model_validate(public_model.json)
             config = model_crd.spec.modelConfig
-        
+
         return {
             "id": public_model.id,
             "name": public_model.name,
@@ -47,7 +47,7 @@ class MockModel:
     """
     Mock Model class that behaves like the original Model for API compatibility
     """
-    
+
     def __init__(self, data: Dict[str, Any]):
         for key, value in data.items():
             setattr(self, key, value)
@@ -58,37 +58,33 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
     Public Model service class - adapter for public_models table
     """
 
-    def create_model(self, db: Session, *, obj_in: ModelCreate, current_user: User) -> Dict[str, Any]:
+    def create_model(
+        self, db: Session, *, obj_in: ModelCreate, current_user: User
+    ) -> Dict[str, Any]:
         """
         Create a Public Model entry
         """
         # Ensure unique name in default namespace
-        existed = db.query(PublicModel).filter(
-            PublicModel.name == obj_in.name,
-            PublicModel.namespace == 'default'
-        ).first()
+        existed = (
+            db.query(PublicModel)
+            .filter(PublicModel.name == obj_in.name, PublicModel.namespace == "default")
+            .first()
+        )
         if existed:
             raise HTTPException(status_code=400, detail="Model name already exists")
 
         # Convert config to JSON format matching kinds table structure
         json_data = {
             "kind": "Model",
-            "spec": {
-                "modelConfig": obj_in.config
-            },
-            "status": {
-                "state": "Available"
-            },
-            "metadata": {
-                "name": obj_in.name,
-                "namespace": "default"
-            },
-            "apiVersion": "agent.wecode.io/v1"
+            "spec": {"modelConfig": obj_in.config},
+            "status": {"state": "Available"},
+            "metadata": {"name": obj_in.name, "namespace": "default"},
+            "apiVersion": "agent.wecode.io/v1",
         }
 
         db_obj = PublicModel(
             name=obj_in.name,
-            namespace='default',
+            namespace="default",
             json=json_data,
             is_active=obj_in.is_active if obj_in.is_active is not None else True,
         )
@@ -97,27 +93,34 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         db.refresh(db_obj)
         return ModelAdapter.to_model_dict(db_obj)
 
-    def bulk_create_models(self, db: Session, *, items: List[ModelBulkCreateItem], current_user: User) -> Dict[str, Any]:
+    def bulk_create_models(
+        self, db: Session, *, items: List[ModelBulkCreateItem], current_user: User
+    ) -> Dict[str, Any]:
         """
         Bulk upsert public models.
         """
         created: List[PublicModel] = []
         updated: List[PublicModel] = []
         skipped: List[Dict[str, Any]] = []
-        
+
         for it in items:
             try:
-                existed = db.query(PublicModel).filter(
-                    PublicModel.name == it.name,
-                    PublicModel.namespace == 'default'
-                ).first()
+                existed = (
+                    db.query(PublicModel)
+                    .filter(
+                        PublicModel.name == it.name, PublicModel.namespace == "default"
+                    )
+                    .first()
+                )
                 if existed:
                     if existed:
                         # Update existing model
                         if isinstance(existed.json, dict):
                             model_crd = Model.model_validate(existed.json)
                             # Update env section
-                            model_crd.spec.modelConfig["env"] = dict(it.env) if isinstance(it.env, dict) else {}
+                            model_crd.spec.modelConfig["env"] = (
+                                dict(it.env) if isinstance(it.env, dict) else {}
+                            )
                             existed.json = model_crd.model_dump()
                         else:
                             # Fallback for invalid JSON
@@ -125,18 +128,22 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
                                 "kind": "Model",
                                 "spec": {
                                     "modelConfig": {
-                                        "env": dict(it.env) if isinstance(it.env, dict) else {}
+                                        "env": (
+                                            dict(it.env)
+                                            if isinstance(it.env, dict)
+                                            else {}
+                                        )
                                     }
                                 },
                                 "status": {"state": "Available"},
                                 "metadata": {"name": it.name, "namespace": "default"},
-                                "apiVersion": "agent.wecode.io/v1"
+                                "apiVersion": "agent.wecode.io/v1",
                             }
                             existed.json = json_data
                     # Update is_active only if explicitly provided
                     if getattr(it, "is_active", None) is not None:
                         existed.is_active = it.is_active  # type: ignore[attr-defined]
-                    
+
                     db.add(existed)
                     db.commit()
                     db.refresh(existed)
@@ -145,24 +152,15 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
                     # Create new
                     json_data = {
                         "kind": "Model",
-                        "spec": {
-                            "modelConfig": {
-                                "env": it.env
-                            }
-                        },
-                        "status": {
-                            "state": "Available"
-                        },
-                        "metadata": {
-                            "name": it.name,
-                            "namespace": "default"
-                        },
-                        "apiVersion": "agent.wecode.io/v1"
+                        "spec": {"modelConfig": {"env": it.env}},
+                        "status": {"state": "Available"},
+                        "metadata": {"name": it.name, "namespace": "default"},
+                        "apiVersion": "agent.wecode.io/v1",
                     }
-                    
+
                     db_obj = PublicModel(
                         name=it.name,
-                        namespace='default',
+                        namespace="default",
                         json=json_data,
                         is_active=getattr(it, "is_active", True),  # type: ignore[attr-defined]
                     )
@@ -173,7 +171,7 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
             except Exception as e:
                 db.rollback()
                 skipped.append({"name": it.name, "reason": f"DB error: {str(e)}"})
-        
+
         return {"created": created, "updated": updated, "skipped": skipped}
 
     def get_models(
@@ -196,26 +194,32 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         """
         Count active public models
         """
-        return db.query(PublicModel).filter(PublicModel.is_active == True).count()  # noqa: E712
+        return (
+            db.query(PublicModel).filter(PublicModel.is_active == True).count()
+        )  # noqa: E712
 
-    def list_model_names(self, db: Session, *, current_user: User, agent_name: str) -> List[Dict[str, str]]:
+    def list_model_names(
+        self, db: Session, *, current_user: User, agent_name: str
+    ) -> List[Dict[str, str]]:
         """
         List available model names based on agent type and shell supportModel filter.
         Queries both user's own models (kinds table) and public models (public_models table).
-        
+
         Agent to model provider mapping:
         - Agno -> openai
         - ClaudeCode -> claude
-        
+
         Returns list of dicts with 'name' and 'displayName' fields.
         """
         # Get shell configuration from public_shells table
-        shell_row = db.query(PublicShell.json).filter(PublicShell.name == agent_name).first()
+        shell_row = (
+            db.query(PublicShell.json).filter(PublicShell.name == agent_name).first()
+        )
         if not shell_row:
             raise HTTPException(status_code=400, detail="Agent not found")
-        
+
         shell_json = shell_row[0] if isinstance(shell_row[0], dict) else {}
-        
+
         # Extract supportModel from shell spec
         supportModel: List[str] = []
         if isinstance(shell_json, dict):
@@ -225,16 +229,13 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
 
         # Determine required model provider based on agent_name
         # Agno uses openai protocol, ClaudeCode uses claude protocol
-        agent_provider_map = {
-            "Agno": "openai",
-            "ClaudeCode": "claude"
-        }
+        agent_provider_map = {"Agno": "openai", "ClaudeCode": "claude"}
         required_provider = agent_provider_map.get(agent_name)
-        
+
         # If supportModel is specified, use it; otherwise filter by agent's required provider
         use_support_model_filter = len(supportModel) > 0
         allowed = set(supportModel)
-        
+
         def get_model_provider(json_data: Optional[Dict]) -> Optional[str]:
             if not isinstance(json_data, dict):
                 return None
@@ -246,7 +247,7 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
                 return env.get("model")
             except:
                 return None
-        
+
         def get_model_display_name(json_data: Optional[Dict]) -> Optional[str]:
             """Extract displayName from model metadata"""
             if not isinstance(json_data, dict):
@@ -271,23 +272,29 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
 
         # Use dict to store name -> displayName mapping (to handle duplicates)
         result_models: Dict[str, Optional[str]] = {}
-        
+
         # Query user's own models from kinds table
-        user_models = db.query(Kind).filter(
-            Kind.user_id == current_user.id,
-            Kind.kind == "Model",
-            Kind.namespace == "default",
-            Kind.is_active == True
-        ).all()
-        
+        user_models = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == current_user.id,
+                Kind.kind == "Model",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .all()
+        )
+
         for m in user_models:
             if is_model_compatible(m.json):
                 display_name = get_model_display_name(m.json)
                 result_models[m.name] = display_name
-        
+
         # Query public models from public_models table
-        public_models = db.query(PublicModel).filter(PublicModel.is_active == True).all()
-        
+        public_models = (
+            db.query(PublicModel).filter(PublicModel.is_active == True).all()
+        )
+
         for m in public_models:
             if is_model_compatible(m.json):
                 # Only add if not already present (user models take precedence)
@@ -295,15 +302,22 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
                     display_name = get_model_display_name(m.json)
                     result_models[m.name] = display_name
 
-        return [{"name": name, "displayName": display_name} for name, display_name in sorted(result_models.items())]
+        return [
+            {"name": name, "displayName": display_name}
+            for name, display_name in sorted(result_models.items())
+        ]
 
-    def get_by_id(self, db: Session, *, model_id: int, current_user: User) -> Dict[str, Any]:
+    def get_by_id(
+        self, db: Session, *, model_id: int, current_user: User
+    ) -> Dict[str, Any]:
         """
         Get public model by ID (only active)
         """
         model = (
             db.query(PublicModel)
-            .filter(PublicModel.id == model_id, PublicModel.is_active == True)  # noqa: E712
+            .filter(
+                PublicModel.id == model_id, PublicModel.is_active == True
+            )  # noqa: E712
             .first()
         )
         if not model:
@@ -319,7 +333,9 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         # Get the actual PublicModel object for update
         model = (
             db.query(PublicModel)
-            .filter(PublicModel.id == model_id, PublicModel.is_active == True)  # noqa: E712
+            .filter(
+                PublicModel.id == model_id, PublicModel.is_active == True
+            )  # noqa: E712
             .first()
         )
         if not model:
@@ -329,10 +345,14 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
 
         # If updating name, ensure uniqueness
         if "name" in update_data and update_data["name"] != model.name:
-            existed = db.query(PublicModel).filter(
-                PublicModel.name == update_data["name"],
-                PublicModel.namespace == 'default'
-            ).first()
+            existed = (
+                db.query(PublicModel)
+                .filter(
+                    PublicModel.name == update_data["name"],
+                    PublicModel.namespace == "default",
+                )
+                .first()
+            )
             if existed:
                 raise HTTPException(status_code=400, detail="Model name already exists")
 
@@ -366,7 +386,9 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         # Get the actual PublicModel object for deletion
         model = (
             db.query(PublicModel)
-            .filter(PublicModel.id == model_id, PublicModel.is_active == True)  # noqa: E712
+            .filter(
+                PublicModel.id == model_id, PublicModel.is_active == True
+            )  # noqa: E712
             .first()
         )
         if not model:

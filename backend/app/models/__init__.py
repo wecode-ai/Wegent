@@ -5,20 +5,13 @@
 """
 Models package
 """
+from app.models.kind import Kind
+from app.models.shared_team import SharedTeam
+from app.models.skill_binary import SkillBinary
+from app.models.subtask import Subtask
+
 # Do NOT import Base here to avoid conflicts with app.db.base.Base
 # All models should import Base directly from app.db.base
 from app.models.user import User
-from app.models.kind import (
-    Kind
-)
-from app.models.subtask import Subtask
-from app.models.shared_team import SharedTeam
-from app.models.skill_binary import SkillBinary
 
-__all__ = [
-    "User",
-    "Kind",
-    "Subtask",
-    "SharedTeam",
-    "SkillBinary"
-]
+__all__ = ["User", "Kind", "Subtask", "SharedTeam", "SkillBinary"]
