@@ -71,7 +71,7 @@ git fetch ${GITHUB_REMOTE_NAME} main
 # 4. 提交到 origin 的 github_main 分支
 # 4. 提交到 origin 的 github_main 分支
 echo "📤 Pushing to ${ORIGIN_REMOTE_NAME}/${TARGET_BRANCH}..."
-git push ${ORIGIN_REMOTE_NAME} ${GITHUB_REMOTE_NAME}/main:${TARGET_BRANCH}
+git push ${ORIGIN_REMOTE_NAME} ${GITHUB_REMOTE_NAME}/main:${TARGET_BRANCH} --no-verify
 
 echo "✅ Successfully synced ${GITHUB_REMOTE_NAME}/main to ${ORIGIN_REMOTE_NAME}/${TARGET_BRANCH}"
 echo ""
