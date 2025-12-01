@@ -311,7 +311,7 @@ async def cli_oidc_callback(
         return _cli_callback_error_page(f"Authentication failed: {error}")
 
     try:
-        tokens = await oidc_service.exchange_code_for_tokens(code, state)
+        tokens = await oidc_service.exchange_code_for_tokens_for_cli(code, state)
 
         id_token = tokens.get("id_token")
         if not id_token:
