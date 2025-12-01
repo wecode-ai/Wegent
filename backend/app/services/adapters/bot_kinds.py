@@ -603,11 +603,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
                 # Update bot's modelRef
                 bot_crd = Bot.model_validate(bot.json)
+                from app.schemas.kind import ModelRef
+
                 if bot_crd.spec.modelRef:
                     bot_crd.spec.modelRef.name = model_name
                     bot_crd.spec.modelRef.namespace = "default"
-                    bot.json = bot_crd.model_dump()
-                    flag_modified(bot, "json")
+                else:
+                    # Create new modelRef if it doesn't exist
+                    bot_crd.spec.modelRef = ModelRef(
+                        name=model_name, namespace="default"
+                    )
+                bot.json = bot_crd.model_dump()
+                flag_modified(bot, "json")
 
                 # Only delete old model if it's a user's private custom model (not public or predefined)
                 # A private custom model must satisfy:

@@ -170,9 +170,36 @@ export default function ModelSelector({
     fetchModels();
   }, [fetchModels]);
 
-  // Restore last selected model from localStorage or set default
+  // Track previous team ID to detect team changes and re-validate model selection
+  const prevTeamIdRef = React.useRef<number | null>(null);
+
+  // Re-validate model selection when team changes
   useEffect(() => {
-    // When team changes or all bots have predefined models, auto-select default
+    const currentTeamId = selectedTeam?.id ?? null;
+    const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId;
+    prevTeamIdRef.current = currentTeamId;
+
+    if (!teamChanged) return;
+
+    // Team changed - re-validate model selection based on new team's showDefaultOption
+    if (showDefaultOption) {
+      // New team supports default option, set to default
+      if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
+        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      }
+    } else {
+      // New team does NOT support default option, clear model selection
+      // User must re-select a compatible model
+      setSelectedModel(null);
+    }
+  }, [selectedTeam?.id, showDefaultOption, selectedModel, setSelectedModel]);
+
+  // Restore last selected model from localStorage or set default (only on initial load)
+  useEffect(() => {
+    // Skip if team has changed (handled by the above effect)
+    // This effect only handles initial load and model list changes
+
+    // When all bots have predefined models, auto-select default
     if (showDefaultOption) {
       // If all bots have predefined models, auto-select "Default"
       if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
