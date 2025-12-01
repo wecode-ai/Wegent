@@ -58,7 +58,8 @@ class ThinkingStep(BaseModel):
 class ExecutionResult(BaseModel):
     value: Optional[str] = None
     thinking: List[ThinkingStep] = []
-    
+    metadata: Optional[Dict[str, Any]] = None  # Additional metadata (e.g., waiting_bot_name for coordinate mode)
+
     def dict(self, **kwargs) -> Dict[str, Any]:
         """Override dict method to exclude None values"""
         # Exclude None values by default

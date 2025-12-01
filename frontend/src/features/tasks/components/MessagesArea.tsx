@@ -325,19 +325,20 @@ export default function MessagesArea({
 
   const renderProgressBar = (status: string, progress: number) => {
     const normalizedStatus = (status ?? '').toUpperCase();
-    const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus);
+    const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING', 'WAITING_INPUT'].includes(normalizedStatus);
+    const isWaitingInput = normalizedStatus === 'WAITING_INPUT';
     const safeProgress = Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 100) : 0;
 
     return (
       <div className="mt-2">
         <div className="flex justify-between items-center mb-1">
           <span className="text-sm">
-            {t('messages.task_status')} {status}
+            {t('messages.task_status')} {isWaitingInput ? t('messages.waiting_input') : status}
           </span>
         </div>
         <div className="w-full bg-border/60 rounded-full h-2">
           <div
-            className={`bg-primary h-2 rounded-full transition-all duration-300 ease-in-out ${isActiveStatus ? 'progress-bar-animated' : ''}`}
+            className={`h-2 rounded-full transition-all duration-300 ease-in-out ${isWaitingInput ? 'bg-amber-500' : 'bg-primary'} ${isActiveStatus && !isWaitingInput ? 'progress-bar-animated' : ''}`}
             style={{ width: `${safeProgress}%` }}
             aria-valuemin={0}
             aria-valuemax={100}

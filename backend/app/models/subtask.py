@@ -17,6 +17,7 @@ from app.db.base import Base
 class SubtaskStatus(str, PyEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    WAITING_INPUT = "WAITING_INPUT"  # Waiting for user input (used in coordinate mode)
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"

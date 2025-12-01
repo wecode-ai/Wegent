@@ -27,6 +27,13 @@ from .model_factory import ModelFactory
 from .mcp_manager import MCPManager
 from .team_builder import TeamBuilder
 from .thinking_step_manager import ThinkingStepManager
+from .interaction_handler import (
+    parse_bot_output,
+    InteractionStatus,
+    should_wait_for_user_input,
+    is_workflow_complete,
+    build_waiting_metadata
+)
 from executor.tasks.task_state_manager import TaskStateManager, TaskState
 from executor.tasks.resource_manager import ResourceManager
 
@@ -429,11 +436,11 @@ class AgnoAgent(Agent):
     def _handle_execution_result(self, result_content: str, execution_type: str = "execution", reasoning=None) -> TaskStatus:
         """
         Handle the execution result and report progress
-        
+
         Args:
             result_content: The content to handle
             execution_type: Type of execution for logging
-            
+
         Returns:
             TaskStatus: Execution status
         """
@@ -444,6 +451,47 @@ class AgnoAgent(Agent):
             logger.info(
                 f"{execution_type} completed with content length: {len(result_content)}"
             )
+
+            # Parse interaction markers in coordinate mode
+            if self.mode == "coordinate":
+                interaction_result = parse_bot_output(result_content)
+
+                if should_wait_for_user_input(interaction_result):
+                    # Bot needs user input - set WAITING_INPUT status
+                    logger.info(f"Bot requested user interaction in {execution_type}")
+                    metadata = build_waiting_metadata(
+                        bot_name=interaction_result.current_bot_name or "unknown",
+                        additional_info={"execution_type": execution_type}
+                    )
+                    self.report_progress(
+                        90,
+                        TaskStatus.WAITING_INPUT.value,
+                        f"${{thinking.waiting_user_input}} {execution_type}",
+                        result=ExecutionResult(
+                            value=interaction_result.content,
+                            thinking=self.thinking_manager.get_thinking_steps(),
+                            metadata=metadata
+                        ).dict(),
+                    )
+                    return TaskStatus.WAITING_INPUT
+
+                if is_workflow_complete(interaction_result):
+                    # Workflow done - use cleaned content
+                    logger.info(f"Workflow completed in {execution_type}")
+                    self.report_progress(
+                        100,
+                        TaskStatus.COMPLETED.value,
+                        f"${{thinking.workflow_completed}} {execution_type}",
+                        result=ExecutionResult(
+                            value=interaction_result.content,
+                            thinking=self.thinking_manager.get_thinking_steps()
+                        ).dict(),
+                    )
+                    return TaskStatus.COMPLETED
+
+                # For TASK_COMPLETED or IN_PROGRESS, continue with normal flow
+                result_content = interaction_result.content
+
             self.report_progress(
                 100,
                 TaskStatus.COMPLETED.value,

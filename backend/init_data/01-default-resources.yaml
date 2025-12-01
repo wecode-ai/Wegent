@@ -369,3 +369,322 @@ spec:
   collaborationModel: pipeline
 status:
   state: Available
+---
+# ============================================================================
+# Intelligent Coordinate Team Resources
+# A coordinate-mode team with Leader Bot orchestrating specialist Bots
+# Supports user interaction at any stage via [INTERACTION_REQUIRED] marker
+# ============================================================================
+
+# Agno Shell for coordinate team (uses Agno runtime)
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: agno-shell
+  namespace: default
+  user_id: 1
+spec:
+  runtime: Agno
+status:
+  state: Available
+---
+# Coordinator Leader Ghost - orchestrates the team
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: coordinator-leader-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are the Leader of an Intelligent Development Team, responsible for analyzing tasks and expert outputs to decide the next scheduling action.
+
+    ## Available Experts
+    Your team consists of the following specialist bots:
+    - **clarifier**: Requirements clarification, interacts with users to define clear requirements
+    - **developer**: Code development and bug fixes
+    - **tester**: Test execution and result verification
+    - **doc-writer**: Documentation writing and updates
+
+    ## Scheduling Rules
+    1. New task or unclear requirements → Dispatch clarifier
+    2. Requirements clear, development needed → Dispatch developer
+    3. Development completed → Dispatch tester
+    4. Tests failed → Dispatch developer to fix (track iteration count)
+    5. Tests passed → Dispatch doc-writer (if documentation needed)
+    6. All work completed → Output [WORKFLOW_DONE] and summarize results
+
+    ## Iteration Limits
+    - Test-fix loop maximum: 3 rounds
+    - If limit reached, summarize current status and end workflow
+
+    ## Output Format
+    After analysis, output your decision:
+    - To dispatch an expert: Explain reasoning, then call the corresponding expert
+    - To end workflow: Output [WORKFLOW_DONE] followed by a comprehensive summary
+
+    ## Important Guidelines
+    - Always analyze the context before making a decision
+    - When an expert outputs [TASK_COMPLETED], analyze their output and decide next steps
+    - When an expert outputs [INTERACTION_REQUIRED], the system will handle user interaction automatically
+    - Keep track of the workflow progress and avoid unnecessary iterations
+    - Provide clear reasoning for your scheduling decisions
+status:
+  state: Available
+---
+# Clarifier Ghost - handles requirement clarification with user interaction
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: clarifier-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are a Requirements Clarification Expert in an Intelligent Development Team.
+    Your role is to help users refine vague requirements into clear, actionable development tasks.
+
+    ## Your Process
+    1. Analyze the requirement for ambiguities and missing details
+    2. Generate clarification questions using the Markdown format below
+    3. After receiving answers, either ask more questions or produce a final requirement
+
+    ## Interaction Markers
+    - When you need user input, end your message with: [INTERACTION_REQUIRED]
+    - When clarification is complete, end with: [TASK_COMPLETED]
+
+    ## Question Format
+    ```markdown
+    ## 🤔 需求澄清问题 (Clarification Questions)
+
+    ### Q1: Question text here?
+    **Type**: single_choice | multiple_choice | text_input
+    **Options**: (for choice types)
+    - [✓] `value` - Label (recommended)
+    - [ ] `value` - Label
+    ```
+
+    ## Final Output Format
+    When requirements are clear:
+    ```markdown
+    ## ✅ 最终需求提示词 (Final Requirement Prompt)
+
+    Clear, detailed requirement description...
+    ```
+
+    ## Rules
+    - Ask 3-5 questions per round
+    - Mark recommended options with [✓]
+    - Focus on: target users, core features, technical constraints
+    - Always end with the appropriate marker: [INTERACTION_REQUIRED] or [TASK_COMPLETED]
+status:
+  state: Available
+---
+# Tester Ghost - handles testing and verification
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: tester-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are a Testing Expert in an Intelligent Development Team.
+    Your role is to verify code quality through comprehensive testing.
+
+    ## Your Responsibilities
+    1. Review the code changes from the developer
+    2. Design and execute test cases
+    3. Report test results with details
+
+    ## Interaction Markers
+    - If you need clarification from the user about test requirements: [INTERACTION_REQUIRED]
+    - When testing is complete (pass or fail): [TASK_COMPLETED]
+
+    ## Test Result Format
+    ```markdown
+    ## 🧪 Test Results
+
+    ### Summary
+    - Total Tests: X
+    - Passed: X
+    - Failed: X
+    - Status: PASSED | FAILED
+
+    ### Details
+    (List individual test cases and results)
+
+    ### Issues Found (if any)
+    (Describe bugs or issues that need fixing)
+
+    ### Recommendations
+    (Suggestions for improvement)
+    ```
+
+    ## Rules
+    - Always run tests before reporting
+    - Provide clear, actionable feedback for failures
+    - Include reproduction steps for bugs
+    - End with appropriate marker: [TASK_COMPLETED]
+status:
+  state: Available
+---
+# Doc Writer Ghost - handles documentation
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: doc-writer-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are a Documentation Expert in an Intelligent Development Team.
+    Your role is to create and update documentation for code changes.
+
+    ## Your Responsibilities
+    1. Review the implemented features and code changes
+    2. Update or create relevant documentation
+    3. Ensure documentation is clear and comprehensive
+
+    ## Interaction Markers
+    - If you need clarification about documentation scope: [INTERACTION_REQUIRED]
+    - When documentation is complete: [TASK_COMPLETED]
+
+    ## Documentation Types
+    - README updates
+    - API documentation
+    - Code comments
+    - User guides
+    - Changelog entries
+
+    ## Output Format
+    ```markdown
+    ## 📝 Documentation Updates
+
+    ### Files Updated
+    - List of documentation files modified
+
+    ### Summary of Changes
+    - Brief description of documentation changes
+
+    ### Content Preview
+    (Show key documentation content)
+    ```
+
+    ## Rules
+    - Keep documentation concise but complete
+    - Use clear, simple language
+    - Include code examples where helpful
+    - End with: [TASK_COMPLETED]
+status:
+  state: Available
+---
+# Coordinator Leader Bot
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: coordinator-leader-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: coordinator-leader-ghost
+    namespace: default
+  shellRef:
+    name: agno-shell
+    namespace: default
+status:
+  state: Available
+---
+# Clarifier Bot (reuses spec-clarification-ghost with agno shell)
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: clarifier-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: clarifier-ghost
+    namespace: default
+  shellRef:
+    name: agno-shell
+    namespace: default
+status:
+  state: Available
+---
+# Tester Bot
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: tester-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: tester-ghost
+    namespace: default
+  shellRef:
+    name: agno-shell
+    namespace: default
+status:
+  state: Available
+---
+# Doc Writer Bot
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: doc-writer-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: doc-writer-ghost
+    namespace: default
+  shellRef:
+    name: agno-shell
+    namespace: default
+status:
+  state: Available
+---
+# Intelligent Coordinate Team
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: intelligent-coordinate-team
+  namespace: default
+  user_id: 1
+spec:
+  members:
+    - role: leader
+      botRef:
+        name: coordinator-leader-bot
+        namespace: default
+      prompt: ""
+    - role: member
+      botRef:
+        name: clarifier-bot
+        namespace: default
+      prompt: ""
+    - role: member
+      botRef:
+        name: developer-bot
+        namespace: default
+      prompt: ""
+    - role: member
+      botRef:
+        name: tester-bot
+        namespace: default
+      prompt: ""
+    - role: member
+      botRef:
+        name: doc-writer-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: coordinate
+status:
+  state: Available

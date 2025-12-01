@@ -25,6 +25,7 @@ from shared.utils.sensitive_data_masker import mask_sensitive_data
 class SubtaskStatus(str, Enum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    WAITING_INPUT = "WAITING_INPUT"  # Waiting for user input (used in coordinate mode)
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"

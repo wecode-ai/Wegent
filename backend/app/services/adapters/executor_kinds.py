@@ -784,6 +784,9 @@ class ExecutorKindsService(
         cancelled_subtasks = len(
             [s for s in subtasks if s.status == SubtaskStatus.CANCELLED]
         )
+        waiting_input_subtasks = len(
+            [s for s in subtasks if s.status == SubtaskStatus.WAITING_INPUT]
+        )
 
         task_crd = Task.model_validate(task.json)
         current_task_status = task_crd.status.status if task_crd.status else "PENDING"
@@ -851,7 +854,19 @@ class ExecutorKindsService(
                     )
                 if last_non_pending_subtask.result:
                     task_crd.status.result = last_non_pending_subtask.result
-        # Priority 4: Check if the last subtask is completed
+        # Priority 4: Check if any subtask is WAITING_INPUT (coordinate mode)
+        elif (
+            last_non_pending_subtask
+            and last_non_pending_subtask.status == SubtaskStatus.WAITING_INPUT
+        ):
+            if task_crd.status:
+                task_crd.status.status = "WAITING_INPUT"
+                if last_non_pending_subtask.result:
+                    task_crd.status.result = last_non_pending_subtask.result
+                logger.info(
+                    f"Task {task_id} status updated to WAITING_INPUT (awaiting user input)"
+                )
+        # Priority 5: Check if the last subtask is completed
         elif subtasks and subtasks[-1].status == SubtaskStatus.COMPLETED:
             # Get last completed subtask
             last_subtask = subtasks[-1] if subtasks else None
@@ -862,11 +877,12 @@ class ExecutorKindsService(
                 task_crd.status.progress = 100
                 task_crd.status.completedAt = datetime.now()
         else:
-            # Update to running status (only if not in a final state)
+            # Update to running status (only if not in a final state or WAITING_INPUT)
             if task_crd.status and current_task_status not in [
                 "CANCELLED",
                 "COMPLETED",
                 "FAILED",
+                "WAITING_INPUT",
             ]:
                 task_crd.status.status = "RUNNING"
                 # If there is only one subtask, use the subtask's progress

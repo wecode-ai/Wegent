@@ -32,6 +32,7 @@
     "copy_markdown": "Copy Markdown content",
     "download": "Download",
     "task_status": "Task Status",
+    "waiting_input": "Waiting for Input",
     "subtask_completed": "Subtask completed",
     "subtask_failed": "Subtask failed",
     "unknown_error": "Unknown error",
