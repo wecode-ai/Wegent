@@ -5,6 +5,7 @@
 """
 YAML initialization module for loading initial data from YAML files.
 This module scans a directory for YAML files and creates initial resources.
+It also handles data migrations for legacy data compatibility.
 """
 
 import logging
@@ -14,8 +15,10 @@ from typing import Any, Dict, List
 
 import yaml
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
+from app.models.kind import Kind
 from app.models.public_shell import PublicShell
 from app.models.user import User
 from app.services.k_batch import batch_service
@@ -391,10 +394,129 @@ def scan_and_apply_yaml_directory(
     }
 
 
+def migrate_legacy_shell_data(db: Session) -> Dict[str, Any]:
+    """
+    Migrate legacy shell data from old format (using 'runtime') to new format (using 'shellType').
+
+    This migration is needed because PR #222 changed the Shell spec field from 'runtime' to 'shellType'.
+    Existing data in the database may still use the old 'runtime' field name.
+
+    The migration is idempotent - it only updates records that still use the old format.
+
+    Args:
+        db: Database session
+
+    Returns:
+        Summary of migration operations
+    """
+    logger.info("Starting legacy shell data migration...")
+
+    migrated_public_shells = 0
+    migrated_user_shells = 0
+    errors = []
+
+    # Migrate public_shells table
+    try:
+        public_shells = (
+            db.query(PublicShell)
+            .filter(PublicShell.is_active == True)  # noqa: E712
+            .all()
+        )
+
+        for shell in public_shells:
+            if not isinstance(shell.json, dict):
+                continue
+
+            spec = shell.json.get("spec", {})
+            if not isinstance(spec, dict):
+                continue
+
+            # Check if using old 'runtime' field instead of 'shellType'
+            if "runtime" in spec and "shellType" not in spec:
+                # Migrate: copy runtime to shellType
+                shell.json["spec"]["shellType"] = spec["runtime"]
+                # Remove old runtime field for clean data
+                del shell.json["spec"]["runtime"]
+                flag_modified(shell, "json")
+                db.add(shell)
+                migrated_public_shells += 1
+                logger.info(
+                    f"Migrated public shell '{shell.name}': "
+                    f"runtime -> shellType = {shell.json['spec']['shellType']}"
+                )
+
+        if migrated_public_shells > 0:
+            db.commit()
+            logger.info(f"Committed {migrated_public_shells} public shell migrations")
+
+    except Exception as e:
+        logger.error(f"Error migrating public shells: {e}")
+        errors.append(f"public_shells: {str(e)}")
+        db.rollback()
+
+    # Migrate user shells in kinds table
+    try:
+        user_shells = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Shell",
+                Kind.is_active == True,  # noqa: E712
+            )
+            .all()
+        )
+
+        for shell in user_shells:
+            if not isinstance(shell.json, dict):
+                continue
+
+            spec = shell.json.get("spec", {})
+            if not isinstance(spec, dict):
+                continue
+
+            # Check if using old 'runtime' field instead of 'shellType'
+            if "runtime" in spec and "shellType" not in spec:
+                # Migrate: copy runtime to shellType
+                shell.json["spec"]["shellType"] = spec["runtime"]
+                # Remove old runtime field for clean data
+                del shell.json["spec"]["runtime"]
+                flag_modified(shell, "json")
+                db.add(shell)
+                migrated_user_shells += 1
+                logger.info(
+                    f"Migrated user shell '{shell.name}' (user_id={shell.user_id}): "
+                    f"runtime -> shellType = {shell.json['spec']['shellType']}"
+                )
+
+        if migrated_user_shells > 0:
+            db.commit()
+            logger.info(f"Committed {migrated_user_shells} user shell migrations")
+
+    except Exception as e:
+        logger.error(f"Error migrating user shells: {e}")
+        errors.append(f"user_shells: {str(e)}")
+        db.rollback()
+
+    total_migrated = migrated_public_shells + migrated_user_shells
+    logger.info(
+        f"Legacy shell data migration complete: "
+        f"{migrated_public_shells} public shells, "
+        f"{migrated_user_shells} user shells migrated"
+    )
+
+    return {
+        "status": "completed" if not errors else "completed_with_errors",
+        "migrated_public_shells": migrated_public_shells,
+        "migrated_user_shells": migrated_user_shells,
+        "total_migrated": total_migrated,
+        "errors": errors if errors else None,
+    }
+
+
 def run_yaml_initialization(db: Session) -> Dict[str, Any]:
     """
     Main entry point for YAML initialization.
     Scans the configured directory and applies all YAML resources.
+    Also runs data migrations for legacy compatibility.
 
     Args:
         db: Database session
@@ -407,6 +529,10 @@ def run_yaml_initialization(db: Session) -> Dict[str, Any]:
         return {"status": "disabled"}
 
     logger.info("Starting YAML initialization...")
+
+    # Run legacy data migration first
+    migration_result = migrate_legacy_shell_data(db)
+    logger.info(f"Legacy data migration result: {migration_result}")
 
     # Ensure default admin user exists
     try:
