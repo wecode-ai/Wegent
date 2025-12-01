@@ -506,16 +506,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         team_id = task_dict.get("team_id")
         team = None
         if team_id:
-            team = (
-                db.query(Kind)
-                .filter(
-                    Kind.id == team_id,
-                    Kind.user_id == user_id,
-                    Kind.kind == "Team",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
+            team = db.query(Kind).filter(Kind.id == team_id).first()
             if team:
                 team = self._convert_team_to_dict(team, db, user_id)
 
