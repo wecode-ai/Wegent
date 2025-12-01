@@ -158,7 +158,7 @@ class OIDCService:
 
         try:
             token = await client.fetch_token(
-                token_endpoint, code=code, redirect_uri=self.redirect_uri
+                token_endpoint, code=code, redirect_uri=self.cli_redirect_uri
             )
             logger.info(
                 f"Successfully obtained access token, token:{mask_sensitive_data(token)}"
