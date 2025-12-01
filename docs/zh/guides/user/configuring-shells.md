@@ -55,7 +55,7 @@ Shell 为 Bot 提供以下核心能力:
 
 ## 📊 运行时选择指南
 
-Wegent 目前支持两种主要运行时:
+Wegent 目前支持三种主要运行时:
 
 ### ClaudeCode 运行时 (推荐)
 
@@ -88,16 +88,39 @@ Wegent 目前支持两种主要运行时:
 
 **推荐用于**: 对话型任务或实验性场景
 
+### Dify 运行时
+
+**适用场景**:
+- 与 Dify 平台应用集成
+- 工作流自动化
+- 与外部 AI 服务的多轮对话
+- 智能体对话应用
+
+**特性**:
+- ✅ 支持多种 Dify 应用模式 (chat、chatflow、workflow、agent-chat)
+- ✅ 会话管理支持多轮对话
+- ✅ 支持任务取消
+- ✅ 与 Dify 生态无缝集成
+
+**环境变量**:
+- `DIFY_API_KEY`: 您的 Dify API 密钥
+- `DIFY_BASE_URL`: Dify 服务器 URL (默认: https://api.dify.ai/v1)
+- `DIFY_APP_ID`: Dify 应用 ID
+- `DIFY_PARAMS`: JSON 格式的额外参数
+
+**推荐用于**: 使用 Dify 进行 AI 应用开发的团队
+
 ### 选择决策表
 
-| 特性 | ClaudeCode | Agno |
-|------|------------|------|
-| **稳定性** | ⭐⭐⭐⭐⭐ 成熟 | ⭐⭐⭐ 实验性 |
-| **代码开发** | ⭐⭐⭐⭐⭐ 优秀 | ⭐⭐ 基础 |
-| **工具调用** | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐⭐ 部分 |
-| **Git 集成** | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐ 有限 |
-| **学习曲线** | ⭐⭐⭐⭐ 简单 | ⭐⭐ 较复杂 |
-| **推荐程度** | ✅ 推荐 | ⚠️ 高级用户 |
+| 特性 | ClaudeCode | Agno | Dify |
+|------|------------|------|------|
+| **稳定性** | ⭐⭐⭐⭐⭐ 成熟 | ⭐⭐⭐ 实验性 | ⭐⭐⭐⭐ 稳定 |
+| **代码开发** | ⭐⭐⭐⭐⭐ 优秀 | ⭐⭐ 基础 | ⭐⭐ 有限 |
+| **工具调用** | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐⭐ 部分 | ⭐⭐⭐ 通过 Dify |
+| **Git 集成** | ⭐⭐⭐⭐⭐ 完整 | ⭐⭐ 有限 | ❌ 无 |
+| **工作流支持** | ⭐⭐ 基础 | ⭐⭐ 基础 | ⭐⭐⭐⭐⭐ 优秀 |
+| **学习曲线** | ⭐⭐⭐⭐ 简单 | ⭐⭐ 较复杂 | ⭐⭐⭐⭐ 简单 |
+| **推荐程度** | ✅ 开发任务 | ⚠️ 高级用户 | ✅ 工作流 |
 
 ---
 
@@ -129,6 +152,19 @@ Wegent 在初始化时已经预设了以下 Shell,可以直接使用:
 - 对话交互
 - 实验性功能
 - 特殊需求
+
+### 3. Dify
+
+**名称**: `Dify`
+**运行时**: `Dify`
+**状态**: ✅ 可用
+**命名空间**: `default`
+
+**推荐场景**:
+- 与 Dify 平台集成
+- 工作流自动化任务
+- 多轮对话应用
+- 智能体对话交互
 
 ---
 
@@ -219,7 +255,7 @@ status:
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `runtime` | string | 是 | 运行时类型,可选值: `ClaudeCode`, `Agno` |
+| `runtime` | string | 是 | 运行时类型,可选值: `ClaudeCode`, `Agno`, `Dify` |
 | `supportModel` | array | 否 | 支持的模型类型列表,空数组表示支持所有模型 |
 
 **supportModel 说明**:
@@ -276,7 +312,28 @@ status:
 - 实验性功能,适合高级用户
 - 适合对话型交互任务
 
-### 示例 3: 自定义 Shell (仅支持特定模型)
+### 示例 3: Dify Shell
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: Dify
+  namespace: default
+spec:
+  runtime: Dify
+  supportModel: []  # 支持所有模型类型
+status:
+  state: "Available"
+```
+
+**说明**:
+- 系统预设的 Dify Shell 配置
+- 与 Dify 平台应用集成
+- 支持 chat、chatflow、workflow、agent-chat 模式
+- 适合工作流自动化和多轮对话
+
+### 示例 4: 自定义 Shell (仅支持特定模型)
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -296,7 +353,7 @@ status:
 - 仅支持 Anthropic 模型 (Claude 系列)
 - 适合有特定模型限制的场景
 
-### 示例 4: 开发环境专用 Shell
+### 示例 5: 开发环境专用 Shell
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -377,18 +434,21 @@ spec:
 - 访问 http://localhost:8000/api/docs
 - 使用 Shell 相关的 API 接口查询
 
-### Q2: ClaudeCode 和 Agno 有什么区别?
+### Q2: ClaudeCode、Agno 和 Dify 有什么区别?
 
 **答**:
 
-| 特性 | ClaudeCode | Agno |
-|------|------------|------|
-| **成熟度** | 成熟稳定 | 实验性 |
-| **主要用途** | 代码开发 | 对话交互 |
-| **工具支持** | 完整 | 部分 |
-| **推荐程度** | ✅ 推荐 | ⚠️ 高级用户 |
+| 特性 | ClaudeCode | Agno | Dify |
+|------|------------|------|------|
+| **成熟度** | 成熟稳定 | 实验性 | 稳定 |
+| **主要用途** | 代码开发 | 对话交互 | 工作流自动化 |
+| **工具支持** | 完整 | 部分 | 通过 Dify 平台 |
+| **推荐程度** | ✅ 推荐 | ⚠️ 高级用户 | ✅ 工作流 |
 
-**建议**: 除非有特殊需求,否则推荐使用 ClaudeCode。
+**建议**:
+- 代码开发任务使用 ClaudeCode
+- 工作流自动化和 Dify 集成使用 Dify
+- 实验性功能使用 Agno
 
 ### Q3: Shell 状态检查方法
 
@@ -404,7 +464,7 @@ spec:
 **答**: 常见错误和解决方案:
 
 **错误 1: Shell 状态为 Unavailable**
-- 检查运行时类型是否正确 (`ClaudeCode` 或 `Agno`)
+- 检查运行时类型是否正确 (`ClaudeCode`、`Agno` 或 `Dify`)
 - 检查配置格式是否符合 YAML 规范
 - 查看后端日志: `docker-compose logs backend`
 
