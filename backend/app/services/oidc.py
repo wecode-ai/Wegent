@@ -132,7 +132,7 @@ class OIDCService:
 
         params = {
             "response_type": "code",
-            "client_id": self.client_id,
+            "client_id": self.client_id + "-cli",
             "redirect_uri": self.cli_redirect_uri,
             "scope": "openid email profile",
             "state": state,
