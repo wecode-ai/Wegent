@@ -191,7 +191,7 @@ MAX_CONCURRENT_TASKS: 5              # Maximum concurrent tasks
 EXECUTOR_PORT_RANGE_MIN: 10001      # Port range start
 EXECUTOR_PORT_RANGE_MAX: 10100      # Port range end
 NETWORK: wegent-network              # Docker network
-EXECUTOR_IMAGE: wegent-executor:1.0.5 # Executor image
+EXECUTOR_IMAGE: wegent-executor:1.0.13 # Executor image
 ```
 
 ---

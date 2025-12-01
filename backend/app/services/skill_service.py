@@ -5,13 +5,14 @@
 """
 Skill service for managing Claude Code Skills
 """
-import io
-import zipfile
 import hashlib
+import io
 import re
-from typing import Dict, Any, Optional
-from fastapi import HTTPException
+import zipfile
+from typing import Any, Dict, Optional
+
 import yaml
+from fastapi import HTTPException
 
 
 class SkillValidator:
@@ -45,28 +46,25 @@ class SkillValidator:
         if file_size > SkillValidator.MAX_SIZE:
             raise HTTPException(
                 status_code=413,
-                detail=f"File size {file_size} bytes exceeds maximum allowed size of {SkillValidator.MAX_SIZE} bytes"
+                detail=f"File size {file_size} bytes exceeds maximum allowed size of {SkillValidator.MAX_SIZE} bytes",
             )
 
         # Check if it's a valid ZIP file
         if not zipfile.is_zipfile(io.BytesIO(file_content)):
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid ZIP file format"
-            )
+            raise HTTPException(status_code=400, detail="Invalid ZIP file format")
 
         # Calculate SHA256 hash
         file_hash = hashlib.sha256(file_content).hexdigest()
 
         # Open ZIP and validate structure
         try:
-            with zipfile.ZipFile(io.BytesIO(file_content), 'r') as zip_file:
+            with zipfile.ZipFile(io.BytesIO(file_content), "r") as zip_file:
                 # Security check: prevent Zip Slip attacks
                 for file_info in zip_file.filelist:
-                    if file_info.filename.startswith('/') or '..' in file_info.filename:
+                    if file_info.filename.startswith("/") or ".." in file_info.filename:
                         raise HTTPException(
                             status_code=400,
-                            detail=f"Unsafe file path detected in ZIP: {file_info.filename}"
+                            detail=f"Unsafe file path detected in ZIP: {file_info.filename}",
                         )
 
                 # Find SKILL.md file to determine the skill folder
@@ -75,33 +73,35 @@ class SkillValidator:
 
                 for file_info in zip_file.filelist:
                     # Skip directory entries
-                    if file_info.filename.endswith('/'):
+                    if file_info.filename.endswith("/"):
                         continue
-                    
+
                     # Check if this is SKILL.md
-                    if file_info.filename.endswith('SKILL.md'):
-                        path_parts = file_info.filename.split('/')
-                        
+                    if file_info.filename.endswith("SKILL.md"):
+                        path_parts = file_info.filename.split("/")
+
                         # SKILL.md must be in a subdirectory (skill-folder/SKILL.md)
                         if len(path_parts) == 2:
                             skill_folder_name = path_parts[0]
                             with zip_file.open(file_info) as f:
-                                skill_md_content = f.read().decode('utf-8', errors='ignore')
+                                skill_md_content = f.read().decode(
+                                    "utf-8", errors="ignore"
+                                )
                             break  # Found the skill folder, stop searching
 
                 # Validate that SKILL.md was found
                 if not skill_md_content or not skill_folder_name:
                     raise HTTPException(
                         status_code=400,
-                        detail="SKILL.md not found in skill folder. Expected structure: skill-folder/SKILL.md"
+                        detail="SKILL.md not found in skill folder. Expected structure: skill-folder/SKILL.md",
                     )
 
                 # Validate that the folder name matches the ZIP file name
-                expected_folder_name = file_name.replace('.zip', '')
+                expected_folder_name = file_name.replace(".zip", "")
                 if skill_folder_name != expected_folder_name:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Skill folder name '{skill_folder_name}' must match ZIP file name '{expected_folder_name}'"
+                        detail=f"Skill folder name '{skill_folder_name}' must match ZIP file name '{expected_folder_name}'",
                     )
 
                 # Parse YAML frontmatter from SKILL.md
@@ -113,20 +113,16 @@ class SkillValidator:
                     "author": metadata.get("author"),
                     "tags": metadata.get("tags"),
                     "file_size": file_size,
-                    "file_hash": file_hash
+                    "file_hash": file_hash,
                 }
 
         except zipfile.BadZipFile:
-            raise HTTPException(
-                status_code=400,
-                detail="Corrupted ZIP file"
-            )
+            raise HTTPException(status_code=400, detail="Corrupted ZIP file")
         except Exception as e:
             if isinstance(e, HTTPException):
                 raise
             raise HTTPException(
-                status_code=400,
-                detail=f"Failed to process ZIP file: {str(e)}"
+                status_code=400, detail=f"Failed to process ZIP file: {str(e)}"
             )
 
     @staticmethod
@@ -149,13 +145,15 @@ class SkillValidator:
             Dictionary with parsed metadata
         """
         # Extract YAML frontmatter between --- markers
-        frontmatter_pattern = re.compile(r'^---\s*\n(.*?)\n---\s*\n', re.DOTALL | re.MULTILINE)
+        frontmatter_pattern = re.compile(
+            r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL | re.MULTILINE
+        )
         match = frontmatter_pattern.search(content)
 
         if not match:
             raise HTTPException(
                 status_code=400,
-                detail="SKILL.md must contain YAML frontmatter between --- markers"
+                detail="SKILL.md must contain YAML frontmatter between --- markers",
             )
 
         yaml_content = match.group(1)
@@ -169,7 +167,7 @@ class SkillValidator:
             if "description" not in metadata:
                 raise HTTPException(
                     status_code=400,
-                    detail="SKILL.md frontmatter must include 'description' field"
+                    detail="SKILL.md frontmatter must include 'description' field",
                 )
 
             return metadata
@@ -177,12 +175,12 @@ class SkillValidator:
         except yaml.YAMLError as e:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid YAML frontmatter in SKILL.md: {str(e)}"
+                detail=f"Invalid YAML frontmatter in SKILL.md: {str(e)}",
             )
         except Exception as e:
             if isinstance(e, HTTPException):
                 raise
             raise HTTPException(
                 status_code=400,
-                detail=f"Failed to parse SKILL.md frontmatter: {str(e)}"
+                detail=f"Failed to parse SKILL.md frontmatter: {str(e)}",
             )

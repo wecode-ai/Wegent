@@ -2,25 +2,26 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
+from typing import List, Optional
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
-from typing import List, Optional
-import logging
 
 from app.api.dependencies import get_db
 from app.core import security
-from app.models.user import User
 from app.models.kind import Kind
+from app.models.user import User
 from app.schemas.model import (
+    ModelBulkCreateItem,
     ModelCreate,
-    ModelUpdate,
+    ModelDetail,
     ModelInDB,
     ModelListResponse,
-    ModelDetail,
-    ModelBulkCreateItem,
+    ModelUpdate,
 )
 from app.services.adapters import public_model_service
-from app.services.model_aggregation_service import model_aggregation_service, ModelType
+from app.services.model_aggregation_service import ModelType, model_aggregation_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -37,9 +38,11 @@ def list_models(
     Get Model list (paginated, active only)
     """
     skip = (page - 1) * limit
-    items = public_model_service.get_models(db=db, skip=skip, limit=limit, current_user=current_user)
+    items = public_model_service.get_models(
+        db=db, skip=skip, limit=limit, current_user=current_user
+    )
     total = public_model_service.count_active_models(db=db, current_user=current_user)
-    
+
     return {"total": total, "items": items}
 
 
@@ -59,24 +62,30 @@ def list_model_names(
       ]
     }
     """
-    data = public_model_service.list_model_names(db=db, current_user=current_user, agent_name=agent_name)
+    data = public_model_service.list_model_names(
+        db=db, current_user=current_user, agent_name=agent_name
+    )
     return {"data": data}
 
 
 @router.get("/unified")
 def list_unified_models(
-    agent_name: Optional[str] = Query(None, description="Agent name to filter compatible models (Agno, ClaudeCode)"),
-    include_config: bool = Query(False, description="Whether to include full config in response"),
+    agent_name: Optional[str] = Query(
+        None, description="Agent name to filter compatible models (Agno, ClaudeCode)"
+    ),
+    include_config: bool = Query(
+        False, description="Whether to include full config in response"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
     Get unified list of all available models (both public and user-defined).
-    
+
     This endpoint aggregates models from:
     - Public models (type='public'): Shared across all users
     - User-defined models (type='user'): Private to the current user
-    
+
     Each model includes a 'type' field to identify its source, which is
     important for avoiding naming conflicts when binding models.
 
@@ -101,7 +110,7 @@ def list_unified_models(
         db=db,
         current_user=current_user,
         agent_name=agent_name,
-        include_config=include_config
+        include_config=include_config,
     )
     return {"data": data}
 
@@ -109,18 +118,20 @@ def list_unified_models(
 @router.get("/unified/{model_name}")
 def get_unified_model(
     model_name: str,
-    model_type: Optional[str] = Query(None, description="Model type ('public' or 'user')"),
+    model_type: Optional[str] = Query(
+        None, description="Model type ('public' or 'user')"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
     Get a specific model by name, optionally with type hint.
-    
+
     If model_type is not provided, it will try to find the model
     in the following order:
     1. User's own models (type='user')
     2. Public models (type='public')
-    
+
     Parameters:
     - model_name: Model name
     - model_type: Optional model type hint ('public' or 'user')
@@ -137,17 +148,14 @@ def get_unified_model(
     }
     """
     from fastapi import HTTPException
-    
+
     result = model_aggregation_service.resolve_model(
-        db=db,
-        current_user=current_user,
-        name=model_name,
-        model_type=model_type
+        db=db, current_user=current_user, name=model_name, model_type=model_type
     )
-    
+
     if not result:
         raise HTTPException(status_code=404, detail="Model not found")
-    
+
     return result
 
 
@@ -160,7 +168,9 @@ def create_model(
     """
     Create new Model
     """
-    return public_model_service.create_model(db=db, obj_in=model_create, current_user=current_user)
+    return public_model_service.create_model(
+        db=db, obj_in=model_create, current_user=current_user
+    )
 
 
 @router.post("/batch", status_code=status.HTTP_201_CREATED)
@@ -192,8 +202,10 @@ def bulk_create_models(
       "skipped": [{"name": "...", "reason": "..."}]
     }
     """
-    result = public_model_service.bulk_create_models(db=db, items=items, current_user=current_user)
-    
+    result = public_model_service.bulk_create_models(
+        db=db, items=items, current_user=current_user
+    )
+
     # Convert PublicModel objects to Model-like objects
     created = []
     for pm in result.get("created", []):
@@ -203,10 +215,10 @@ def bulk_create_models(
             "config": pm.json.get("spec", {}).get("modelConfig", {}),
             "is_active": pm.is_active,
             "created_at": pm.created_at,
-            "updated_at": pm.updated_at
+            "updated_at": pm.updated_at,
         }
         created.append(ModelInDB.model_validate(model_data))
-    
+
     updated = []
     for pm in result.get("updated", []):
         model_data = {
@@ -215,11 +227,15 @@ def bulk_create_models(
             "config": pm.json.get("spec", {}).get("modelConfig", {}),
             "is_active": pm.is_active,
             "created_at": pm.created_at,
-            "updated_at": pm.updated_at
+            "updated_at": pm.updated_at,
         }
         updated.append(ModelInDB.model_validate(model_data))
-    
-    return {"created": created, "updated": updated, "skipped": result.get("skipped", [])}
+
+    return {
+        "created": created,
+        "updated": updated,
+        "skipped": result.get("skipped", []),
+    }
 
 
 @router.get("/{model_id}", response_model=ModelDetail)
@@ -231,7 +247,9 @@ def get_model(
     """
     Get specified Model details
     """
-    return public_model_service.get_by_id(db=db, model_id=model_id, current_user=current_user)
+    return public_model_service.get_by_id(
+        db=db, model_id=model_id, current_user=current_user
+    )
 
 
 @router.put("/{model_id}", response_model=ModelInDB)
@@ -244,7 +262,9 @@ def update_model(
     """
     Update Model information
     """
-    return public_model_service.update_model(db=db, model_id=model_id, obj_in=model_update, current_user=current_user)
+    return public_model_service.update_model(
+        db=db, model_id=model_id, obj_in=model_update, current_user=current_user
+    )
 
 
 @router.delete("/{model_id}")
@@ -256,7 +276,9 @@ def delete_model(
     """
     Soft delete Model (set is_active to False)
     """
-    public_model_service.delete_model(db=db, model_id=model_id, current_user=current_user)
+    public_model_service.delete_model(
+        db=db, model_id=model_id, current_user=current_user
+    )
     return {"message": "Model deleted successfully"}
 
 
@@ -290,29 +312,27 @@ def test_model_connection(
     if not provider_type or not model_id or not api_key:
         return {
             "success": False,
-            "message": "Missing required fields: provider_type, model_id, api_key"
+            "message": "Missing required fields: provider_type, model_id, api_key",
         }
 
     try:
         if provider_type == "openai":
             import openai
+
             client = openai.OpenAI(
-                api_key=api_key,
-                base_url=base_url or "https://api.openai.com/v1"
+                api_key=api_key, base_url=base_url or "https://api.openai.com/v1"
             )
             # Send minimal test request
             response = client.chat.completions.create(
                 model=model_id,
                 messages=[{"role": "user", "content": "hi"}],
-                max_tokens=1
+                max_tokens=1,
             )
-            return {
-                "success": True,
-                "message": f"Successfully connected to {model_id}"
-            }
+            return {"success": True, "message": f"Successfully connected to {model_id}"}
 
         elif provider_type == "anthropic":
             import anthropic
+
             client = anthropic.Anthropic(api_key=api_key)
             if base_url:
                 client.base_url = base_url
@@ -320,32 +340,23 @@ def test_model_connection(
             response = client.messages.create(
                 model=model_id,
                 max_tokens=1,
-                messages=[{"role": "user", "content": "hi"}]
+                messages=[{"role": "user", "content": "hi"}],
             )
-            return {
-                "success": True,
-                "message": f"Successfully connected to {model_id}"
-            }
+            return {"success": True, "message": f"Successfully connected to {model_id}"}
 
         else:
-            return {
-                "success": False,
-                "message": "Unsupported provider type"
-            }
+            return {"success": False, "message": "Unsupported provider type"}
 
     except Exception as e:
         logger.error(f"Model connection test failed: {str(e)}")
-        return {
-            "success": False,
-            "message": f"Connection failed: {str(e)}"
-        }
+        return {"success": False, "message": f"Connection failed: {str(e)}"}
 
 
 @router.get("/compatible")
 def get_compatible_models(
     agent_name: str = Query(..., description="Agent name (Agno or ClaudeCode)"),
     current_user: User = Depends(security.get_current_user),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
     """
     Get models compatible with a specific agent type
@@ -364,12 +375,16 @@ def get_compatible_models(
     from app.schemas.kind import Model as ModelCRD
 
     # Query all active Model CRDs from kinds table
-    models = db.query(Kind).filter(
-        Kind.user_id == current_user.id,
-        Kind.kind == "Model",
-        Kind.namespace == "default",
-        Kind.is_active == True
-    ).all()
+    models = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == current_user.id,
+            Kind.kind == "Model",
+            Kind.namespace == "default",
+            Kind.is_active == True,
+        )
+        .all()
+    )
 
     compatible_models = []
 
