@@ -132,7 +132,7 @@ class OIDCService:
 
         params = {
             "response_type": "code",
-            "client_id": self.client_id+"-cli",
+            "client_id": self.client_id,
             "redirect_uri": self.cli_redirect_uri,
             "scope": "openid email profile",
             "state": state,
@@ -142,6 +142,31 @@ class OIDCService:
         auth_url = f"{authorization_endpoint}?{urlencode(params)}"
         logger.info(f"Generated CLI authorization URL: {auth_url}")
         return auth_url
+    async def exchange_code_for_tokens_for_cli(self, code: str, state: str) -> Dict[str, Any]:
+        """Exchange Authorization Code for Tokens"""
+        metadata = await self.get_metadata()
+        token_endpoint = metadata.get("token_endpoint")
+
+        if not token_endpoint:
+            raise HTTPException(
+                status_code=502, detail="Missing token_endpoint in OIDC metadata"
+            )
+
+        client = AsyncOAuth2Client(
+            client_id=self.client_id+"-cli", client_secret=self.client_secret
+        )
+
+        try:
+            token = await client.fetch_token(
+                token_endpoint, code=code, redirect_uri=self.redirect_uri
+            )
+            logger.info(
+                f"Successfully obtained access token, token:{mask_sensitive_data(token)}"
+            )
+            return token
+        except Exception as e:
+            logger.error(f"Token exchange failed: {e}")
+            raise HTTPException(status_code=400, detail=f"Token exchange failed: {e}")
 
     async def exchange_code_for_tokens(self, code: str, state: str) -> Dict[str, Any]:
         """Exchange Authorization Code for Tokens"""
