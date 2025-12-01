@@ -235,9 +235,13 @@ kind: Shell
 metadata:
   name: <shell-name>
   namespace: default
+  labels:
+    type: local_engine  # 或 "external_api" 用于 Dify
 spec:
-  runtime: <runtime-type>
+  shellType: <agent-type>
   supportModel: []
+  baseImage: <optional-custom-docker-image>
+  baseShellRef: <optional-reference-to-base-shell>
 status:
   state: "Available"
 ```
@@ -250,13 +254,16 @@ status:
 |------|------|------|------|
 | `name` | string | 是 | Shell 的唯一标识符,使用小写字母和中划线 |
 | `namespace` | string | 是 | 命名空间,通常使用 `default` |
+| `labels.type` | string | 否 | Shell 执行类型: `local_engine` 或 `external_api` |
 
 #### spec 部分
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `runtime` | string | 是 | 运行时类型,可选值: `ClaudeCode`, `Agno`, `Dify` |
+| `shellType` | string | 是 | 智能体类型,可选值: `ClaudeCode`, `Agno`, `Dify`（为向后兼容也接受 `runtime`） |
 | `supportModel` | array | 否 | 支持的模型类型列表,空数组表示支持所有模型 |
+| `baseImage` | string | 否 | 自定义 Docker 基础镜像地址,用于用户自定义 Shell |
+| `baseShellRef` | string | 否 | 引用的基础公共 Shell（如 "ClaudeCode"） |
 
 **supportModel 说明**:
 - 空数组 `[]`: 支持所有模型类型
@@ -280,8 +287,10 @@ kind: Shell
 metadata:
   name: ClaudeCode
   namespace: default
+  labels:
+    type: local_engine
 spec:
-  runtime: ClaudeCode
+  shellType: ClaudeCode
   supportModel: []  # 支持所有模型类型
 status:
   state: "Available"
@@ -300,8 +309,10 @@ kind: Shell
 metadata:
   name: Agno
   namespace: default
+  labels:
+    type: local_engine
 spec:
-  runtime: Agno
+  shellType: Agno
   supportModel: []  # 支持所有模型类型
 status:
   state: "Available"
@@ -320,8 +331,10 @@ kind: Shell
 metadata:
   name: Dify
   namespace: default
+  labels:
+    type: external_api
 spec:
-  runtime: Dify
+  shellType: Dify
   supportModel: []  # 支持所有模型类型
 status:
   state: "Available"
@@ -341,8 +354,10 @@ kind: Shell
 metadata:
   name: custom-claude-shell
   namespace: default
+  labels:
+    type: local_engine
 spec:
-  runtime: ClaudeCode
+  shellType: ClaudeCode
   supportModel: ["anthropic"]  # 仅支持 Anthropic 模型
 status:
   state: "Available"
@@ -353,7 +368,31 @@ status:
 - 仅支持 Anthropic 模型 (Claude 系列)
 - 适合有特定模型限制的场景
 
-### 示例 5: 开发环境专用 Shell
+### 示例 5: 自定义基础镜像的 Shell
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: my-custom-shell
+  namespace: default
+  labels:
+    type: local_engine
+spec:
+  shellType: ClaudeCode
+  supportModel: []
+  baseImage: "ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0"
+  baseShellRef: "ClaudeCode"
+status:
+  state: "Available"
+```
+
+**说明**:
+- 自定义 Shell，使用用户指定的 Docker 基础镜像
+- 引用 ClaudeCode 作为基础 Shell 类型
+- 适用于预装额外工具或依赖项
+
+### 示例 6: 开发环境专用 Shell
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -361,8 +400,10 @@ kind: Shell
 metadata:
   name: dev-environment-shell
   namespace: development
+  labels:
+    type: local_engine
 spec:
-  runtime: ClaudeCode
+  shellType: ClaudeCode
   supportModel: []
 status:
   state: "Available"

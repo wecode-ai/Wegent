@@ -19,7 +19,13 @@ from app.models.public_shell import PublicShell
 from app.models.user import User
 from app.schemas.bot import BotCreate, BotDetail, BotInDB, BotUpdate
 from app.schemas.kind import Bot, Ghost, Model, Shell, Team
-from app.services.adapters.shell_utils import get_shell_type
+from app.services.adapters.shell_utils import (
+    get_shell_by_name,
+    get_shell_info_by_name,
+    get_shell_type,
+    get_shells_by_names_batch,
+    resolve_shell_name_for_display,
+)
 from app.services.base import BaseService
 
 
@@ -330,52 +336,27 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             db.add(model)
 
         support_model = []
-        shell_type = "local_engine"  # Default shell type
-        if obj_in.agent_name:
-            public_shell = (
-                db.query(PublicShell)
-                .filter(
-                    PublicShell.name == obj_in.agent_name,
-                    PublicShell.namespace == "default",
-                )
-                .first()
-            )
+        execution_type = "local_engine"  # Default shell type
 
-            if public_shell and isinstance(public_shell.json, dict):
-                shell_crd = Shell.model_validate(public_shell.json)
-                support_model = shell_crd.spec.supportModel or []
-                # Get shell type from metadata.labels
-                if shell_crd.metadata.labels and "type" in shell_crd.metadata.labels:
-                    shell_type = shell_crd.metadata.labels["type"]
+        # Get shell info by name (resolves actual shell_type from shell_name)
+        # The shell_name is the name of the user-selected Shell (custom or public)
+        try:
+            shell_info = get_shell_info_by_name(db, obj_in.shell_name, user_id)
+            execution_type = shell_info["execution_type"]
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
-        shell_json = {
-            "kind": "Shell",
-            "spec": {"runtime": obj_in.agent_name, "supportModel": support_model},
-            "metadata": {
-                "name": f"{obj_in.name}-shell",
-                "namespace": "default",
-                "labels": {"type": shell_type},
-            },
-            "status": {"state": "Available"},
-            "apiVersion": "agent.wecode.io/v1",
-        }
+        # Bot's shellRef directly points to the user-selected Shell
+        # No need to create a dedicated shell for each bot
+        shell_ref_name = obj_in.shell_name
+        shell_ref_namespace = "default"
 
-        shell = Kind(
-            user_id=user_id,
-            kind="Shell",
-            name=f"{obj_in.name}-shell",
-            namespace="default",
-            json=shell_json,
-            is_active=True,
-        )
-        db.add(shell)
-
-        # Create Bot with modelRef pointing to the selected model
+        # Create Bot with shellRef pointing to the user-selected Shell
         bot_json = {
             "kind": "Bot",
             "spec": {
                 "ghostRef": {"name": f"{obj_in.name}-ghost", "namespace": "default"},
-                "shellRef": {"name": f"{obj_in.name}-shell", "namespace": "default"},
+                "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
                 "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
             },
             "status": {"state": "Available"},
@@ -404,6 +385,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             )
         else:
             db.refresh(model)
+
+        # Get the shell for response (from user's custom shells or public shells)
+        shell = get_shell_by_name(db, shell_ref_name, user_id)
 
         # Return bot-like structure
         return self._convert_to_bot_dict(bot, ghost, shell, model, obj_in.agent_config)
@@ -554,40 +538,29 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             bot.name = new_name
             flag_modified(bot, "json")  # Mark JSON field as modified
 
-        if "agent_name" in update_data and shell:
-            # Query public_shells table to get supportModel and shell type based on new agent_name
-            support_model = []
-            shell_type = "local_engine"  # Default shell type
-            new_agent_name = update_data["agent_name"]
-            if new_agent_name:
-                public_shell = (
-                    db.query(PublicShell)
-                    .filter(
-                        PublicShell.name == new_agent_name,
-                        PublicShell.namespace == "default",
-                    )
-                    .first()
-                )
+        if "shell_name" in update_data:
+            # Update Bot's shellRef to point directly to the user-selected Shell
+            new_shell_name = update_data["shell_name"]
+            try:
+                shell_info = get_shell_info_by_name(db, new_shell_name, user_id)
+            except ValueError as e:
+                raise HTTPException(status_code=400, detail=str(e))
 
-                if public_shell and isinstance(public_shell.json, dict):
-                    public_shell_crd = Shell.model_validate(public_shell.json)
-                    support_model = public_shell_crd.spec.supportModel or []
-                    # Get shell type from metadata.labels
-                    if (
-                        public_shell_crd.metadata.labels
-                        and "type" in public_shell_crd.metadata.labels
-                    ):
-                        shell_type = public_shell_crd.metadata.labels["type"]
+            logger.info(
+                f"[DEBUG] update_with_user: shell_name={new_shell_name}, "
+                f"resolved shell_type={shell_info['shell_type']}, "
+                f"execution_type={shell_info['execution_type']}"
+            )
 
-            shell_crd = Shell.model_validate(shell.json)
-            shell_crd.spec.runtime = new_agent_name
-            shell_crd.spec.supportModel = support_model
-            # Update shell type in metadata.labels
-            if not shell_crd.metadata.labels:
-                shell_crd.metadata.labels = {}
-            shell_crd.metadata.labels["type"] = shell_type
-            shell.json = shell_crd.model_dump()
-            flag_modified(shell, "json")  # Mark JSON field as modified
+            # Update Bot's shellRef to point to the user-selected Shell
+            bot_crd = Bot.model_validate(bot.json)
+            bot_crd.spec.shellRef.name = new_shell_name
+            bot_crd.spec.shellRef.namespace = "default"
+            bot.json = bot_crd.model_dump()
+            flag_modified(bot, "json")
+
+            # Update shell reference for response
+            shell = get_shell_by_name(db, new_shell_name, user_id)
 
         if "agent_config" in update_data:
             new_agent_config = update_data["agent_config"]
@@ -850,15 +823,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                         detail=f"Bot '{bot_name}' is being used in team '{team.name}'. Please remove it from the team first.",
                     )
 
-        # Get related components
+        # Get related components (only ghost needs to be deleted)
         ghost, shell, model = self._get_bot_components(db, bot, user_id)
 
-        # Delete all components
+        # Delete bot and ghost only
+        # Shell is not deleted because it's a reference to user's custom shell or public shell
+        # For legacy bots that have dedicated {bot_name}-shell, we also don't delete them
+        # to maintain backward compatibility with existing data
         db.delete(bot)
         if ghost:
             db.delete(ghost)
-        if shell:
-            db.delete(shell)
+        # Note: shell is not deleted - it's a shared resource or legacy data
 
         db.commit()
 
@@ -903,18 +878,16 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             .first()
         )
 
-        # Get shell
-        shell = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Shell",
-                Kind.name == bot_crd.spec.shellRef.name,
-                Kind.namespace == bot_crd.spec.shellRef.namespace,
-                Kind.is_active == True,
-            )
-            .first()
+        # Get shell - try user's custom shells first, then public shells
+        shell_ref_name = bot_crd.spec.shellRef.name
+        shell = get_shell_by_name(db, shell_ref_name, user_id)
+
+        logger.info(
+            f"[DEBUG] _get_bot_components: shellRef.name={shell_ref_name}, "
+            f"shell found={shell is not None}, "
+            f"shell type={type(shell).__name__ if shell else 'None'}"
         )
+
         # Get model - try private models first, then public models
         # modelRef is optional, only get if it exists
         model = None
@@ -983,23 +956,21 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         base_filter = and_(Kind.user_id == user_id, Kind.is_active == True)
 
         ghosts = []
-        shells = []
         models = []
 
         ghost_filter = build_or_filters("Ghost", ghost_keys)
         if ghost_filter is not None:
             ghosts = db.query(Kind).filter(base_filter).filter(ghost_filter).all()
 
-        shell_filter = build_or_filters("Shell", shell_keys)
-        if shell_filter is not None:
-            shells = db.query(Kind).filter(base_filter).filter(shell_filter).all()
+        # Use unified shell query function that checks both user shells and public shells
+        shell_map = get_shells_by_names_batch(db, shell_keys, user_id)
 
         model_filter = build_or_filters("Model", model_keys)
         if model_filter is not None:
             models = db.query(Kind).filter(base_filter).filter(model_filter).all()
 
         ghost_map = {(g.name, g.namespace): g for g in ghosts}
-        shell_map = {(s.name, s.namespace): s for s in shells}
+        # shell_map is already populated by get_shells_by_names_batch
         model_map = {(m.name, m.namespace): m for m in models}
 
         # For models not found in kinds table, try to find in public_models table
@@ -1058,17 +1029,22 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Extract data from components
         system_prompt = ""
         mcp_servers = {}
-        agent_name = ""
+        shell_name = ""
+        shell_type = ""
         agent_config = {}
+
+        # Get shell_name from bot's shellRef
+        bot_crd = Bot.model_validate(bot.json)
+        shell_ref_name = bot_crd.spec.shellRef.name if bot_crd.spec.shellRef else ""
+
+        # Use resolve_shell_name_for_display to handle legacy shells
+        # This will return shell_type as shell_name for legacy {bot_name}-shell format
+        shell_name, shell_type = resolve_shell_name_for_display(shell_ref_name, shell)
 
         if ghost and ghost.json:
             ghost_crd = Ghost.model_validate(ghost.json)
             system_prompt = ghost_crd.spec.systemPrompt
             mcp_servers = ghost_crd.spec.mcpServers or {}
-
-        if shell and shell.json:
-            shell_crd = Shell.model_validate(shell.json)
-            agent_name = shell_crd.spec.runtime
 
         # Determine agent_config
         # For frontend display, we need to return { bind_model: "xxx", bind_model_type: "public"|"user" } format when:
@@ -1095,7 +1071,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             protocol = model_crd.spec.protocol
 
             # Get the modelRef name from bot to determine if it's a dedicated private model
-            bot_crd = Bot.model_validate(bot.json)
             model_ref_name = (
                 bot_crd.spec.modelRef.name if bot_crd.spec.modelRef else None
             )
@@ -1160,7 +1135,8 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "id": bot.id,
             "user_id": bot.user_id,
             "name": bot.name,
-            "agent_name": agent_name,
+            "shell_name": shell_name,  # The shell name for display (e.g., 'ClaudeCode')
+            "shell_type": shell_type,  # The actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
             "agent_config": agent_config,
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,

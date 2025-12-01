@@ -195,8 +195,13 @@ kind: Shell
 metadata:
   name: ClaudeCode
   namespace: default
+  labels:
+    type: local_engine  # or "external_api" for Dify
 spec:
-  runtime: "ClaudeCode"
+  shellType: "ClaudeCode"  # Agent type: ClaudeCode, Agno, Dify
+  supportModel: []
+  baseImage: "ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0"  # Optional: custom base image
+  baseShellRef: "ClaudeCode"  # Optional: reference to base public shell
 ```
 
 ### Field Description
@@ -205,8 +210,11 @@ spec:
 |------|------|----------|-------------|
 | `metadata.name` | string | Yes | Unique identifier for the Shell |
 | `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.runtime` | string | Yes | Runtime type, such as `ClaudeCode`, `Agno` |
+| `metadata.labels.type` | string | No | Shell execution type: `local_engine` or `external_api` |
+| `spec.shellType` | string | Yes | Agent type, such as `ClaudeCode`, `Agno`, `Dify` (also accepts `runtime` for backward compatibility) |
 | `spec.supportModel` | array | No | List of supported model types |
+| `spec.baseImage` | string | No | Custom base Docker image address for user-defined shells |
+| `spec.baseShellRef` | string | No | Reference to base public shell (e.g., "ClaudeCode")
 
 ### Supported Runtimes
 

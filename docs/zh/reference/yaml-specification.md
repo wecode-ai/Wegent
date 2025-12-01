@@ -195,8 +195,13 @@ kind: Shell
 metadata:
   name: ClaudeCode
   namespace: default
+  labels:
+    type: local_engine  # 或 "external_api" 用于 Dify
 spec:
-  runtime: "ClaudeCode"
+  shellType: "ClaudeCode"  # 智能体类型：ClaudeCode、Agno、Dify
+  supportModel: []
+  baseImage: "ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0"  # 可选：自定义基础镜像
+  baseShellRef: "ClaudeCode"  # 可选：引用的基础公共 Shell
 ```
 
 ### 字段说明
@@ -205,8 +210,11 @@ spec:
 |------|------|------|------|
 | `metadata.name` | string | 是 | Shell 的唯一标识符 |
 | `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.runtime` | string | 是 | 运行时类型，如 `ClaudeCode`、`Agno` |
+| `metadata.labels.type` | string | 否 | Shell 执行类型：`local_engine` 或 `external_api` |
+| `spec.shellType` | string | 是 | 智能体类型，如 `ClaudeCode`、`Agno`、`Dify`（为向后兼容也接受 `runtime`） |
 | `spec.supportModel` | array | 否 | 支持的模型类型列表 |
+| `spec.baseImage` | string | 否 | 自定义基础 Docker 镜像地址，用于用户自定义 Shell |
+| `spec.baseShellRef` | string | 否 | 引用的基础公共 Shell（如 "ClaudeCode"）
 
 ### 支持的运行时
 

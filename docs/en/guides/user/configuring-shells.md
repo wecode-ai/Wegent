@@ -235,9 +235,13 @@ kind: Shell
 metadata:
   name: <shell-name>
   namespace: default
+  labels:
+    type: local_engine  # or "external_api" for Dify
 spec:
-  runtime: <runtime-type>
+  shellType: <agent-type>
   supportModel: []
+  baseImage: <optional-custom-docker-image>
+  baseShellRef: <optional-reference-to-base-shell>
 status:
   state: "Available"
 ```
@@ -250,13 +254,16 @@ status:
 |-------|------|----------|-------------|
 | `name` | string | Yes | Unique identifier for the Shell, use lowercase letters and hyphens |
 | `namespace` | string | Yes | Namespace, usually use `default` |
+| `labels.type` | string | No | Shell execution type: `local_engine` or `external_api` |
 
 #### spec Section
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `runtime` | string | Yes | Runtime type, options: `ClaudeCode`, `Agno`, `Dify` |
+| `shellType` | string | Yes | Agent type, options: `ClaudeCode`, `Agno`, `Dify` (also accepts `runtime` for backward compatibility) |
 | `supportModel` | array | No | List of supported model types, empty array means all models supported |
+| `baseImage` | string | No | Custom Docker base image for user-defined shells |
+| `baseShellRef` | string | No | Reference to a base public shell (e.g., "ClaudeCode") |
 
 **supportModel Explanation**:
 - Empty array `[]`: Supports all model types
@@ -280,8 +287,10 @@ kind: Shell
 metadata:
   name: ClaudeCode
   namespace: default
+  labels:
+    type: local_engine
 spec:
-  runtime: ClaudeCode
+  shellType: ClaudeCode
   supportModel: []  # Supports all model types
 status:
   state: "Available"
@@ -300,8 +309,10 @@ kind: Shell
 metadata:
   name: Agno
   namespace: default
+  labels:
+    type: local_engine
 spec:
-  runtime: Agno
+  shellType: Agno
   supportModel: []  # Supports all model types
 status:
   state: "Available"
@@ -320,8 +331,10 @@ kind: Shell
 metadata:
   name: Dify
   namespace: default
+  labels:
+    type: external_api
 spec:
-  runtime: Dify
+  shellType: Dify
   supportModel: []  # Supports all model types
 status:
   state: "Available"
@@ -341,8 +354,10 @@ kind: Shell
 metadata:
   name: custom-claude-shell
   namespace: default
+  labels:
+    type: local_engine
 spec:
-  runtime: ClaudeCode
+  shellType: ClaudeCode
   supportModel: ["anthropic"]  # Only supports Anthropic models
 status:
   state: "Available"
@@ -353,7 +368,31 @@ status:
 - Only supports Anthropic models (Claude series)
 - Suitable for scenarios with specific model restrictions
 
-### Example 5: Development Environment Shell
+### Example 5: Custom Shell with Base Image
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: my-custom-shell
+  namespace: default
+  labels:
+    type: local_engine
+spec:
+  shellType: ClaudeCode
+  supportModel: []
+  baseImage: "ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0"
+  baseShellRef: "ClaudeCode"
+status:
+  state: "Available"
+```
+
+**Description**:
+- Custom Shell with a user-specified Docker base image
+- References ClaudeCode as the base shell type
+- Useful for pre-installing additional tools or dependencies
+
+### Example 6: Development Environment Shell
 
 ```yaml
 apiVersion: agent.wecode.io/v1
@@ -361,8 +400,10 @@ kind: Shell
 metadata:
   name: dev-environment-shell
   namespace: development
+  labels:
+    type: local_engine
 spec:
-  runtime: ClaudeCode
+  shellType: ClaudeCode
   supportModel: []
 status:
   state: "Available"
