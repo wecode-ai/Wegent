@@ -75,8 +75,7 @@ function unifiedToModel(unified: UnifiedModel): Model {
 
 // Helper function to get display text for a model: displayName(modelId) or name(modelId)
 function getModelDisplayText(model: Model): string {
-  const displayName = model.displayName || model.name;
-  return model.modelId ? `${displayName}(${model.modelId})` : displayName;
+  return model.displayName ? `${model.displayName}(${model.name})` : model.name;
 }
 
 // Helper function to check if all bots in a team have predefined models
@@ -454,6 +453,14 @@ export default function ModelSelector({
                                     </Tag>
                                   )}
                                 </div>
+                                {model.modelId && (
+                                  <span
+                                    className="text-[10px] text-text-muted truncate"
+                                    title={model.modelId}
+                                  >
+                                    {model.modelId}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </CommandItem>
