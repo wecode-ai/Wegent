@@ -72,7 +72,8 @@ function unifiedToModel(unified: UnifiedModel): Model {
 }
 
 // Helper function to check if all bots in a team have predefined models
-function allBotsHavePredefinedModel(team: TeamWithBotDetails | null): boolean {
+// Exported for use in ChatArea to determine if model selection is required
+export function allBotsHavePredefinedModel(team: TeamWithBotDetails | null): boolean {
   if (!team || !team.bots || team.bots.length === 0) {
     return false;
   }
@@ -254,10 +255,20 @@ export default function ModelSelector({
   // Determine if selector should be disabled
   const isDisabled = disabled || externalLoading || isLoading || isMixedTeam;
 
+  // Check if model selection is required (for legacy teams without predefined models)
+  const isModelRequired = !showDefaultOption && !selectedModel;
+
   // Get display text for trigger
   const getTriggerDisplayText = () => {
     if (!selectedModel) {
-      return isLoading ? t('actions.loading') : t('task_submit.select_model', '选择模型');
+      if (isLoading) {
+        return t('actions.loading');
+      }
+      // Show required hint for legacy teams without predefined models
+      if (isModelRequired) {
+        return t('task_submit.model_required', '请选择模型');
+      }
+      return t('task_submit.select_model', '选择模型');
     }
     if (selectedModel.name === DEFAULT_MODEL_NAME) {
       return t('task_submit.default_model', '默认');
@@ -276,7 +287,7 @@ export default function ModelSelector({
         style={{ maxWidth: isMobile ? 140 : 180, minWidth: isMobile ? 50 : 70 }}
       >
         <CpuChipIcon
-          className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading || externalLoading ? 'animate-pulse' : ''}`}
+          className={`w-3 h-3 flex-shrink-0 ml-1 ${isModelRequired ? 'text-error' : 'text-text-muted'} ${isLoading || externalLoading ? 'animate-pulse' : ''}`}
         />
         <div className="relative min-w-0 flex-1">
           <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -288,7 +299,8 @@ export default function ModelSelector({
                 disabled={isDisabled}
                 className={cn(
                   'flex h-9 w-full min-w-0 items-center justify-between rounded-lg text-left',
-                  'bg-transparent px-0 text-xs text-text-muted',
+                  'bg-transparent px-0 text-xs',
+                  isModelRequired ? 'text-error' : 'text-text-muted',
                   'hover:bg-transparent transition-colors',
                   'focus:outline-none focus:ring-0',
                   'disabled:cursor-not-allowed disabled:opacity-50'
