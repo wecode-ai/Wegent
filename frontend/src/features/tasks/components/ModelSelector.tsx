@@ -72,7 +72,8 @@ function unifiedToModel(unified: UnifiedModel): Model {
 }
 
 // Helper function to check if all bots in a team have predefined models
-function allBotsHavePredefinedModel(team: TeamWithBotDetails | null): boolean {
+// Exported for use in ChatArea to determine if model selection is required
+export function allBotsHavePredefinedModel(team: TeamWithBotDetails | null): boolean {
   if (!team || !team.bots || team.bots.length === 0) {
     return false;
   }
@@ -169,9 +170,36 @@ export default function ModelSelector({
     fetchModels();
   }, [fetchModels]);
 
-  // Restore last selected model from localStorage or set default
+  // Track previous team ID to detect team changes and re-validate model selection
+  const prevTeamIdRef = React.useRef<number | null>(null);
+
+  // Re-validate model selection when team changes
   useEffect(() => {
-    // When team changes or all bots have predefined models, auto-select default
+    const currentTeamId = selectedTeam?.id ?? null;
+    const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId;
+    prevTeamIdRef.current = currentTeamId;
+
+    if (!teamChanged) return;
+
+    // Team changed - re-validate model selection based on new team's showDefaultOption
+    if (showDefaultOption) {
+      // New team supports default option, set to default
+      if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
+        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      }
+    } else {
+      // New team does NOT support default option, clear model selection
+      // User must re-select a compatible model
+      setSelectedModel(null);
+    }
+  }, [selectedTeam?.id, showDefaultOption, selectedModel, setSelectedModel]);
+
+  // Restore last selected model from localStorage or set default (only on initial load)
+  useEffect(() => {
+    // Skip if team has changed (handled by the above effect)
+    // This effect only handles initial load and model list changes
+
+    // When all bots have predefined models, auto-select default
     if (showDefaultOption) {
       // If all bots have predefined models, auto-select "Default"
       if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
@@ -254,10 +282,20 @@ export default function ModelSelector({
   // Determine if selector should be disabled
   const isDisabled = disabled || externalLoading || isLoading || isMixedTeam;
 
+  // Check if model selection is required (for legacy teams without predefined models)
+  const isModelRequired = !showDefaultOption && !selectedModel;
+
   // Get display text for trigger
   const getTriggerDisplayText = () => {
     if (!selectedModel) {
-      return isLoading ? t('actions.loading') : t('task_submit.select_model', '选择模型');
+      if (isLoading) {
+        return t('actions.loading');
+      }
+      // Show required hint for legacy teams without predefined models
+      if (isModelRequired) {
+        return t('task_submit.model_required', '请选择模型');
+      }
+      return t('task_submit.select_model', '选择模型');
     }
     if (selectedModel.name === DEFAULT_MODEL_NAME) {
       return t('task_submit.default_model', '默认');
@@ -276,7 +314,7 @@ export default function ModelSelector({
         style={{ maxWidth: isMobile ? 140 : 180, minWidth: isMobile ? 50 : 70 }}
       >
         <CpuChipIcon
-          className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading || externalLoading ? 'animate-pulse' : ''}`}
+          className={`w-3 h-3 flex-shrink-0 ml-1 ${isModelRequired ? 'text-error' : 'text-text-muted'} ${isLoading || externalLoading ? 'animate-pulse' : ''}`}
         />
         <div className="relative min-w-0 flex-1">
           <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -288,7 +326,8 @@ export default function ModelSelector({
                 disabled={isDisabled}
                 className={cn(
                   'flex h-9 w-full min-w-0 items-center justify-between rounded-lg text-left',
-                  'bg-transparent px-0 text-xs text-text-muted',
+                  'bg-transparent px-0 text-xs',
+                  isModelRequired ? 'text-error' : 'text-text-muted',
                   'hover:bg-transparent transition-colors',
                   'focus:outline-none focus:ring-0',
                   'disabled:cursor-not-allowed disabled:opacity-50'

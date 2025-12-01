@@ -9,7 +9,11 @@ import { Send, CircleStop } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
-import ModelSelector, { Model, DEFAULT_MODEL_NAME } from './ModelSelector';
+import ModelSelector, {
+  Model,
+  DEFAULT_MODEL_NAME,
+  allBotsHavePredefinedModel,
+} from './ModelSelector';
 import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
@@ -171,6 +175,18 @@ export default function ChatArea({
     const modelNameLength = selectedModel?.name?.trim().length || 0;
     return teamNameLength + modelNameLength > COMPACT_QUOTA_NAME_THRESHOLD;
   }, [isMobile, selectedTeam?.name, selectedModel?.name]);
+
+  // Check if model selection is required but not fulfilled
+  // For legacy teams without predefined models, user MUST select a model before sending
+  const isModelSelectionRequired = React.useMemo(() => {
+    // Skip check if team is not selected, or if team type is 'dify' (external API)
+    if (!selectedTeam || selectedTeam.agent_type === 'dify') return false;
+    // If team's bots have predefined models, "Default" option is available, no need to force selection
+    const hasDefaultOption = allBotsHavePredefinedModel(selectedTeam);
+    if (hasDefaultOption) return false;
+    // Model selection is required when no model is selected
+    return !selectedModel;
+  }, [selectedTeam, selectedModel]);
 
   const handleTeamChange = (team: Team | null) => {
     console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null');
@@ -580,7 +596,9 @@ export default function ChatArea({
                           size="icon"
                           onClick={handleSendMessage}
                           disabled={
-                            isLoading || (shouldHideChatInput ? false : !taskInputMessage.trim())
+                            isLoading ||
+                            isModelSelectionRequired ||
+                            (shouldHideChatInput ? false : !taskInputMessage.trim())
                           }
                           className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
                         >
@@ -722,7 +740,9 @@ export default function ChatArea({
                         size="icon"
                         onClick={handleSendMessage}
                         disabled={
-                          isLoading || (shouldHideChatInput ? false : !taskInputMessage.trim())
+                          isLoading ||
+                          isModelSelectionRequired ||
+                          (shouldHideChatInput ? false : !taskInputMessage.trim())
                         }
                         className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
                       >

@@ -536,6 +536,7 @@
     "override_short": "覆盖",
     "mixed_team_warning": "当前团队包含多种执行器类型，无法统一指定模型",
     "default_model": "默认绑定模型",
-    "use_bot_model": "使用 Bot 预设模型"
+    "use_bot_model": "使用 Bot 预设模型",
+    "model_required": "请选择模型"
   }
 }

@@ -535,6 +535,7 @@
     "override_short": "Override",
     "mixed_team_warning": "This team contains multiple executor types, cannot specify a unified model",
     "default_model": "Default",
-    "use_bot_model": "Use Bot's predefined model"
+    "use_bot_model": "Use Bot's predefined model",
+    "model_required": "Please select a model"
   }
 }
