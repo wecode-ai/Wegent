@@ -503,7 +503,6 @@ class ExecutorKindsService(
                                     db.query(PublicModel)
                                     .filter(
                                         PublicModel.name == private_model_name.strip(),
-                                        PublicModel.is_active == True,
                                     )
                                     .first()
                                 )
