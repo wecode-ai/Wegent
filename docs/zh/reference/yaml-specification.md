@@ -214,7 +214,7 @@ spec:
 |--------|------|
 | `ClaudeCode` | Claude Code 运行时 |
 | `Agno` | Agno 运行时 |
-| `Dify` | Dify 运行时（计划中） |
+| `Dify` | Dify 运行时 |
 
 ---
 
