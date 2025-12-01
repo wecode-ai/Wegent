@@ -26,6 +26,11 @@ def login_swagger(
     if not user:
         raise HTTPException(status_code=400, detail="Invalid username or password")
 
+    # Update auth_source if it was unknown
+    if user.auth_source == "unknown":
+        user.auth_source = "password"
+        db.commit()
+
     access_token = create_access_token(data={"sub": user.user_name})
     return {"access_token": access_token, "token_type": "bearer"}
 
@@ -39,6 +44,11 @@ def login(db: Session = Depends(get_db), login_data: LoginRequest = Body(...)):
     user = authenticate_user(db, login_data.user_name, login_data.password)
     if not user:
         raise HTTPException(status_code=400, detail="Invalid username or password")
+
+    # Update auth_source if it was unknown
+    if user.auth_source == "unknown":
+        user.auth_source = "password"
+        db.commit()
 
     access_token = create_access_token(data={"sub": user.user_name})
 

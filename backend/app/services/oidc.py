@@ -28,6 +28,7 @@ class OIDCService:
         self.client_secret = settings.OIDC_CLIENT_SECRET
         self.discovery_url = settings.OIDC_DISCOVERY_URL
         self.redirect_uri = settings.OIDC_REDIRECT_URI
+        self.cli_redirect_uri = settings.OIDC_CLI_REDIRECT_URI
 
         self._metadata: Optional[Dict[str, Any]] = None
         self._jwks: Optional[Dict[str, Any]] = None
@@ -116,6 +117,30 @@ class OIDCService:
 
         auth_url = f"{authorization_endpoint}?{urlencode(params)}"
         logger.info(f"Generated authorization URL: {auth_url}")
+        return auth_url
+
+    async def get_authorization_url_for_cli(self, state: str, nonce: str) -> str:
+        """Generate Authorization URL for CLI login (uses CLI redirect URI)"""
+        metadata = await self.get_metadata()
+        authorization_endpoint = metadata.get("authorization_endpoint")
+
+        if not authorization_endpoint:
+            raise HTTPException(
+                status_code=502,
+                detail="Missing authorization_endpoint in OIDC metadata",
+            )
+
+        params = {
+            "response_type": "code",
+            "client_id": self.client_id,
+            "redirect_uri": self.cli_redirect_uri,
+            "scope": "openid email profile",
+            "state": state,
+            "nonce": nonce,
+        }
+
+        auth_url = f"{authorization_endpoint}?{urlencode(params)}"
+        logger.info(f"Generated CLI authorization URL: {auth_url}")
         return auth_url
 
     async def exchange_code_for_tokens(self, code: str, state: str) -> Dict[str, Any]:

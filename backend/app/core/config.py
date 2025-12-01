@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     OIDC_CLIENT_SECRET: str = "test"
     OIDC_DISCOVERY_URL: str = "http://localhost:5556/.well-known/openid-configuration"
     OIDC_REDIRECT_URI: str = "http://localhost:8000/api/auth/oidc/callback"
+    OIDC_CLI_REDIRECT_URI: str = "http://localhost:8000/api/auth/oidc/cli-callback"
 
     # Redis configuration
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
