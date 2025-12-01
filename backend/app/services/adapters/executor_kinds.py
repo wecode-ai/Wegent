@@ -6,7 +6,7 @@ import asyncio
 import logging
 import threading
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import httpx
 from fastapi import HTTPException
@@ -17,6 +17,7 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
+from app.models.public_model import PublicModel
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
@@ -241,6 +242,40 @@ class ExecutorKindsService(
                     task.updated_at = datetime.now()
                     flag_modified(task, "json")
 
+    def _get_model_config_from_public_model(
+        self, db: Session, agent_config: Any
+    ) -> Any:
+        """
+        Get model configuration from PublicModel table by private_model name in agent_config
+        """
+        # Check if agent_config is a dictionary
+        if not isinstance(agent_config, dict):
+            return agent_config
+
+        # Extract private_model field
+        private_model_name = agent_config.get("private_model")
+
+        # Check if private_model_name is a valid non-empty string
+        if not isinstance(private_model_name, str) or not private_model_name.strip():
+            return agent_config
+
+        try:
+            model_name = private_model_name.strip()
+            public_model = (
+                db.query(PublicModel).filter(PublicModel.name == model_name).first()
+            )
+
+            if public_model and public_model.json:
+                model_config = public_model.json.get("spec", {}).get("modelConfig", {})
+                return model_config
+
+        except Exception as e:
+            logger.warning(
+                f"Failed to load model '{private_model_name}' from public_models: {e}"
+            )
+
+        return agent_config
+
     def _format_subtasks_response(
         self, db: Session, subtasks: List[Subtask]
     ) -> Dict[str, List[Dict]]:
@@ -411,7 +446,6 @@ class ExecutorKindsService(
                 # Get model for agent config (modelRef is optional)
                 # Try to find in kinds table (user's private models) first, then public_models table
                 model = None
-                model_from_public = False
                 if bot_crd.spec.modelRef:
                     model = (
                         db.query(Kind)
@@ -427,7 +461,6 @@ class ExecutorKindsService(
 
                     # If not found in kinds table, try public_models table
                     if not model:
-                        from app.models.public_model import PublicModel
 
                         public_model = (
                             db.query(PublicModel)
@@ -441,7 +474,6 @@ class ExecutorKindsService(
                         )
                         if public_model:
                             model = public_model
-                            model_from_public = True
                             logger.info(
                                 f"Found model '{bot_crd.spec.modelRef.name}' in public_models table for bot {bot.name}"
                             )
@@ -469,6 +501,12 @@ class ExecutorKindsService(
                 if model and model.json:
                     model_crd = Model.model_validate(model.json)
                     agent_config = model_crd.spec.modelConfig
+
+                    # Check for private_model in agent_config (legacy compatibility)
+                    agent_config = self._get_model_config_from_public_model(
+                        db, agent_config
+                    )
+
                     # Decrypt API key for executor
                     if isinstance(agent_config, dict) and "env" in agent_config:
                         if "api_key" in agent_config["env"]:
@@ -570,8 +608,6 @@ class ExecutorKindsService(
                                     )
                             else:
                                 # Fallback to public_models table (legacy)
-                                from app.models.public_model import PublicModel
-
                                 model_row = (
                                     db.query(PublicModel)
                                     .filter(PublicModel.name == model_name_to_use)
