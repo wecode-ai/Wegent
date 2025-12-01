@@ -672,7 +672,7 @@ netstat -tlnp
 ## 环境信息
 - OS: Ubuntu 22.04
 - Docker: 24.0.6
-- Wegent版本: v1.0.0
+- Wegent版本: v1.0.13
 
 ## 问题描述
 简要描述问题...

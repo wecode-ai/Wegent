@@ -523,7 +523,7 @@ When creating an Issue, include:
 ## Environment
 - OS: Ubuntu 22.04
 - Docker: 24.0.6
-- Wegent Version: v1.0.0
+- Wegent Version: v1.0.13
 
 ## Problem Description
 Brief description...
