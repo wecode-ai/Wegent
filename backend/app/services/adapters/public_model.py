@@ -23,13 +23,20 @@ class ModelAdapter:
     """
 
     @staticmethod
-    def to_model_dict(public_model: PublicModel) -> Dict[str, Any]:
+    def to_model_dict(public_model: PublicModel, include_config: bool = False) -> Dict[str, Any]:
         """
-        Convert PublicModel to Model-like dictionary
+        Convert PublicModel to Model-like dictionary.
+
+        Args:
+            public_model: PublicModel instance to convert
+            include_config: If False (default), excludes sensitive config data for security
+
+        Returns:
+            Dictionary representation without sensitive config information
         """
-        # Extract config from json.spec.modelConfig
+        # Extract config from json.spec.modelConfig but don't return it by default
         config = {}
-        if isinstance(public_model.json, dict):
+        if include_config and isinstance(public_model.json, dict):
             model_crd = Model.model_validate(public_model.json)
             config = model_crd.spec.modelConfig
 

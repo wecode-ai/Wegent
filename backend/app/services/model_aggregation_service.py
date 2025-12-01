@@ -87,9 +87,16 @@ class UnifiedModel:
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
-        """Convert to full dictionary including config"""
+        """
+        Convert to full dictionary including config.
+
+        For security reasons, config is never included for public models
+        to prevent exposing sensitive API keys and configuration.
+        """
         result = self.to_dict()
-        result["config"] = self.config
+        # Only include config for user models, not public models
+        if self.type == ModelType.USER:
+            result["config"] = self.config
         result["isActive"] = self.is_active
         return result
 
@@ -328,7 +335,7 @@ class ModelAggregationService:
                 display_name=None,  # Public models don't have displayName in current schema
                 provider=provider,
                 model_id=model_id,
-                config=config if include_config else {},
+                config={},  # Never include config for public models for security
                 is_active=model_dict.get("is_active", True),
             )
 
@@ -397,8 +404,7 @@ class ModelAggregationService:
 
             for model_dict in public_models:
                 if model_dict.get("name") == name:
-                    config = model_dict.get("config", {})
-                    env = config.get("env", {}) if isinstance(config, dict) else {}
+                    env = model_dict.get("config", {}).get("env", {}) if isinstance(model_dict.get("config"), dict) else {}
 
                     return UnifiedModel(
                         name=model_dict.get("name", ""),
@@ -406,7 +412,7 @@ class ModelAggregationService:
                         display_name=None,
                         provider=env.get("model") if isinstance(env, dict) else None,
                         model_id=env.get("model_id") if isinstance(env, dict) else None,
-                        config=config,
+                        config={},  # Never include config for public models for security
                         is_active=model_dict.get("is_active", True),
                     ).to_full_dict()
 
