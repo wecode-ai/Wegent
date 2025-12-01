@@ -510,7 +510,6 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 db.query(Kind)
                 .filter(
                     Kind.id == team_id,
-                    Kind.user_id == user_id,
                     Kind.kind == "Team",
                     Kind.is_active == True,
                 )
