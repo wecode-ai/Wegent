@@ -493,6 +493,41 @@ class ExecutorKindsService(
                 # Model resolution logic with support for bind_model and task-level override
                 try:
                     if isinstance(agent_config, dict):
+                        # 0. Check for private_model in agent_config (legacy compatibility)
+                        private_model_name = agent_config.get("private_model")
+                        if isinstance(private_model_name, str) and private_model_name.strip():
+                            try:
+                                from app.models.public_model import PublicModel
+
+                                private_model = (
+                                    db.query(PublicModel)
+                                    .filter(
+                                        PublicModel.name == private_model_name.strip(),
+                                        PublicModel.is_active == True,
+                                    )
+                                    .first()
+                                )
+
+                                if private_model and private_model.json:
+                                    private_model_config = private_model.json.get("spec", {}).get("modelConfig", {})
+                                    if isinstance(private_model_config, dict):
+                                        # Decrypt API key for executor
+                                        if (
+                                            "env" in private_model_config
+                                            and "api_key" in private_model_config["env"]
+                                        ):
+                                            private_model_config["env"]["api_key"] = decrypt_api_key(
+                                                private_model_config["env"]["api_key"]
+                                            )
+                                        agent_config_data = private_model_config
+                                        logger.info(
+                                            f"Successfully loaded legacy private_model config: {private_model_name.strip()}"
+                                        )
+                            except Exception as e:
+                                logger.warning(
+                                    f"Failed to load legacy private_model '{private_model_name}': {e}"
+                                )
+
                         # 1. Get Task-level model information
                         task_model_name = None
                         force_override = False
