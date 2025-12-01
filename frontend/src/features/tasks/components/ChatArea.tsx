@@ -9,6 +9,7 @@ import { Send, CircleStop } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
+import TeamShowcase from './TeamShowcase';
 import ModelSelector, { Model, DEFAULT_MODEL_NAME } from './ModelSelector';
 import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
@@ -617,6 +618,9 @@ export default function ChatArea({
                     </>
                   )}
                 </div>
+
+                {/* Team Showcase - Recommended and Favorites */}
+                <TeamShowcase onSelectTeam={handleTeamChange} />
               </div>
             </div>
           </div>

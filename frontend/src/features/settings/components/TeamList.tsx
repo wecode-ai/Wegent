@@ -7,8 +7,8 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import '@/features/common/scrollbar.css';
-import { AiOutlineTeam } from 'react-icons/ai';
 import { RiRobot2Line } from 'react-icons/ri';
+import * as LucideIcons from 'lucide-react';
 import LoadingState from '@/features/common/LoadingState';
 import {
   PencilIcon,
@@ -16,9 +16,11 @@ import {
   DocumentDuplicateIcon,
   ChatBubbleLeftEllipsisIcon,
   ShareIcon,
+  StarIcon,
 } from '@heroicons/react/24/outline';
+import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid';
 import { Bot, Team } from '@/types/api';
-import { fetchTeamsList, deleteTeam, shareTeam } from '../services/teams';
+import { fetchTeamsList, deleteTeam, shareTeam, toggleTeamFavorite } from '../services/teams';
 import { fetchBotsList } from '../services/bots';
 import TeamEdit from './TeamEdit';
 import BotList from './BotList';
@@ -55,6 +57,7 @@ export default function TeamList() {
   const [shareData, setShareData] = useState<{ teamName: string; shareUrl: string } | null>(null);
   const [sharingId, setSharingId] = useState<number | null>(null);
   const [_deletingId, setDeletingId] = useState<number | null>(null);
+  const [togglingFavoriteId, setTogglingFavoriteId] = useState<number | null>(null);
   const [botListVisible, setBotListVisible] = useState(false);
   const router = useRouter();
   const isEditing = editingTeamId !== null;
@@ -207,6 +210,27 @@ export default function TeamList() {
     return !team.share_status || team.share_status === 0 || team.share_status === 1; // Personal teams (no share_status or share_status=0) show share button
   };
 
+  // Handle toggle favorite
+  const handleToggleFavorite = async (team: Team) => {
+    if (togglingFavoriteId === team.id) return;
+
+    setTogglingFavoriteId(team.id);
+    try {
+      const result = await toggleTeamFavorite(team.id, team.is_favorited || false);
+      // Update team's favorite status in the list
+      setTeamsSorted(prev =>
+        prev.map(t => (t.id === team.id ? { ...t, is_favorited: result.is_favorited } : t))
+      );
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('teams.favorite_failed'),
+      });
+    } finally {
+      setTogglingFavoriteId(null);
+    }
+  };
+
   return (
     <>
       <div className="space-y-3">
@@ -250,7 +274,29 @@ export default function TeamList() {
                         >
                           <div className="flex items-center justify-between min-w-0">
                             <div className="flex items-center space-x-3 min-w-0 flex-1">
-                              <AiOutlineTeam className="w-5 h-5 text-primary flex-shrink-0" />
+                              {(() => {
+                                // Get the icon component dynamically
+                                const IconComponent = team.icon
+                                  ? (
+                                      LucideIcons as unknown as Record<
+                                        string,
+                                        React.ComponentType<{ className?: string }>
+                                      >
+                                    )[team.icon]
+                                  : null;
+                                // Get first letter for default avatar
+                                const firstLetter = team.name.trim().charAt(0).toUpperCase() || 'T';
+
+                                return (
+                                  <div className="flex-shrink-0 w-10 h-10 rounded-lg flex items-center justify-center bg-primary/10 text-primary">
+                                    {IconComponent ? (
+                                      <IconComponent className="w-5 h-5" />
+                                    ) : (
+                                      <span className="text-lg font-semibold">{firstLetter}</span>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                               <div className="flex flex-col justify-center min-w-0 flex-1">
                                 <div className="flex items-center space-x-2 min-w-0">
                                   <h3 className="text-base font-medium text-text-primary mb-0 truncate">
@@ -286,6 +332,24 @@ export default function TeamList() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => handleToggleFavorite(team)}
+                                title={
+                                  team.is_favorited
+                                    ? t('teams.remove_favorite')
+                                    : t('teams.add_favorite')
+                                }
+                                className="h-8 w-8"
+                                disabled={togglingFavoriteId === team.id}
+                              >
+                                {team.is_favorited ? (
+                                  <StarIconSolid className="w-4 h-4 text-primary" />
+                                ) : (
+                                  <StarIcon className="w-4 h-4" />
+                                )}
+                              </Button>
                               <Button
                                 variant="ghost"
                                 size="icon"

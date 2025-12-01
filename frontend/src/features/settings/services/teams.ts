@@ -40,3 +40,17 @@ export async function updateTeam(teamId: number, teamData: CreateTeamRequest): P
 export async function shareTeam(teamId: number): Promise<TeamShareResponse> {
   return await teamApis.shareTeam(teamId);
 }
+
+/**
+ * Toggle team favorite status
+ */
+export async function toggleTeamFavorite(
+  teamId: number,
+  isFavorited: boolean
+): Promise<{ message: string; is_favorited: boolean }> {
+  if (isFavorited) {
+    return await teamApis.removeTeamFromFavorites(teamId);
+  } else {
+    return await teamApis.addTeamToFavorites(teamId);
+  }
+}
