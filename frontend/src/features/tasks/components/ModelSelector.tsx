@@ -32,6 +32,7 @@ export interface Model {
   name: string;
   provider: string; // 'openai' | 'claude'
   modelId: string;
+  displayName?: string | null; // Human-readable display name
   type?: ModelTypeEnum; // 'public' | 'user' - identifies model source
 }
 
@@ -67,12 +68,19 @@ function unifiedToModel(unified: UnifiedModel): Model {
     name: unified.name,
     provider: unified.provider || 'claude',
     modelId: unified.modelId || '',
+    displayName: unified.displayName,
     type: unified.type,
   };
 }
 
+// Helper function to get display text for a model: displayName(modelId) or name(modelId)
+function getModelDisplayText(model: Model): string {
+  return model.displayName ? `${model.displayName}(${model.name})` : model.name;
+}
+
 // Helper function to check if all bots in a team have predefined models
-function allBotsHavePredefinedModel(team: TeamWithBotDetails | null): boolean {
+// Exported for use in ChatArea to determine if model selection is required
+export function allBotsHavePredefinedModel(team: TeamWithBotDetails | null): boolean {
   if (!team || !team.bots || team.bots.length === 0) {
     return false;
   }
@@ -169,9 +177,36 @@ export default function ModelSelector({
     fetchModels();
   }, [fetchModels]);
 
-  // Restore last selected model from localStorage or set default
+  // Track previous team ID to detect team changes and re-validate model selection
+  const prevTeamIdRef = React.useRef<number | null>(null);
+
+  // Re-validate model selection when team changes
   useEffect(() => {
-    // When team changes or all bots have predefined models, auto-select default
+    const currentTeamId = selectedTeam?.id ?? null;
+    const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId;
+    prevTeamIdRef.current = currentTeamId;
+
+    if (!teamChanged) return;
+
+    // Team changed - re-validate model selection based on new team's showDefaultOption
+    if (showDefaultOption) {
+      // New team supports default option, set to default
+      if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
+        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      }
+    } else {
+      // New team does NOT support default option, clear model selection
+      // User must re-select a compatible model
+      setSelectedModel(null);
+    }
+  }, [selectedTeam?.id, showDefaultOption, selectedModel, setSelectedModel]);
+
+  // Restore last selected model from localStorage or set default (only on initial load)
+  useEffect(() => {
+    // Skip if team has changed (handled by the above effect)
+    // This effect only handles initial load and model list changes
+
+    // When all bots have predefined models, auto-select default
     if (showDefaultOption) {
       // If all bots have predefined models, auto-select "Default"
       if (!selectedModel || selectedModel.name !== DEFAULT_MODEL_NAME) {
@@ -254,18 +289,29 @@ export default function ModelSelector({
   // Determine if selector should be disabled
   const isDisabled = disabled || externalLoading || isLoading || isMixedTeam;
 
+  // Check if model selection is required (for legacy teams without predefined models)
+  const isModelRequired = !showDefaultOption && !selectedModel;
+
   // Get display text for trigger
   const getTriggerDisplayText = () => {
     if (!selectedModel) {
-      return isLoading ? t('actions.loading') : t('task_submit.select_model', '选择模型');
+      if (isLoading) {
+        return t('actions.loading');
+      }
+      // Show required hint for legacy teams without predefined models
+      if (isModelRequired) {
+        return t('task_submit.model_required', '请选择模型');
+      }
+      return t('task_submit.select_model', '选择模型');
     }
     if (selectedModel.name === DEFAULT_MODEL_NAME) {
       return t('task_submit.default_model', '默认');
     }
+    const displayText = getModelDisplayText(selectedModel);
     if (forceOverride && !isMixedTeam) {
-      return `${selectedModel.name}(${t('task_submit.override_short', '覆盖')})`;
+      return `${displayText}(${t('task_submit.override_short', '覆盖')})`;
     }
-    return selectedModel.name;
+    return displayText;
   };
 
   return (
@@ -276,7 +322,7 @@ export default function ModelSelector({
         style={{ maxWidth: isMobile ? 140 : 180, minWidth: isMobile ? 50 : 70 }}
       >
         <CpuChipIcon
-          className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading || externalLoading ? 'animate-pulse' : ''}`}
+          className={`w-3 h-3 flex-shrink-0 ml-1 ${isModelRequired ? 'text-error' : 'text-text-muted'} ${isLoading || externalLoading ? 'animate-pulse' : ''}`}
         />
         <div className="relative min-w-0 flex-1">
           <Popover open={isOpen} onOpenChange={setIsOpen}>
@@ -288,7 +334,8 @@ export default function ModelSelector({
                 disabled={isDisabled}
                 className={cn(
                   'flex h-9 w-full min-w-0 items-center justify-between rounded-lg text-left',
-                  'bg-transparent px-0 text-xs text-text-muted',
+                  'bg-transparent px-0 text-xs',
+                  isModelRequired ? 'text-error' : 'text-text-muted',
                   'hover:bg-transparent transition-colors',
                   'focus:outline-none focus:ring-0',
                   'disabled:cursor-not-allowed disabled:opacity-50'
@@ -370,7 +417,7 @@ export default function ModelSelector({
                         {filteredModels.map(model => (
                           <CommandItem
                             key={getModelKey(model)}
-                            value={`${model.name} ${model.provider} ${model.modelId} ${model.type}`}
+                            value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
                             onSelect={() => handleModelSelect(getModelKey(model))}
                             className={cn(
                               'group cursor-pointer select-none',
@@ -396,9 +443,9 @@ export default function ModelSelector({
                                 <div className="flex items-center gap-1.5">
                                   <span
                                     className="font-medium text-xs text-text-secondary truncate"
-                                    title={model.name}
+                                    title={getModelDisplayText(model)}
                                   >
-                                    {model.name}
+                                    {getModelDisplayText(model)}
                                   </span>
                                   {model.type === 'public' && (
                                     <Tag variant="info" className="text-[10px]">
@@ -406,12 +453,14 @@ export default function ModelSelector({
                                     </Tag>
                                   )}
                                 </div>
-                                <span
-                                  className="text-[10px] text-text-muted truncate mt-0.5"
-                                  title={model.modelId}
-                                >
-                                  {model.modelId}
-                                </span>
+                                {model.modelId && (
+                                  <span
+                                    className="text-[10px] text-text-muted truncate"
+                                    title={model.modelId}
+                                  >
+                                    {model.modelId}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </CommandItem>
