@@ -262,7 +262,9 @@ async def cli_oidc_login_init(request: CLILoginInitRequest):
 
     except Exception as e:
         logger.error(f"CLI OIDC login init failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Failed to initialize OIDC login: {e}")
+        raise HTTPException(
+            status_code=500, detail=f"Failed to initialize OIDC login: {e}"
+        )
 
 
 @router.get("/cli-callback")
@@ -371,7 +373,11 @@ async def cli_oidc_callback(
         # Store token in Redis session
         await cache_manager.set(
             session_key,
-            {"status": "success", "access_token": jwt_token, "username": user.user_name},
+            {
+                "status": "success",
+                "access_token": jwt_token,
+                "username": user.user_name,
+            },
             expire=CLI_SESSION_EXPIRE_SECONDS,
         )
 
