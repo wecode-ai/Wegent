@@ -84,3 +84,32 @@ class UserInfo(BaseModel):
 
     id: int
     user_name: str
+
+
+class UserAuthTypeResponse(BaseModel):
+    """Response model for user authentication type query"""
+
+    exists: bool
+    auth_source: Optional[str] = None
+
+
+class CLILoginInitRequest(BaseModel):
+    """Request model for CLI OIDC login initialization"""
+
+    session_id: str
+
+
+class CLILoginInitResponse(BaseModel):
+    """Response model for CLI OIDC login initialization"""
+
+    auth_url: str
+    session_id: str
+
+
+class CLIPollResponse(BaseModel):
+    """Response model for CLI polling"""
+
+    status: str  # pending, success, failed
+    access_token: Optional[str] = None
+    username: Optional[str] = None
+    error: Optional[str] = None

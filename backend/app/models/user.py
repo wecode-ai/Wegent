@@ -20,6 +20,8 @@ class User(Base):
     email = Column(String(100))
     git_info = Column(JSON)
     is_active = Column(Boolean, default=True)
+    # Authentication source: password, oidc, or unknown (for existing users)
+    auth_source = Column(String(20), nullable=False, default="unknown")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
