@@ -387,7 +387,7 @@ export default function TaskListSection({
               <Tooltip delayDuration={500}>
                 <TooltipTrigger asChild>
                   <div
-                    className={`flex items-center gap-2.5 py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
+                    className={`flex items-start gap-2.5 py-2 px-2 rounded hover:bg-hover cursor-pointer ${selectedTaskDetail?.id === task.id ? 'bg-hover' : ''}`}
                     onClick={() => handleTaskClick(task)}
                     onTouchStart={handleTouchStart(task)}
                     onTouchMove={handleTouchMove}
@@ -401,26 +401,26 @@ export default function TaskListSection({
                       userSelect: 'none',
                     }}
                   >
-                    <div className="flex-shrink-0 relative">
-                      <div className="w-4 h-4 flex items-center justify-center">
-                        {getStatusIcon(task.status)}
-                      </div>
-                      {isTaskUnread(task) && (
-                        <span
-                          className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
-                        />
-                      )}
-                    </div>
-
                     <div className="flex-1 min-w-0 flex flex-col gap-1">
                       <p className="text-sm text-text-primary leading-tight truncate m-0">
                         {task.title}
                       </p>
 
-                      <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="flex-shrink-0 relative">
+                          <div className="w-4 h-4 flex items-center justify-center">
+                            {getStatusIcon(task.status)}
+                          </div>
+                          {isTaskUnread(task) && (
+                            <span
+                              className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                            />
+                          )}
+                        </div>
                         <span className="text-xs text-text-muted">
                           {formatTimeAgo(task.created_at)}
                         </span>
+                        <div className="flex-1" />
                         {getTaskTypeIcon(task)}
                       </div>
                     </div>
