@@ -409,7 +409,9 @@ class ExecutorKindsService(
                 )
 
                 # Get model for agent config (modelRef is optional)
+                # Try to find in kinds table (user's private models) first, then public_models table
                 model = None
+                model_from_public = False
                 if bot_crd.spec.modelRef:
                     model = (
                         db.query(Kind)
@@ -422,6 +424,27 @@ class ExecutorKindsService(
                         )
                         .first()
                     )
+
+                    # If not found in kinds table, try public_models table
+                    if not model:
+                        from app.models.public_model import PublicModel
+
+                        public_model = (
+                            db.query(PublicModel)
+                            .filter(
+                                PublicModel.name == bot_crd.spec.modelRef.name,
+                                PublicModel.namespace
+                                == bot_crd.spec.modelRef.namespace,
+                                PublicModel.is_active == True,
+                            )
+                            .first()
+                        )
+                        if public_model:
+                            model = public_model
+                            model_from_public = True
+                            logger.info(
+                                f"Found model '{bot_crd.spec.modelRef.name}' in public_models table for bot {bot.name}"
+                            )
 
                 # Extract data from components
                 system_prompt = ""
