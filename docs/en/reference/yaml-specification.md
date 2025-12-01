@@ -214,7 +214,7 @@ spec:
 |---------|-------------|
 | `ClaudeCode` | Claude Code runtime |
 | `Agno` | Agno runtime |
-| `Dify` | Dify runtime (planned) |
+| `Dify` | Dify runtime |
 
 ---
 
