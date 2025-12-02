@@ -46,6 +46,9 @@ class Settings(BaseSettings):
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
 
+    # Direct chat configuration
+    MAX_CONCURRENT_DIRECT_CHATS: int = 50  # Maximum concurrent direct chat sessions
+
     # Task append expiration (hours)
     APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
     APPEND_CODE_TASK_EXPIRE_HOURS: int = 24

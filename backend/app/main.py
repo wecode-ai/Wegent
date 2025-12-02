@@ -24,6 +24,7 @@ from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
 from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
+from app.services.direct_chat import close_http_client
 from app.services.jobs import start_background_jobs, stop_background_jobs
 
 
@@ -199,8 +200,11 @@ def create_app():
         logger.info("=" * 60)
 
     @app.on_event("shutdown")
-    def shutdown():
+    async def shutdown():
         logger.info("Shutting down application...")
+        # Close direct chat HTTP client
+        await close_http_client()
+        logger.info("✓ Direct chat HTTP client closed")
         # Stop background jobs
         stop_background_jobs(app)
         logger.info("✓ Application shutdown completed")

@@ -7,6 +7,7 @@ from app.api.endpoints.adapter import (
     agents,
     bots,
     dify,
+    direct_chat,
     executors,
     models,
     shells,
@@ -30,4 +31,5 @@ api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(executors.router, prefix="/executors", tags=["executors"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
 api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
+api_router.include_router(direct_chat.router, prefix="/direct-chat", tags=["direct-chat"])
 api_router.include_router(k_router)

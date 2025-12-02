@@ -21,10 +21,14 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
 from app.schemas.task import TaskCreate, TaskDetail, TaskInDB, TaskStatus, TaskUpdate
 from app.services.adapters.executor_kinds import executor_kinds_service
+from app.services.adapters.shell_utils import get_shell_info_by_name
 from app.services.adapters.team_kinds import team_kinds_service
 from app.services.base import BaseService
 
 logger = logging.getLogger(__name__)
+
+# Shell types that support direct chat mode (no Docker container needed)
+DIRECT_CHAT_SHELL_TYPES = ["Chat", "Dify"]
 
 
 class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
@@ -1533,6 +1537,78 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "updated_at": related_data.get("updated_at", task.updated_at),
             "completed_at": related_data.get("completed_at"),
         }
+
+    def check_team_supports_direct_chat(
+        self, db: Session, team: Kind, user_id: int
+    ) -> bool:
+        """
+        Check if all bots in a team support direct chat mode.
+
+        Direct chat mode is supported when ALL bots in the team use
+        shell types that don't require Docker containers (Chat or Dify).
+
+        Args:
+            db: Database session
+            team: Team Kind object
+            user_id: User ID
+
+        Returns:
+            bool: True if all bots support direct chat
+        """
+        team_crd = Team.model_validate(team.json)
+
+        if not team_crd.spec.members:
+            return False
+
+        for member in team_crd.spec.members:
+            # Find bot in kinds table
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == team.user_id,
+                    Kind.kind == "Bot",
+                    Kind.name == member.botRef.name,
+                    Kind.namespace == member.botRef.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if not bot:
+                logger.warning(
+                    f"Bot {member.botRef.name} not found for direct chat check"
+                )
+                return False
+
+            bot_crd = Bot.model_validate(bot.json)
+
+            # Get shell type
+            try:
+                shell_info = get_shell_info_by_name(
+                    db,
+                    bot_crd.spec.shellRef.name,
+                    bot.user_id,
+                    bot_crd.spec.shellRef.namespace,
+                )
+                shell_type = shell_info["shell_type"]
+
+                if shell_type not in DIRECT_CHAT_SHELL_TYPES:
+                    logger.debug(
+                        f"Bot {bot.name} uses shell type '{shell_type}' "
+                        f"which does not support direct chat"
+                    )
+                    return False
+            except Exception as e:
+                logger.warning(
+                    f"Error getting shell info for bot {bot.name}: {e}"
+                )
+                return False
+
+        logger.info(
+            f"Team {team.name} supports direct chat mode "
+            f"(all {len(team_crd.spec.members)} bots use direct chat shells)"
+        )
+        return True
 
 
 task_kinds_service = TaskKindsService(Kind)
