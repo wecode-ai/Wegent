@@ -130,8 +130,28 @@ class ModelAggregationService:
             if not isinstance(env, dict):
                 env = {}
 
+            # Get provider from env.model
+            provider = env.get("model")
+
+            # If provider is not explicitly set, try to infer from model_id or other env variables
+            if not provider:
+                model_id = env.get("model_id", "")
+
+                # Check for Anthropic-specific environment variables
+                if any(key.startswith("ANTHROPIC_") for key in env.keys()):
+                    provider = "claude"
+                # Check for OpenAI-specific environment variables
+                elif any(key.startswith("OPENAI_") for key in env.keys()):
+                    provider = "openai"
+                # Infer from model_id patterns (claude-*, gpt-*)
+                elif isinstance(model_id, str):
+                    if "claude" in model_id.lower() or "anthropic" in model_id.lower():
+                        provider = "claude"
+                    elif "gpt" in model_id.lower() or "openai" in model_id.lower():
+                        provider = "openai"
+
             return {
-                "provider": env.get("model"),
+                "provider": provider,
                 "model_id": env.get("model_id"),
                 "display_name": model_crd.metadata.displayName,
                 "config": model_crd.spec.modelConfig,
@@ -318,8 +338,24 @@ class ModelAggregationService:
             config = model_dict.get("config", {})
             env = config.get("env", {}) if isinstance(config, dict) else {}
 
+            # Get provider from env.model
             provider = env.get("model") if isinstance(env, dict) else None
             model_id = env.get("model_id") if isinstance(env, dict) else None
+
+            # If provider is not explicitly set, try to infer it
+            if not provider and isinstance(env, dict):
+                # Check for Anthropic-specific environment variables
+                if any(key.startswith("ANTHROPIC_") for key in env.keys()):
+                    provider = "claude"
+                # Check for OpenAI-specific environment variables
+                elif any(key.startswith("OPENAI_") for key in env.keys()):
+                    provider = "openai"
+                # Infer from model_id patterns (claude-*, gpt-*)
+                elif isinstance(model_id, str):
+                    if "claude" in model_id.lower() or "anthropic" in model_id.lower():
+                        provider = "claude"
+                    elif "gpt" in model_id.lower() or "openai" in model_id.lower():
+                        provider = "openai"
 
             # Filter by shell compatibility if shell_type is provided
             if shell_type and not self._is_model_compatible_with_shell(
@@ -405,12 +441,31 @@ class ModelAggregationService:
                     config = model_dict.get("config", {})
                     env = config.get("env", {}) if isinstance(config, dict) else {}
 
+                    # Get provider from env.model
+                    provider = env.get("model") if isinstance(env, dict) else None
+                    model_id = env.get("model_id") if isinstance(env, dict) else None
+
+                    # If provider is not explicitly set, try to infer it
+                    if not provider and isinstance(env, dict):
+                        # Check for Anthropic-specific environment variables
+                        if any(key.startswith("ANTHROPIC_") for key in env.keys()):
+                            provider = "claude"
+                        # Check for OpenAI-specific environment variables
+                        elif any(key.startswith("OPENAI_") for key in env.keys()):
+                            provider = "openai"
+                        # Infer from model_id patterns (claude-*, gpt-*)
+                        elif isinstance(model_id, str):
+                            if "claude" in model_id.lower() or "anthropic" in model_id.lower():
+                                provider = "claude"
+                            elif "gpt" in model_id.lower() or "openai" in model_id.lower():
+                                provider = "openai"
+
                     return UnifiedModel(
                         name=model_dict.get("name", ""),
                         model_type=ModelType.PUBLIC,
                         display_name=None,
-                        provider=env.get("model") if isinstance(env, dict) else None,
-                        model_id=env.get("model_id") if isinstance(env, dict) else None,
+                        provider=provider,
+                        model_id=model_id,
                         config=config,
                         is_active=model_dict.get("is_active", True),
                     ).to_full_dict()
