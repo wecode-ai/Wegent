@@ -69,7 +69,7 @@ def post_create_claude_model_hook(
                     "hooks": [
                         {
                             "type": "command",
-                            "command": "/app/scripts/file_change_sender.py"
+                            "command": "/app/scripts/file_change_sender"
                         }
                     ]
                 }

@@ -40,6 +40,18 @@ hiddenimports += collect_submodules('pymysql')
 if os.path.exists(shared_path):
     hiddenimports += collect_submodules('shared')
 
+# Collect executor.wecode submodules (WeCode-specific extensions)
+hiddenimports += collect_submodules('executor.wecode')
+
+# Explicitly add executor.wecode modules for PyInstaller
+hiddenimports += [
+    'executor.wecode',
+    'executor.wecode.api',
+    'executor.wecode.api.claude_hooks',
+    'executor.wecode.config',
+    'executor.wecode.config.config',
+]
+
 # Additional hidden imports
 hiddenimports += [
     'uvicorn.logging',

@@ -27,8 +27,19 @@ RUN pip install -r /app/executor/requirements.txt
 COPY executor /app/executor
 COPY shared /app/shared
 
-# Build standalone binary
+# Copy file_change_sender.py and its spec file for separate compilation
+COPY file_change_sender.py /app/file_change_sender.py
+COPY file_change_sender.spec /app/file_change_sender.spec
+
+# Build standalone binaries
 RUN cd /app/executor && bash build.sh
+
+# Build file_change_sender binary
+RUN cd /app && \
+    pip install pyinstaller && \
+    pyinstaller file_change_sender.spec --clean && \
+    echo "file_change_sender binary built successfully" && \
+    ls -lh /app/dist/file_change_sender
 
 # Runtime stage: minimal image with only the binary
 FROM registry.api.weibo.com/ci/wegent-runtime:0.0.2-add-go
@@ -44,12 +55,12 @@ RUN npm update -g @anthropic-ai/claude-code
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENV CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY="false"
 
-# Copy only the standalone binary from builder
+# Copy standalone binaries from builder
 COPY --from=builder /app/executor/dist/executor /app/executor
+COPY --from=builder /app/dist/file_change_sender /app/scripts/file_change_sender
 
-# Copy WeCode specific files
+# Copy WeCode specific config files
 COPY claude_hooks.json /app/config/claude_hooks.json
-COPY file_change_sender.py /app/scripts/file_change_sender.py
 
 ENV PORT=10001
 ENV PYTHONPATH=/app

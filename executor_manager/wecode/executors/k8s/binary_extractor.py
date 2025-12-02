@@ -18,7 +18,7 @@ from shared.logger import setup_logger
 logger = setup_logger(__name__)
 
 # Constants for K8s InitContainer
-EXECUTOR_BINARY_PATH = "/app/executor"
+EXECUTOR_APP_DIR = "/app"
 INIT_CONTAINER_MOUNT_PATH = "/shared"
 MAIN_CONTAINER_MOUNT_PATH = "/app"
 
@@ -27,7 +27,8 @@ def get_init_container_config(executor_image: str) -> dict:
     """
     Get InitContainer configuration for extracting executor binary.
 
-    In K8s, we use an InitContainer to copy the executor binary from the
+    In K8s, we use an InitContainer to copy the entire /app directory
+    (including executor binary, config files, and scripts) from the
     official image to a shared emptyDir volume. The main container then
     mounts this volume and executes the binary.
 
@@ -47,7 +48,7 @@ def get_init_container_config(executor_image: str) -> dict:
         "command": [
             "sh",
             "-c",
-            f"cp {EXECUTOR_BINARY_PATH} {INIT_CONTAINER_MOUNT_PATH}/executor && chmod +x {INIT_CONTAINER_MOUNT_PATH}/executor"
+            f"cp -r {EXECUTOR_APP_DIR}/* {INIT_CONTAINER_MOUNT_PATH}/ && chmod +x {INIT_CONTAINER_MOUNT_PATH}/executor"
         ],
         "volumeMounts": [
             {
