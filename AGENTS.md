@@ -27,7 +27,7 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 - **Backend** (FastAPI + SQLAlchemy + MySQL): RESTful API and business logic
 - **Frontend** (Next.js 15 + TypeScript + React 19): Web UI with shadcn/ui components
 - **Executor**: Task execution engine (Claude Code, Agno, Dify)
-- **Executor Manager**: Task orchestration via Docker
+- **Executor Manager**: Task orchestration via Docker or Kubernetes
 - **Shared**: Common utilities and models
 
 **Core principles:**
@@ -581,9 +581,31 @@ alembic upgrade head --sql
 
 ### Executor Manager
 
-**Tech:** Python, Docker SDK, FastAPI
+**Tech:** Python, Docker SDK, Kubernetes Client, FastAPI
 
-**Environment:** `TASK_API_DOMAIN`, `EXECUTOR_IMAGE`, `MAX_CONCURRENT_TASKS`, `NETWORK`
+**Deployment Modes:**
+- **Docker Mode**: Uses Docker SDK to manage containers locally
+- **Kubernetes Mode**: Uses Kubernetes API to manage pods in a cluster
+
+**Common tasks:**
+- Add executor type: Implement in `executors/`
+- Modify orchestration: Update `scheduler/`
+
+**Environment Variables:**
+- General: `TASK_API_DOMAIN`, `EXECUTOR_IMAGE`, `MAX_CONCURRENT_TASKS`
+- Docker Mode: `NETWORK`, `EXECUTOR_WORKSPACE`
+- K8s Mode: `K8S_NAMESPACE`, `EXECUTOR_DEFAULT_MAGE`
+
+**Base Image Support:**
+
+Both Docker and Kubernetes modes support custom base images via bot configuration:
+- **Docker**: Uses Named Volume pattern - mounts executor binary from shared volume
+- **Kubernetes**: Uses InitContainer pattern - copies executor binary to shared emptyDir volume
+
+When `base_image` is specified in bot configuration:
+1. InitContainer/Volume setup copies executor binary from official image
+2. Main container uses custom base image and runs the copied binary
+3. Enables users to validate and use their own base images while maintaining executor compatibility
 
 ---
 

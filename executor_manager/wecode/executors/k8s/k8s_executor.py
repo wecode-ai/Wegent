@@ -82,6 +82,9 @@ class K8sExecutor(Executor):
         user_config = task.get("user") or {}
         user_name = user_config.get("name", "unknown")
 
+        # Check if this is a validation task
+        is_validation_task = task.get("type") == "validation"
+
         status = "success"
         progress = 30
         error_msg = ""
@@ -120,7 +123,14 @@ class K8sExecutor(Executor):
                     )
                     callback_status = TaskStatus.FAILED.value
                 else:
-                    # Need to mount the internal git_token to the pod via secret 
+                    # Extract base_image from bot configuration (if available)
+                    base_image = self._get_base_image_from_task(task)
+
+                    # Log base_image usage
+                    if base_image:
+                        logger.info(f"Using custom base image: {base_image} with InitContainer pattern")
+
+                    # Need to mount the internal git_token to the pod via secret
                     pod = build_pod_configuration(
                         user_name,
                         executor_name,
@@ -143,6 +153,10 @@ class K8sExecutor(Executor):
                             "error_msg", "Kubernetes pod creation failed"
                         )
                         callback_status = TaskStatus.FAILED.value
+
+                        # For validation tasks, report failure
+                        if is_validation_task:
+                            self._report_validation_failure(task, "starting_container", error_msg)
             except ApiException as e:
                 logger.error(
                     f"Kubernetes API error creating pod for task {task_id}: {e}"
@@ -151,6 +165,10 @@ class K8sExecutor(Executor):
                 progress = 100
                 error_msg = f"Kubernetes API error: {e}"
                 callback_status = TaskStatus.FAILED.value
+
+                # For validation tasks, report failure
+                if is_validation_task:
+                    self._report_validation_failure(task, "starting_container", error_msg)
             except Exception as e:
                 logger.error(f"Error creating Kubernetes pod for task {task_id}: {e}")
                 status = "failed"
@@ -158,7 +176,12 @@ class K8sExecutor(Executor):
                 error_msg = f"Error: {e}"
                 callback_status = TaskStatus.FAILED.value
 
-        if callback:
+                # For validation tasks, report failure
+                if is_validation_task:
+                    self._report_validation_failure(task, "starting_container", error_msg)
+
+        # Call callback function only for regular tasks (not validation tasks)
+        if not is_validation_task and callback:
             try:
                 callback(
                     task_id=task_id,
@@ -457,3 +480,65 @@ class K8sExecutor(Executor):
                 "status": "failed",
                 "error_msg": f"Error cancelling task: {str(e)}"
             }
+
+    def _get_base_image_from_task(self, task: Dict[str, Any]) -> Optional[str]:
+        """
+        Extract custom base_image from task's bot configuration.
+
+        Args:
+            task: Task dictionary containing bot information
+
+        Returns:
+            Optional[str]: base_image if found, None otherwise
+        """
+        bots = task.get("bot", [])
+        if bots and isinstance(bots, list) and len(bots) > 0:
+            # Use the first bot's base_image if available
+            first_bot = bots[0]
+            if isinstance(first_bot, dict):
+                return first_bot.get("base_image")
+        return None
+
+    def _report_validation_failure(
+        self,
+        task: Dict[str, Any],
+        stage: str,
+        error_message: str
+    ) -> None:
+        """
+        Report validation failure to backend.
+
+        Args:
+            task: Task data containing validation_params
+            stage: Current validation stage
+            error_message: Error message to report
+        """
+        import httpx
+
+        validation_params = task.get("validation_params", {})
+        validation_id = validation_params.get("validation_id")
+
+        if not validation_id:
+            logger.debug("No validation_id in task, skipping failure report")
+            return
+
+        task_api_domain = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
+        update_url = f"{task_api_domain}/api/shells/validation-status/{validation_id}"
+
+        update_payload = {
+            "status": "completed",
+            "stage": stage,
+            "progress": 100,
+            "valid": False,
+            "errorMessage": error_message,
+        }
+
+        try:
+            with httpx.Client(timeout=10.0) as client:
+                response = client.post(update_url, json=update_payload)
+                if response.status_code == 200:
+                    logger.info(f"Reported validation failure: {validation_id} -> {stage}")
+                else:
+                    logger.warning(f"Failed to report validation failure: {response.status_code} {response.text}")
+        except Exception as e:
+            logger.error(f"Error reporting validation failure: {e}")

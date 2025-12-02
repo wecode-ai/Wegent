@@ -24,10 +24,17 @@ metadata:
     krs.weibo.com/type: "online"
     admission-webhook.kubus.weibo.com/pod-global-injector-v2: "enabled"
 spec:
+  {% if init_container %}
+  initContainers:
+    - {{ init_container | to_nice_yaml | indent(6) }}
+  {% endif %}
   containers:
     - name: {{ executor_name }}
       image: {{ image }}
       imagePullPolicy: Always
+      {% if container_entrypoint %}
+      command: ["{{ container_entrypoint }}"]
+      {% endif %}
       ports:
         - containerPort: 8080
           name: https
@@ -75,6 +82,10 @@ spec:
             fieldRef:
               apiVersion: v1
               fieldPath: status.podIP
+        {% if use_base_image %}
+        - name: USE_BASE_IMAGE
+          value: "true"
+        {% endif %}
       terminationMessagePath: /dev/termination-log
       terminationMessagePolicy: File
       volumeMounts:
@@ -139,3 +150,4 @@ spec:
     {{ volumes | to_nice_yaml | indent(4) }}
     {% endif %}
   restartPolicy: OnFailure
+
