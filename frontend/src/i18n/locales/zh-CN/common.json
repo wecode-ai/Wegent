@@ -596,6 +596,11 @@
       "base_image_and_shell_required": "验证需要同时填写 Base Image 和基础 Shell",
       "base_shell_not_found": "未找到所选基础 Shell",
       "image_not_compatible": "镜像与所选 Shell 类型不兼容"
-    }
+    },
+    "software_requirements_title": "软件版本要求",
+    "software_requirements_hint": "以下软件需要在您的 Base Image 中预先安装并满足最低版本要求",
+    "required": "必需",
+    "optional": "可选",
+    "copy_command": "复制命令"
   }
 }
