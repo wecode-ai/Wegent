@@ -42,7 +42,8 @@
     "chat": "聊天",
     "code": "编码",
     "settings": "设置",
-    "docs": "文档"
+    "docs": "文档",
+    "admin": "系统管理"
   },
   "sidebar": {
     "recent_visits": "最近访问",
