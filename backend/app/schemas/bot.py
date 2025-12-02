@@ -10,11 +10,11 @@ from pydantic import BaseModel
 from app.schemas.user import UserInDB
 
 
-class BotBase(BaseModel):
-    """Bot base model"""
+class BotCreate(BaseModel):
+    """Bot creation model - request schema"""
 
     name: str
-    agent_name: str
+    shell_name: str  # Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
@@ -22,17 +22,13 @@ class BotBase(BaseModel):
     is_active: bool = True
 
 
-class BotCreate(BotBase):
-    """Bot creation model"""
-
-    pass
-
-
 class BotUpdate(BaseModel):
-    """Bot update model"""
+    """Bot update model - request schema"""
 
     name: Optional[str] = None
-    agent_name: Optional[str] = None
+    shell_name: Optional[str] = (
+        None  # Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
+    )
     agent_config: Optional[dict[str, Any]] = None
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
@@ -40,11 +36,19 @@ class BotUpdate(BaseModel):
     is_active: Optional[bool] = None
 
 
-class BotInDB(BotBase):
-    """Database bot model"""
+class BotInDB(BaseModel):
+    """Database bot model - response schema"""
 
     id: int
     user_id: int
+    name: str
+    shell_name: str  # Shell name (the name user selected, e.g., 'ClaudeCode', 'my-custom-shell')
+    shell_type: str  # Actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
+    agent_config: dict[str, Any]
+    system_prompt: Optional[str] = None
+    mcp_servers: Optional[dict[str, Any]] = None
+    skills: Optional[List[str]] = None
+    is_active: bool = True
     created_at: datetime
     updated_at: datetime
 
@@ -57,7 +61,8 @@ class BotDetail(BaseModel):
 
     id: int
     name: str
-    agent_name: str
+    shell_name: str  # Shell name (the name user selected, e.g., 'ClaudeCode', 'my-custom-shell')
+    shell_type: str  # Actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
     agent_config: dict[str, Any]
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None

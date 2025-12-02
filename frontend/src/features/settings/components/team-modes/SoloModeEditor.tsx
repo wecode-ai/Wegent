@@ -190,7 +190,7 @@ export default function SoloModeEditor({
                   <RiRobot2Line className="w-4 h-4 text-text-muted flex-shrink-0" />
                   <span className="truncate">
                     {selectedBot.name}
-                    <span className="text-text-muted text-xs ml-1">({selectedBot.agent_name})</span>
+                    <span className="text-text-muted text-xs ml-1">({selectedBot.shell_type})</span>
                   </span>
                 </div>
               ) : (
@@ -221,11 +221,11 @@ export default function SoloModeEditor({
                           <TooltipTrigger asChild>
                             <span className="block truncate max-w-[200px]">
                               {b.name}{' '}
-                              <span className="text-text-muted text-xs">({b.agent_name})</span>
+                              <span className="text-text-muted text-xs">({b.shell_type})</span>
                             </span>
                           </TooltipTrigger>
                           <TooltipContent>
-                            <p>{`${b.name} (${b.agent_name})`}</p>
+                            <p>{`${b.name} (${b.shell_type})`}</p>
                           </TooltipContent>
                         </Tooltip>
                       </div>

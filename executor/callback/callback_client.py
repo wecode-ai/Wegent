@@ -98,6 +98,7 @@ class CallbackClient:
         executor_name: Optional[str] = None,
         executor_namespace: Optional[str] = None,
         result: Optional[Dict[str, Any]] = None,
+        task_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Send a callback to the executor_manager
@@ -111,12 +112,13 @@ class CallbackClient:
             executor_name: Optional executor name
             executor_namespace: Optional executor namespace
             result: Optional result data dictionary
+            task_type: Optional task type (e.g., "validation" for validation tasks)
 
         Returns:
             Dict[str, Any]: Result returned by the callback interface
         """
         logger.info(
-            f"Sending callback: task_id={task_id} subtask_id={subtask_id}, task_title={task_title}, progress={progress}"
+            f"Sending callback: task_id={task_id} subtask_id={subtask_id}, task_title={task_title}, progress={progress}, task_type={task_type}"
         )
 
         if executor_name is None:
@@ -139,6 +141,8 @@ class CallbackClient:
             data["error_message"] = message
         if result:
             data["result"] = result
+        if task_type:
+            data["task_type"] = task_type
 
         try:
             return self._request_with_retry(lambda: self._do_send_callback(data))
