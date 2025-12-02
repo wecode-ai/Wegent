@@ -306,10 +306,16 @@ export default function Workbench({
   };
 
   // Build execution timeline from thinking data
+  interface ToolExecution {
+    timestamp: string;
+    description?: string;
+  }
+
   interface TimelineStep {
     toolName: string;
     count: number;
     timestamp: string;
+    executions: ToolExecution[];
   }
 
   const buildTimeline = (
@@ -325,14 +331,29 @@ export default function Workbench({
     let currentTool: string | null = null;
     let currentCount = 0;
     let currentTimestamp = '';
+    let currentExecutions: ToolExecution[] = [];
 
     thinkingSteps.forEach(step => {
       let toolName: string | null = null;
       let timestamp = '';
+      let description: string | undefined;
 
       // Extract tool name from details
       if (step.details?.type === 'tool_use' && typeof step.details?.name === 'string') {
         toolName = step.details.name;
+        // Extract description from tool input
+        const input = step.details.input as Record<string, unknown> | undefined;
+        if (input?.file_path) {
+          description = String(input.file_path);
+        } else if (input?.command) {
+          description = String(input.command).slice(0, 50) + (String(input.command).length > 50 ? '...' : '');
+        } else if (input?.pattern) {
+          description = String(input.pattern);
+        } else if (input?.query) {
+          description = String(input.query).slice(0, 50) + (String(input.query).length > 50 ? '...' : '');
+        } else if (input?.url) {
+          description = String(input.url).slice(0, 50) + (String(input.url).length > 50 ? '...' : '');
+        }
       } else if (
         step.details &&
         'message' in step.details &&
@@ -340,12 +361,25 @@ export default function Workbench({
         step.details.message !== null
       ) {
         const message = step.details.message as {
-          content?: Array<{ type: string; name?: string }>;
+          content?: Array<{ type: string; name?: string; input?: Record<string, unknown> }>;
         };
         if (message.content && Array.isArray(message.content)) {
           for (const content of message.content) {
             if (content.type === 'tool_use' && content.name) {
               toolName = content.name;
+              // Extract description from tool input
+              const input = content.input;
+              if (input?.file_path) {
+                description = String(input.file_path);
+              } else if (input?.command) {
+                description = String(input.command).slice(0, 50) + (String(input.command).length > 50 ? '...' : '');
+              } else if (input?.pattern) {
+                description = String(input.pattern);
+              } else if (input?.query) {
+                description = String(input.query).slice(0, 50) + (String(input.query).length > 50 ? '...' : '');
+              } else if (input?.url) {
+                description = String(input.url).slice(0, 50) + (String(input.url).length > 50 ? '...' : '');
+              }
               break;
             }
           }
@@ -366,8 +400,11 @@ export default function Workbench({
 
       if (toolName) {
         if (toolName === currentTool) {
-          // Same tool, increment count
+          // Same tool, increment count and add execution
           currentCount++;
+          if (timestamp) {
+            currentExecutions.push({ timestamp, description });
+          }
         } else {
           // Different tool, save previous and start new
           if (currentTool) {
@@ -375,11 +412,13 @@ export default function Workbench({
               toolName: currentTool,
               count: currentCount,
               timestamp: currentTimestamp,
+              executions: currentExecutions,
             });
           }
           currentTool = toolName;
           currentCount = 1;
           currentTimestamp = timestamp || currentTimestamp;
+          currentExecutions = timestamp ? [{ timestamp, description }] : [];
         }
       }
     });
@@ -390,6 +429,7 @@ export default function Workbench({
         toolName: currentTool,
         count: currentCount,
         timestamp: currentTimestamp,
+        executions: currentExecutions,
       });
     }
 
@@ -655,7 +695,7 @@ export default function Workbench({
                                     {/* Timeline connector line */}
                                     {!isLast && (
                                       <div
-                                        className="absolute left-[9px] top-6 w-[2px] h-full bg-border"
+                                        className="absolute left-[9px] top-6 w-[2px] bg-border"
                                         style={{ height: 'calc(100% + 1rem)' }}
                                       />
                                     )}
@@ -675,11 +715,30 @@ export default function Workbench({
                                           {icon}×{step.count}
                                         </span>
                                       </div>
-                                      {step.timestamp && (
+                                      {/* Show individual execution timepoints */}
+                                      {step.executions.length > 0 ? (
+                                        <div className="space-y-1.5 mt-2">
+                                          {step.executions.map((execution, execIndex) => (
+                                            <div
+                                              key={execIndex}
+                                              className="flex items-center gap-2 text-xs text-text-tertiary pl-2 border-l-2 border-border"
+                                            >
+                                              <span className="font-mono text-text-muted whitespace-nowrap">
+                                                {execution.timestamp}
+                                              </span>
+                                              {execution.description && (
+                                                <span className="truncate text-text-secondary" title={execution.description}>
+                                                  {execution.description}
+                                                </span>
+                                              )}
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : step.timestamp ? (
                                         <div className="text-xs text-text-tertiary">
                                           {step.timestamp}
                                         </div>
-                                      )}
+                                      ) : null}
                                     </div>
                                   </div>
                                 );
