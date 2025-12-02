@@ -440,15 +440,15 @@ export default function ModelSelector({
                             <div className="flex items-center gap-2 min-w-0 flex-1">
                               <CpuChipIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
                               <div className="flex flex-col min-w-0 flex-1">
-                                <div className="flex items-center gap-1.5">
+                                <div className="flex items-center gap-1.5 flex-nowrap">
                                   <span
-                                    className="font-medium text-xs text-text-secondary truncate"
+                                    className="font-medium text-xs text-text-secondary truncate min-w-0"
                                     title={getModelDisplayText(model)}
                                   >
                                     {getModelDisplayText(model)}
                                   </span>
                                   {model.type === 'public' && (
-                                    <Tag variant="info" className="text-[10px]">
+                                    <Tag variant="info" className="text-[10px] flex-shrink-0 whitespace-nowrap">
                                       {t('models.public', '公共')}
                                     </Tag>
                                   )}
