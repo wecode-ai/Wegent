@@ -306,6 +306,7 @@ spec:
 
 | Model | Description |
 |-------|-------------|
+| `solo` | Solo mode, single Bot executes independently |
 | `pipeline` | Pipeline mode, execute in sequence |
 | `route` | Route mode, route based on conditions |
 | `coordinate` | Coordinate mode, members coordinate |

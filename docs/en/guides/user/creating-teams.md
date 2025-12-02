@@ -61,9 +61,37 @@ Team = Multiple Bots + Collaboration Mode + Member Roles
 
 ## 🤝 Collaboration Modes
 
-Wegent supports four collaboration modes, each suitable for different scenarios.
+Wegent supports five collaboration modes, each suitable for different scenarios.
 
-### 1. Pipeline Mode
+### 1. Solo Mode
+
+**Characteristics**: Single Bot executes independently, simplest mode
+
+**Flow**:
+```
+User Task → Bot → Result
+```
+
+**Use cases**:
+- Simple tasks that don't require collaboration
+- Single-purpose agents (e.g., requirement clarification, code generation)
+- Quick prototyping and testing
+
+**Example configuration**:
+```yaml
+spec:
+  collaborationModel: "solo"
+  members:
+    - role: "leader"
+      botRef:
+        name: developer-bot
+        namespace: default
+      prompt: ""
+```
+
+**Note**: Solo mode supports all agent types (ClaudeCode, Agno, Dify).
+
+### 2. Pipeline Mode
 
 **Characteristics**: Sequential execution, output of previous Bot becomes input of next Bot
 
@@ -89,7 +117,7 @@ spec:
       role: "member"
 ```
 
-### 2. Route Mode
+### 3. Route Mode
 
 **Characteristics**: Leader routes tasks to appropriate Bot based on task type
 
@@ -117,7 +145,7 @@ spec:
       role: "member"
 ```
 
-### 3. Coordinate Mode
+### 4. Coordinate Mode
 
 **Characteristics**: Leader coordinates multiple Bots working in parallel, then aggregates results
 
@@ -145,7 +173,7 @@ spec:
       role: "member"
 ```
 
-### 4. Collaborate Mode
+### 5. Collaborate Mode
 
 **Characteristics**: All Bots share context, freely discuss and collaborate
 
@@ -191,6 +219,7 @@ Select appropriate collaboration mode based on task characteristics:
 
 | Task Type | Recommended Mode |
 |-----------|------------------|
+| Simple single-agent task | Solo |
 | Sequential workflow | Pipeline |
 | Classification processing | Route |
 | Parallel analysis | Coordinate |
@@ -282,6 +311,7 @@ status:
 
 | Value | Description |
 |-------|-------------|
+| `solo` | Solo mode |
 | `pipeline` | Pipeline mode |
 | `route` | Route mode |
 | `coordinate` | Coordinate mode |
@@ -595,7 +625,8 @@ status:
 #### ❌ Avoid
 
 - Team too large (>10 members) - High coordination cost
-- Team too small (only 1 member) - Loses collaboration advantage
+
+**Note**: For single-member teams, use Solo mode instead of Pipeline mode.
 
 ### 2. Role Assignment
 
@@ -683,19 +714,22 @@ prompt: |
 ### 4. Collaboration Mode Selection
 
 #### Decision Tree
+#### Decision Tree
 
 ```
-Does task require sequential execution?
-├─ Yes → Pipeline
+Is it a single-agent task?
+├─ Yes → Solo
 └─ No
-    └─ Does task need classification?
-        ├─ Yes → Route
+    └─ Does task require sequential execution?
+        ├─ Yes → Pipeline
         └─ No
-            └─ Can task be parallelized?
-                ├─ Yes → Coordinate
-                └─ No → Collaborate
+            └─ Does task need classification?
+                ├─ Yes → Route
+                └─ No
+                    └─ Can task be parallelized?
+                        ├─ Yes → Coordinate
+                        └─ No → Collaborate
 ```
-
 ### 5. Cost Optimization
 
 #### Strategy 1: Mix different models
@@ -810,6 +844,7 @@ spec:
 
 | Task Type | Recommended Mode | Reason |
 |-----------|------------------|--------|
+| Single-agent task | Solo | Simple and efficient |
 | Development process | Pipeline | Sequential execution efficient |
 | Problem classification | Route | Highly targeted |
 | Multi-angle analysis | Coordinate | Parallel fast |

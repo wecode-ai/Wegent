@@ -113,7 +113,7 @@ spec:
         name: developer-bot
         namespace: default
       prompt: ""
-  collaborationModel: pipeline
+  collaborationModel: solo
 status:
   state: Available
 ---
@@ -366,6 +366,6 @@ spec:
         name: spec-clarification-bot
         namespace: default
       prompt: ""
-  collaborationModel: pipeline
+  collaborationModel: solo
 status:
   state: Available

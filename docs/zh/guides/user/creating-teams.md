@@ -61,9 +61,37 @@ Team = 多个 Bot + 协作模式 + 成员角色
 
 ## 🤝 协作模式
 
-Wegent 支持四种协作模式,每种模式适用于不同的场景。
+Wegent 支持五种协作模式,每种模式适用于不同的场景。
 
-### 1. Pipeline (流水线模式)
+### 1. Solo (单人模式)
+
+**特点**: 单个 Bot 独立执行,最简单的模式
+
+**流程**:
+```
+用户任务 → Bot → 结果
+```
+
+**适用场景**:
+- 不需要协作的简单任务
+- 单一用途的智能体(如需求澄清、代码生成)
+- 快速原型和测试
+
+**示例配置**:
+```yaml
+spec:
+  collaborationModel: "solo"
+  members:
+    - role: "leader"
+      botRef:
+        name: developer-bot
+        namespace: default
+      prompt: ""
+```
+
+**注意**: Solo 模式支持所有 agent 类型(ClaudeCode、Agno、Dify)。
+
+### 2. Pipeline (流水线模式)
 
 **特点**: 顺序执行,前一个 Bot 的输出作为下一个 Bot 的输入
 
@@ -89,7 +117,7 @@ spec:
       role: "member"
 ```
 
-### 2. Route (路由模式)
+### 3. Route (路由模式)
 
 **特点**: Leader 根据任务类型路由给合适的 Bot
 
@@ -117,7 +145,7 @@ spec:
       role: "member"
 ```
 
-### 3. Coordinate (协调模式)
+### 4. Coordinate (协调模式)
 
 **特点**: Leader 协调多个 Bot 并行工作,最后汇总结果
 
@@ -145,7 +173,7 @@ spec:
       role: "member"
 ```
 
-### 4. Collaborate (协作模式)
+### 5. Collaborate (协作模式)
 
 **特点**: 所有 Bot 共享上下文,自由讨论和协作
 
@@ -191,6 +219,7 @@ spec:
 
 | 任务类型 | 推荐模式 |
 |----------|----------|
+| 简单单智能体任务 | Solo |
 | 顺序工作流 | Pipeline |
 | 分类处理 | Route |
 | 并行分析 | Coordinate |
@@ -282,6 +311,7 @@ status:
 
 | 值 | 说明 |
 |-----|------|
+| `solo` | 单人模式 |
 | `pipeline` | 流水线模式 |
 | `route` | 路由模式 |
 | `coordinate` | 协调模式 |
@@ -626,7 +656,8 @@ status:
 #### ❌ 避免
 
 - 团队过大 (超过 10 个成员) - 协调成本高
-- 团队过小 (只有 1 个成员) - 失去协作优势
+
+**注意**: 对于单成员团队,请使用 Solo 模式而不是 Pipeline 模式。
 
 ### 2. 角色分配
 
@@ -716,15 +747,18 @@ prompt: |
 #### 决策树
 
 ```
-任务需要顺序执行?
-├─ 是 → Pipeline
+是单智能体任务?
+├─ 是 → Solo
 └─ 否
-    └─ 任务需要分类处理?
-        ├─ 是 → Route
+    └─ 任务需要顺序执行?
+        ├─ 是 → Pipeline
         └─ 否
-            └─ 任务可以并行?
-                ├─ 是 → Coordinate
-                └─ 否 → Collaborate
+            └─ 任务需要分类处理?
+                ├─ 是 → Route
+                └─ 否
+                    └─ 任务可以并行?
+                        ├─ 是 → Coordinate
+                        └─ 否 → Collaborate
 ```
 
 ### 5. 成本优化
@@ -946,6 +980,7 @@ spec:
 
 | 任务类型 | 推荐模式 | 原因 |
 |----------|----------|------|
+| 单智能体任务 | Solo | 简单高效 |
 | 开发流程 | Pipeline | 顺序执行效率高 |
 | 问题分类 | Route | 针对性强 |
 | 多角度分析 | Coordinate | 并行快速 |
