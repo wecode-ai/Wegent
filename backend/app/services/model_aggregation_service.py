@@ -160,16 +160,23 @@ class ModelAggregationService:
             True if compatible, False otherwise
         """
         # Shell type to model provider mapping
-        shell_provider_map = {"Agno": "openai", "ClaudeCode": "claude"}
+        # Agno supports both OpenAI and Claude models
+        shell_provider_map = {
+            "Agno": ["openai", "claude"],
+            "ClaudeCode": ["claude"]
+        }
 
         # If supportModel is specified in shell, use it
         if support_model:
             return provider in support_model
 
-        # Otherwise, filter by shell's required provider
-        required_provider = shell_provider_map.get(shell_type)
-        if required_provider:
-            return provider == required_provider
+        # Otherwise, filter by shell's supported providers
+        supported_providers = shell_provider_map.get(shell_type)
+        if supported_providers:
+            if isinstance(supported_providers, list):
+                return provider in supported_providers
+            else:
+                return provider == supported_providers
 
         # No filter, allow all
         return True

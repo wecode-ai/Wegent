@@ -892,7 +892,12 @@ const BotEdit: React.FC<BotEditProps> = ({
                         {agentName === 'ClaudeCode' && (
                           <SelectItem value="claude">Claude (Anthropic)</SelectItem>
                         )}
-                        {agentName === 'Agno' && <SelectItem value="openai">OpenAI</SelectItem>}
+                        {agentName === 'Agno' && (
+                          <>
+                            <SelectItem value="openai">OpenAI</SelectItem>
+                            <SelectItem value="claude">Claude (Anthropic)</SelectItem>
+                          </>
+                        )}
                         {/* Show all options if agent type is unknown or not selected */}
                         {agentName !== 'ClaudeCode' && agentName !== 'Agno' && (
                           <>
@@ -933,7 +938,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                         : agentName === 'Agno'
                           ? `{
   "env": {
-    "model": "openai",
+    "model": "openai or claude",
     "model_id": "xxxxxx",
     "api_key": "xxxxxx",
     "base_url": "xxxxxx"
