@@ -17,6 +17,7 @@ from app.db.base import Base
 class SubtaskStatus(str, PyEnum):
     PENDING = "PENDING"
     RUNNING = "RUNNING"
+    WAITING = "WAITING"  # New: waiting for external event
     COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
@@ -53,6 +54,13 @@ class Subtask(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime)
+
+    # Async mode fields for external event waiting
+    waiting_for = Column(String(50), nullable=True)  # Event type being waited for (e.g., ci_pipeline, approval)
+    waiting_since = Column(DateTime, nullable=True)  # Timestamp when entered WAITING state
+    waiting_timeout = Column(Integer, nullable=True)  # Timeout in seconds, optional
+    resume_count = Column(Integer, default=0)  # Number of times session has been resumed
+    max_resume_count = Column(Integer, default=5)  # Maximum allowed resume count
 
     __table_args__ = (
         {

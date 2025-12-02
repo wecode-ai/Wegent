@@ -143,6 +143,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         task.status !== 'DELETE'
     );
 
+    // WAITING tasks are considered incomplete and need periodic refresh
+    // as they may be resumed by external webhook events
     let interval: NodeJS.Timeout | null = null;
 
     if (hasIncompleteTasks) {

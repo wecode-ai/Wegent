@@ -25,6 +25,7 @@ from claude_agent_sdk.types import (
     TextBlock,
     ToolResultBlock,
 )
+from executor.agents.claude_code.output_parser import detect_waiting_signal
 
 logger = setup_logger("claude_response_processor")
 
@@ -464,7 +465,42 @@ async def _process_result_message(
         # Ensure result is string type
         result_str = str(msg.result) if msg.result is not None else "No result"
         logger.info(f"Sending successful result via callback: {result_str}")
-        
+
+        # Check for waiting signals in the result (async mode support)
+        waiting_for = detect_waiting_signal(result_str)
+        if waiting_for:
+            logger.info(f"Detected waiting signal: {waiting_for}, entering WAITING state")
+
+            if thinking_manager:
+                thinking_manager.add_thinking_step(
+                    title="thinking.waiting_for_external_event",
+                    report_immediately=True,
+                    use_i18n_keys=True,
+                    details={
+                        "waiting_for": waiting_for,
+                        "message": f"Waiting for {waiting_for}"
+                    }
+                )
+
+            # Update workbench status to waiting
+            state_manager.update_workbench_status("waiting")
+
+            # Report WAITING status with the waiting_for type
+            # Parse result to include waiting info
+            if isinstance(msg.result, dict):
+                result_dict = msg.result
+            else:
+                result_dict = {"value": msg.result}
+            result_dict["waiting_for"] = waiting_for
+
+            state_manager.report_progress(
+                progress=50,  # Not fully complete yet
+                status="WAITING",
+                message=f"Waiting for {waiting_for}",
+                extra_result=result_dict
+            )
+            return TaskStatus.RUNNING  # Keep running to allow resume
+
         # Add thinking step for successful result
         if thinking_manager:
             thinking_manager.add_thinking_step(

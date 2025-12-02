@@ -10,7 +10,8 @@ class TaskStatus(str, enum.Enum):
     SUCCESS = "SUCCESS"  # Task executed successfully, subtask completed
     PENDING = "PENDING"  # Waiting for execution
     COMPLETED = "COMPLETED"  # Task completed
-    
+    WAITING = "WAITING"  # Waiting for external event (async mode)
+
     # New status
     INITIALIZED = "INITIALIZED"  # Initialization completed
     PRE_EXECUTED = "PRE_EXECUTED"  # Pre-execution completed
