@@ -250,6 +250,7 @@ class ValidateImageRequest(BaseModel):
     """Request body for validating base image compatibility"""
     image: str
     shell_type: str  # e.g., "ClaudeCode", "Agno"
+    user_name: Optional[str] = None
     shell_name: Optional[str] = None  # Optional shell name for tracking
     validation_id: Optional[str] = None  # UUID for tracking validation status
 
@@ -328,6 +329,9 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
             "agent_name": "ImageValidator",
             "base_image": image,  # Use the target image for validation
         }],
+        "user": {
+            "name": request.user_name or "validator",
+        },
         "validation_params": {
             "shell_type": shell_type,
             "image": image,
