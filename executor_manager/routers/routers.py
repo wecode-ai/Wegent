@@ -165,6 +165,7 @@ async def _forward_validation_callback(request: CallbackRequest):
         "checks": validation_result.get("checks"),
         "errors": validation_result.get("errors"),
         "errorMessage": request.error_message,
+        "executor_name": request.executor_name,  # Include executor_name for container cleanup
     }
 
     # Get backend URL
@@ -315,7 +316,7 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
     # Build validation task data
     # Use a unique negative task_id to distinguish validation tasks from regular tasks
     import time
-    validation_task_id = -(int(time.time() * 1000) % 1000000)  # Negative ID for validation tasks
+    validation_task_id = int(time.time() * 1000) % 1000000  # Negative ID for validation tasks
 
     validation_task = {
         "task_id": validation_task_id,
