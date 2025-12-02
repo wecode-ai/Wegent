@@ -546,6 +546,7 @@ async def validate_image(
                 json={
                     "image": image,
                     "shell_type": shell_type,
+                    "user_name": current_user.user_name,
                     "shell_name": request.shellName or "",
                     "validation_id": validation_id,  # Pass UUID to executor manager
                 },
@@ -765,7 +766,7 @@ async def update_validation_status(
             )
 
         # Cleanup validation container if validation is completed
-        if request.executor_name and (request.status == "COMPLETED" or request.progress == 100):
+        if request.executor_name and request.valid is True:
             await _cleanup_validation_container(request.executor_name)
 
         return {"status": "success", "message": "Validation status updated"}
