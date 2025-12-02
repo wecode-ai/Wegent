@@ -9,11 +9,12 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import { Tab } from '@headlessui/react';
-import { PuzzlePieceIcon, UsersIcon, BellIcon, CpuChipIcon } from '@heroicons/react/24/outline';
+import { PuzzlePieceIcon, UsersIcon, BellIcon, CpuChipIcon, CommandLineIcon } from '@heroicons/react/24/outline';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
 import TeamList from '@/features/settings/components/TeamList';
 import NotificationSettings from '@/features/settings/components/NotificationSettings';
 import ModelList from '@/features/settings/components/ModelList';
+import ShellList from '@/features/settings/components/ShellList';
 import { UserProvider } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -27,9 +28,10 @@ function DashboardContent() {
   const tabIndexToName = useMemo(
     (): Record<number, string> => ({
       0: 'models',
-      1: 'team',
-      2: 'integrations',
-      3: 'notifications',
+      1: 'shells',
+      2: 'team',
+      3: 'integrations',
+      4: 'notifications',
     }),
     []
   );
@@ -38,9 +40,10 @@ function DashboardContent() {
   const tabNameToIndex = useMemo(
     (): Record<string, number> => ({
       models: 0,
-      team: 1,
-      integrations: 2,
-      notifications: 3,
+      shells: 1,
+      team: 2,
+      integrations: 3,
+      notifications: 4,
     }),
     []
   );
@@ -123,6 +126,19 @@ function DashboardContent() {
                         }`
                       }
                     >
+                      <CommandLineIcon className="w-4 h-4" />
+                      <span>{t('settings.shells')}</span>
+                    </Tab>
+
+                    <Tab
+                      className={({ selected }) =>
+                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                          selected
+                            ? 'bg-muted text-text-primary'
+                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                        }`
+                      }
+                    >
                       <UsersIcon className="w-4 h-4" />
                       <span>{t('settings.team')}</span>
                     </Tab>
@@ -160,6 +176,9 @@ function DashboardContent() {
                         <ModelList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
+                        <ShellList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
                         <TeamList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
@@ -187,6 +206,19 @@ function DashboardContent() {
                       >
                         <CpuChipIcon className="w-3 h-3" />
                         <span className="hidden xs:inline">{t('settings.models')}</span>
+                      </Tab>
+
+                      <Tab
+                        className={({ selected }) =>
+                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
+                            selected
+                              ? 'bg-muted text-text-primary'
+                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                          }`
+                        }
+                      >
+                        <CommandLineIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('settings.shells')}</span>
                       </Tab>
 
                       <Tab
@@ -234,6 +266,9 @@ function DashboardContent() {
                     <Tab.Panels>
                       <Tab.Panel className="focus:outline-none">
                         <ModelList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <ShellList />
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />

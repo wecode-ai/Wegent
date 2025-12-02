@@ -33,19 +33,30 @@ async def lifespan(app):
     FastAPI application lifecycle manager
     Starts the task scheduler when the application starts, and performs cleanup operations when the application shuts down
     """
+    # Extract executor binary to Named Volume on startup
+    logger.info("Extracting executor binary to Named Volume...")
+    try:
+        from executors.docker.binary_extractor import extract_executor_binary
+        if extract_executor_binary():
+            logger.info("Executor binary extraction completed")
+        else:
+            logger.warning("Executor binary extraction failed, custom base images may not work")
+    except Exception as e:
+        logger.warning(f"Executor binary extraction error: {e}, custom base images may not work")
+
     # Start the task scheduler
     logger.info("Initializing task scheduler...")
     scheduler_instance = TaskScheduler()
-    
+
     # Start the scheduler in a separate thread
     scheduler_thread = threading.Thread(target=start_scheduler, args=(scheduler_instance,))
     scheduler_thread.daemon = True
     scheduler_thread.start()
-    
+
     logger.info("Task scheduler started successfully")
-    
+
     yield  # During FastAPI application runtime
-    
+
     # Cleanup operations when the application shuts down (if needed)
     logger.info("Shutting down task scheduler...")
     # If TaskScheduler has a stop method, you can call it here

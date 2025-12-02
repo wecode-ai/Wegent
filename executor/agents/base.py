@@ -50,6 +50,7 @@ class Agent:
         self.subtask_id = task_data.get("subtask_id", -1)
         self.task_title = task_data.get("task_title", "")
         self.subtask_title = task_data.get("subtask_title", "")
+        self.task_type = task_data.get("type")  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
 
@@ -113,7 +114,7 @@ class Agent:
             message: Optional message string
             result: Optional result data dictionary
         """
-        logger.info(f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}")
+        logger.info(f"Reporting progress: {progress}%, status: {status}, message: {message}, result: {result}, task_type: {self.task_type}")
         self.callback_client.send_callback(
             task_id=self.task_id,
             subtask_id=self.subtask_id,
@@ -123,6 +124,7 @@ class Agent:
             status=status,
             message=message,
             result=result,
+            task_type=self.task_type,
         )
 
     def pre_execute(self) -> TaskStatus:

@@ -62,14 +62,25 @@ class AgentService:
             return existing_agent
 
         try:
-            bot_config = task_data.get("bot")
-            if isinstance(bot_config, list):
-                agent_name = bot_config[0].get("agent_name", "").strip().lower()
+            # Determine agent type based on task type
+            task_type = task_data.get("type", "")
+            
+            if task_type == "validation":
+                # For validation tasks, use ImageValidatorAgent
+                shell_type = "imagevalidator"
+                logger.info(f"[{_format_task_log(task_id, subtask_id)}] Validation task detected, using ImageValidatorAgent")
             else:
-                agent_name = bot_config.get("agent_name", "").strip().lower()
+                # For regular tasks, get shell_type from bot config
+                bot_config = task_data.get("bot")
+                if isinstance(bot_config, list):
+                    shell_type = bot_config[0].get("shell_type", "").strip().lower() if bot_config else ""
+                elif isinstance(bot_config, dict):
+                    shell_type = bot_config.get("shell_type", "").strip().lower()
+                else:
+                    shell_type = ""
 
-            logger.info(f"[{_format_task_log(task_id, subtask_id)}] Creating new agent '{agent_name}'")
-            agent = AgentFactory.get_agent(agent_name, task_data)
+            logger.info(f"[{_format_task_log(task_id, subtask_id)}] Creating new agent '{shell_type}'")
+            agent = AgentFactory.get_agent(shell_type, task_data)
 
             if not agent:
                 logger.error(f"[{_format_task_log(task_id, subtask_id)}] Failed to create agent")

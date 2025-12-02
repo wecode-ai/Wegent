@@ -72,7 +72,7 @@ def _get_callback_params(task_data: Dict[str, Any]) -> Dict[str, str]:
     Returns:
         dict: Common callback parameters
     """
-    return {
+    params = {
         "task_id": task_data.get("task_id", -1),
         "subtask_id": task_data.get("subtask_id", -1),
         "task_title": task_data.get("task_title", ""),
@@ -80,6 +80,11 @@ def _get_callback_params(task_data: Dict[str, Any]) -> Dict[str, str]:
         "executor_name": os.getenv("EXECUTOR_NAME"),
         "executor_namespace": os.getenv("EXECUTOR_NAMESPACE"),
     }
+    # Include task_type if present (e.g., "validation" for validation tasks)
+    task_type = task_data.get("type")
+    if task_type:
+        params["task_type"] = task_type
+    return params
 
 
 def process(task_data: Dict[str, Any]) -> TaskStatus:
@@ -96,8 +101,21 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
     # Get common callback parameters
     callback_params = _get_callback_params(task_data)
 
+    # Extract validation_id from validation_params if present (for validation tasks)
+    validation_params = task_data.get("validation_params", {})
+    validation_id = validation_params.get("validation_id") if validation_params else None
+
+    # For validation tasks, include validation_id in the started callback result
+    # so executor_manager can identify it as a validation task
+    started_result = None
+    if validation_id:
+        started_result = {
+            "validation_id": validation_id,
+            "stage": "running",
+        }
+
     # Send task started callback
-    result = send_task_started_callback(**callback_params)
+    result = send_task_started_callback(result=started_result, **callback_params)
     if not result or result.get("status") != TaskStatus.SUCCESS.value:
         logger.error("Failed to send 'running' status callback")
         return TaskStatus.FAILED
@@ -125,7 +143,20 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
     if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
         send_task_completed_callback(message=message, **callback_params)
     elif status in [TaskStatus.FAILED]:
-        send_task_failed_callback(error_message=message, **callback_params)
+        # Include validation_id in result for validation tasks so that
+        # executor_manager can forward the failure status to backend
+        fail_result = None
+        if validation_id:
+            fail_result = {
+                "validation_id": validation_id,
+                "stage": "failed",
+                "validation_result": {
+                    "valid": False,
+                    "checks": [],
+                    "errors": [message] if message else [],
+                },
+            }
+        send_task_failed_callback(error_message=message, result=fail_result, **callback_params)
 
     return status
 

@@ -24,6 +24,7 @@ import { TeamMode, getFilteredBotsForMode, AgentType } from './team-modes';
 import { createTeam, updateTeam } from '../services/teams';
 import TeamEditDrawer from './TeamEditDrawer';
 import { useTranslation } from '@/hooks/useTranslation';
+import { shellApis, UnifiedShell } from '@/apis/shells';
 
 // Import mode-specific editors
 import SoloModeEditor from './team-modes/SoloModeEditor';
@@ -83,15 +84,30 @@ export default function TeamEdit(props: TeamEditProps) {
   const wasDrawerOpenRef = useRef(false);
   // Store unsaved team prompts
   const [unsavedPrompts, setUnsavedPrompts] = useState<Record<string, string>>({});
-
   // Mode change confirmation dialog state
   const [modeChangeDialogVisible, setModeChangeDialogVisible] = useState(false);
   const [pendingMode, setPendingMode] = useState<TeamMode | null>(null);
 
-  // Filter bots based on current mode
+  // Shells data for resolving custom shell runtime types
+  const [shells, setShells] = useState<UnifiedShell[]>([]);
+
+  // Load shells data on mount
+  useEffect(() => {
+    const fetchShells = async () => {
+      try {
+        const response = await shellApis.getUnifiedShells();
+        setShells(response.data || []);
+      } catch (error) {
+        console.error('Failed to fetch shells:', error);
+      }
+    };
+    fetchShells();
+  }, []);
+
+  // Filter bots based on current mode, using shells to resolve custom shell runtime types
   const filteredBots = useMemo(() => {
-    return getFilteredBotsForMode(bots, mode);
-  }, [bots, mode]);
+    return getFilteredBotsForMode(bots, mode, shells);
+  }, [bots, mode, shells]);
 
   // Get allowed agents for current mode
   const allowedAgentsForMode = useMemo((): AgentType[] | undefined => {
@@ -274,17 +290,17 @@ export default function TeamEdit(props: TeamEditProps) {
     setModeChangeDialogVisible(false);
     setPendingMode(null);
   };
-  // Get currently selected agent_name (from leader or selected bot)
-  // Note: agent_name restriction has been removed - users can now select any mode
-  const selectedAgentName = useMemo(() => {
-    // No agent_name restriction - always return null
+  // Get currently selected shell_type (from leader or selected bot)
+  // Note: shell_type restriction has been removed - users can now select any mode
+  const selectedShellType = useMemo(() => {
+    // No shell_type restriction - always return null
     return null;
   }, []);
 
   const isDifyLeader = useMemo(() => {
     if (leaderBotId === null) return false;
     const leader = filteredBots.find((b: Bot) => b.id === leaderBotId);
-    return leader?.agent_name === 'Dify';
+    return leader?.shell_type === 'Dify';
   }, [leaderBotId, filteredBots]);
 
   // Leader change handler
@@ -296,7 +312,7 @@ export default function TeamEdit(props: TeamEditProps) {
 
     const newLeader = filteredBots.find((b: Bot) => b.id === botId);
     // If the new leader is Dify, clear the selected bots
-    if (newLeader?.agent_name === 'Dify') {
+    if (newLeader?.shell_type === 'Dify') {
       setSelectedBotKeys([]);
     }
 
@@ -349,7 +365,7 @@ export default function TeamEdit(props: TeamEditProps) {
     // For solo mode, only use leaderBotId
     const selectedIds = mode === 'solo' ? [] : selectedBotKeys.map(k => Number(k));
 
-    // Note: agent_name consistency validation has been removed - users can now mix different agent types
+    // Note: shell_type consistency validation has been removed - users can now mix different agent types
     // Assemble bots data (per-step prompt not supported, all prompts empty)
     // Ensure leader bot is first, others follow transfer order
     const allBotIds: number[] = [];
@@ -606,7 +622,7 @@ export default function TeamEdit(props: TeamEditProps) {
               unsavedPrompts={unsavedPrompts}
               teamPromptMap={teamPromptMap}
               isDifyLeader={isDifyLeader}
-              selectedAgentName={selectedAgentName}
+              selectedShellType={selectedShellType}
               leaderOptions={leaderOptions}
               toast={toast}
               onEditBot={handleEditBot}
