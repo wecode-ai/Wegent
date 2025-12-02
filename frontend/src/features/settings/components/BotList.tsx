@@ -173,7 +173,7 @@ export default function BotList() {
                                 </div>
                                 <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
                                   <Tag variant="default" className="capitalize">
-                                    {bot.agent_name}
+                                    {bot.shell_type}
                                   </Tag>
                                   <Tag variant="info" className="hidden sm:inline-flex capitalize">
                                     {isPredefinedModel(bot.agent_config)

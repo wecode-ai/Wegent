@@ -48,7 +48,7 @@ def list_models(
 
 @router.get("/names")
 def list_model_names(
-    agent_name: str = Query(..., description="Agent name (Agno、ClaudeCode)"),
+    shell_type: str = Query(..., description="Shell type (Agno, ClaudeCode)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -63,15 +63,15 @@ def list_model_names(
     }
     """
     data = public_model_service.list_model_names(
-        db=db, current_user=current_user, agent_name=agent_name
+        db=db, current_user=current_user, shell_type=shell_type
     )
     return {"data": data}
 
 
 @router.get("/unified")
 def list_unified_models(
-    agent_name: Optional[str] = Query(
-        None, description="Agent name to filter compatible models (Agno, ClaudeCode)"
+    shell_type: Optional[str] = Query(
+        None, description="Shell type to filter compatible models (Agno, ClaudeCode)"
     ),
     include_config: bool = Query(
         False, description="Whether to include full config in response"
@@ -90,7 +90,7 @@ def list_unified_models(
     important for avoiding naming conflicts when binding models.
 
     Parameters:
-    - agent_name: Optional agent name to filter compatible models
+    - shell_type: Optional shell type to filter compatible models
     - include_config: Whether to include full model config in response
 
     Response:
@@ -109,7 +109,7 @@ def list_unified_models(
     data = model_aggregation_service.list_available_models(
         db=db,
         current_user=current_user,
-        agent_name=agent_name,
+        shell_type=shell_type,
         include_config=include_config,
     )
     return {"data": data}
@@ -333,9 +333,13 @@ def test_model_connection(
         elif provider_type == "anthropic":
             import anthropic
 
-            client = anthropic.Anthropic(api_key=api_key)
+            # Create client with base_url in constructor for proper initialization
+            # This is required for compatible APIs like MiniMax
+            client_kwargs = {"auth_token": api_key}
             if base_url:
-                client.base_url = base_url
+                client_kwargs["base_url"] = base_url
+
+            client = anthropic.Anthropic(**client_kwargs)
 
             response = client.messages.create(
                 model=model_id,
@@ -354,15 +358,15 @@ def test_model_connection(
 
 @router.get("/compatible")
 def get_compatible_models(
-    agent_name: str = Query(..., description="Agent name (Agno or ClaudeCode)"),
+    shell_type: str = Query(..., description="Shell type (Agno or ClaudeCode)"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    Get models compatible with a specific agent type
+    Get models compatible with a specific shell type
 
     Parameters:
-    - agent_name: "Agno" or "ClaudeCode"
+    - shell_type: "Agno" or "ClaudeCode"
 
     Response:
     {
@@ -399,9 +403,10 @@ def get_compatible_models(
                 model_type = env.get("model", "")
 
                 # Filter compatible models
-                if agent_name == "Agno" and model_type == "openai":
+                # Agno supports both OpenAI and Claude models
+                if shell_type == "Agno" and model_type in ["openai", "claude"]:
                     compatible_models.append({"name": model_kind.name})
-                elif agent_name == "ClaudeCode" and model_type == "claude":
+                elif shell_type == "ClaudeCode" and model_type == "claude":
                     compatible_models.append({"name": model_kind.name})
         except Exception as e:
             logger.warning(f"Failed to parse model {model_kind.name}: {e}")

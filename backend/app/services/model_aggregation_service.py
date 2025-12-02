@@ -145,42 +145,49 @@ class ModelAggregationService:
                 "config": {},
             }
 
-    def _is_model_compatible_with_agent(
-        self, provider: Optional[str], agent_name: str, support_model: List[str]
+    def _is_model_compatible_with_shell(
+        self, provider: Optional[str], shell_type: str, support_model: List[str]
     ) -> bool:
         """
-        Check if a model is compatible with the given agent.
+        Check if a model is compatible with the given shell type.
 
         Args:
             provider: Model provider (e.g., 'openai', 'claude')
-            agent_name: Agent name (e.g., 'Agno', 'ClaudeCode')
+            shell_type: Shell type (e.g., 'Agno', 'ClaudeCode')
             support_model: List of supported model providers from shell spec
 
         Returns:
             True if compatible, False otherwise
         """
-        # Agent to model provider mapping
-        agent_provider_map = {"Agno": "openai", "ClaudeCode": "claude"}
+        # Shell type to model provider mapping
+        # Agno supports both OpenAI and Claude models
+        shell_provider_map = {
+            "Agno": ["openai", "claude"],
+            "ClaudeCode": ["claude"]
+        }
 
         # If supportModel is specified in shell, use it
         if support_model:
             return provider in support_model
 
-        # Otherwise, filter by agent's required provider
-        required_provider = agent_provider_map.get(agent_name)
-        if required_provider:
-            return provider == required_provider
+        # Otherwise, filter by shell's supported providers
+        supported_providers = shell_provider_map.get(shell_type)
+        if supported_providers:
+            if isinstance(supported_providers, list):
+                return provider in supported_providers
+            else:
+                return provider == supported_providers
 
         # No filter, allow all
         return True
 
-    def _get_shell_support_model(self, db: Session, agent_name: str) -> List[str]:
+    def _get_shell_support_model(self, db: Session, shell_type: str) -> List[str]:
         """
         Get supported model list from shell configuration.
 
         Args:
             db: Database session
-            agent_name: Agent name
+            shell_type: Shell type
 
         Returns:
             List of supported model providers
@@ -188,7 +195,7 @@ class ModelAggregationService:
         from app.models.public_shell import PublicShell
 
         shell_row = (
-            db.query(PublicShell.json).filter(PublicShell.name == agent_name).first()
+            db.query(PublicShell.json).filter(PublicShell.name == shell_type).first()
         )
 
         if shell_row and isinstance(shell_row[0], dict):
@@ -230,7 +237,7 @@ class ModelAggregationService:
         self,
         db: Session,
         current_user: User,
-        agent_name: Optional[str] = None,
+        shell_type: Optional[str] = None,
         include_config: bool = False,
     ) -> List[Dict[str, Any]]:
         """
@@ -245,7 +252,7 @@ class ModelAggregationService:
         Args:
             db: Database session
             current_user: Current user
-            agent_name: Optional agent name to filter compatible models
+            shell_type: Optional shell type to filter compatible models
             include_config: Whether to include full config in response
 
         Returns:
@@ -256,10 +263,10 @@ class ModelAggregationService:
             - provider: Model provider
             - modelId: Model ID
         """
-        # Get shell configuration if agent_name is provided
+        # Get shell configuration if shell_type is provided
         support_model: List[str] = []
-        if agent_name:
-            support_model = self._get_shell_support_model(db, agent_name)
+        if shell_type:
+            support_model = self._get_shell_support_model(db, shell_type)
 
         result: List[UnifiedModel] = []
         seen_names: Dict[str, ModelType] = {}  # Track names to handle duplicates
@@ -279,15 +286,13 @@ class ModelAggregationService:
             # Custom models are user-specific configurations (isCustomConfig=True)
             if self._is_custom_model(model_data):
                 continue
-
             info = self._extract_model_info_from_crd(model_data)
 
-            # Filter by agent compatibility if agent_name is provided
-            if agent_name and not self._is_model_compatible_with_agent(
-                info["provider"], agent_name, support_model
+            # Filter by shell compatibility if shell_type is provided
+            if shell_type and not self._is_model_compatible_with_shell(
+                info["provider"], shell_type, support_model
             ):
                 continue
-
             unified = UnifiedModel(
                 name=resource.name,
                 model_type=ModelType.USER,  # Mark as user-defined model
@@ -316,9 +321,9 @@ class ModelAggregationService:
             provider = env.get("model") if isinstance(env, dict) else None
             model_id = env.get("model_id") if isinstance(env, dict) else None
 
-            # Filter by agent compatibility if agent_name is provided
-            if agent_name and not self._is_model_compatible_with_agent(
-                provider, agent_name, support_model
+            # Filter by shell compatibility if shell_type is provided
+            if shell_type and not self._is_model_compatible_with_shell(
+                provider, shell_type, support_model
             ):
                 continue
 
@@ -328,7 +333,6 @@ class ModelAggregationService:
                 display_name=None,  # Public models don't have displayName in current schema
                 provider=provider,
                 model_id=model_id,
-                config=config if include_config else {},
                 is_active=model_dict.get("is_active", True),
             )
 
@@ -406,7 +410,6 @@ class ModelAggregationService:
                         display_name=None,
                         provider=env.get("model") if isinstance(env, dict) else None,
                         model_id=env.get("model_id") if isinstance(env, dict) else None,
-                        config=config,
                         is_active=model_dict.get("is_active", True),
                     ).to_full_dict()
 

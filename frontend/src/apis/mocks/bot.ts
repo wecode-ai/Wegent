@@ -10,7 +10,8 @@ export const MOCK_BOTS: Bot[] = [
   {
     id: 1,
     name: 'Code Reviewer',
-    agent_name: 'claude_code_agent',
+    shell_name: 'ClaudeCode',
+    shell_type: 'ClaudeCode',
     agent_config: { model: 'claude-3-opus-20240229' },
     system_prompt: 'You are a senior software engineer. Please review the code for any issues.',
     mcp_servers: {},
@@ -21,7 +22,8 @@ export const MOCK_BOTS: Bot[] = [
   {
     id: 2,
     name: 'Unit Test Writer',
-    agent_name: 'claude_code_agent',
+    shell_name: 'ClaudeCode',
+    shell_type: 'ClaudeCode',
     agent_config: { model: 'claude-3-sonnet-20240229' },
     system_prompt: 'You are a QA engineer. Please write unit tests for the given code.',
     mcp_servers: {},
@@ -45,6 +47,7 @@ export const botHandlers = [
     const newBot: Bot = {
       id: MOCK_BOTS.length + 1,
       ...botData,
+      shell_type: botData.shell_name, // For mock, shell_type equals shell_name
       is_active: true,
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
