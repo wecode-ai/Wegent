@@ -333,7 +333,6 @@ class ModelAggregationService:
                 display_name=None,  # Public models don't have displayName in current schema
                 provider=provider,
                 model_id=model_id,
-                config=config if include_config else {},
                 is_active=model_dict.get("is_active", True),
             )
 
@@ -411,7 +410,6 @@ class ModelAggregationService:
                         display_name=None,
                         provider=env.get("model") if isinstance(env, dict) else None,
                         model_id=env.get("model_id") if isinstance(env, dict) else None,
-                        config=config,
                         is_active=model_dict.get("is_active", True),
                     ).to_full_dict()
 
