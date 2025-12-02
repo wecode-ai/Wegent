@@ -333,9 +333,13 @@ def test_model_connection(
         elif provider_type == "anthropic":
             import anthropic
 
-            client = anthropic.Anthropic(api_key=api_key)
+            # Create client with base_url in constructor for proper initialization
+            # This is required for compatible APIs like MiniMax
+            client_kwargs = {"auth_token": api_key}
             if base_url:
-                client.base_url = base_url
+                client_kwargs["base_url"] = base_url
+
+            client = anthropic.Anthropic(**client_kwargs)
 
             response = client.messages.create(
                 model=model_id,
