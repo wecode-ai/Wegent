@@ -165,6 +165,7 @@ async def _forward_validation_callback(request: CallbackRequest):
         "checks": validation_result.get("checks"),
         "errors": validation_result.get("errors"),
         "errorMessage": request.error_message,
+        "executor_name": request.executor_name,  # Include executor_name for container cleanup
     }
 
     # Get backend URL
@@ -249,6 +250,7 @@ class ValidateImageRequest(BaseModel):
     """Request body for validating base image compatibility"""
     image: str
     shell_type: str  # e.g., "ClaudeCode", "Agno"
+    user_name: Optional[str] = None
     shell_name: Optional[str] = None  # Optional shell name for tracking
     validation_id: Optional[str] = None  # UUID for tracking validation status
 
@@ -315,7 +317,7 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
     # Build validation task data
     # Use a unique negative task_id to distinguish validation tasks from regular tasks
     import time
-    validation_task_id = (int(time.time() * 1000) % 1000000)  # Negative ID for validation tasks
+    validation_task_id = int(time.time() * 1000) % 1000000  # Negative ID for validation tasks
 
     validation_task = {
         "task_id": validation_task_id,
@@ -327,6 +329,9 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
             "agent_name": "ImageValidator",
             "base_image": image,  # Use the target image for validation
         }],
+        "user": {
+            "name": request.user_name or "validator",
+        },
         "validation_params": {
             "shell_type": shell_type,
             "image": image,
