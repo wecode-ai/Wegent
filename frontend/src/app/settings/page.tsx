@@ -9,12 +9,11 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import { Tab } from '@headlessui/react';
-import { PuzzlePieceIcon, UsersIcon, BellIcon, CpuChipIcon, CommandLineIcon } from '@heroicons/react/24/outline';
+import { PuzzlePieceIcon, UsersIcon, BellIcon, CpuChipIcon } from '@heroicons/react/24/outline';
 import GitHubIntegration from '@/features/settings/components/GitHubIntegration';
 import TeamList from '@/features/settings/components/TeamList';
 import NotificationSettings from '@/features/settings/components/NotificationSettings';
 import ModelList from '@/features/settings/components/ModelList';
-import ShellList from '@/features/settings/components/ShellList';
 import { UserProvider } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -117,7 +116,8 @@ function DashboardContent() {
                       <span>{t('settings.models')}</span>
                     </Tab>
 
-                    <Tab
+                    {/* Shells tab temporarily disabled */}
+                    {/* <Tab
                       className={({ selected }) =>
                         `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
                           selected
@@ -128,7 +128,7 @@ function DashboardContent() {
                     >
                       <CommandLineIcon className="w-4 h-4" />
                       <span>{t('settings.shells')}</span>
-                    </Tab>
+                    </Tab> */}
 
                     <Tab
                       className={({ selected }) =>
@@ -175,9 +175,10 @@ function DashboardContent() {
                       <Tab.Panel className="focus:outline-none">
                         <ModelList />
                       </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
+                      {/* ShellList panel temporarily disabled */}
+                      {/* <Tab.Panel className="focus:outline-none">
                         <ShellList />
-                      </Tab.Panel>
+                      </Tab.Panel> */}
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
                       </Tab.Panel>
@@ -208,7 +209,8 @@ function DashboardContent() {
                         <span className="hidden xs:inline">{t('settings.models')}</span>
                       </Tab>
 
-                      <Tab
+                      {/* Shells tab temporarily disabled */}
+                      {/* <Tab
                         className={({ selected }) =>
                           `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
                             selected
@@ -219,7 +221,7 @@ function DashboardContent() {
                       >
                         <CommandLineIcon className="w-3 h-3" />
                         <span className="hidden xs:inline">{t('settings.shells')}</span>
-                      </Tab>
+                      </Tab> */}
 
                       <Tab
                         className={({ selected }) =>
@@ -267,9 +269,10 @@ function DashboardContent() {
                       <Tab.Panel className="focus:outline-none">
                         <ModelList />
                       </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
+                      {/* ShellList panel temporarily disabled */}
+                      {/* <Tab.Panel className="focus:outline-none">
                         <ShellList />
-                      </Tab.Panel>
+                      </Tab.Panel> */}
                       <Tab.Panel className="focus:outline-none">
                         <TeamList />
                       </Tab.Panel>
