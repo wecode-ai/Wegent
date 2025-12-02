@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import os
 import re
 import uuid
 from datetime import datetime
@@ -113,6 +114,7 @@ class ValidationStatusUpdateRequest(BaseModel):
     checks: Optional[List[ImageCheckResult]] = None
     errors: Optional[List[str]] = None
     errorMessage: Optional[str] = None
+    executor_name: Optional[str] = None  # Executor container name for cleanup
 
 
 def _public_shell_to_unified(shell: PublicShell) -> UnifiedShell:
@@ -741,6 +743,9 @@ async def update_validation_status(
 
     This endpoint is called by Executor Manager to update validation progress.
     Note: This is an internal API and should not be exposed publicly.
+
+    When validation is completed (status is 'completed' or progress is 100),
+    this will automatically cleanup the validation container if executor_name is provided.
     """
     try:
         success = await _update_validation_status(
@@ -759,6 +764,10 @@ async def update_validation_status(
                 status_code=500, detail="Failed to update validation status"
             )
 
+        # Cleanup validation container if validation is completed
+        if request.executor_name and (request.status == "COMPLETED" or request.progress == 100):
+            await _cleanup_validation_container(request.executor_name)
+
         return {"status": "success", "message": "Validation status updated"}
     except HTTPException:
         raise
@@ -767,3 +776,40 @@ async def update_validation_status(
         raise HTTPException(
             status_code=500, detail=f"Error updating validation status: {str(e)}"
         )
+
+
+async def _cleanup_validation_container(executor_name: str) -> None:
+    """
+    Cleanup validation container after validation is completed.
+
+    Args:
+        executor_name: Name of the executor container to delete
+    """
+    import httpx
+
+    if not executor_name:
+        logger.warning("No executor_name provided for cleanup")
+        return
+
+    executor_manager_url = os.getenv("EXECUTOR_MANAGER_URL", "http://localhost:8001")
+    delete_url = f"{executor_manager_url}/executor-manager/executor/delete"
+
+    try:
+        logger.info(f"Cleaning up validation container: {executor_name}")
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(
+                delete_url,
+                json={"executor_name": executor_name}
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                if result.get("status") == "success":
+                    logger.info(f"Successfully cleaned up validation container: {executor_name}")
+                else:
+                    logger.warning(f"Failed to cleanup validation container {executor_name}: {result.get('error_msg', 'Unknown error')}")
+            else:
+                logger.warning(f"Failed to cleanup validation container {executor_name}: HTTP {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error cleaning up validation container {executor_name}: {e}")
+        # Don't raise exception - cleanup failure should not break validation status update
