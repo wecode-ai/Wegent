@@ -165,6 +165,7 @@ async def _forward_validation_callback(request: CallbackRequest):
         "checks": validation_result.get("checks"),
         "errors": validation_result.get("errors"),
         "errorMessage": request.error_message,
+        "executor_name": request.executor_name,  # Include executor_name for container cleanup
     }
 
     # Get backend URL
