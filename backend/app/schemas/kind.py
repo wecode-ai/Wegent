@@ -107,6 +107,13 @@ class ModelRef(BaseModel):
     namespace: str = "default"
 
 
+class ShellResources(BaseModel):
+    """Resource configuration for persistent containers"""
+
+    cpu: str = "2"  # CPU cores, default 2
+    memory: str = "4Gi"  # Memory size, default 4GB
+
+
 class ShellSpec(BaseModel):
     """Shell specification"""
 
@@ -118,6 +125,11 @@ class ShellSpec(BaseModel):
     baseShellRef: Optional[str] = (
         None  # Reference to base public shell (e.g., "ClaudeCode")
     )
+    workspaceType: Optional[str] = Field(
+        default="ephemeral",
+        validation_alias=AliasChoices("workspaceType", "workspace_type"),
+    )  # Workspace type: 'ephemeral' (default) or 'persistent'
+    resources: Optional[ShellResources] = None  # Resource config for persistent containers
 
 
 class ShellStatus(Status):

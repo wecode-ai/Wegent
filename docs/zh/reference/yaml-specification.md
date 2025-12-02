@@ -215,6 +215,10 @@ status:
 | `spec.shellType` | string | 是 | Shell 类型，如 `ClaudeCode`、`Agno`、`Dify` |
 | `spec.supportModel` | array | 否 | 支持的模型类型列表 |
 | `spec.baseImage` | string | 否 | 本地引擎 Shell 的 Docker 基础镜像（`local_engine` 类型必填） |
+| `spec.workspaceType` | string | 否 | 工作空间类型：`ephemeral`（默认）或 `persistent`。临时空间每次任务创建新容器，持久空间保持容器运行 |
+| `spec.resources` | object | 否 | 持久容器的资源配置（仅当 `workspaceType` 为 `persistent` 时使用） |
+| `spec.resources.cpu` | string | 否 | 分配的 CPU 核数，默认 `2` |
+| `spec.resources.memory` | string | 否 | 分配的内存大小，如 `4Gi`。可选值：`2Gi`、`4Gi`、`8Gi`、`16Gi` |
 | `status.state` | string | 否 | Shell 状态：`Available` 或 `Unavailable` |
 
 ### Shell 类型

@@ -162,6 +162,12 @@ const ShellList: React.FC = () => {
                             <Tag variant="info" className="hidden sm:inline-flex text-xs">
                               {getExecutionTypeLabel(shell.executionType)}
                             </Tag>
+                            {/* Workspace Type Tag */}
+                            {shell.workspaceType === 'persistent' && (
+                              <Tag variant="success" className="text-xs">
+                                {t('shells.workspace_persistent')}
+                              </Tag>
+                            )}
                             {shell.baseImage && (
                               <Tag
                                 variant="default"

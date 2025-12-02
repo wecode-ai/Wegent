@@ -595,6 +595,29 @@
       "base_image_and_shell_required": "Both base image and base shell are required for validation",
       "base_shell_not_found": "Selected base shell not found",
       "image_not_compatible": "Image is not compatible with the selected shell type"
-    }
+    },
+    "workspace_type": "Workspace Type",
+    "select_workspace_type": "Select workspace type",
+    "workspace_ephemeral": "Ephemeral",
+    "workspace_ephemeral_desc": "New container per task",
+    "workspace_persistent": "Persistent",
+    "workspace_persistent_desc": "Long-running container",
+    "workspace_type_hint": "Ephemeral creates a new container for each task. Persistent keeps the container running for multiple tasks.",
+    "resource_config": "Resource Configuration",
+    "cpu_cores": "CPU Cores",
+    "cpu_hint": "Number of CPU cores allocated to the container (1-16)",
+    "memory": "Memory",
+    "select_memory": "Select memory size",
+    "memory_hint": "Amount of memory allocated to the container",
+    "container_status": "Container Status",
+    "container_running": "Running",
+    "container_stopped": "Stopped",
+    "container_error": "Error",
+    "container_pending": "Pending",
+    "container_creating": "Creating",
+    "container_not_created": "Not Created",
+    "restart_container": "Restart Container",
+    "destroy_container": "Destroy Container",
+    "destroy_container_confirm": "Are you sure you want to destroy this container? All data will be lost."
   }
 }

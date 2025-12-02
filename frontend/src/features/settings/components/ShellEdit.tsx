@@ -25,6 +25,8 @@ import {
   ImageCheckResult,
   ValidationStage,
   ValidationStatusResponse,
+  WorkspaceType,
+  ShellResources,
 } from '@/apis/shells';
 
 // Polling configuration
@@ -39,6 +41,9 @@ const STAGE_PROGRESS: Record<ValidationStage, number> = {
   running_checks: 70,
   completed: 100,
 };
+
+// Memory options for persistent containers
+const MEMORY_OPTIONS = ['2Gi', '4Gi', '8Gi', '16Gi'];
 
 interface ShellEditProps {
   shell: UnifiedShell | null;
@@ -56,6 +61,12 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
   const [baseShellRef, setBaseShellRef] = useState(shell?.baseShellRef || '');
   const [baseImage, setBaseImage] = useState(shell?.baseImage || '');
   const [originalBaseImage] = useState(shell?.baseImage || ''); // Track original value for edit mode
+  const [workspaceType, setWorkspaceType] = useState<WorkspaceType>(
+    (shell?.workspaceType as WorkspaceType) || 'ephemeral'
+  );
+  const [resources, setResources] = useState<ShellResources>(
+    shell?.resources || { cpu: '2', memory: '4Gi' }
+  );
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
   const [_validationId, setValidationId] = useState<string | null>(null);
@@ -340,6 +351,8 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
         await shellApis.updateShell(shell.name, {
           displayName: displayName.trim() || undefined,
           baseImage: baseImage.trim() || undefined,
+          workspaceType,
+          resources: workspaceType === 'persistent' ? resources : undefined,
         });
         toast({
           title: t('shells.update_success'),
@@ -350,6 +363,8 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
           displayName: displayName.trim() || undefined,
           baseShellRef,
           baseImage: baseImage.trim(),
+          workspaceType,
+          resources: workspaceType === 'persistent' ? resources : undefined,
         });
         toast({
           title: t('shells.create_success'),
@@ -502,6 +517,83 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
           </Select>
           <p className="text-xs text-text-muted">{t('shells.base_shell_hint')}</p>
         </div>
+
+        {/* Workspace Type */}
+        <div className="space-y-2">
+          <Label htmlFor="workspaceType" className="text-lg font-semibold text-text-primary">
+            {t('shells.workspace_type')}
+          </Label>
+          <Select
+            value={workspaceType}
+            onValueChange={(value: WorkspaceType) => setWorkspaceType(value)}
+          >
+            <SelectTrigger className="bg-base">
+              <SelectValue placeholder={t('shells.select_workspace_type')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ephemeral">
+                <div className="flex items-center gap-2">
+                  <span>{t('shells.workspace_ephemeral')}</span>
+                  <span className="text-xs text-text-muted">({t('shells.workspace_ephemeral_desc')})</span>
+                </div>
+              </SelectItem>
+              <SelectItem value="persistent">
+                <div className="flex items-center gap-2">
+                  <span>{t('shells.workspace_persistent')}</span>
+                  <span className="text-xs text-text-muted">({t('shells.workspace_persistent_desc')})</span>
+                </div>
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-text-muted">{t('shells.workspace_type_hint')}</p>
+        </div>
+
+        {/* Resource Configuration (only for persistent workspace) */}
+        {workspaceType === 'persistent' && (
+          <div className="space-y-4 p-4 border border-border rounded-lg bg-muted/20">
+            <h4 className="text-base font-medium text-text-primary">{t('shells.resource_config')}</h4>
+
+            {/* CPU */}
+            <div className="space-y-2">
+              <Label htmlFor="cpu" className="text-sm font-medium text-text-primary">
+                {t('shells.cpu_cores')}
+              </Label>
+              <Input
+                id="cpu"
+                type="number"
+                min="1"
+                max="16"
+                value={resources.cpu}
+                onChange={e => setResources({ ...resources, cpu: e.target.value })}
+                className="bg-base w-32"
+              />
+              <p className="text-xs text-text-muted">{t('shells.cpu_hint')}</p>
+            </div>
+
+            {/* Memory */}
+            <div className="space-y-2">
+              <Label htmlFor="memory" className="text-sm font-medium text-text-primary">
+                {t('shells.memory')}
+              </Label>
+              <Select
+                value={resources.memory}
+                onValueChange={(value: string) => setResources({ ...resources, memory: value })}
+              >
+                <SelectTrigger className="bg-base w-32">
+                  <SelectValue placeholder={t('shells.select_memory')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {MEMORY_OPTIONS.map(option => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-text-muted">{t('shells.memory_hint')}</p>
+            </div>
+          </div>
+        )}
 
         {/* Base Image */}
         <div className="space-y-2">

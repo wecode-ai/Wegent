@@ -10,12 +10,13 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
+from app.models.container_instance import ContainerInstance
 from app.models.kind import Kind
 from app.models.public_shell import PublicShell
 from app.models.user import User
@@ -43,6 +44,17 @@ class UnifiedShell(BaseModel):
     executionType: Optional[str] = (
         None  # 'local_engine' or 'external_api' (from labels)
     )
+    workspaceType: Optional[str] = Field(
+        default="ephemeral"
+    )  # 'ephemeral' or 'persistent'
+    resources: Optional[dict] = None  # Resource config for persistent containers
+
+
+class ShellResourcesRequest(BaseModel):
+    """Resource configuration for persistent containers"""
+
+    cpu: str = "2"  # CPU cores
+    memory: str = "4Gi"  # Memory size (2Gi, 4Gi, 8Gi, 16Gi)
 
 
 class ShellCreateRequest(BaseModel):
@@ -52,6 +64,10 @@ class ShellCreateRequest(BaseModel):
     displayName: Optional[str] = None
     baseShellRef: str  # Required: base public shell name (e.g., "ClaudeCode")
     baseImage: str  # Required: custom base image address
+    workspaceType: Optional[str] = Field(
+        default="ephemeral"
+    )  # 'ephemeral' or 'persistent'
+    resources: Optional[ShellResourcesRequest] = None  # Resource config
 
 
 class ShellUpdateRequest(BaseModel):
@@ -59,6 +75,8 @@ class ShellUpdateRequest(BaseModel):
 
     displayName: Optional[str] = None
     baseImage: Optional[str] = None
+    workspaceType: Optional[str] = None  # 'ephemeral' or 'persistent'
+    resources: Optional[ShellResourcesRequest] = None  # Resource config
 
 
 class ImageValidationRequest(BaseModel):
@@ -117,10 +135,33 @@ class ValidationStatusUpdateRequest(BaseModel):
     executor_name: Optional[str] = None  # Executor container name for cleanup
 
 
+# Container Instance Response Models
+class ContainerInstanceResponse(BaseModel):
+    """Response model for container instance"""
+
+    id: int
+    user_id: int
+    shell_id: int
+    container_id: Optional[str] = None
+    access_url: Optional[str] = None
+    status: str  # pending/creating/running/stopped/error
+    repo_url: Optional[str] = None
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+    last_task_at: Optional[datetime] = None
+    error_message: Optional[str] = None
+
+
 def _public_shell_to_unified(shell: PublicShell) -> UnifiedShell:
     """Convert PublicShell to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(shell.json)
     labels = shell_crd.metadata.labels or {}
+    resources = None
+    if shell_crd.spec.resources:
+        resources = {
+            "cpu": shell_crd.spec.resources.cpu,
+            "memory": shell_crd.spec.resources.memory,
+        }
     return UnifiedShell(
         name=shell.name,
         type="public",
@@ -130,6 +171,8 @@ def _public_shell_to_unified(shell: PublicShell) -> UnifiedShell:
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
+        workspaceType=shell_crd.spec.workspaceType or "ephemeral",
+        resources=resources,
     )
 
 
@@ -137,6 +180,12 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
     """Convert Kind (user shell) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(kind.json)
     labels = shell_crd.metadata.labels or {}
+    resources = None
+    if shell_crd.spec.resources:
+        resources = {
+            "cpu": shell_crd.spec.resources.cpu,
+            "memory": shell_crd.spec.resources.memory,
+        }
     return UnifiedShell(
         name=kind.name,
         type="user",
@@ -146,6 +195,8 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
+        workspaceType=shell_crd.spec.workspaceType or "ephemeral",
+        resources=resources,
     )
 
 
@@ -335,6 +386,25 @@ def create_shell(
             detail="Invalid base image format. Expected formats: image, image:tag, registry/image:tag, or registry:port/image:tag",
         )
 
+    # Validate workspaceType if provided
+    workspace_type = request.workspaceType or "ephemeral"
+    if workspace_type not in ("ephemeral", "persistent"):
+        raise HTTPException(
+            status_code=400,
+            detail="workspaceType must be 'ephemeral' or 'persistent'",
+        )
+
+    # Build resources config
+    resources_config = None
+    if request.resources:
+        resources_config = {
+            "cpu": request.resources.cpu,
+            "memory": request.resources.memory,
+        }
+    elif workspace_type == "persistent":
+        # Default resources for persistent containers
+        resources_config = {"cpu": "2", "memory": "4Gi"}
+
     # Create Shell CRD
     shell_crd = {
         "apiVersion": "agent.wecode.io/v1",
@@ -350,6 +420,8 @@ def create_shell(
             "supportModel": base_shell_crd.spec.supportModel or [],
             "baseImage": request.baseImage,
             "baseShellRef": request.baseShellRef,
+            "workspaceType": workspace_type,
+            "resources": resources_config,
         },
         "status": {"state": "Available"},
     }
@@ -421,6 +493,23 @@ def update_shell(
                 detail="Invalid base image format. Expected formats: image, image:tag, registry/image:tag, or registry:port/image:tag",
             )
         shell_crd.spec.baseImage = request.baseImage
+
+    # Update workspaceType if provided
+    if request.workspaceType is not None:
+        if request.workspaceType not in ("ephemeral", "persistent"):
+            raise HTTPException(
+                status_code=400,
+                detail="workspaceType must be 'ephemeral' or 'persistent'",
+            )
+        shell_crd.spec.workspaceType = request.workspaceType
+
+    # Update resources if provided
+    if request.resources is not None:
+        from app.schemas.kind import ShellResources
+        shell_crd.spec.resources = ShellResources(
+            cpu=request.resources.cpu,
+            memory=request.resources.memory,
+        )
 
     # Save changes
     shell.json = shell_crd.model_dump(mode="json")
@@ -814,3 +903,289 @@ async def _cleanup_validation_container(executor_name: str) -> None:
     except Exception as e:
         logger.error(f"Error cleaning up validation container {executor_name}: {e}")
         # Don't raise exception - cleanup failure should not break validation status update
+
+
+# =====================================================================
+# Container Instance Management APIs
+# =====================================================================
+
+
+def _get_shell_id_by_name(
+    db: Session, user_id: int, shell_name: str
+) -> Optional[int]:
+    """Get shell ID by name for the current user"""
+    # First check user shells
+    user_shell = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Shell",
+            Kind.name == shell_name,
+            Kind.namespace == "default",
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+    if user_shell:
+        return user_shell.id
+
+    # Check public shells
+    public_shell = (
+        db.query(PublicShell)
+        .filter(
+            PublicShell.name == shell_name,
+            PublicShell.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+    if public_shell:
+        # For public shells, use negative ID to distinguish from user shells
+        return -public_shell.id
+
+    return None
+
+
+@router.get("/{shell_name}/container", response_model=ContainerInstanceResponse)
+def get_shell_container(
+    shell_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get the container instance associated with a shell.
+
+    Returns the container status, access URL, and other details.
+    Only applicable for persistent workspace type shells.
+    """
+    shell_id = _get_shell_id_by_name(db, current_user.id, shell_name)
+    if not shell_id:
+        raise HTTPException(status_code=404, detail="Shell not found")
+
+    container = (
+        db.query(ContainerInstance)
+        .filter(
+            ContainerInstance.user_id == current_user.id,
+            ContainerInstance.shell_id == shell_id,
+        )
+        .first()
+    )
+
+    if not container:
+        raise HTTPException(
+            status_code=404,
+            detail="No container instance found for this shell",
+        )
+
+    return ContainerInstanceResponse(
+        id=container.id,
+        user_id=container.user_id,
+        shell_id=container.shell_id,
+        container_id=container.container_id,
+        access_url=container.access_url,
+        status=container.status,
+        repo_url=container.repo_url,
+        created_at=container.created_at,
+        updated_at=container.updated_at,
+        last_task_at=container.last_task_at,
+        error_message=container.error_message,
+    )
+
+
+@router.post("/{shell_name}/container/restart")
+async def restart_shell_container(
+    shell_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Restart the container instance associated with a shell.
+
+    This will send a restart request to the Executor Manager.
+    """
+    import httpx
+
+    shell_id = _get_shell_id_by_name(db, current_user.id, shell_name)
+    if not shell_id:
+        raise HTTPException(status_code=404, detail="Shell not found")
+
+    container = (
+        db.query(ContainerInstance)
+        .filter(
+            ContainerInstance.user_id == current_user.id,
+            ContainerInstance.shell_id == shell_id,
+        )
+        .first()
+    )
+
+    if not container:
+        raise HTTPException(
+            status_code=404,
+            detail="No container instance found for this shell",
+        )
+
+    if not container.container_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Container has not been created yet",
+        )
+
+    # Call Executor Manager to restart container
+    executor_manager_url = os.getenv("EXECUTOR_MANAGER_URL", "http://localhost:8001")
+    restart_url = f"{executor_manager_url}/executor-manager/containers/{shell_id}/restart"
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(restart_url)
+
+            if response.status_code == 200:
+                result = response.json()
+                # Update container status in database
+                container.status = "running"
+                container.error_message = None
+                container.updated_at = datetime.now()
+                db.add(container)
+                db.commit()
+
+                return {
+                    "status": "success",
+                    "message": "Container restart initiated",
+                    "container_id": container.container_id,
+                }
+            else:
+                raise HTTPException(
+                    status_code=response.status_code,
+                    detail=f"Failed to restart container: {response.text}",
+                )
+    except httpx.RequestError as e:
+        logger.error(f"Failed to connect to executor manager: {e}")
+        raise HTTPException(
+            status_code=503,
+            detail=f"Failed to connect to executor manager: {str(e)}",
+        )
+
+
+@router.delete("/{shell_name}/container")
+async def delete_shell_container(
+    shell_name: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Delete (destroy) the container instance associated with a shell.
+
+    This will stop and remove the container, and delete the database record.
+    """
+    import httpx
+
+    shell_id = _get_shell_id_by_name(db, current_user.id, shell_name)
+    if not shell_id:
+        raise HTTPException(status_code=404, detail="Shell not found")
+
+    container = (
+        db.query(ContainerInstance)
+        .filter(
+            ContainerInstance.user_id == current_user.id,
+            ContainerInstance.shell_id == shell_id,
+        )
+        .first()
+    )
+
+    if not container:
+        raise HTTPException(
+            status_code=404,
+            detail="No container instance found for this shell",
+        )
+
+    # If container exists in Docker, delete it via Executor Manager
+    if container.container_id:
+        executor_manager_url = os.getenv("EXECUTOR_MANAGER_URL", "http://localhost:8001")
+        delete_url = f"{executor_manager_url}/executor-manager/containers/{shell_id}"
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                response = await client.delete(delete_url)
+
+                if response.status_code not in (200, 404):
+                    logger.warning(
+                        f"Failed to delete container from executor manager: {response.text}"
+                    )
+        except httpx.RequestError as e:
+            logger.warning(f"Failed to connect to executor manager for container deletion: {e}")
+            # Continue to delete database record even if executor manager call fails
+
+    # Delete database record
+    db.delete(container)
+    db.commit()
+
+    return {
+        "status": "success",
+        "message": "Container instance deleted",
+    }
+
+
+@router.post("/{shell_name}/container/status", include_in_schema=False)
+def update_container_status(
+    shell_name: str,
+    status: str = Query(..., description="New container status"),
+    container_id: Optional[str] = Query(None, description="Docker container ID"),
+    access_url: Optional[str] = Query(None, description="Container access URL"),
+    error_message: Optional[str] = Query(None, description="Error message if any"),
+    db: Session = Depends(get_db),
+):
+    """
+    Internal API for Executor Manager to update container status.
+
+    This endpoint should not be exposed publicly.
+    """
+    # Find the shell and container
+    # This is an internal API, so we need to find by shell_name across all users
+    user_shell = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "Shell",
+            Kind.name == shell_name,
+            Kind.namespace == "default",
+            Kind.is_active == True,  # noqa: E712
+        )
+        .first()
+    )
+
+    if not user_shell:
+        raise HTTPException(status_code=404, detail="Shell not found")
+
+    container = (
+        db.query(ContainerInstance)
+        .filter(ContainerInstance.shell_id == user_shell.id)
+        .first()
+    )
+
+    if not container:
+        # Create new container instance if not exists
+        container = ContainerInstance(
+            user_id=user_shell.user_id,
+            shell_id=user_shell.id,
+            status=status,
+            container_id=container_id,
+            access_url=access_url,
+            error_message=error_message,
+        )
+        db.add(container)
+    else:
+        # Update existing container
+        container.status = status
+        if container_id:
+            container.container_id = container_id
+        if access_url:
+            container.access_url = access_url
+        if error_message is not None:
+            container.error_message = error_message
+        container.updated_at = datetime.now()
+        db.add(container)
+
+    db.commit()
+    db.refresh(container)
+
+    return {
+        "status": "success",
+        "container_id": container.id,
+    }

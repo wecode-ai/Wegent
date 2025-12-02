@@ -22,6 +22,7 @@ from executor_manager.tasks.task_processor import TaskProcessor
 from executor_manager.clients.task_api_client import TaskApiClient
 from shared.models.task import TasksRequest
 from executor_manager.executors.dispatcher import ExecutorDispatcher
+from executor_manager.executors.docker.persistent_container import PersistentContainerManager
 from typing import Optional, Dict, Any
 
 # Setup logger
@@ -37,6 +38,8 @@ app = FastAPI(
 task_processor = TaskProcessor()
 # Create API client for direct API calls
 api_client = TaskApiClient()
+# Create persistent container manager
+persistent_container_manager = PersistentContainerManager()
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -393,4 +396,187 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
         raise
     except Exception as e:
         logger.error(f"Error cancelling task {request.task_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# =====================================================================
+# Persistent Container Management APIs
+# =====================================================================
+
+
+class ContainerCreateRequest(BaseModel):
+    """Request body for creating a persistent container"""
+    user_id: int
+    shell_id: int
+    shell_config: Dict[str, Any]
+    git_config: Optional[Dict[str, Any]] = None
+    executor_image: str
+
+
+class ContainerActionRequest(BaseModel):
+    """Request body for container actions (restart, stop)"""
+    user_id: int
+    shell_id: int
+
+
+@app.get("/executor-manager/containers")
+async def list_containers(
+    user_id: Optional[int] = None,
+    http_request: Request = None,
+):
+    """
+    List all persistent containers, optionally filtered by user.
+
+    Args:
+        user_id: Optional user ID to filter containers
+
+    Returns:
+        List of container information
+    """
+    try:
+        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
+        logger.info(f"Received request to list containers (user_id={user_id}) from {client_ip}")
+
+        result = persistent_container_manager.list_persistent_containers(user_id)
+        return result
+
+    except Exception as e:
+        logger.error(f"Error listing containers: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/executor-manager/containers/{shell_id}")
+async def get_container(
+    shell_id: int,
+    user_id: int,
+    http_request: Request = None,
+):
+    """
+    Get container status for a specific shell.
+
+    Args:
+        shell_id: Shell ID
+        user_id: User ID
+
+    Returns:
+        Container information or 404 if not found
+    """
+    try:
+        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
+        logger.info(f"Received request to get container for shell {shell_id} from {client_ip}")
+
+        container_info = persistent_container_manager.get_container_info(user_id, shell_id)
+
+        if not container_info:
+            raise HTTPException(status_code=404, detail="Container not found")
+
+        return container_info
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting container info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/executor-manager/containers")
+async def create_container(
+    request: ContainerCreateRequest,
+    http_request: Request = None,
+):
+    """
+    Create or get existing persistent container.
+
+    Args:
+        request: Container creation request with shell and git config
+
+    Returns:
+        Container information including status and access URL
+    """
+    try:
+        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
+        logger.info(f"Received request to create container for shell {request.shell_id} from {client_ip}")
+
+        result = persistent_container_manager.get_or_create_container(
+            user_id=request.user_id,
+            shell_id=request.shell_id,
+            shell_config=request.shell_config,
+            git_config=request.git_config or {},
+            executor_image=request.executor_image,
+        )
+
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("error_message", "Failed to create container"))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error creating container: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/executor-manager/containers/{shell_id}/restart")
+async def restart_container(
+    shell_id: int,
+    request: ContainerActionRequest,
+    http_request: Request = None,
+):
+    """
+    Restart a persistent container.
+
+    Args:
+        shell_id: Shell ID
+        request: Container action request with user_id
+
+    Returns:
+        Restart result
+    """
+    try:
+        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
+        logger.info(f"Received request to restart container for shell {shell_id} from {client_ip}")
+
+        container_name = f"wegent-persistent-{request.user_id}-{shell_id}"
+        result = persistent_container_manager.restart_container(container_name)
+
+        if result.get("status") == "error":
+            raise HTTPException(status_code=500, detail=result.get("error_message", "Failed to restart container"))
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error restarting container: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/executor-manager/containers/{shell_id}")
+async def delete_persistent_container(
+    shell_id: int,
+    user_id: int,
+    http_request: Request = None,
+):
+    """
+    Delete (destroy) a persistent container.
+
+    Args:
+        shell_id: Shell ID
+        user_id: User ID
+
+    Returns:
+        Deletion result
+    """
+    try:
+        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
+        logger.info(f"Received request to delete container for shell {shell_id} from {client_ip}")
+
+        container_name = f"wegent-persistent-{user_id}-{shell_id}"
+        result = persistent_container_manager.delete_container(container_name)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Error deleting container: {e}")
         raise HTTPException(status_code=500, detail=str(e))

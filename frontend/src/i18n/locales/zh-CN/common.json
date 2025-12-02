@@ -596,6 +596,29 @@
       "base_image_and_shell_required": "验证需要同时填写 Base Image 和基础 Shell",
       "base_shell_not_found": "未找到所选基础 Shell",
       "image_not_compatible": "镜像与所选 Shell 类型不兼容"
-    }
+    },
+    "workspace_type": "工作空间类型",
+    "select_workspace_type": "选择工作空间类型",
+    "workspace_ephemeral": "临时空间",
+    "workspace_ephemeral_desc": "每次任务创建新容器",
+    "workspace_persistent": "持久空间",
+    "workspace_persistent_desc": "长期运行的容器",
+    "workspace_type_hint": "临时空间为每个任务创建新容器。持久空间保持容器运行，支持多任务复用。",
+    "resource_config": "资源配置",
+    "cpu_cores": "CPU 核数",
+    "cpu_hint": "分配给容器的 CPU 核数（1-16）",
+    "memory": "内存",
+    "select_memory": "选择内存大小",
+    "memory_hint": "分配给容器的内存大小",
+    "container_status": "容器状态",
+    "container_running": "运行中",
+    "container_stopped": "已停止",
+    "container_error": "错误",
+    "container_pending": "等待中",
+    "container_creating": "创建中",
+    "container_not_created": "未创建",
+    "restart_container": "重启容器",
+    "destroy_container": "销毁容器",
+    "destroy_container_confirm": "确定要销毁此容器吗？所有数据将会丢失。"
   }
 }

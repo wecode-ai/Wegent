@@ -6,6 +6,12 @@ import { apiClient } from './client';
 
 // Shell Types
 export type ShellTypeEnum = 'public' | 'user';
+export type WorkspaceType = 'ephemeral' | 'persistent';
+
+export interface ShellResources {
+  cpu: string; // e.g., "2"
+  memory: string; // e.g., "4Gi"
+}
 
 export interface UnifiedShell {
   name: string;
@@ -16,6 +22,8 @@ export interface UnifiedShell {
   baseShellRef?: string | null;
   supportModel?: string[] | null;
   executionType?: 'local_engine' | 'external_api' | null; // Shell execution type
+  workspaceType?: WorkspaceType | null; // 'ephemeral' or 'persistent'
+  resources?: ShellResources | null; // Resource configuration for persistent containers
 }
 
 export interface UnifiedShellListResponse {
@@ -27,11 +35,15 @@ export interface ShellCreateRequest {
   displayName?: string;
   baseShellRef: string; // Required: base public shell name (e.g., "ClaudeCode")
   baseImage: string; // Required: custom base image address
+  workspaceType?: WorkspaceType; // 'ephemeral' or 'persistent'
+  resources?: ShellResources; // Resource configuration
 }
 
 export interface ShellUpdateRequest {
   displayName?: string;
   baseImage?: string;
+  workspaceType?: WorkspaceType;
+  resources?: ShellResources;
 }
 
 // Image Validation Types
@@ -160,4 +172,48 @@ export const shellApis = {
       shell => shell.type === 'public' && shell.executionType === 'local_engine'
     );
   },
+
+  /**
+   * Get container instance for a shell
+   *
+   * @param shellName - Shell name
+   */
+  async getContainerInstance(shellName: string): Promise<ContainerInstanceResponse> {
+    return apiClient.get(`/shells/${encodeURIComponent(shellName)}/container`);
+  },
+
+  /**
+   * Restart container instance for a shell
+   *
+   * @param shellName - Shell name
+   */
+  async restartContainer(shellName: string): Promise<{ status: string; message: string }> {
+    return apiClient.post(`/shells/${encodeURIComponent(shellName)}/container/restart`);
+  },
+
+  /**
+   * Delete container instance for a shell
+   *
+   * @param shellName - Shell name
+   */
+  async deleteContainer(shellName: string): Promise<{ status: string; message: string }> {
+    return apiClient.delete(`/shells/${encodeURIComponent(shellName)}/container`);
+  },
 };
+
+// Container Instance Types
+export type ContainerStatus = 'pending' | 'creating' | 'running' | 'stopped' | 'error';
+
+export interface ContainerInstanceResponse {
+  id: number;
+  user_id: number;
+  shell_id: number;
+  container_id?: string | null;
+  access_url?: string | null;
+  status: ContainerStatus;
+  repo_url?: string | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+  last_task_at?: string | null;
+  error_message?: string | null;
+}
