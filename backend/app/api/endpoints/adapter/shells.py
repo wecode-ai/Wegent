@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import logging
+import os
 import re
 import uuid
 from datetime import datetime
@@ -764,7 +765,7 @@ async def update_validation_status(
             )
 
         # Cleanup validation container if validation is completed
-        if request.executor_name and (request.status == "completed" or request.progress == 100):
+        if request.executor_name and (request.status == "COMPLETED" or request.progress == 100):
             await _cleanup_validation_container(request.executor_name)
 
         return {"status": "success", "message": "Validation status updated"}
