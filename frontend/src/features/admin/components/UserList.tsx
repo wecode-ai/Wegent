@@ -22,7 +22,6 @@ import {
   PencilIcon,
   TrashIcon,
   KeyIcon,
-  ShieldCheckIcon,
   NoSymbolIcon,
   CheckCircleIcon,
 } from '@heroicons/react/24/outline';
@@ -60,8 +59,8 @@ const UserList: React.FC = () => {
   const { t } = useTranslation('admin');
   const { toast } = useToast();
   const [users, setUsers] = useState<AdminUser[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [_total, setTotal] = useState(0);
+  const [page, _setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [includeInactive, setIncludeInactive] = useState(false);
 
@@ -89,7 +88,7 @@ const UserList: React.FC = () => {
       const response = await adminApis.getUsers(page, 20, includeInactive);
       setUsers(response.items);
       setTotal(response.total);
-    } catch (error) {
+    } catch (_error) {
       toast({
         variant: 'destructive',
         title: t('users.errors.load_failed'),

@@ -50,8 +50,8 @@ const PublicModelList: React.FC = () => {
   const { t } = useTranslation('admin');
   const { toast } = useToast();
   const [models, setModels] = useState<AdminPublicModel[]>([]);
-  const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [_total, setTotal] = useState(0);
+  const [page, _setPage] = useState(1);
   const [loading, setLoading] = useState(true);
 
   // Dialog states
@@ -79,7 +79,7 @@ const PublicModelList: React.FC = () => {
       const response = await adminApis.getPublicModels(page, 20);
       setModels(response.items);
       setTotal(response.total);
-    } catch (error) {
+    } catch (_error) {
       toast({
         variant: 'destructive',
         title: t('public_models.errors.load_failed'),
