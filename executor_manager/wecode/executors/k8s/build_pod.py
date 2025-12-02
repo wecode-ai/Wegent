@@ -17,8 +17,10 @@ from executor_manager.wecode.executors.k8s.binary_extractor import (
 )
 
 def to_nice_yaml(value, indent=2):
-    if isinstance(value, dict) and "name" in value:
-        value = {k: v for k, v in value.items() if k != "name"}
+    """
+    Convert value to YAML format.
+    Note: We preserve the 'name' field for initContainers.
+    """
     return yaml.dump(
         value,
         default_flow_style=False,

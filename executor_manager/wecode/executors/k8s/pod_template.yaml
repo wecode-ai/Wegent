@@ -26,7 +26,12 @@ metadata:
 spec:
   {% if init_container %}
   initContainers:
-    - {{ init_container | to_nice_yaml | indent(6) }}
+    - name: {{ init_container.name }}
+      image: {{ init_container.image }}
+      imagePullPolicy: {{ init_container.imagePullPolicy }}
+      command: {{ init_container.command | tojson }}
+      volumeMounts:
+        {{ init_container.volumeMounts | to_nice_yaml | indent(8) }}
   {% endif %}
   containers:
     - name: {{ executor_name }}
