@@ -8,7 +8,7 @@ import { Bot, PaginationParams, SuccessMessage } from '../types/api';
 // Bot Request/Response Types
 export interface CreateBotRequest {
   name: string;
-  agent_name: string;
+  shell_name: string; // Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
   agent_config: Record<string, unknown>;
   system_prompt: string;
   mcp_servers: Record<string, unknown>;
@@ -17,7 +17,7 @@ export interface CreateBotRequest {
 
 export interface UpdateBotRequest {
   name?: string;
-  agent_name?: string;
+  shell_name?: string; // Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
   agent_config?: Record<string, unknown>;
   system_prompt?: string;
   mcp_servers?: Record<string, unknown>;

@@ -29,7 +29,8 @@ export interface GitInfo {
 export interface Bot {
   id: number;
   name: string;
-  agent_name: string;
+  shell_name: string; // Shell name user selected (e.g., 'ClaudeCode', 'my-custom-shell')
+  shell_type: string; // Actual agent type (e.g., 'ClaudeCode', 'Agno', 'Dify')
   agent_config: Record<string, unknown>;
   system_prompt: string;
   mcp_servers: Record<string, unknown>;
@@ -104,7 +105,7 @@ export interface Team {
 /** Bot summary with only necessary fields for team list */
 export interface BotSummary {
   agent_config?: Record<string, unknown>;
-  agent_name?: string;
+  shell_type?: string;
 }
 
 /** Bot information (used for Team.bots) */

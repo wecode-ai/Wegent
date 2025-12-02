@@ -81,7 +81,7 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         # Convert to JSON format matching kinds table structure
         json_data = {
             "kind": "Shell",
-            "spec": {"runtime": obj_in.name, "supportModel": supportModel},
+            "spec": {"shellType": obj_in.name, "supportModel": supportModel},
             "status": {"state": "Available"},
             "metadata": {"name": obj_in.name, "namespace": "default"},
             "apiVersion": "agent.wecode.io/v1",
@@ -175,11 +175,11 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         for field, value in update_data.items():
             if field == "name":
                 setattr(shell, field, value)
-                # Also update metadata and runtime in json
+                # Also update metadata and shellType in json
                 if isinstance(shell.json, dict):
                     shell_crd = Shell.model_validate(shell.json)
                     shell_crd.metadata.name = value
-                    shell_crd.spec.runtime = value
+                    shell_crd.spec.shellType = value
                     shell.json = shell_crd.model_dump()
             elif field == "config":
                 # Update supportModel from config.mode_filter

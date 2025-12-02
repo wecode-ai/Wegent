@@ -18,7 +18,7 @@ export async function fetchBotsList(): Promise<Bot[]> {
   items.forEach((bot, index) => {
     console.log(`[DEBUG] Bot ${index} (${bot.name}):`, {
       id: bot.id,
-      agent_name: bot.agent_name,
+      shell_type: bot.shell_type,
       agent_config: bot.agent_config,
     });
   });

@@ -185,7 +185,7 @@ spec:
 
 ## 🐚 Shell
 
-Shell 定义了智能体的运行环境，指定了运行时类型和支持的模型。
+Shell 定义了智能体的运行环境，指定了运行时类型、基础镜像和支持的模型。
 
 ### 完整配置示例
 
@@ -195,8 +195,14 @@ kind: Shell
 metadata:
   name: ClaudeCode
   namespace: default
+  labels:
+    type: local_engine
 spec:
-  runtime: "ClaudeCode"
+  shellType: ClaudeCode
+  supportModel: []
+  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
+status:
+  state: Available
 ```
 
 ### 字段说明
@@ -205,16 +211,25 @@ spec:
 |------|------|------|------|
 | `metadata.name` | string | 是 | Shell 的唯一标识符 |
 | `metadata.namespace` | string | 是 | 命名空间，通常为 `default` |
-| `spec.runtime` | string | 是 | 运行时类型，如 `ClaudeCode`、`Agno` |
+| `metadata.labels` | object | 否 | 分类标签，如 `type: local_engine` 或 `type: external_api` |
+| `spec.shellType` | string | 是 | Shell 类型，如 `ClaudeCode`、`Agno`、`Dify` |
 | `spec.supportModel` | array | 否 | 支持的模型类型列表 |
+| `spec.baseImage` | string | 否 | 本地引擎 Shell 的 Docker 基础镜像（`local_engine` 类型必填） |
+| `status.state` | string | 否 | Shell 状态：`Available` 或 `Unavailable` |
 
-### 支持的运行时
+### Shell 类型
 
-| 运行时 | 说明 |
-|--------|------|
-| `ClaudeCode` | Claude Code 运行时 |
-| `Agno` | Agno 运行时 |
-| `Dify` | Dify 运行时 |
+| 类型 | 标签 | 说明 |
+|------|------|------|
+| `ClaudeCode` | `local_engine` | Claude Code 运行时，需要 `baseImage` |
+| `Agno` | `local_engine` | Agno 运行时，需要 `baseImage` |
+| `Dify` | `external_api` | Dify 外部 API 运行时，不需要 `baseImage` |
+
+### 标签说明
+
+| 标签 | 可选值 | 说明 |
+|------|--------|------|
+| `type` | `local_engine`, `external_api` | 表示 Shell 是本地运行还是连接外部 API |
 
 ---
 

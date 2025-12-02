@@ -13,6 +13,7 @@ from executor.agents.base import Agent
 from executor.agents.claude_code.claude_code_agent import ClaudeCodeAgent
 from executor.agents.agno.agno_agent import AgnoAgent
 from executor.agents.dify.dify_agent import DifyAgent
+from executor.agents.image_validator.image_validator_agent import ImageValidatorAgent
 
 logger = setup_logger("agent_factory")
 
@@ -21,12 +22,18 @@ class AgentFactory:
     """
     Factory class for creating agent instances based on agent_type
 
-    Agents are classified into two types:
+    Agents are classified into types:
     - local_engine: Agents that execute code locally (ClaudeCode, Agno)
     - external_api: Agents that delegate execution to external services (Dify)
+    - validator: Agents that perform validation tasks (ImageValidator)
     """
 
-    _agents = {"claudecode": ClaudeCodeAgent, "agno": AgnoAgent, "dify": DifyAgent}
+    _agents = {
+        "claudecode": ClaudeCodeAgent,
+        "agno": AgnoAgent,
+        "dify": DifyAgent,
+        "imagevalidator": ImageValidatorAgent,
+    }
 
     @classmethod
     def get_agent(cls, agent_type: str, task_data: Dict[str, Any]) -> Optional[Agent]:

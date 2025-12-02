@@ -31,7 +31,7 @@ export interface LeaderModeEditorProps {
   unsavedPrompts: Record<string, string>;
   teamPromptMap: Map<number, boolean>;
   isDifyLeader: boolean;
-  selectedAgentName: string | null;
+  selectedShellType: string | null;
   leaderOptions: Bot[];
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
   onEditBot: (botId: number) => void;
@@ -50,7 +50,7 @@ export default function LeaderModeEditor({
   unsavedPrompts,
   teamPromptMap,
   isDifyLeader,
-  selectedAgentName,
+  selectedShellType,
   leaderOptions,
   onEditBot,
   onCreateBot,
@@ -83,7 +83,7 @@ export default function LeaderModeEditor({
                   <span className="truncate max-w-[200px]">
                     {bots.find(b => b.id === leaderBotId)?.name || ''}
                     <span className="text-text-muted text-xs ml-1">
-                      ({bots.find(b => b.id === leaderBotId)?.agent_name || ''})
+                      ({bots.find(b => b.id === leaderBotId)?.shell_type || ''})
                     </span>
                   </span>
                 </div>
@@ -134,11 +134,11 @@ export default function LeaderModeEditor({
                         <TooltipTrigger asChild>
                           <span className="block truncate max-w-[200px]">
                             {b.name}{' '}
-                            <span className="text-text-muted text-xs">({b.agent_name})</span>
+                            <span className="text-text-muted text-xs">({b.shell_type})</span>
                           </span>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>{`${b.name} (${b.agent_name})`}</p>
+                          <p>{`${b.name} (${b.shell_type})`}</p>
                         </TooltipContent>
                       </Tooltip>
                       {teamPromptMap.get(b.id) && (
@@ -194,7 +194,7 @@ export default function LeaderModeEditor({
         unsavedPrompts={unsavedPrompts}
         teamPromptMap={teamPromptMap}
         isDifyLeader={isDifyLeader}
-        selectedAgentName={selectedAgentName}
+        selectedShellType={selectedShellType}
         excludeLeader={true}
         onEditBot={onEditBot}
         onCreateBot={onCreateBot}

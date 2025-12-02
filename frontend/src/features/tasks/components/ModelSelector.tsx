@@ -448,7 +448,10 @@ export default function ModelSelector({
                                     {getModelDisplayText(model)}
                                   </span>
                                   {model.type === 'public' && (
-                                    <Tag variant="info" className="text-[10px] flex-shrink-0 whitespace-nowrap">
+                                    <Tag
+                                      variant="info"
+                                      className="text-[10px] flex-shrink-0 whitespace-nowrap"
+                                    >
                                       {t('models.public', '公共')}
                                     </Tag>
                                   )}

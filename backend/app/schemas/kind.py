@@ -8,7 +8,7 @@ Kubernetes-style API schemas for cloud-native agent management
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 
 class ObjectMeta(BaseModel):
@@ -110,8 +110,14 @@ class ModelRef(BaseModel):
 class ShellSpec(BaseModel):
     """Shell specification"""
 
-    runtime: str
+    shellType: str = Field(
+        ..., validation_alias=AliasChoices("shellType", "runtime")
+    )  # Agent type: 'ClaudeCode', 'Agno', 'Dify', etc. Accepts 'runtime' for backward compatibility
     supportModel: Optional[List[str]] = None
+    baseImage: Optional[str] = None  # Custom base image address for user-defined shells
+    baseShellRef: Optional[str] = (
+        None  # Reference to base public shell (e.g., "ClaudeCode")
+    )
 
 
 class ShellStatus(Status):

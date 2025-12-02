@@ -24,7 +24,7 @@ export interface BotTransferProps {
   unsavedPrompts: Record<string, string>;
   teamPromptMap: Map<number, boolean>;
   isDifyLeader?: boolean;
-  selectedAgentName?: string | null;
+  selectedShellType?: string | null;
   /** Whether to exclude leader from transfer list */
   excludeLeader?: boolean;
   /** Whether to auto-set first selected bot as leader */
@@ -46,7 +46,7 @@ export default function BotTransfer({
   unsavedPrompts,
   teamPromptMap,
   isDifyLeader = false,
-  selectedAgentName = null,
+  selectedShellType = null,
   excludeLeader = false,
   autoSetLeader = false,
   sortable = false,
@@ -110,13 +110,13 @@ export default function BotTransfer({
     return filteredBots.map(b => ({
       key: String(b.id),
       title: b.name,
-      description: b.agent_name,
+      description: b.shell_type,
       disabled:
         isDifyLeader ||
-        // Disable options not matching agent_name if already selected
-        (selectedAgentName !== null && b.agent_name !== selectedAgentName),
+        // Disable options not matching shell_type if already selected
+        (selectedShellType !== null && b.shell_type !== selectedShellType),
     }));
-  }, [bots, isDifyLeader, selectedAgentName, excludeLeader, leaderBotId]);
+  }, [bots, isDifyLeader, selectedShellType, excludeLeader, leaderBotId]);
 
   // Transfer change handler
   const onTransferChange = (

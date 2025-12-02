@@ -110,10 +110,10 @@ export interface CompatibleModelsResponse {
 // Model Services
 export const modelApis = {
   /**
-   * Get model names for a specific agent (legacy API, use getUnifiedModels for new implementations)
+   * Get model names for a specific shell type (legacy API, use getUnifiedModels for new implementations)
    */
-  async getModelNames(agentName: string): Promise<ModelNamesResponse> {
-    return apiClient.get(`/models/names?agent_name=${encodeURIComponent(agentName)}`);
+  async getModelNames(shellType: string): Promise<ModelNamesResponse> {
+    return apiClient.get(`/models/names?shell_type=${encodeURIComponent(shellType)}`);
   },
 
   /**
@@ -122,16 +122,16 @@ export const modelApis = {
    * This is the recommended API for new implementations.
    * Each model includes a 'type' field ('public' or 'user') to identify its source.
    *
-   * @param agentName - Optional agent name to filter compatible models
+   * @param shellType - Optional shell type to filter compatible models
    * @param includeConfig - Whether to include full model config in response
    */
   async getUnifiedModels(
-    agentName?: string,
+    shellType?: string,
     includeConfig: boolean = false
   ): Promise<UnifiedModelListResponse> {
     const params = new URLSearchParams();
-    if (agentName) {
-      params.append('agent_name', agentName);
+    if (shellType) {
+      params.append('shell_type', shellType);
     }
     if (includeConfig) {
       params.append('include_config', 'true');
@@ -206,9 +206,9 @@ export const modelApis = {
   },
 
   /**
-   * Get models compatible with a specific agent type
+   * Get models compatible with a specific shell type
    */
-  async getCompatibleModels(agentName: string): Promise<CompatibleModelsResponse> {
-    return apiClient.get(`/models/compatible?agent_name=${encodeURIComponent(agentName)}`);
+  async getCompatibleModels(shellType: string): Promise<CompatibleModelsResponse> {
+    return apiClient.get(`/models/compatible?shell_type=${encodeURIComponent(shellType)}`);
   },
 };

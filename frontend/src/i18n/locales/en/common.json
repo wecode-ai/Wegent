@@ -125,7 +125,9 @@
     "dify_parameters_loading": "Loading parameters...",
     "dify_parameters_load_failed": "Failed to load application parameters",
     "dify_parameters_refresh": "Refresh parameters",
-    "dify_no_parameters": "No parameters configured for this application."
+    "dify_no_parameters": "No parameters configured for this application.",
+    "custom_shell": "Custom",
+    "public_model": "Public"
   },
   "bots": {
     "title": "AI Assistant",
@@ -312,6 +314,7 @@
     "bot": "Bot",
     "team": "Team",
     "models": "Models",
+    "shells": "Shells",
     "sections": {
       "general": "General"
     }
@@ -537,5 +540,61 @@
     "default_model": "Default",
     "use_bot_model": "Use Bot's predefined model",
     "model_required": "Please select a model"
+  },
+  "shells": {
+    "title": "Shell Management",
+    "description": "Manage custom shells with your own base images",
+    "public": "Public",
+    "create": "Create Shell",
+    "edit": "Edit Shell",
+    "delete": "Delete Shell",
+    "validate": "Validate",
+    "shell_name": "Shell Name",
+    "name_hint": "Unique identifier, can only contain lowercase letters, numbers, and hyphens",
+    "name_readonly_hint": "Shell name cannot be changed after creation",
+    "display_name": "Display Name",
+    "display_name_placeholder": "My Custom Shell",
+    "display_name_hint": "Human-readable name for display (optional)",
+    "base_shell": "Base Shell",
+    "select_base_shell": "Select a base shell type",
+    "base_shell_hint": "The shell type this custom shell is based on (ClaudeCode, Agno)",
+    "base_image": "Base Image",
+    "base_image_hint": "Docker image address (e.g., ghcr.io/your-org/your-image:latest)",
+    "no_shells": "No shells available",
+    "no_shells_hint": "Click the button above to create your first custom shell",
+    "validation_success": "Image validation passed",
+    "validation_failed": "Image validation failed",
+    "validation_passed": "All checks passed",
+    "validation_not_passed": "Some checks failed",
+    "validation_submitted": "Validation task submitted",
+    "validation_skipped": "Validation skipped",
+    "validation_in_progress": "Validation in progress",
+    "validation_async_hint": "Validation is running in the background. Results will be available shortly.",
+    "validation_required": "Please complete image validation first",
+    "validation_timeout": "Validation timed out, please check network or image size",
+    "validation_stage_submitted": "Validation task submitted...",
+    "validation_stage_pulling": "Pulling image...",
+    "validation_stage_starting": "Starting container...",
+    "validation_stage_checking": "Running dependency checks...",
+    "error_image_pull": "Image pull failed",
+    "error_container_start": "Container start failed",
+    "create_success": "Shell created successfully",
+    "update_success": "Shell updated successfully",
+    "delete_success": "Shell deleted successfully",
+    "delete_confirm_title": "Confirm Delete",
+    "delete_confirm_message": "Are you sure you want to delete the shell \"{{name}}\"? This action cannot be undone.",
+    "errors": {
+      "load_shells_failed": "Failed to load shells",
+      "create_failed": "Failed to create shell",
+      "update_failed": "Failed to update shell",
+      "delete_failed": "Failed to delete shell",
+      "name_required": "Shell name is required",
+      "name_invalid": "Shell name can only contain lowercase letters, numbers, and hyphens",
+      "base_shell_required": "Base shell is required",
+      "base_image_required": "Base image is required",
+      "base_image_and_shell_required": "Both base image and base shell are required for validation",
+      "base_shell_not_found": "Selected base shell not found",
+      "image_not_compatible": "Image is not compatible with the selected shell type"
+    }
   }
 }

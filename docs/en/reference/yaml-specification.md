@@ -185,7 +185,7 @@ spec:
 
 ## 🐚 Shell
 
-Shell defines the agent's runtime environment, specifying the runtime type and supported models.
+Shell defines the agent's runtime environment, specifying the runtime type, base image, and supported models.
 
 ### Complete Configuration Example
 
@@ -195,8 +195,14 @@ kind: Shell
 metadata:
   name: ClaudeCode
   namespace: default
+  labels:
+    type: local_engine
 spec:
-  runtime: "ClaudeCode"
+  shellType: ClaudeCode
+  supportModel: []
+  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
+status:
+  state: Available
 ```
 
 ### Field Description
@@ -205,16 +211,25 @@ spec:
 |------|------|----------|-------------|
 | `metadata.name` | string | Yes | Unique identifier for the Shell |
 | `metadata.namespace` | string | Yes | Namespace, typically `default` |
-| `spec.runtime` | string | Yes | Runtime type, such as `ClaudeCode`, `Agno` |
+| `metadata.labels` | object | No | Labels for categorization, e.g., `type: local_engine` or `type: external_api` |
+| `spec.shellType` | string | Yes | Shell type, such as `ClaudeCode`, `Agno`, `Dify` |
 | `spec.supportModel` | array | No | List of supported model types |
+| `spec.baseImage` | string | No | Docker base image for local engine shells (required for `local_engine` type) |
+| `status.state` | string | No | Shell status: `Available` or `Unavailable` |
 
-### Supported Runtimes
+### Shell Types
 
-| Runtime | Description |
-|---------|-------------|
-| `ClaudeCode` | Claude Code runtime |
-| `Agno` | Agno runtime |
-| `Dify` | Dify runtime |
+| Type | Label | Description |
+|------|-------|-------------|
+| `ClaudeCode` | `local_engine` | Claude Code runtime, requires `baseImage` |
+| `Agno` | `local_engine` | Agno runtime, requires `baseImage` |
+| `Dify` | `external_api` | Dify external API runtime, no `baseImage` needed |
+
+### Labels
+
+| Label | Values | Description |
+|-------|--------|-------------|
+| `type` | `local_engine`, `external_api` | Indicates whether the shell runs locally or connects to external API |
 
 ---
 

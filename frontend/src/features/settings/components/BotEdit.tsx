@@ -25,8 +25,8 @@ import {
   getModelTypeFromConfig,
   createPredefinedModelConfig,
 } from '@/features/settings/services/bots';
-import { agentApis, Agent } from '@/apis/agents';
 import { modelApis, UnifiedModel, ModelTypeEnum } from '@/apis/models';
+import { shellApis, UnifiedShell } from '@/apis/shells';
 import { fetchSkillsList } from '@/apis/skills';
 import { useTranslation } from 'react-i18next';
 import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapter';
@@ -68,8 +68,8 @@ const BotEdit: React.FC<BotEditProps> = ({
   const { t, i18n } = useTranslation('common');
 
   const [botSaving, setBotSaving] = useState(false);
-  const [agents, setAgents] = useState<Agent[]>([]);
-  const [loadingAgents, setLoadingAgents] = useState(false);
+  const [shells, setShells] = useState<UnifiedShell[]>([]);
+  const [loadingShells, setLoadingShells] = useState(false);
   const [models, setModels] = useState<UnifiedModel[]>([]);
   const [loadingModels, setLoadingModels] = useState(false);
   const [isCustomModel, setIsCustomModel] = useState(false);
@@ -91,11 +91,12 @@ const BotEdit: React.FC<BotEditProps> = ({
   }, [editingBot, editingBotId, cloningBot]);
 
   const [botName, setBotName] = useState(baseBot?.name || '');
-  const [agentName, setAgentName] = useState(baseBot?.agent_name || '');
+  // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
+  const [agentName, setAgentName] = useState(baseBot?.shell_name || baseBot?.shell_type || '');
   // Helper function to remove protocol from agent_config for display
   const getAgentConfigWithoutProtocol = (config: Record<string, unknown> | undefined): string => {
     if (!config) return '';
-     
+
     const { protocol: _, ...rest } = config;
     return Object.keys(rest).length > 0 ? JSON.stringify(rest, null, 2) : '';
   };
@@ -255,32 +256,32 @@ const BotEdit: React.FC<BotEditProps> = ({
     window.open(docsUrl, '_blank');
   }, [i18n.language]);
 
-  // Get agents list
+  // Get shells list (including both public and user-defined shells)
   useEffect(() => {
-    const fetchAgents = async () => {
-      setLoadingAgents(true);
+    const fetchShells = async () => {
+      setLoadingShells(true);
       try {
-        const response = await agentApis.getAgents();
-        // Filter agents based on allowedAgents prop
-        let filteredAgents = response.items;
+        const response = await shellApis.getUnifiedShells();
+        // Filter shells based on allowedAgents prop (using shellType as agent type)
+        let filteredShells = response.data || [];
         if (allowedAgents && allowedAgents.length > 0) {
-          filteredAgents = response.items.filter(agent =>
-            allowedAgents.includes(agent.name as AgentType)
+          filteredShells = filteredShells.filter(shell =>
+            allowedAgents.includes(shell.shellType as AgentType)
           );
         }
-        setAgents(filteredAgents);
+        setShells(filteredShells);
       } catch (error) {
-        console.error('Failed to fetch agents:', error);
+        console.error('Failed to fetch shells:', error);
         toast({
           variant: 'destructive',
           title: t('bot.errors.fetch_agents_failed'),
         });
       } finally {
-        setLoadingAgents(false);
+        setLoadingShells(false);
       }
     };
 
-    fetchAgents();
+    fetchShells();
   }, [toast, t, allowedAgents]);
   // Get skills list - only for ClaudeCode agent
   useEffect(() => {
@@ -312,7 +313,8 @@ const BotEdit: React.FC<BotEditProps> = ({
   useEffect(() => {
     console.log('[DEBUG] fetchModels useEffect triggered', {
       agentName,
-      baseBot_agent_name: baseBot?.agent_name,
+      baseBot_shell_name: baseBot?.shell_name,
+      baseBot_shell_type: baseBot?.shell_type,
       baseBot_agent_config: baseBot?.agent_config,
     });
 
@@ -324,17 +326,24 @@ const BotEdit: React.FC<BotEditProps> = ({
     const fetchModels = async () => {
       setLoadingModels(true);
       try {
+        // Find the selected shell to get its shellType for model filtering
+        const selectedShell = shells.find(s => s.name === agentName);
+        // Use shell's shellType for model filtering, fallback to agentName for public shells
+        const shellType = selectedShell?.shellType || agentName;
+
         // Use the new unified models API which includes type information
-        const response = await modelApis.getUnifiedModels(agentName);
+        const response = await modelApis.getUnifiedModels(shellType);
         console.log('[DEBUG] Models loaded:', response.data);
         setModels(response.data);
 
         // After loading models, check if we should restore the bot's saved model
         // This handles the case when editing an existing bot with a predefined model
-        // Only restore if the current agentName matches the baseBot's agent_name
+        // Only restore if the current agentName matches the baseBot's shell_name
         // (i.e., user hasn't switched to a different agent)
         const hasConfig = baseBot?.agent_config && Object.keys(baseBot.agent_config).length > 0;
-        const agentMatches = baseBot?.agent_name === agentName;
+        // Use shell_name for comparison, fallback to shell_type for backward compatibility
+        const baseBotShellName = baseBot?.shell_name || baseBot?.shell_type;
+        const agentMatches = baseBotShellName === agentName;
         const isPredefined = hasConfig && isPredefinedModel(baseBot.agent_config);
 
         console.log('[DEBUG] Model restore check:', {
@@ -389,11 +398,12 @@ const BotEdit: React.FC<BotEditProps> = ({
     };
 
     fetchModels();
-  }, [agentName, toast, t, baseBot]);
+  }, [agentName, shells, toast, t, baseBot]);
   // Reset base form when switching editing object
   useEffect(() => {
     setBotName(baseBot?.name || '');
-    setAgentName(baseBot?.agent_name || '');
+    // Use shell_name for the selected shell, fallback to shell_type for backward compatibility
+    setAgentName(baseBot?.shell_name || baseBot?.shell_type || '');
     setPrompt(baseBot?.system_prompt || '');
     setMcpConfig(baseBot?.mcp_servers ? JSON.stringify(baseBot.mcp_servers, null, 2) : '');
     setSelectedSkills(baseBot?.skills || []);
@@ -576,7 +586,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     try {
       const botReq: CreateBotRequest = {
         name: botName.trim(),
-        agent_name: agentName.trim(),
+        shell_name: agentName.trim(), // Use shell_name instead of shell_type
         agent_config: parsedAgentConfig as Record<string, unknown>,
         system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
         mcp_servers: parsedMcpConfig ?? {},
@@ -737,15 +747,20 @@ const BotEdit: React.FC<BotEditProps> = ({
                 }
                 setAgentName(value);
               }}
-              disabled={loadingAgents || readOnly}
+              disabled={loadingShells || readOnly}
             >
               <SelectTrigger className="w-full">
                 <SelectValue placeholder={t('bot.agent_select')} />
               </SelectTrigger>
               <SelectContent>
-                {agents.map(agent => (
-                  <SelectItem key={agent.name} value={agent.name}>
-                    {agent.name}
+                {shells.map(shell => (
+                  <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
+                    {shell.displayName || shell.name}
+                    {shell.type === 'user' && (
+                      <span className="ml-1 text-xs text-text-muted">
+                        [{t('bot.custom_shell', '自定义')}]
+                      </span>
+                    )}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -877,7 +892,12 @@ const BotEdit: React.FC<BotEditProps> = ({
                         {agentName === 'ClaudeCode' && (
                           <SelectItem value="claude">Claude (Anthropic)</SelectItem>
                         )}
-                        {agentName === 'Agno' && <SelectItem value="openai">OpenAI</SelectItem>}
+                        {agentName === 'Agno' && (
+                          <>
+                            <SelectItem value="openai">OpenAI</SelectItem>
+                            <SelectItem value="claude">Claude (Anthropic)</SelectItem>
+                          </>
+                        )}
                         {/* Show all options if agent type is unknown or not selected */}
                         {agentName !== 'ClaudeCode' && agentName !== 'Agno' && (
                           <>
@@ -918,7 +938,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                         : agentName === 'Agno'
                           ? `{
   "env": {
-    "model": "openai",
+    "model": "openai or claude",
     "model_id": "xxxxxx",
     "api_key": "xxxxxx",
     "base_url": "xxxxxx"

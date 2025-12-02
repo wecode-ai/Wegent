@@ -199,13 +199,13 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         )  # noqa: E712
 
     def list_model_names(
-        self, db: Session, *, current_user: User, agent_name: str
+        self, db: Session, *, current_user: User, shell_type: str
     ) -> List[Dict[str, str]]:
         """
-        List available model names based on agent type and shell supportModel filter.
+        List available model names based on shell type and shell supportModel filter.
         Queries both user's own models (kinds table) and public models (public_models table).
 
-        Agent to model provider mapping:
+        Shell type to model provider mapping:
         - Agno -> openai
         - ClaudeCode -> claude
 
@@ -213,10 +213,10 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         """
         # Get shell configuration from public_shells table
         shell_row = (
-            db.query(PublicShell.json).filter(PublicShell.name == agent_name).first()
+            db.query(PublicShell.json).filter(PublicShell.name == shell_type).first()
         )
         if not shell_row:
-            raise HTTPException(status_code=400, detail="Agent not found")
+            raise HTTPException(status_code=400, detail="Shell type not found")
 
         shell_json = shell_row[0] if isinstance(shell_row[0], dict) else {}
 
@@ -227,10 +227,10 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
             supportModel = shell_crd.spec.supportModel or []
             supportModel = [str(x) for x in supportModel if x]
 
-        # Determine required model provider based on agent_name
+        # Determine required model provider based on shell_type
         # Agno uses openai protocol, ClaudeCode uses claude protocol
-        agent_provider_map = {"Agno": "openai", "ClaudeCode": "claude"}
-        required_provider = agent_provider_map.get(agent_name)
+        shell_provider_map = {"Agno": "openai", "ClaudeCode": "claude"}
+        required_provider = shell_provider_map.get(shell_type)
 
         # If supportModel is specified, use it; otherwise filter by agent's required provider
         use_support_model_filter = len(supportModel) > 0

@@ -539,7 +539,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 bot_crd = Bot.model_validate(bot.json)
 
                 # Initialize default values
-                agent_name = ""
+                shell_type = ""
                 agent_config = {}
                 system_prompt = ""
                 mcp_servers = {}
@@ -592,14 +592,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 )
                 if shell and shell.json:
                     shell_crd = Shell.model_validate(shell.json)
-                    agent_name = shell_crd.spec.runtime
+                    shell_type = shell_crd.spec.shellType
 
                 # Create bot dict compatible with BotInDB schema
                 bot_dict = {
                     "id": bot.id,
                     "user_id": bot.user_id,
                     "name": bot.name,
-                    "agent_name": agent_name,
+                    "shell_type": shell_type,
                     "agent_config": agent_config,
                     "system_prompt": system_prompt,
                     "mcp_servers": mcp_servers,

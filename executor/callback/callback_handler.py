@@ -34,6 +34,7 @@ def send_status_callback(
     progress: int,
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
+    task_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Send status callback
@@ -46,6 +47,7 @@ def send_status_callback(
         progress (int): Progress
         executor_name (str, optional): Executor name
         executor_namespace (str, optional): Executor namespace
+        task_type (str, optional): Task type (e.g., "validation" for validation tasks)
 
     Returns:
         Dict[str, Any]: Callback response
@@ -61,6 +63,7 @@ def send_status_callback(
             message=message,
             executor_name=executor_name,
             executor_namespace=executor_namespace,
+            task_type=task_type,
         )
         
         if result and result.get("status") == TaskStatus.SUCCESS.value:
@@ -84,6 +87,8 @@ def send_task_started_callback(
     subtask_title: Optional[str] = None,
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
+    task_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Send task started callback
@@ -93,11 +98,13 @@ def send_task_started_callback(
         task_title (str): Task title
         executor_name (str, optional): Executor name
         executor_namespace (str, optional): Executor namespace
+        result (dict, optional): Result data to include in callback (e.g., validation_id)
+        task_type (str, optional): Task type (e.g., "validation" for validation tasks)
 
     Returns:
         Dict[str, Any]: Callback response
     """
-    return send_status_callback(
+    return callback_client.send_callback(
         task_id=task_id,
         subtask_id=subtask_id,
         task_title=task_title,
@@ -107,6 +114,8 @@ def send_task_started_callback(
         progress=50,
         executor_name=executor_name,
         executor_namespace=executor_namespace,
+        result=result,
+        task_type=task_type,
     )
 
 
@@ -118,6 +127,8 @@ def send_task_completed_callback(
     message: str = "Task executed successfully",
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
+    task_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Send task completed callback
@@ -130,11 +141,13 @@ def send_task_completed_callback(
         message (str, optional): Message. Defaults to "Task executed successfully".
         executor_name (str, optional): Executor name
         executor_namespace (str, optional): Executor namespace
+        result (dict, optional): Result data to include in callback
+        task_type (str, optional): Task type (e.g., "validation" for validation tasks)
 
     Returns:
         Dict[str, Any]: Callback response
     """
-    return send_status_callback(
+    return callback_client.send_callback(
         task_id=task_id,
         subtask_id=subtask_id,
         task_title=task_title,
@@ -144,6 +157,8 @@ def send_task_completed_callback(
         progress=100,
         executor_name=executor_name,
         executor_namespace=executor_namespace,
+        result=result,
+        task_type=task_type,
     )
 
 
@@ -155,6 +170,8 @@ def send_task_failed_callback(
     error_message: Optional[str] = None,
     executor_name: Optional[str] = None,
     executor_namespace: Optional[str] = None,
+    result: Optional[Dict[str, Any]] = None,
+    task_type: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Send task failed callback
@@ -165,11 +182,13 @@ def send_task_failed_callback(
         error_message (str): Error message
         executor_name (str, optional): Executor name
         executor_namespace (str, optional): Executor namespace
+        result (dict, optional): Result data to include in callback (e.g., validation_id)
+        task_type (str, optional): Task type (e.g., "validation" for validation tasks)
 
     Returns:
         Dict[str, Any]: Callback response
     """
-    return send_status_callback(
+    return callback_client.send_callback(
         task_id=task_id,
         subtask_id=subtask_id,
         task_title=task_title,
@@ -179,4 +198,6 @@ def send_task_failed_callback(
         progress=100,
         executor_name=executor_name,
         executor_namespace=executor_namespace,
+        result=result,
+        task_type=task_type,
     )

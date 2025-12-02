@@ -674,7 +674,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     if len(bots) > 1:
                         raise HTTPException(
                             status_code=400,
-                            detail=f"Teams using external API shells ({shell_crd.spec.runtime}) must have exactly one bot. Found {len(bots)} bots.",
+                            detail=f"Teams using external API shells ({shell_crd.spec.shellType}) must have exactly one bot. Found {len(bots)} bots.",
                         )
 
     def get_team_by_id(
@@ -796,9 +796,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         team_crd = Team.model_validate(team.json)
 
-        # Convert members to bots format and collect agent_names for is_mix_team calculation
+        # Convert members to bots format and collect shell_types for is_mix_team calculation
         bots = []
-        agent_names = set()
+        shell_types = set()
 
         for member in team_crd.spec.members:
             # Find bot in kinds table
@@ -824,12 +824,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 }
                 bots.append(bot_info)
 
-                # Collect agent_name for is_mix_team calculation
-                if bot_summary.get("agent_name"):
-                    agent_names.add(bot_summary["agent_name"])
+                # Collect shell_type for is_mix_team calculation
+                if bot_summary.get("shell_type"):
+                    shell_types.add(bot_summary["shell_type"])
 
-        # Calculate is_mix_team: true if there are multiple different agent types
-        is_mix_team = len(agent_names) > 1
+        # Calculate is_mix_team: true if there are multiple different shell types
+        is_mix_team = len(shell_types) > 1
 
         # Get agent_type from the first bot's shell
         agent_type = None
@@ -861,16 +861,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 if shell:
                     shell_crd = Shell.model_validate(shell.json)
-                    runtime = shell_crd.spec.runtime
-                    # Map runtime to agent type
-                    if runtime == "AgnoShell":
+                    shell_type = shell_crd.spec.shellType
+                    # Map shellType to agent type
+                    if shell_type == "Agno":
                         agent_type = "agno"
-                    elif runtime == "ClaudeCodeShell":
+                    elif shell_type == "ClaudeCode":
                         agent_type = "claude"
-                    elif runtime == "DifyShell":
+                    elif shell_type == "Dify":
                         agent_type = "dify"
                     else:
-                        agent_type = runtime.lower().replace("shell", "")
+                        agent_type = shell_type.lower() if shell_type else None
 
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}
@@ -911,7 +911,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             f"[_get_bot_summary] bot.name={bot.name}, modelRef.name={model_ref_name}, modelRef.namespace={model_ref_namespace}"
         )
 
-        # Get shell to extract agent_name
+        # Get shell to extract shell_type
         shell = (
             db.query(Kind)
             .filter(
@@ -924,10 +924,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             .first()
         )
 
-        agent_name = ""
+        shell_type = ""
         if shell and shell.json:
             shell_crd = Shell.model_validate(shell.json)
-            agent_name = shell_crd.spec.runtime
+            shell_type = shell_crd.spec.shellType
 
         agent_config = {}
 
@@ -1008,7 +1008,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         else:
             logger.info(f"[_get_bot_summary] No modelRef for bot {bot.name}")
 
-        result = {"agent_config": agent_config, "agent_name": agent_name}
+        result = {"agent_config": agent_config, "shell_type": shell_type}
         logger.info(f"[_get_bot_summary] Returning: {result}")
         return result
 
@@ -1064,7 +1064,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Extract data from components
         system_prompt = ""
         mcp_servers = {}
-        agent_name = ""
+        shell_type = ""
         agent_config = {}
 
         if ghost and ghost.json:
@@ -1074,7 +1074,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         if shell and shell.json:
             shell_crd = Shell.model_validate(shell.json)
-            agent_name = shell_crd.spec.runtime
+            shell_type = shell_crd.spec.shellType
 
         if model and model.json:
             model_crd = Model.model_validate(model.json)
@@ -1084,7 +1084,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": bot.id,
             "user_id": bot.user_id,
             "name": bot.name,
-            "agent_name": agent_name,
+            "shell_type": shell_type,
             "agent_config": agent_config,
             "system_prompt": system_prompt,
             "mcp_servers": mcp_servers,
