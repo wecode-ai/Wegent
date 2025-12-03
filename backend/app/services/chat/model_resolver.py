@@ -16,6 +16,7 @@ from typing import Any, Dict, Optional
 
 from shared.utils.crypto import decrypt_api_key
 from sqlalchemy.orm import Session
+from app.core.config import settings
 
 from app.models.kind import Kind
 from app.models.public_model import PublicModel
@@ -367,7 +368,16 @@ def _extract_model_config(model_spec: Dict[str, Any]) -> Dict[str, Any]:
     if not default_headers:
         # Also check env for backward compatibility
         default_headers = env.get("DEFAULT_HEADERS", {})
-    
+
+    if not default_headers:
+        # settings.EXECUTOR_ENV is a JSON string, need to parse it first
+        try:
+            executor_env = json.loads(settings.EXECUTOR_ENV) if settings.EXECUTOR_ENV else {}
+            default_headers = executor_env.get("DEFAULT_HEADERS", {})
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"[model_resolver] Failed to parse settings.EXECUTOR_ENV as JSON")
+            default_headers = {}
+
     # If still empty, try to get from environment variable (EXECUTOR_ENV or DEFAULT_HEADERS)
     if not default_headers:
         default_headers = get_default_headers_from_env()
