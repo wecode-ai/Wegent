@@ -370,7 +370,7 @@
   },
   "quota": {
     "load_failed": "Failed to fetch credits info",
-    "brief": "{{quota_source}} credits {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
+    "brief": "WeCredits {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
     "detail_monthly": "Your monthly credits: {{monthly_quota}}, used {{monthly_usage}}, left {{monthly_left}}.",
     "detail_permanent": "Permanent credits: {{permanent_quota}}, used {{permanent_usage}}, left {{permanent_left}}.",
     "detail_tip": "Monthly credits reset at the beginning of each month, permanent credits can be obtained via activities."
