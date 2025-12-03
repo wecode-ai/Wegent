@@ -43,6 +43,7 @@ class StreamChatRequest(BaseModel):
     task_id: Optional[int] = None  # Optional for multi-turn conversations
     model_id: Optional[str] = None  # Optional model override
     force_override_bot_model: bool = False
+    attachment_id: Optional[int] = None  # Optional attachment ID for file upload
     # Git info (optional, for record keeping)
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -362,13 +363,16 @@ async def stream_chat(
     This endpoint directly calls LLM APIs without going through Docker Executor.
     Only works for teams where all bots use Chat Shell type.
     
+    Supports file attachments via attachment_id parameter. When provided,
+    the attachment's extracted text will be prepended to the user message.
+    
     Returns SSE stream with the following events:
     - {"task_id": int, "subtask_id": int, "content": "", "done": false} - First message with IDs
     - {"content": "...", "done": false} - Content chunks
     - {"content": "", "done": true, "result": {...}} - Completion
     - {"error": "..."} - Error message
     """
-    logger.info(f"[chat.py] stream_chat called: team_id={request.team_id}, task_id={request.task_id}, user_id={current_user.id}")
+    logger.info(f"[chat.py] stream_chat called: team_id={request.team_id}, task_id={request.task_id}, user_id={current_user.id}, attachment_id={request.attachment_id}")
     logger.info(f"[chat.py] message preview: {request.message[:50]}...")
     
     # Validate team exists
@@ -392,10 +396,59 @@ async def stream_chat(
             detail="This team does not support direct chat. Please use the task API instead."
         )
     
-    # Create task and subtasks
+    # Handle attachment if provided
+    attachment = None
+    final_message = request.message
+    if request.attachment_id:
+        from app.models.subtask_attachment import AttachmentStatus
+        from app.services.attachment import attachment_service
+        
+        attachment = attachment_service.get_attachment(
+            db=db,
+            attachment_id=request.attachment_id,
+            user_id=current_user.id,
+        )
+        
+        if attachment is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        
+        if attachment.status != AttachmentStatus.READY:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Attachment is not ready: {attachment.status.value}"
+            )
+        
+        # Build message with attachment content
+        final_message = attachment_service.build_message_with_attachment(
+            request.message, attachment
+        )
+        logger.info(f"[chat.py] Message with attachment built, original_len={len(request.message)}, final_len={len(final_message)}")
+    
+    # Create task and subtasks (use original message for storage, final_message for LLM)
     task, assistant_subtask = _create_task_and_subtasks(
         db, current_user, team, request.message, request, request.task_id
     )
+    
+    # Link attachment to the user subtask if provided
+    if attachment:
+        # Find the user subtask (the one before assistant_subtask)
+        user_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task.id,
+                Subtask.message_id == assistant_subtask.message_id - 1,
+                Subtask.role == SubtaskRole.USER,
+            )
+            .first()
+        )
+        if user_subtask:
+            attachment_service.link_attachment_to_subtask(
+                db=db,
+                attachment_id=attachment.id,
+                subtask_id=user_subtask.id,
+                user_id=current_user.id,
+            )
+            logger.info(f"[chat.py] Attachment {attachment.id} linked to user subtask {user_subtask.id}")
     
     # Get first bot for model config and system prompt
     team_crd = Team.model_validate(team.json)
@@ -490,11 +543,11 @@ async def stream_chat(
         }
         yield f"data: {json.dumps(first_msg)}\n\n"
         
-        # Get the actual stream from chat service
+        # Get the actual stream from chat service (use final_message with attachment content)
         stream_response = await chat_service.chat_stream(
             subtask_id=assistant_subtask.id,
             task_id=task.id,
-            message=request.message,
+            message=final_message,
             model_config=model_config,
             system_prompt=system_prompt,
         )

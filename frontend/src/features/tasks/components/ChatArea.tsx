@@ -18,6 +18,7 @@ import RepositorySelector from './RepositorySelector';
 import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
+import FileUpload from './FileUpload';
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 import { sendMessage, isChatShell } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -29,6 +30,7 @@ import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferenc
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useChatStream } from '@/hooks/useChatStream';
+import { useAttachment } from '@/hooks/useAttachment';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 // Threshold for combined team name + model name length to trigger compact quota mode
@@ -78,6 +80,15 @@ export default function ChatArea({
   // Pending user message for optimistic UI update (Chat Shell)
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
 
+  // File attachment state
+  const {
+    state: attachmentState,
+    handleFileSelect,
+    handleRemove: handleAttachmentRemove,
+    reset: resetAttachment,
+    isReadyToSend: isAttachmentReadyToSend,
+  } = useAttachment();
+
   // Memoize the params change handler to prevent infinite re-renders
   const handleExternalApiParamsChange = useCallback((params: Record<string, string>) => {
     setExternalApiParams(params);
@@ -113,6 +124,8 @@ export default function ChatArea({
     onComplete: (taskId, _subtaskId) => {
       // Clear pending user message after stream completes
       setPendingUserMessage(null);
+      // Reset attachment after successful send
+      resetAttachment();
       // Refresh task list and details after stream ends
       refreshTasks();
       refreshSelectedTaskDetail(false);
@@ -313,6 +326,15 @@ export default function ChatArea({
     const message = taskInputMessage.trim();
     if (!message && !shouldHideChatInput) return;
 
+    // Check if attachment is ready
+    if (!isAttachmentReadyToSend) {
+      toast({
+        variant: 'destructive',
+        title: '请等待文件上传完成',
+      });
+      return;
+    }
+
     setIsLoading(true);
     setError('');
 
@@ -322,6 +344,7 @@ export default function ChatArea({
       selectedTeamId: selectedTeam?.id,
       agentType: selectedTeam?.agent_type,
       isChatShellResult: isChatShell(selectedTeam),
+      attachmentId: attachmentState.attachment?.id,
     });
     
     if (isChatShell(selectedTeam)) {
@@ -340,6 +363,7 @@ export default function ChatArea({
           task_id: selectedTaskDetail?.id,
           model_id: modelId,
           force_override_bot_model: forceOverride,
+          attachment_id: attachmentState.attachment?.id,
         });
 
         // If this is a new task, update the selected task
@@ -411,6 +435,8 @@ export default function ChatArea({
       });
     } else {
       setTaskInputMessage('');
+      // Reset attachment after successful send
+      resetAttachment();
       // Redirect to task URL after successfully creating a task
       if (newTask && newTask.task_id) {
         const params = new URLSearchParams(Array.from(searchParams.entries()));
@@ -666,6 +692,20 @@ export default function ChatArea({
 
                 {/* Chat Input Card */}
                 <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
+                  {/* File Upload Preview - show above input when file is selected */}
+                  {(attachmentState.attachment || attachmentState.isUploading || attachmentState.error) && (
+                    <div className="px-3 pt-2">
+                      <FileUpload
+                        attachment={attachmentState.attachment}
+                        isUploading={attachmentState.isUploading}
+                        uploadProgress={attachmentState.uploadProgress}
+                        error={attachmentState.error}
+                        disabled={hasMessages || isLoading || isStreaming}
+                        onFileSelect={handleFileSelect}
+                        onRemove={handleAttachmentRemove}
+                      />
+                    </div>
+                  )}
                   {/* Chat Input - hide for workflow mode when no messages */}
                   {!shouldHideChatInput && (
                     <ChatInput
@@ -681,6 +721,18 @@ export default function ChatArea({
                     className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
                   >
                     <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
+                      {/* File Upload Button - only show when no file is selected */}
+                      {!attachmentState.attachment && !attachmentState.isUploading && isChatShell(selectedTeam) && (
+                        <FileUpload
+                          attachment={null}
+                          isUploading={false}
+                          uploadProgress={0}
+                          error={attachmentState.error}
+                          disabled={hasMessages || isLoading || isStreaming}
+                          onFileSelect={handleFileSelect}
+                          onRemove={handleAttachmentRemove}
+                        />
+                      )}
                       {teams.length > 0 && (
                         <TeamSelector
                           selectedTeam={selectedTeam}
@@ -755,6 +807,7 @@ export default function ChatArea({
                             isLoading ||
                             isStreaming ||
                             isModelSelectionRequired ||
+                            !isAttachmentReadyToSend ||
                             (shouldHideChatInput ? false : !taskInputMessage.trim())
                           }
                           className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
@@ -821,6 +874,20 @@ export default function ChatArea({
 
               {/* Chat Input Card */}
               <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
+                {/* File Upload Preview - show above input when file is selected */}
+                {(attachmentState.attachment || attachmentState.isUploading || attachmentState.error) && (
+                  <div className="px-3 pt-2">
+                    <FileUpload
+                      attachment={attachmentState.attachment}
+                      isUploading={attachmentState.isUploading}
+                      uploadProgress={attachmentState.uploadProgress}
+                      error={attachmentState.error}
+                      disabled={isLoading || isStreaming}
+                      onFileSelect={handleFileSelect}
+                      onRemove={handleAttachmentRemove}
+                    />
+                  </div>
+                )}
                 {/* Chat Input - hide for workflow mode */}
                 {!shouldHideChatInput && (
                   <ChatInput
@@ -836,6 +903,18 @@ export default function ChatArea({
                   className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
                 >
                   <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
+                    {/* File Upload Button - only show when no file is selected */}
+                    {!attachmentState.attachment && !attachmentState.isUploading && isChatShell(selectedTeam) && (
+                      <FileUpload
+                        attachment={null}
+                        isUploading={false}
+                        uploadProgress={0}
+                        error={attachmentState.error}
+                        disabled={isLoading || isStreaming}
+                        onFileSelect={handleFileSelect}
+                        onRemove={handleAttachmentRemove}
+                      />
+                    )}
                     {teams.length > 0 && (
                       <TeamSelector
                         selectedTeam={selectedTeam}
@@ -910,6 +989,7 @@ export default function ChatArea({
                           isLoading ||
                           isStreaming ||
                           isModelSelectionRequired ||
+                          !isAttachmentReadyToSend ||
                           (shouldHideChatInput ? false : !taskInputMessage.trim())
                         }
                         className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"

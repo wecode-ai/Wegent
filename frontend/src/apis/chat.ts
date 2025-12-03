@@ -48,6 +48,8 @@ export interface StreamChatRequest {
   model_id?: string;
   /** Force override bot's default model */
   force_override_bot_model?: boolean;
+  /** Attachment ID for file upload (optional) */
+  attachment_id?: number;
   /** Git info for record keeping (optional) */
   git_url?: string;
   git_repo?: string;
