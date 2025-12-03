@@ -38,11 +38,12 @@ class SubtaskAttachment(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     
-    # Foreign key to subtasks table (nullable - can be set after message is sent)
+    # Reference to subtasks table (no foreign key constraint for flexibility)
+    # 0 means unlinked, > 0 means linked to a subtask
     subtask_id = Column(
-        Integer, 
-        ForeignKey("subtasks.id", ondelete="CASCADE"), 
-        nullable=True,
+        Integer,
+        nullable=False,
+        default=0,
         index=True
     )
     
@@ -59,11 +60,15 @@ class SubtaskAttachment(Base):
     binary_data = Column(LONGBLOB, nullable=False)
 
     # Image base64 encoding (for vision models, LONGTEXT for large images)
-    image_base64 = Column(LONGTEXT, nullable=True)
+    # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
+    # Empty string or None means no image data
+    image_base64 = Column(LONGTEXT, nullable=True, default="")
 
     # Extracted text content (LONGTEXT for MySQL - supports up to 4GB)
-    extracted_text = Column(LONGTEXT, nullable=True)
-    text_length = Column(Integer, nullable=True)  # Character count of extracted text
+    # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
+    # Empty string or None means no extracted text
+    extracted_text = Column(LONGTEXT, nullable=True, default="")
+    text_length = Column(Integer, nullable=False, default=0)  # Character count of extracted text
     
     # Processing status
     status = Column(
@@ -71,10 +76,10 @@ class SubtaskAttachment(Base):
         nullable=False,
         default=AttachmentStatus.UPLOADING
     )
-    error_message = Column(String(500), nullable=True)
+    error_message = Column(String(500), nullable=False, default="")
     
     # Timestamps
-    created_at = Column(DateTime, default=func.now())
+    created_at = Column(DateTime, nullable=False, default=func.now())
 
     __table_args__ = (
         {

@@ -32,7 +32,8 @@ def upgrade() -> None:
     op.create_table(
         'subtask_attachments',
         sa.Column('id', sa.Integer(), nullable=False, autoincrement=True),
-        sa.Column('subtask_id', sa.Integer(), nullable=True),
+        # subtask_id: 0 means unlinked, > 0 means linked to a subtask (no FK constraint)
+        sa.Column('subtask_id', sa.Integer(), nullable=False, default=0),
         sa.Column('user_id', sa.Integer(), nullable=False),
         sa.Column('original_filename', sa.String(255), nullable=False),
         sa.Column('file_extension', sa.String(20), nullable=False),
@@ -41,15 +42,17 @@ def upgrade() -> None:
         # Use LONGBLOB for binary_data to support large files (up to 4GB)
         sa.Column('binary_data', LONGBLOB(), nullable=False),
         # Use LONGTEXT for image_base64 to support large base64-encoded images
+        # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so we use nullable=True
         sa.Column('image_base64', LONGTEXT(), nullable=True),
         # Use LONGTEXT for extracted_text to support large documents
+        # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so we use nullable=True
         sa.Column('extracted_text', LONGTEXT(), nullable=True),
-        sa.Column('text_length', sa.Integer(), nullable=True),
+        sa.Column('text_length', sa.Integer(), nullable=False, default=0),
         sa.Column('status', sa.Enum('uploading', 'parsing', 'ready', 'failed', name='attachmentstatus'), nullable=False),
-        sa.Column('error_message', sa.String(500), nullable=True),
-        sa.Column('created_at', sa.DateTime(), nullable=True),
+        sa.Column('error_message', sa.String(500), nullable=False, server_default=''),
+        sa.Column('created_at', sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.PrimaryKeyConstraint('id'),
-        sa.ForeignKeyConstraint(['subtask_id'], ['subtasks.id'], ondelete='CASCADE'),
+        # No foreign key constraint for subtask_id to allow unlinked attachments
         mysql_charset='utf8mb4',
         mysql_collate='utf8mb4_unicode_ci',
         mysql_engine='InnoDB'
@@ -63,10 +66,5 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Drop subtask_attachments table."""
-    op.drop_index('ix_subtask_attachments_user_id', table_name='subtask_attachments')
-    op.drop_index('ix_subtask_attachments_subtask_id', table_name='subtask_attachments')
-    op.drop_index('ix_subtask_attachments_id', table_name='subtask_attachments')
+    # Simply drop the table - this will automatically drop all indexes and constraints
     op.drop_table('subtask_attachments')
-    
-    # Drop the enum type
-    op.execute("DROP TYPE IF EXISTS attachmentstatus")

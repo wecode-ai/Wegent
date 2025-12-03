@@ -28,12 +28,17 @@ class AttachmentService:
     def __init__(self):
         self.parser = DocumentParser()
     
+    # Placeholder subtask_id for attachments not yet linked to a subtask
+    # Using 0 as a sentinel value since database requires non-null
+    UNLINKED_SUBTASK_ID = 0
+
     def upload_attachment(
         self,
         db: Session,
         user_id: int,
         filename: str,
         binary_data: bytes,
+        subtask_id: int = 0,
     ) -> SubtaskAttachment:
         """
         Upload and process a file attachment.
@@ -43,6 +48,7 @@ class AttachmentService:
             user_id: User ID
             filename: Original filename
             binary_data: File binary data
+            subtask_id: Subtask ID to link to (0 means unlinked)
             
         Returns:
             Created SubtaskAttachment record
@@ -71,15 +77,24 @@ class AttachmentService:
         # Get MIME type
         mime_type = self.parser.get_mime_type(extension)
         
+        # Use placeholder subtask_id if not provided (0 means unlinked)
+        effective_subtask_id = subtask_id if subtask_id > 0 else self.UNLINKED_SUBTASK_ID
+        
         # Create attachment record with UPLOADING status
+        # All fields must have non-null values as required by database
         attachment = SubtaskAttachment(
+            subtask_id=effective_subtask_id,
             user_id=user_id,
             original_filename=filename,
             file_extension=extension,
             file_size=file_size,
             mime_type=mime_type,
             binary_data=binary_data,
+            image_base64="",  # Empty string as placeholder, will be updated after parsing
+            extracted_text="",  # Empty string as placeholder, will be updated after parsing
+            text_length=0,  # Will be updated after parsing
             status=AttachmentStatus.UPLOADING,
+            error_message="",  # Empty string as placeholder
         )
         db.add(attachment)
         db.flush()  # Get the ID
@@ -93,9 +108,9 @@ class AttachmentService:
             extracted_text, text_length, image_base64 = self.parser.parse(binary_data, extension)
 
             # Update attachment with parsed content
-            attachment.extracted_text = extracted_text
-            attachment.text_length = text_length
-            attachment.image_base64 = image_base64
+            attachment.extracted_text = extracted_text if extracted_text else ""
+            attachment.text_length = text_length if text_length else 0
+            attachment.image_base64 = image_base64 if image_base64 else ""
             attachment.status = AttachmentStatus.READY
             
         except DocumentParseError as e:
@@ -216,8 +231,8 @@ class AttachmentService:
         if attachment is None:
             return False
         
-        # Only allow deletion of unlinked attachments
-        if attachment.subtask_id is not None:
+        # Only allow deletion of unlinked attachments (subtask_id == 0 means unlinked)
+        if attachment.subtask_id > 0:
             logger.warning(
                 f"Cannot delete attachment {attachment_id}: linked to subtask {attachment.subtask_id}"
             )
