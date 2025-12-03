@@ -49,12 +49,6 @@ class ImageValidatorAgent(Agent):
                 "min_version": None,
             },
             {
-                "name": "sqlite",
-                "command": "sqlite3 --version",
-                "version_regex": r"(\d+\.\d+\.\d+)",
-                "min_version": "3.50.0",
-            },
-            {
                 "name": "python",
                 "command": "python3 --version",
                 "version_regex": r"Python (\d+\.\d+\.\d+)",
@@ -68,6 +62,12 @@ class ImageValidatorAgent(Agent):
                 "version_regex": r"Python (\d+\.\d+\.\d+)",
                 "min_version": "3.12.0",
             },
+            {
+                "name": "sqlite",
+                "command": "sqlite3 --version",
+                "version_regex": r"(\d+\.\d+\.\d+)",
+                "min_version": "3.50.0",
+            }
         ],
     }
 
