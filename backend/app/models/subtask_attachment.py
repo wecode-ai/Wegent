@@ -10,8 +10,9 @@ Stores file binary data and extracted text content for chat attachments.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
+from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -54,11 +55,11 @@ class SubtaskAttachment(Base):
     file_size = Column(Integer, nullable=False)  # File size in bytes
     mime_type = Column(String(100), nullable=False)
     
-    # Binary data storage (LONGBLOB for MySQL)
-    binary_data = Column(LargeBinary, nullable=False)
+    # Binary data storage (LONGBLOB for MySQL - supports up to 4GB)
+    binary_data = Column(LONGBLOB, nullable=False)
     
-    # Extracted text content (LONGTEXT for MySQL)
-    extracted_text = Column(Text, nullable=True)
+    # Extracted text content (LONGTEXT for MySQL - supports up to 4GB)
+    extracted_text = Column(LONGTEXT, nullable=True)
     text_length = Column(Integer, nullable=True)  # Character count of extracted text
     
     # Processing status
