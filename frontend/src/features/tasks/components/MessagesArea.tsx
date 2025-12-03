@@ -196,9 +196,6 @@ export default function MessagesArea({
           let aiContent;
           const result = sub.result;
 
-          // Debug: log the result structure
-          console.log('Subtask result:', result);
-
           if (result) {
             if (typeof result === 'object') {
               const resultObj = result as ResultWithThinking;

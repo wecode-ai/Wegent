@@ -111,15 +111,6 @@ export default function ChatArea({
   // Restore user preferences from localStorage when teams load
   // Only runs for new tasks (no messages), not when switching to existing tasks
   useEffect(() => {
-    console.log('[ChatArea] Preference restoration effect triggered', {
-      teamsLength: teams.length,
-      hasRestoredPreferences,
-      hasMessages,
-      selectedTeam: selectedTeam?.name || 'null',
-      selectedTeamId: selectedTeam?.id || 'null',
-      initialTeamId: initialTeamIdRef.current,
-    });
-
     // Skip if already restored, no teams, or viewing existing task (has messages)
     if (hasRestoredPreferences || !teams.length || hasMessages) return;
 
@@ -159,6 +150,40 @@ export default function ChatArea({
       setSelectedTeam(selectedTeamForNewTask);
     }
   }, [selectedTeamForNewTask, hasMessages]);
+
+  // Set model from task detail when viewing existing task
+  useEffect(() => {
+    // Only apply when viewing an existing task (has messages) and task has a model_id
+    if (hasMessages && selectedTaskDetail?.model_id && selectedTaskDetail?.id) {
+      const taskModelId = selectedTaskDetail.model_id;
+
+      // If current model already matches, skip
+      if (selectedModel?.name === taskModelId) {
+        return;
+      }
+
+      // Check if it's the default model
+      if (taskModelId === DEFAULT_MODEL_NAME) {
+        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      } else {
+        // For non-default models, create a minimal model object
+        // The type field is intentionally undefined so ModelSelector won't try to validate it
+        setSelectedModel({
+          name: taskModelId,
+          provider: '',
+          modelId: taskModelId,
+          displayName: null,
+          type: undefined, // Explicitly set to undefined to skip compatibility checks
+        });
+      }
+    }
+  }, [
+    hasMessages,
+    selectedTaskDetail?.model_id,
+    selectedTaskDetail?.id,
+    selectedModel?.name,
+    setSelectedModel,
+  ]);
 
   const shouldHideQuotaUsage = React.useMemo(() => {
     if (!isMobile || !selectedTeam?.name) return false;
