@@ -203,7 +203,18 @@ def create_app():
         logger.info("Shutting down application...")
         # Stop background jobs
         stop_background_jobs(app)
-        logger.info("✓ Application shutdown completed")
+        # Close HTTP client for direct chat services
+        import asyncio
+        from app.services.chat import http_client_manager
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.create_task(http_client_manager.close())
+            else:
+                loop.run_until_complete(http_client_manager.close())
+        except Exception as e:
+            logger.warning(f"Error closing HTTP client: {e}")
+        logger.info("Application shutdown completed")
 
     return app
 

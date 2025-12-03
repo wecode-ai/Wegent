@@ -1539,5 +1539,87 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "completed_at": related_data.get("completed_at"),
         }
 
+    def is_direct_chat_team(
+        self,
+        db: Session,
+        team: Kind,
+        user_id: int,
+    ) -> bool:
+        """
+        Check if a team supports direct chat mode.
+
+        A team supports direct chat if ALL its bots use Chat or Dify shell types.
+
+        Args:
+            db: Database session
+            team: Team Kind object
+            user_id: User ID (owner of team)
+
+        Returns:
+            bool: True if team supports direct chat mode
+        """
+        from app.models.public_shell import PublicShell
+        from app.services.chat.base import ChatShellTypes
+
+        team_crd = Team.model_validate(team.json)
+
+        if not team_crd.spec.members:
+            return False
+
+        for member in team_crd.spec.members:
+            # Find bot in kinds table
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == team.user_id,
+                    Kind.kind == "Bot",
+                    Kind.name == member.botRef.name,
+                    Kind.namespace == member.botRef.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if not bot:
+                return False
+
+            bot_crd = Bot.model_validate(bot.json)
+
+            # Get shell type
+            shell_kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == team.user_id,
+                    Kind.kind == "Shell",
+                    Kind.name == bot_crd.spec.shellRef.name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            # If not found in user's shells, check public shells
+            if shell_kind:
+                shell_crd = Shell.model_validate(shell_kind.json)
+                shell_type = shell_crd.spec.shellType
+            else:
+                public_shell = (
+                    db.query(PublicShell)
+                    .filter(PublicShell.name == bot_crd.spec.shellRef.name)
+                    .first()
+                )
+                if public_shell:
+                    shell_crd = Shell.model_validate(public_shell.json)
+                    shell_type = shell_crd.spec.shellType
+                else:
+                    # Shell not found, cannot be direct chat
+                    return False
+
+            # Check if shell type supports direct chat
+            if not ChatShellTypes.is_direct_chat_shell(shell_type):
+                return False
+
+        return True
+
 
 task_kinds_service = TaskKindsService(Kind)
