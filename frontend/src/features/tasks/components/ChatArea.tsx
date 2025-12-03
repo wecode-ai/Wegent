@@ -101,7 +101,6 @@ export default function ChatArea({
   // New: Get selectedTask to determine if there are messages
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
     useTaskContext();
-  const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id);
 
   // Chat Shell streaming hook
   const {
@@ -137,6 +136,17 @@ export default function ChatArea({
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
   const lastSubtaskId = lastSubtask?.id;
   const lastSubtaskUpdatedAt = lastSubtask?.updated_at || lastSubtask?.completed_at;
+
+  // Determine if there are messages to display
+  // We consider it has messages if:
+  // 1. There is a selected task with ID (existing chat)
+  // 2. There is a pending user message (optimistic UI for new chat)
+  // 3. It is currently streaming (active new chat)
+  const hasMessages = React.useMemo(() => {
+    return Boolean(
+      (selectedTaskDetail && selectedTaskDetail.id) || pendingUserMessage || isStreaming
+    );
+  }, [selectedTaskDetail, pendingUserMessage, isStreaming]);
 
   // Determine if chat input should be hidden (workflow mode always hides chat input)
   const shouldHideChatInput = React.useMemo(() => {
