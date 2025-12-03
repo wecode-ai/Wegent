@@ -457,9 +457,8 @@ def delete_shell(
     if not shell:
         raise HTTPException(status_code=404, detail="User shell not found")
 
-    # Soft delete
-    shell.is_active = False
-    db.add(shell)
+    # Hard delete
+    db.delete(shell)
     db.commit()
 
     return {"message": "Shell deleted successfully"}
