@@ -127,6 +127,7 @@ class TaskDetail(BaseModel):
     user: Optional[UserInDB] = None
     team: Optional[TeamInDB] = None
     subtasks: Any = None
+    model_id: Optional[str] = None
 
     class Config:
         from_attributes = True

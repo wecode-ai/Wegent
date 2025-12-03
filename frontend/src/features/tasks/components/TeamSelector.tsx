@@ -39,13 +39,6 @@ export default function TeamSelector({
   const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), []);
   // Handle team selection from task detail
   useEffect(() => {
-    console.log('[TeamSelector] Effect triggered', {
-      hasSelectedTaskDetail: !!selectedTaskDetail,
-      selectedTeam: selectedTeam?.name || 'null',
-      selectedTeamId: selectedTeam?.id || 'null',
-      teamsLength: teams.length,
-    });
-
     // Priority 1: Set team from task detail if viewing a task
     if (
       selectedTaskDetail &&

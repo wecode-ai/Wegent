@@ -222,6 +222,7 @@ export interface TaskDetail {
   team: Team;
   subtasks: TaskDetailSubtask[];
   workbench?: WorkbenchData | null;
+  model_id?: string | null; // Model name used for this task
 }
 
 /** Subtask result structure */
