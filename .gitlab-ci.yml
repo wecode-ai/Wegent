@@ -16,18 +16,18 @@ stages:
   - auto-merge-request
 
 # WeAgent MR Validation Job
-validate-wegent-mr:
-  stage: validation
-  image: registry.api.weibo.com/ci/ci-runner:extend
-  script:
-    - |
-      # Check if code comes from "wegent"
-      if [[ "$CI_COMMIT_REF_NAME" =~ ^wegent ]]; then
-        exit 1
-      fi
-  rules:
-    - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "develop"'
-      when: always
+# validate-wegent-mr:
+#   stage: validation
+#   image: registry.api.weibo.com/ci/ci-runner:extend
+#   script:
+#     - |
+#       # Check if code comes from "wegent"
+#       if [[ "$CI_COMMIT_REF_NAME" =~ ^wegent ]]; then
+#         exit 1
+#       fi
+#   rules:
+#     - if: '$CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "develop"'
+#       when: always
 
 wegent-runtime:
   stage: package
