@@ -6,8 +6,11 @@
 Session manager for Chat Shell.
 
 Manages chat history and session state in Redis for multi-turn conversations.
+Also manages cancellation state for streaming chat requests using Redis
+for cross-worker communication in multi-worker deployments.
 """
 
+import asyncio
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -16,6 +19,11 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Redis key prefix for cancellation flags
+CANCEL_KEY_PREFIX = "chat:cancel:"
+# Cancellation flag TTL in seconds (5 minutes should be enough for any chat)
+CANCEL_FLAG_TTL = 300
+
 
 class SessionManager:
     """
@@ -23,10 +31,17 @@ class SessionManager:
     
     Stores conversation history for multi-turn chat support.
     Uses task_id as the session identifier.
+    
+    Also manages cancellation state for streaming chat requests.
+    Uses Redis for cancellation flags to support multi-worker deployments.
+    Uses subtask_id as the cancellation identifier.
     """
     
     def __init__(self):
         self._cache = cache_manager
+        # Local asyncio events for in-process signaling (optimization)
+        # Key: subtask_id, Value: asyncio.Event
+        self._local_events: Dict[int, asyncio.Event] = {}
     
     def _get_history_key(self, task_id: int) -> str:
         """Generate Redis key for chat history."""
@@ -178,6 +193,121 @@ class SessionManager:
         """
         history = await self.get_chat_history(task_id)
         return len(history)
+    
+    # ==================== Cancellation Management ====================
+    
+    def _get_cancel_key(self, subtask_id: int) -> str:
+        """Generate Redis key for cancellation flag."""
+        return f"{CANCEL_KEY_PREFIX}{subtask_id}"
+    
+    async def register_stream(self, subtask_id: int) -> asyncio.Event:
+        """
+        Register a new streaming request and return its cancellation event.
+        
+        Creates a local asyncio.Event for in-process signaling and
+        clears any existing cancellation flag in Redis.
+        
+        Args:
+            subtask_id: The subtask ID for the stream
+            
+        Returns:
+            asyncio.Event: Event that will be set when cancellation is requested
+        """
+        # Create local event for in-process signaling
+        cancel_event = asyncio.Event()
+        self._local_events[subtask_id] = cancel_event
+        
+        # Clear any existing cancellation flag in Redis (in case of retry)
+        cancel_key = self._get_cancel_key(subtask_id)
+        try:
+            await self._cache.delete(cancel_key)
+        except Exception as e:
+            logger.warning(f"Failed to clear cancel flag for subtask {subtask_id}: {e}")
+        
+        return cancel_event
+    
+    async def cancel_stream(self, subtask_id: int) -> bool:
+        """
+        Request cancellation of a streaming request.
+        
+        Sets cancellation flag in Redis (for cross-worker communication)
+        and also sets local event if the stream is in this process.
+        
+        Args:
+            subtask_id: The subtask ID to cancel
+            
+        Returns:
+            bool: True if cancellation flag was set successfully
+        """
+        cancel_key = self._get_cancel_key(subtask_id)
+        
+        # Set cancellation flag in Redis (cross-worker)
+        try:
+            success = await self._cache.set(cancel_key, True, expire=CANCEL_FLAG_TTL)
+        except Exception as e:
+            logger.error(f"Failed to set Redis cancel flag for subtask {subtask_id}: {e}")
+            success = False
+        
+        # Also set local event if stream is in this process (optimization)
+        local_event = self._local_events.get(subtask_id)
+        if local_event:
+            local_event.set()
+        
+        return success
+    
+    async def unregister_stream(self, subtask_id: int):
+        """
+        Unregister a streaming request (cleanup after completion or cancellation).
+        
+        Removes local event and cleans up Redis cancellation flag.
+        
+        Args:
+            subtask_id: The subtask ID to unregister
+        """
+        # Clean up local event
+        was_cancelled = False
+        if subtask_id in self._local_events:
+            was_cancelled = self._local_events[subtask_id].is_set()
+            del self._local_events[subtask_id]
+        
+        # Clean up Redis cancellation flag
+        cancel_key = self._get_cancel_key(subtask_id)
+        try:
+            await self._cache.delete(cancel_key)
+        except Exception as e:
+            logger.warning(f"Failed to delete cancel flag for subtask {subtask_id}: {e}")
+    
+    async def is_cancelled(self, subtask_id: int) -> bool:
+        """
+        Check if a streaming request has been cancelled.
+        
+        Checks both local event (fast path) and Redis flag (cross-worker).
+        If Redis flag is set, also sets local event for consistency.
+        
+        Args:
+            subtask_id: The subtask ID to check
+            
+        Returns:
+            bool: True if cancellation has been requested
+        """
+        # Fast path: check local event first
+        local_event = self._local_events.get(subtask_id)
+        if local_event and local_event.is_set():
+            return True
+        
+        # Slow path: check Redis flag (for cross-worker cancellation)
+        cancel_key = self._get_cancel_key(subtask_id)
+        try:
+            redis_flag = await self._cache.get(cancel_key)
+            if redis_flag is True:
+                # Set local event for consistency
+                if local_event:
+                    local_event.set()
+                return True
+        except Exception as e:
+            logger.warning(f"Failed to check Redis cancel flag for subtask {subtask_id}: {e}")
+        
+        return False
 
 
 # Global session manager instance
