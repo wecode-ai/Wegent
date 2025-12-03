@@ -106,7 +106,12 @@ def create_app():
 
     # Create database tables and start background worker
     @app.on_event("startup")
-    def startup():
+    async def startup():
+        # Initialize chat service HTTP client
+        from app.services.chat.base import get_http_client
+        await get_http_client()
+        logger.info("✓ Chat service HTTP client initialized")
+
         # Run database migrations
         if settings.ENVIRONMENT == "development" and settings.DB_AUTO_MIGRATE:
             logger.info(
@@ -199,8 +204,14 @@ def create_app():
         logger.info("=" * 60)
 
     @app.on_event("shutdown")
-    def shutdown():
+    async def shutdown():
         logger.info("Shutting down application...")
+        
+        # Close chat service HTTP client
+        from app.services.chat.base import close_http_client
+        await close_http_client()
+        logger.info("✓ Chat service HTTP client closed")
+        
         # Stop background jobs
         stop_background_jobs(app)
         logger.info("✓ Application shutdown completed")

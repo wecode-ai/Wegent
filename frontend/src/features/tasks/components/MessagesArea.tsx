@@ -16,6 +16,7 @@ import ThinkingComponent from './ThinkingComponent';
 import ClarificationForm from './ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from './ClarificationAnswerSummary';
+import { useTypewriter } from '@/hooks/useTypewriter';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
 
 interface Message {
@@ -128,12 +129,21 @@ interface MessagesAreaProps {
   selectedTeam?: Team | null;
   selectedRepo?: GitRepoInfo | null;
   selectedBranch?: GitBranch | null;
+  /** Streaming content for Chat Shell (optional) */
+  streamingContent?: string;
+  /** Whether streaming is in progress */
+  isStreaming?: boolean;
+  /** Pending user message for optimistic update */
+  pendingUserMessage?: string | null;
 }
 
 export default function MessagesArea({
   selectedTeam,
   selectedRepo,
   selectedBranch,
+  streamingContent,
+  isStreaming,
+  pendingUserMessage,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
@@ -146,8 +156,20 @@ export default function MessagesArea({
   const isUserNearBottomRef = useRef(true);
   const AUTO_SCROLL_THRESHOLD = 32;
 
+  // Use Typewriter effect for streaming content
+  const displayContent = useTypewriter(streamingContent || '');
+
+  // Check if team uses Chat Shell (streaming mode, no polling needed)
+  // Case-insensitive comparison since backend may return 'chat' or 'Chat'
+  const isChatShell = selectedTeam?.agent_type?.toLowerCase() === 'chat';
+
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
+
+    // Chat Shell uses streaming, no polling needed
+    if (isChatShell) {
+      return;
+    }
 
     // Only auto-refresh when the task exists and is not completed
     if (
@@ -164,7 +186,7 @@ export default function MessagesArea({
     return () => {
       if (intervalId) clearInterval(intervalId);
     };
-  }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail]);
+  }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail, isChatShell]);
 
   // Calculate messages from taskDetail
   function generateTaskMessages(detail: TaskDetail | null): Message[] {
@@ -321,7 +343,7 @@ export default function MessagesArea({
     const distanceFromBottom =
       container.scrollHeight - container.scrollTop - container.clientHeight;
     isUserNearBottomRef.current = distanceFromBottom <= AUTO_SCROLL_THRESHOLD;
-  }, [displayMessages, AUTO_SCROLL_THRESHOLD]);
+  }, [displayMessages, displayContent, pendingUserMessage, isStreaming, AUTO_SCROLL_THRESHOLD]);
 
   const renderProgressBar = (status: string, progress: number) => {
     const normalizedStatus = (status ?? '').toUpperCase();
@@ -747,7 +769,7 @@ export default function MessagesArea({
   return (
     <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
       {/* Messages Area - only shown when there are messages or loading */}
-      {displayMessages.length > 0 && (
+      {(displayMessages.length > 0 || pendingUserMessage || isStreaming) && (
         <div
           ref={messagesContainerRef}
           className="flex-1 overflow-y-auto mb-4 space-y-8 messages-container custom-scrollbar"
@@ -788,6 +810,57 @@ export default function MessagesArea({
               </div>
             );
           })}
+
+          {/* Pending user message (optimistic update) */}
+          {pendingUserMessage && (
+            <div className="flex justify-end my-6">
+              <div className="flex max-w-[75%] w-auto flex-col gap-3 items-end">
+                <div className="relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm bg-muted">
+                  <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <div className="text-sm break-all">{pendingUserMessage}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Streaming AI response */}
+          {isStreaming && streamingContent !== undefined && (
+            <div className="flex justify-start">
+              <div className="flex w-full flex-col gap-3 items-start">
+                <div className="relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm bg-surface">
+                  <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                    <Bot className="w-4 h-4" />
+                    <span className="font-semibold">
+                      {selectedTeam?.name || t('messages.bot') || 'Bot'}
+                    </span>
+                  </div>
+                  {displayContent ? (
+                    <MarkdownEditor.Markdown
+                      source={displayContent}
+                      style={{ background: 'transparent' }}
+                      wrapperElement={{ 'data-color-mode': theme }}
+                      components={{
+                        a: ({ href, children, ...props }) => (
+                          <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                            {children}
+                          </a>
+                        ),
+                      }}
+                    />
+                  ) : (
+                    <div className="flex items-center gap-2 text-text-muted">
+                      <span className="animate-pulse">●</span>
+                      <span className="text-sm">{t('messages.thinking') || 'Thinking...'}</span>
+                    </div>
+                  )}
+                  {/* Blinking cursor */}
+                  <span className="animate-pulse text-primary">▊</span>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

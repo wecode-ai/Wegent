@@ -19,7 +19,7 @@ import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
 import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
-import { sendMessage } from '../service/messageService';
+import { sendMessage, isChatShell } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
 import { Button } from '@/components/ui/button';
@@ -28,6 +28,7 @@ import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
+import { useChatStream } from '@/hooks/useChatStream';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 // Threshold for combined team name + model name length to trigger compact quota mode
@@ -74,6 +75,9 @@ export default function ChatArea({
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
   const [appMode, setAppMode] = useState<string | undefined>(undefined);
 
+  // Pending user message for optimistic UI update (Chat Shell)
+  const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
+
   // Memoize the params change handler to prevent infinite re-renders
   const handleExternalApiParamsChange = useCallback((params: Record<string, string>) => {
     setExternalApiParams(params);
@@ -98,6 +102,37 @@ export default function ChatArea({
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
     useTaskContext();
   const hasMessages = Boolean(selectedTaskDetail && selectedTaskDetail.id);
+
+  // Chat Shell streaming hook
+  const {
+    isStreaming,
+    streamingContent,
+    startStream,
+    stopStream,
+    resetStream,
+  } = useChatStream({
+    onComplete: (taskId, _subtaskId) => {
+      // Clear pending user message after stream completes
+      setPendingUserMessage(null);
+      // Refresh task list and details after stream ends
+      refreshTasks();
+      refreshSelectedTaskDetail(false);
+      resetStream();
+      // Update URL if this was a new task
+      if (taskId && !selectedTaskDetail?.id) {
+        const params = new URLSearchParams(Array.from(searchParams.entries()));
+        params.set('taskId', String(taskId));
+        router.push(`?${params.toString()}`);
+      }
+    },
+    onError: (error) => {
+      setPendingUserMessage(null);
+      toast({
+        variant: 'destructive',
+        title: error.message,
+      });
+    },
+  });
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
   const lastSubtaskId = lastSubtask?.id;
@@ -237,16 +272,86 @@ export default function ChatArea({
   }, [hasMessages]);
 
   const handleSendMessage = async () => {
+    const message = taskInputMessage.trim();
+    if (!message && !shouldHideChatInput) return;
+
     setIsLoading(true);
     setError('');
 
+    // Check if this is a Chat Shell - use streaming mode
+    console.log('[ChatArea] handleSendMessage - checking isChatShell:', {
+      selectedTeam: selectedTeam?.name,
+      selectedTeamId: selectedTeam?.id,
+      agentType: selectedTeam?.agent_type,
+      isChatShellResult: isChatShell(selectedTeam),
+    });
+    
+    if (isChatShell(selectedTeam)) {
+      console.log('[ChatArea] Using Chat Shell streaming mode');
+      // Optimistic UI update: show user message immediately
+      setPendingUserMessage(message);
+      setTaskInputMessage('');
+
+      // When default model is selected, don't pass model_id (use bot's predefined model)
+      const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
+
+      try {
+        const taskId = await startStream({
+          message,
+          team_id: selectedTeam?.id ?? 0,
+          task_id: selectedTaskDetail?.id,
+          model_id: modelId,
+          force_override_bot_model: forceOverride,
+        });
+
+        // If this is a new task, update the selected task
+        if (taskId && !selectedTaskDetail?.id) {
+          setSelectedTask({
+            id: taskId,
+            title: message.substring(0, 100),
+            team_id: selectedTeam?.id || 0,
+            git_url: '',
+            git_repo: '',
+            git_repo_id: 0,
+            git_domain: '',
+            branch_name: '',
+            prompt: message,
+            status: 'RUNNING',
+            task_type: taskType,
+            progress: 0,
+            batch: 1,
+            result: {} as Record<string, unknown>,
+            error_message: '',
+            user_id: 0,
+            user_name: '',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            completed_at: '',
+          });
+        }
+
+        // Manually trigger scroll to bottom after sending message
+        setTimeout(() => scrollToBottom(true), 0);
+      } catch (err) {
+        setPendingUserMessage(null);
+        toast({
+          variant: 'destructive',
+          title: (err as Error)?.message || 'Failed to start chat stream',
+        });
+      }
+
+      setIsLoading(false);
+      return;
+    }
+
+    // Non-Chat Shell: use existing task creation flow
     // Prepare message with embedded external API parameters if applicable
-    let finalMessage = taskInputMessage;
+    let finalMessage = message;
     if (Object.keys(externalApiParams).length > 0) {
       // Embed parameters using special marker format
       // Backend will extract these parameters for external API calls
       const paramsJson = JSON.stringify(externalApiParams);
-      finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${taskInputMessage}`;
+      finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`;
     }
 
     // When default model is selected, don't pass model_id (use bot's predefined model)
@@ -278,14 +383,14 @@ export default function ChatArea({
         // Create a minimal Task object with required fields
         setSelectedTask({
           id: newTask.task_id,
-          title: taskInputMessage.substring(0, 100),
+          title: message.substring(0, 100),
           team_id: selectedTeam?.id || 0,
           git_url: selectedRepo?.git_url || '',
           git_repo: selectedRepo?.git_repo || '',
           git_repo_id: selectedRepo?.git_repo_id || 0,
           git_domain: selectedRepo?.git_domain || '',
           branch_name: selectedBranch?.name || '',
-          prompt: taskInputMessage,
+          prompt: message,
           status: 'PENDING',
           task_type: taskType,
           progress: 0,
@@ -496,6 +601,9 @@ export default function ChatArea({
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
             selectedBranch={selectedBranch}
+            streamingContent={streamingContent}
+            isStreaming={isStreaming}
+            pendingUserMessage={pendingUserMessage}
           />
         </div>
       </div>
@@ -559,7 +667,17 @@ export default function ChatArea({
                       {!shouldHideQuotaUsage && (
                         <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
                       )}
-                      {selectedTaskDetail?.status === 'PENDING' ? (
+                      {isStreaming ? (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={stopStream}
+                          className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
+                          title="Stop generating"
+                        >
+                          <CircleStop className="h-5 w-5 text-orange-500" />
+                        </Button>
+                      ) : selectedTaskDetail?.status === 'PENDING' ? (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -597,6 +715,7 @@ export default function ChatArea({
                           onClick={handleSendMessage}
                           disabled={
                             isLoading ||
+                            isStreaming ||
                             isModelSelectionRequired ||
                             (shouldHideChatInput ? false : !taskInputMessage.trim())
                           }
@@ -703,7 +822,17 @@ export default function ChatArea({
                     {!shouldHideQuotaUsage && (
                       <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
                     )}
-                    {selectedTaskDetail?.status === 'PENDING' ? (
+                    {isStreaming ? (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={stopStream}
+                        className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
+                        title="Stop generating"
+                      >
+                        <CircleStop className="h-5 w-5 text-orange-500" />
+                      </Button>
+                    ) : selectedTaskDetail?.status === 'PENDING' ? (
                       <Button
                         variant="ghost"
                         size="icon"
@@ -741,6 +870,7 @@ export default function ChatArea({
                         onClick={handleSendMessage}
                         disabled={
                           isLoading ||
+                          isStreaming ||
                           isModelSelectionRequired ||
                           (shouldHideChatInput ? false : !taskInputMessage.trim())
                         }
