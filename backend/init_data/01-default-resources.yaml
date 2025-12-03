@@ -37,7 +37,7 @@ spec:
     Steps
 
     1. Create a New Branch
-    - The branch name must start with wegent/
+    - The branch name must start with wegent-
     - Ensure the branch exists both locally and remotely
 
     2. Generate Code
