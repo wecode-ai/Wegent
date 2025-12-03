@@ -29,6 +29,8 @@ interface UseChatStreamOptions {
 interface UseChatStreamReturn {
   /** Whether streaming is in progress */
   isStreaming: boolean;
+  /** Whether stop operation is in progress (waiting for backend confirmation) */
+  isStopping: boolean;
   /** Accumulated streaming content */
   streamingContent: string;
   /** Error if any */
@@ -74,6 +76,7 @@ interface UseChatStreamReturn {
  */
 export function useChatStream(options: UseChatStreamOptions = {}): UseChatStreamReturn {
   const [isStreaming, setIsStreaming] = useState(false);
+  const [isStopping, setIsStopping] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [error, setError] = useState<Error | null>(null);
   const [taskId, setTaskId] = useState<number | null>(null);
@@ -82,6 +85,8 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
   const abortRef = useRef<(() => void) | null>(null);
   const optionsRef = useRef(options);
   const subtaskIdRef = useRef<number | null>(null);
+  // Use ref to track streaming content for reliable access in stopStream
+  const streamingContentRef = useRef('');
 
   // Keep options ref updated
   optionsRef.current = options;
@@ -96,6 +101,7 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
     // Reset state
     setIsStreaming(true);
     setStreamingContent('');
+    streamingContentRef.current = ''; // Reset ref too
     setError(null);
     setTaskId(request.task_id || null);
     setSubtaskId(null);
@@ -116,7 +122,11 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
 
         // Append content
         if (data.content) {
-          setStreamingContent(prev => prev + data.content);
+          setStreamingContent(prev => {
+            const newContent = prev + data.content;
+            streamingContentRef.current = newContent; // Keep ref in sync
+            return newContent;
+          });
           optionsRef.current.onChunk?.(data.content);
         }
       },
@@ -140,23 +150,33 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
   /**
    * Stop the current streaming request and cancel on backend.
    * Saves partial content that was received before cancellation.
+   *
+   * IMPORTANT: This function waits for backend confirmation before updating UI
+   * to ensure the server has actually stopped generating content.
+   *
+   * After stopping, the onComplete callback is called to trigger a refresh,
+   * which will fetch the saved partial content from the backend.
    */
   const stopStream = useCallback(async () => {
-    // First abort the frontend fetch request
+    // Set stopping state to show loading indicator
+    setIsStopping(true);
+
+    // Get the current streaming content from ref (reliable access)
+    const partialContent = streamingContentRef.current;
+    console.log(
+      '[useChatStream] stopStream called, partialContent length:',
+      partialContent?.length || 0
+    );
+
+    // Get task ID and subtask ID before aborting
+    const currentTaskId = taskId;
+    const currentSubtaskId = subtaskIdRef.current;
+
+    // First abort the frontend fetch request to stop receiving new content
     abortRef.current?.();
 
-    // Get the current streaming content before clearing state
-    // We need to access the current state value directly
-    let partialContent = '';
-    setStreamingContent(prev => {
-      partialContent = prev;
-      return prev; // Don't change the state, just read it
-    });
-
-    setIsStreaming(false);
-
-    // Then call backend to cancel the subtask with partial content
-    const currentSubtaskId = subtaskIdRef.current;
+    // Call backend to cancel the subtask with partial content
+    // Wait for backend confirmation before updating UI state
     if (currentSubtaskId) {
       try {
         await cancelChat({
@@ -164,23 +184,36 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
           partial_content: partialContent || undefined,
         });
         console.log(
-          '[useChatStream] Chat cancelled successfully, subtask_id:',
+          '[useChatStream] Chat stopped successfully, subtask_id:',
           currentSubtaskId,
           'partial_content_length:',
           partialContent?.length || 0
         );
+
+        // Call onComplete to trigger refresh and show the saved partial content
+        // The backend marks the task as COMPLETED, so we treat this as a successful completion
+        if (currentTaskId && currentSubtaskId) {
+          optionsRef.current.onComplete?.(currentTaskId, currentSubtaskId);
+        }
       } catch (error) {
-        console.error('[useChatStream] Failed to cancel chat:', error);
-        // Don't throw - the stream is already stopped on frontend
+        console.error('[useChatStream] Failed to stop chat:', error);
+        // Even if backend cancel fails, we should still stop the frontend streaming
+        // to prevent UI from being stuck in streaming state
       }
     }
-  }, []);
+
+    // Only update UI state after backend has confirmed cancellation
+    // This ensures the server has actually stopped generating content
+    setIsStreaming(false);
+    setIsStopping(false);
+  }, [taskId]);
 
   /**
    * Reset all streaming state.
    */
   const resetStream = useCallback(() => {
     setStreamingContent('');
+    streamingContentRef.current = ''; // Reset ref too
     setError(null);
     setTaskId(null);
     setSubtaskId(null);
@@ -188,6 +221,7 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
 
   return {
     isStreaming,
+    isStopping,
     streamingContent,
     error,
     taskId,

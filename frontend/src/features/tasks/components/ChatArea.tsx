@@ -79,6 +79,9 @@ export default function ChatArea({
 
   // Pending user message for optimistic UI update (Chat Shell)
   const [pendingUserMessage, setPendingUserMessage] = useState<string | null>(null);
+  // Pending attachment for optimistic UI update (Chat Shell)
+  const [pendingAttachment, setPendingAttachment] =
+    useState<typeof attachmentState.attachment>(null);
 
   // File attachment state
   const {
@@ -115,31 +118,32 @@ export default function ChatArea({
     useTaskContext();
 
   // Chat Shell streaming hook
-  const { isStreaming, streamingContent, startStream, stopStream, resetStream } = useChatStream({
-    onComplete: (taskId, _subtaskId) => {
-      // Clear pending user message after stream completes
-      setPendingUserMessage(null);
-      // Reset attachment after successful send
-      resetAttachment();
-      // Refresh task list and details after stream ends
-      refreshTasks();
-      refreshSelectedTaskDetail(false);
-      resetStream();
-      // Update URL if this was a new task
-      if (taskId && !selectedTaskDetail?.id) {
-        const params = new URLSearchParams(Array.from(searchParams.entries()));
-        params.set('taskId', String(taskId));
-        router.push(`?${params.toString()}`);
-      }
-    },
-    onError: error => {
-      setPendingUserMessage(null);
-      toast({
-        variant: 'destructive',
-        title: error.message,
-      });
-    },
-  });
+  const { isStreaming, isStopping, streamingContent, startStream, stopStream, resetStream } =
+    useChatStream({
+      onComplete: (taskId, _subtaskId) => {
+        // Clear pending user message and attachment after stream completes
+        setPendingUserMessage(null);
+        setPendingAttachment(null);
+        // Refresh task list and details after stream ends
+        refreshTasks();
+        refreshSelectedTaskDetail(false);
+        resetStream();
+        // Update URL if this was a new task
+        if (taskId && !selectedTaskDetail?.id) {
+          const params = new URLSearchParams(Array.from(searchParams.entries()));
+          params.set('taskId', String(taskId));
+          router.push(`?${params.toString()}`);
+        }
+      },
+      onError: error => {
+        setPendingUserMessage(null);
+        setPendingAttachment(null);
+        toast({
+          variant: 'destructive',
+          title: error.message,
+        });
+      },
+    });
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
   const lastSubtaskId = lastSubtask?.id;
@@ -393,7 +397,11 @@ export default function ChatArea({
       console.log('[ChatArea] Using Chat Shell streaming mode');
       // Optimistic UI update: show user message immediately
       setPendingUserMessage(message);
+      // Save attachment for pending message display, then clear input
+      setPendingAttachment(attachmentState.attachment);
       setTaskInputMessage('');
+      // Reset attachment immediately after sending (clear from input area)
+      resetAttachment();
 
       // When default model is selected, don't pass model_id (use bot's predefined model)
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
@@ -579,19 +587,31 @@ export default function ChatArea({
       setIsCancelling(false);
     }
   };
-
-  const scrollToBottom = (force = false) => {
+  const scrollToBottom = useCallback((force = false) => {
     const container = scrollContainerRef.current;
     if (!container) return;
 
     if (force || isUserNearBottomRef.current) {
-      container.scrollTop = container.scrollHeight;
-      // Force means user initiated action, treat as pinned to bottom
-      if (force) {
-        isUserNearBottomRef.current = true;
-      }
+      // Use requestAnimationFrame to ensure DOM is fully rendered before scrolling
+      requestAnimationFrame(() => {
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+          // Force means user initiated action, treat as pinned to bottom
+          if (force) {
+            isUserNearBottomRef.current = true;
+          }
+        }
+      });
     }
-  };
+  }, []);
+
+  // Callback for MessagesArea to notify content changes (for auto-scroll during streaming)
+  const handleMessagesContentChange = useCallback(() => {
+    // During streaming or when user is near bottom, auto-scroll to bottom
+    if (isStreaming || isUserNearBottomRef.current) {
+      scrollToBottom();
+    }
+  }, [isStreaming, scrollToBottom]);
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -618,7 +638,7 @@ export default function ChatArea({
       // Force scroll to bottom when opening a historical task
       setTimeout(() => scrollToBottom(true), 100);
     }
-  }, [selectedTaskDetail?.id, hasMessages]);
+  }, [selectedTaskDetail?.id, hasMessages, scrollToBottom]);
 
   useEffect(() => {
     if (!hasMessages || !lastSubtaskId) return;
@@ -629,7 +649,7 @@ export default function ChatArea({
     }, 60);
 
     return () => clearTimeout(timer);
-  }, [hasMessages, lastSubtaskId, lastSubtaskUpdatedAt]);
+  }, [hasMessages, lastSubtaskId, lastSubtaskUpdatedAt, scrollToBottom]);
 
   // Keep floating input aligned with the chat area width to avoid overflow
   useEffect(() => {
@@ -710,6 +730,8 @@ export default function ChatArea({
             streamingContent={streamingContent}
             isStreaming={isStreaming}
             pendingUserMessage={pendingUserMessage}
+            pendingAttachment={pendingAttachment}
+            onContentChange={handleMessagesContentChange}
           />
         </div>
       </div>
@@ -822,16 +844,23 @@ export default function ChatArea({
                       {!shouldHideQuotaUsage && (
                         <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
                       )}
-                      {isStreaming ? (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={stopStream}
-                          className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
-                          title="Stop generating"
-                        >
-                          <CircleStop className="h-5 w-5 text-orange-500" />
-                        </Button>
+                      {isStreaming || isStopping ? (
+                        isStopping ? (
+                          <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                            <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                            <CircleStop className="h-4 w-4 text-orange-500" />
+                          </div>
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={stopStream}
+                            className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
+                            title="Stop generating"
+                          >
+                            <CircleStop className="h-5 w-5 text-orange-500" />
+                          </Button>
+                        )
                       ) : selectedTaskDetail?.status === 'PENDING' ? (
                         <Button
                           variant="ghost"
@@ -1027,16 +1056,23 @@ export default function ChatArea({
                     {!shouldHideQuotaUsage && (
                       <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
                     )}
-                    {isStreaming ? (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={stopStream}
-                        className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
-                        title="Stop generating"
-                      >
-                        <CircleStop className="h-5 w-5 text-orange-500" />
-                      </Button>
+                    {isStreaming || isStopping ? (
+                      isStopping ? (
+                        <div className="relative h-6 w-6 flex items-center justify-center flex-shrink-0 translate-y-0.5">
+                          <div className="absolute inset-0 rounded-full border-2 border-orange-200 border-t-orange-500 animate-spin" />
+                          <CircleStop className="h-4 w-4 text-orange-500" />
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={stopStream}
+                          className="h-6 w-6 rounded-full hover:bg-orange-100 flex-shrink-0 translate-y-0.5"
+                          title="Stop generating"
+                        >
+                          <CircleStop className="h-5 w-5 text-orange-500" />
+                        </Button>
+                      )
                     ) : selectedTaskDetail?.status === 'PENDING' ? (
                       <Button
                         variant="ghost"

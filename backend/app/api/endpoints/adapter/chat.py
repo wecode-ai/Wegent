@@ -635,8 +635,12 @@ async def cancel_chat(
     """
     Cancel an ongoing chat stream.
     
-    This endpoint updates the subtask status to CANCELLED and
-    also updates the associated task status.
+    For Chat Shell type, this endpoint:
+    - Updates the subtask status to COMPLETED (not CANCELLED) to show the truncated message
+    - Saves the partial content received before cancellation
+    - Updates the task status to COMPLETED so the conversation can continue
+    
+    This allows users to see the partial response and continue the conversation.
     
     Returns:
         {"success": bool, "message": str}
@@ -663,18 +667,26 @@ async def cancel_chat(
             "message": f"Subtask is already in {subtask.status.value} state"
         }
     
-    # Update subtask status to CANCELLED
-    subtask.status = SubtaskStatus.CANCELLED
+    # For Chat Shell, we mark as COMPLETED instead of CANCELLED
+    # This allows the truncated message to be displayed normally
+    # and the user can continue the conversation
+    subtask.status = SubtaskStatus.COMPLETED
+    subtask.progress = 100
     subtask.completed_at = datetime.now()
     subtask.updated_at = datetime.now()
-    subtask.error_message = "Cancelled by user"
+    # Don't set error_message for stopped chat - it's not an error
+    subtask.error_message = ""
     
     # Save partial content if provided
     if request.partial_content:
         subtask.result = {"value": request.partial_content}
-        logger.info(f"[chat.py] cancel_chat: saving partial content, length={len(request.partial_content)}")
+        logger.info(f"[chat.py] cancel_chat: saving partial content as completed result, length={len(request.partial_content)}")
+    else:
+        # If no partial content, set empty result
+        subtask.result = {"value": ""}
+        logger.info(f"[chat.py] cancel_chat: no partial content, setting empty result")
     
-    # Also update the task status
+    # Also update the task status to COMPLETED so conversation can continue
     task = (
         db.query(Kind)
         .filter(
@@ -690,8 +702,10 @@ async def cancel_chat(
         
         task_crd = Task.model_validate(task.json)
         if task_crd.status:
-            task_crd.status.status = "CANCELLED"
-            task_crd.status.errorMessage = "Cancelled by user"
+            # Set to COMPLETED instead of CANCELLED
+            # This allows the user to continue the conversation
+            task_crd.status.status = "COMPLETED"
+            task_crd.status.errorMessage = ""  # No error message for stopped chat
             task_crd.status.updatedAt = datetime.now()
             task_crd.status.completedAt = datetime.now()
         
@@ -701,9 +715,9 @@ async def cancel_chat(
     
     db.commit()
     
-    logger.info(f"[chat.py] cancel_chat: subtask {request.subtask_id} cancelled successfully")
+    logger.info(f"[chat.py] cancel_chat: subtask {request.subtask_id} stopped and marked as completed")
     
     return {
         "success": True,
-        "message": "Chat cancelled successfully"
+        "message": "Chat stopped successfully"
     }
