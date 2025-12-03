@@ -494,10 +494,13 @@ async def stream_chat(
     agent_config = bot_spec.get("agent_config", {})
     
     # Get user info for data sources
+    # Note: Use "name" key to match executor's task_data.user.name format
     user_info = {
         "id": current_user.id,
-        "name": current_user.user_name,
+        "name": current_user.user_name or "",
+        "user_name": current_user.user_name or "",  # Also include user_name for compatibility
     }
+    
     
     # Build task_data similar to executor format
     task_data = {
@@ -519,6 +522,7 @@ async def stream_chat(
         "user": user_info,
         "env": model_config.get("default_headers", {}),  # For backward compatibility
     }
+    
     
     # Process DEFAULT_HEADERS with placeholder replacement
     raw_default_headers = model_config.get("default_headers", {})
