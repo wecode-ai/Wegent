@@ -6,36 +6,36 @@
  * Attachment API client for file upload and management.
  */
 
-import { getToken } from './user'
+import { getToken } from './user';
 
 // API base URL - use relative path for browser compatibility
-const API_BASE_URL = ''
+const API_BASE_URL = '';
 
 /**
  * Attachment status enum
  */
-export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed'
+export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed';
 
 /**
  * Attachment response from API
  */
 export interface AttachmentResponse {
-  id: number
-  filename: string
-  file_size: number
-  mime_type: string
-  status: AttachmentStatus
-  text_length?: number | null
-  error_message?: string | null
+  id: number;
+  filename: string;
+  file_size: number;
+  mime_type: string;
+  status: AttachmentStatus;
+  text_length?: number | null;
+  error_message?: string | null;
 }
 
 /**
  * Detailed attachment response
  */
 export interface AttachmentDetailResponse extends AttachmentResponse {
-  subtask_id?: number | null
-  file_extension: string
-  created_at: string
+  subtask_id?: number | null;
+  file_extension: string;
+  created_at: string;
 }
 
 /**
@@ -52,7 +52,13 @@ export const SUPPORTED_EXTENSIONS = [
   '.csv',
   '.txt',
   '.md',
-]
+  '.jpg',
+  '.jpeg',
+  '.png',
+  '.gif',
+  '.bmp',
+  '.webp',
+];
 
 /**
  * Supported MIME types
@@ -68,33 +74,38 @@ export const SUPPORTED_MIME_TYPES = [
   'text/csv',
   'text/plain',
   'text/markdown',
-]
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/bmp',
+  'image/webp',
+];
 
 /**
- * Maximum file size (5 MB)
+ * Maximum file size (20 MB)
  */
-export const MAX_FILE_SIZE = 5 * 1024 * 1024
+export const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 /**
  * Check if a file extension is supported
  */
 export function isSupportedExtension(filename: string): boolean {
-  const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'))
-  return SUPPORTED_EXTENSIONS.includes(ext)
+  const ext = filename.toLowerCase().substring(filename.lastIndexOf('.'));
+  return SUPPORTED_EXTENSIONS.includes(ext);
 }
 
 /**
  * Check if file size is within limits
  */
 export function isValidFileSize(size: number): boolean {
-  return size <= MAX_FILE_SIZE
+  return size <= MAX_FILE_SIZE;
 }
 
 /**
  * Get file extension from filename
  */
 export function getFileExtension(filename: string): string {
-  return filename.toLowerCase().substring(filename.lastIndexOf('.'))
+  return filename.toLowerCase().substring(filename.lastIndexOf('.'));
 }
 
 /**
@@ -102,11 +113,11 @@ export function getFileExtension(filename: string): string {
  */
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) {
-    return `${bytes} B`
+    return `${bytes} B`;
   } else if (bytes < 1024 * 1024) {
-    return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / 1024).toFixed(1)} KB`;
   } else {
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   }
 }
 
@@ -114,25 +125,32 @@ export function formatFileSize(bytes: number): string {
  * Get file icon based on extension
  */
 export function getFileIcon(extension: string): string {
-  const ext = extension.toLowerCase()
+  const ext = extension.toLowerCase();
   switch (ext) {
     case '.pdf':
-      return '📄'
+      return '📄';
     case '.doc':
     case '.docx':
-      return '📝'
+      return '📝';
     case '.ppt':
     case '.pptx':
-      return '📊'
+      return '📊';
     case '.xls':
     case '.xlsx':
     case '.csv':
-      return '📈'
+      return '📈';
     case '.txt':
     case '.md':
-      return '📃'
+      return '📃';
+    case '.jpg':
+    case '.jpeg':
+    case '.png':
+    case '.gif':
+    case '.bmp':
+    case '.webp':
+      return '🖼️';
     default:
-      return '📎'
+      return '📎';
   }
 }
 
@@ -147,65 +165,63 @@ export async function uploadAttachment(
   file: File,
   onProgress?: (progress: number) => void
 ): Promise<AttachmentResponse> {
-  const token = getToken()
+  const token = getToken();
 
   // Validate file before upload
   if (!isSupportedExtension(file.name)) {
-    throw new Error(
-      `不支持的文件类型。支持的类型: ${SUPPORTED_EXTENSIONS.join(', ')}`
-    )
+    throw new Error(`不支持的文件类型。支持的类型: ${SUPPORTED_EXTENSIONS.join(', ')}`);
   }
 
   if (!isValidFileSize(file.size)) {
-    throw new Error(`文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`)
+    throw new Error(`文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`);
   }
 
-  const formData = new FormData()
-  formData.append('file', file)
+  const formData = new FormData();
+  formData.append('file', file);
 
   // Use XMLHttpRequest for progress tracking
   return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
+    const xhr = new XMLHttpRequest();
 
     xhr.upload.addEventListener('progress', event => {
       if (event.lengthComputable && onProgress) {
-        const progress = Math.round((event.loaded / event.total) * 100)
-        onProgress(progress)
+        const progress = Math.round((event.loaded / event.total) * 100);
+        onProgress(progress);
       }
-    })
+    });
 
     xhr.addEventListener('load', () => {
       if (xhr.status >= 200 && xhr.status < 300) {
         try {
-          const response = JSON.parse(xhr.responseText)
-          resolve(response)
+          const response = JSON.parse(xhr.responseText);
+          resolve(response);
         } catch {
-          reject(new Error('Failed to parse response'))
+          reject(new Error('Failed to parse response'));
         }
       } else {
         try {
-          const error = JSON.parse(xhr.responseText)
-          reject(new Error(error.detail || 'Upload failed'))
+          const error = JSON.parse(xhr.responseText);
+          reject(new Error(error.detail || 'Upload failed'));
         } catch {
-          reject(new Error(`Upload failed: ${xhr.status}`))
+          reject(new Error(`Upload failed: ${xhr.status}`));
         }
       }
-    })
+    });
 
     xhr.addEventListener('error', () => {
-      reject(new Error('Network error during upload'))
-    })
+      reject(new Error('Network error during upload'));
+    });
 
     xhr.addEventListener('abort', () => {
-      reject(new Error('Upload cancelled'))
-    })
+      reject(new Error('Upload cancelled'));
+    });
 
-    xhr.open('POST', `${API_BASE_URL}/api/attachments/upload`)
+    xhr.open('POST', `${API_BASE_URL}/api/attachments/upload`);
     if (token) {
-      xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+      xhr.setRequestHeader('Authorization', `Bearer ${token}`);
     }
-    xhr.send(formData)
-  })
+    xhr.send(formData);
+  });
 }
 
 /**
@@ -214,10 +230,8 @@ export async function uploadAttachment(
  * @param attachmentId - Attachment ID
  * @returns Attachment details
  */
-export async function getAttachment(
-  attachmentId: number
-): Promise<AttachmentDetailResponse> {
-  const token = getToken()
+export async function getAttachment(attachmentId: number): Promise<AttachmentDetailResponse> {
+  const token = getToken();
 
   const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}`, {
     method: 'GET',
@@ -225,14 +239,14 @@ export async function getAttachment(
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
     },
-  })
+  });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}))
-    throw new Error(error.detail || 'Failed to get attachment')
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to get attachment');
   }
 
-  return response.json()
+  return response.json();
 }
 
 /**
@@ -242,7 +256,7 @@ export async function getAttachment(
  * @returns Download URL
  */
 export function getAttachmentDownloadUrl(attachmentId: number): string {
-  return `${API_BASE_URL}/api/attachments/${attachmentId}/download`
+  return `${API_BASE_URL}/api/attachments/${attachmentId}/download`;
 }
 
 /**
@@ -251,35 +265,29 @@ export function getAttachmentDownloadUrl(attachmentId: number): string {
  * @param attachmentId - Attachment ID
  * @param filename - Filename for download
  */
-export async function downloadAttachment(
-  attachmentId: number,
-  filename: string
-): Promise<void> {
-  const token = getToken()
+export async function downloadAttachment(attachmentId: number, filename: string): Promise<void> {
+  const token = getToken();
 
-  const response = await fetch(
-    `${API_BASE_URL}/api/attachments/${attachmentId}/download`,
-    {
-      method: 'GET',
-      headers: {
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
-    }
-  )
+  const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}/download`, {
+    method: 'GET',
+    headers: {
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  });
 
   if (!response.ok) {
-    throw new Error('Failed to download attachment')
+    throw new Error('Failed to download attachment');
   }
 
-  const blob = await response.blob()
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = filename
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 /**
@@ -288,7 +296,7 @@ export async function downloadAttachment(
  * @param attachmentId - Attachment ID
  */
 export async function deleteAttachment(attachmentId: number): Promise<void> {
-  const token = getToken()
+  const token = getToken();
 
   const response = await fetch(`${API_BASE_URL}/api/attachments/${attachmentId}`, {
     method: 'DELETE',
@@ -296,11 +304,11 @@ export async function deleteAttachment(attachmentId: number): Promise<void> {
       'Content-Type': 'application/json',
       ...(token && { Authorization: `Bearer ${token}` }),
     },
-  })
+  });
 
   if (!response.ok) {
-    const error = await response.json().catch(() => ({}))
-    throw new Error(error.detail || 'Failed to delete attachment')
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to delete attachment');
   }
 }
 
@@ -313,29 +321,26 @@ export async function deleteAttachment(attachmentId: number): Promise<void> {
 export async function getAttachmentBySubtask(
   subtaskId: number
 ): Promise<AttachmentDetailResponse | null> {
-  const token = getToken()
+  const token = getToken();
 
-  const response = await fetch(
-    `${API_BASE_URL}/api/attachments/subtask/${subtaskId}`,
-    {
-      method: 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token && { Authorization: `Bearer ${token}` }),
-      },
-    }
-  )
+  const response = await fetch(`${API_BASE_URL}/api/attachments/subtask/${subtaskId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  });
 
   if (!response.ok) {
     if (response.status === 404) {
-      return null
+      return null;
     }
-    const error = await response.json().catch(() => ({}))
-    throw new Error(error.detail || 'Failed to get attachment')
+    const error = await response.json().catch(() => ({}));
+    throw new Error(error.detail || 'Failed to get attachment');
   }
 
-  const data = await response.json()
-  return data || null
+  const data = await response.json();
+  return data || null;
 }
 
 /**
@@ -348,4 +353,4 @@ export const attachmentApis = {
   downloadAttachment,
   deleteAttachment,
   getAttachmentBySubtask,
-}
+};

@@ -5,14 +5,15 @@
 """
 Document parser service for extracting text from various file formats.
 
-Supports: PDF, Word (.doc, .docx), PowerPoint (.ppt, .pptx), 
-Excel (.xls, .xlsx, .csv), TXT, and Markdown files.
+Supports: PDF, Word (.doc, .docx), PowerPoint (.ppt, .pptx),
+Excel (.xls, .xlsx, .csv), TXT, Markdown files, and Images (.jpg, .jpeg, .png, .gif, .bmp, .webp).
 """
 
 import csv
+import base64
 import io
 import logging
-from typing import Tuple
+from typing import Tuple, Optional
 
 import chardet
 
@@ -27,7 +28,7 @@ class DocumentParseError(Exception):
 class DocumentParser:
     """
     Document parser for extracting text content from various file formats.
-    
+
     Supported formats:
     - PDF (.pdf)
     - Word (.doc, .docx)
@@ -35,6 +36,7 @@ class DocumentParser:
     - Excel (.xls, .xlsx, .csv)
     - Plain text (.txt)
     - Markdown (.md)
+    - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
     """
     
     # Supported file extensions and their MIME types
@@ -49,10 +51,16 @@ class DocumentParser:
         ".csv": "text/csv",
         ".txt": "text/plain",
         ".md": "text/markdown",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+        ".gif": "image/gif",
+        ".bmp": "image/bmp",
+        ".webp": "image/webp",
     }
     
-    # Maximum file size (5 MB)
-    MAX_FILE_SIZE = 5 * 1024 * 1024
+    # Maximum file size (20 MB)
+    MAX_FILE_SIZE = 20 * 1024 * 1024
     
     # Maximum extracted text length (50000 characters)
     MAX_TEXT_LENGTH = 50000
@@ -77,26 +85,29 @@ class DocumentParser:
         """Check if extracted text length is within limits."""
         return len(text) <= cls.MAX_TEXT_LENGTH
     
-    def parse(self, binary_data: bytes, extension: str) -> Tuple[str, int]:
+    def parse(self, binary_data: bytes, extension: str) -> Tuple[str, int, Optional[str]]:
         """
         Parse document and extract text content.
-        
+
         Args:
             binary_data: File binary data
             extension: File extension (e.g., '.pdf', '.docx')
-            
+
         Returns:
-            Tuple of (extracted_text, text_length)
-            
+            Tuple of (extracted_text, text_length, image_base64)
+            image_base64 is None for non-image files
+
         Raises:
             DocumentParseError: If parsing fails
         """
         extension = extension.lower()
-        
+
         if not self.is_supported_extension(extension):
             raise DocumentParseError(f"Unsupported file type: {extension}")
-        
+
         try:
+            image_base64 = None
+
             if extension == ".pdf":
                 text = self._parse_pdf(binary_data)
             elif extension in [".doc", ".docx"]:
@@ -109,16 +120,18 @@ class DocumentParser:
                 text = self._parse_csv(binary_data)
             elif extension in [".txt", ".md"]:
                 text = self._parse_text(binary_data)
+            elif extension in [".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"]:
+                text, image_base64 = self._parse_image(binary_data, extension)
             else:
                 raise DocumentParseError(f"Unsupported file type: {extension}")
-            
+
             # Validate text length
             if not self.validate_text_length(text):
                 raise DocumentParseError(
                     f"Extracted text exceeds maximum length ({self.MAX_TEXT_LENGTH} characters)"
                 )
-            
-            return text, len(text)
+
+            return text, len(text), image_base64
             
         except DocumentParseError:
             raise
@@ -296,7 +309,7 @@ class DocumentParser:
         """Parse plain text or markdown file."""
         # Try common encodings in order of preference
         encodings_to_try = ["utf-8", "utf-8-sig", "gbk", "gb2312", "gb18030", "latin-1"]
-        
+
         # First, try to detect encoding using chardet
         try:
             detected = chardet.detect(binary_data)
@@ -306,7 +319,7 @@ class DocumentParser:
                 encodings_to_try.insert(0, detected_encoding)
         except Exception:
             pass  # Ignore chardet errors
-        
+
         # Try each encoding
         last_error = None
         for encoding in encodings_to_try:
@@ -315,13 +328,55 @@ class DocumentParser:
             except (UnicodeDecodeError, LookupError) as e:
                 last_error = e
                 continue
-        
+
         # If all encodings fail, try with error handling
         try:
             return binary_data.decode("utf-8", errors="replace")
         except Exception as e:
             logger.error(f"Error parsing text file: {e}", exc_info=True)
             raise DocumentParseError(f"Failed to parse text file: {str(last_error or e)}")
+
+    def _parse_image(self, binary_data: bytes, extension: str) -> Tuple[str, str]:
+        """
+        Parse image file and return metadata information with base64 encoding.
+
+        Returns:
+            Tuple of (metadata_text, base64_encoded_image)
+        """
+        try:
+            from PIL import Image
+
+            image_file = io.BytesIO(binary_data)
+            img = Image.open(image_file)
+
+            # Extract image metadata
+            width, height = img.size
+            mode = img.mode
+            format_name = img.format or extension[1:].upper()
+
+            # Build description
+            text = f"[图片文件]\n"
+            text += f"格式: {format_name}\n"
+            text += f"尺寸: {width} x {height} 像素\n"
+            text += f"颜色模式: {mode}\n"
+            text += f"文件大小: {len(binary_data)} 字节"
+
+            # Try to extract EXIF data if available
+            if hasattr(img, '_getexif') and img._getexif():
+                text += "\n\n[EXIF 信息]"
+                exif_data = img._getexif()
+                if exif_data:
+                    # Just mention EXIF is available, don't extract all
+                    text += "\n包含 EXIF 元数据"
+
+            # Encode image to base64 for vision models
+            image_base64 = base64.b64encode(binary_data).decode('utf-8')
+
+            return text, image_base64
+
+        except Exception as e:
+            logger.error(f"Error parsing image: {e}", exc_info=True)
+            raise DocumentParseError(f"Failed to parse image: {str(e)}")
 
 
 # Global parser instance

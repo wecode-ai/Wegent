@@ -6,7 +6,14 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
-import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
+import type {
+  TaskDetail,
+  TaskDetailSubtask,
+  Team,
+  GitRepoInfo,
+  GitBranch,
+  Attachment,
+} from '@/types/api';
 import { Bot, User, Copy, Check, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';

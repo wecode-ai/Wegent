@@ -116,7 +116,7 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
 
         // Append content
         if (data.content) {
-          setStreamingContent((prev) => prev + data.content);
+          setStreamingContent(prev => prev + data.content);
           optionsRef.current.onChunk?.(data.content);
         }
       },
@@ -144,15 +144,15 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
   const stopStream = useCallback(async () => {
     // First abort the frontend fetch request
     abortRef.current?.();
-    
+
     // Get the current streaming content before clearing state
     // We need to access the current state value directly
     let partialContent = '';
-    setStreamingContent((prev) => {
+    setStreamingContent(prev => {
       partialContent = prev;
       return prev; // Don't change the state, just read it
     });
-    
+
     setIsStreaming(false);
 
     // Then call backend to cancel the subtask with partial content
@@ -163,7 +163,12 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
           subtask_id: currentSubtaskId,
           partial_content: partialContent || undefined,
         });
-        console.log('[useChatStream] Chat cancelled successfully, subtask_id:', currentSubtaskId, 'partial_content_length:', partialContent?.length || 0);
+        console.log(
+          '[useChatStream] Chat cancelled successfully, subtask_id:',
+          currentSubtaskId,
+          'partial_content_length:',
+          partialContent?.length || 0
+        );
       } catch (error) {
         console.error('[useChatStream] Failed to cancel chat:', error);
         // Don't throw - the stream is already stopped on frontend

@@ -45,9 +45,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(data);
   } catch (error) {
     console.error('Chat cancel proxy error:', error);
-    return NextResponse.json(
-      { error: 'Failed to proxy chat cancel request' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to proxy chat cancel request' }, { status: 500 });
   }
 }

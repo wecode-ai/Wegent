@@ -92,3 +92,4 @@ python-docx>=1.1.0
 python-pptx>=0.6.23
 openpyxl>=3.1.2
 chardet>=5.2.0
+pillow>=10.0.0

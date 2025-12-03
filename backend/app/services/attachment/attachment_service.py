@@ -8,7 +8,7 @@ Attachment service for managing file uploads and document parsing.
 
 import logging
 import os
-from typing import Optional
+from typing import Optional, Union, Dict, Any
 
 from sqlalchemy.orm import Session
 
@@ -90,11 +90,12 @@ class AttachmentService:
         
         # Parse document
         try:
-            extracted_text, text_length = self.parser.parse(binary_data, extension)
-            
+            extracted_text, text_length, image_base64 = self.parser.parse(binary_data, extension)
+
             # Update attachment with parsed content
             attachment.extracted_text = extracted_text
             attachment.text_length = text_length
+            attachment.image_base64 = image_base64
             attachment.status = AttachmentStatus.READY
             
         except DocumentParseError as e:
@@ -233,29 +234,47 @@ class AttachmentService:
         self,
         message: str,
         attachment: SubtaskAttachment,
-    ) -> str:
+    ) -> Union[str, Dict[str, Any]]:
         """
-        Build a message with attachment content prepended.
-        
+        Build a message with attachment content.
+
+        For image attachments, returns a vision-compatible message structure.
+        For text documents, returns combined text message.
+
         Args:
             message: User's original message
-            attachment: Attachment with extracted text
-            
+            attachment: Attachment with extracted text or image data
+
         Returns:
-            Combined message with file content
+            For images: Dict with vision content structure
+            For documents: String with combined text
         """
-        if not attachment.extracted_text:
+        # Check if this is an image attachment
+        is_image = attachment.file_extension.lower() in [
+            ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"
+        ]
+
+        if is_image and attachment.image_base64:
+            # Return vision-compatible message structure
+            # This will be handled specially by the chat service
+            return {
+                "type": "vision",
+                "text": message,
+                "image_base64": attachment.image_base64,
+                "mime_type": attachment.mime_type,
+                "filename": attachment.original_filename,
+            }
+        elif attachment.extracted_text:
+            # For documents, combine text as before
+            combined = (
+                f"【文件内容 - {attachment.original_filename}】:\n"
+                f"{attachment.extracted_text}\n\n"
+                f"【用户问题】:\n"
+                f"{message}"
+            )
+            return combined
+        else:
             return message
-        
-        # Format: File content first, then user's question
-        combined = (
-            f"【文件内容 - {attachment.original_filename}】:\n"
-            f"{attachment.extracted_text}\n\n"
-            f"【用户问题】:\n"
-            f"{message}"
-        )
-        
-        return combined
 
 
 # Global service instance

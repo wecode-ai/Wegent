@@ -14,7 +14,7 @@ import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
 from fastapi.responses import StreamingResponse
@@ -51,20 +51,20 @@ class ChatService(ChatServiceBase):
         self,
         subtask_id: int,
         task_id: int,
-        message: str,
+        message: Union[str, Dict[str, Any]],
         model_config: Dict[str, Any],
         system_prompt: str = "",
     ) -> StreamingResponse:
         """
         Stream chat response from LLM API.
-        
+
         Args:
             subtask_id: Subtask ID for status updates
             task_id: Task ID for session history
-            message: User message
+            message: User message (string or vision dict)
             model_config: Model configuration (api_key, base_url, model_id, model)
             system_prompt: Bot's system prompt
-            
+
         Returns:
             StreamingResponse with SSE events
         """
@@ -146,32 +146,51 @@ class ChatService(ChatServiceBase):
     def _build_messages(
         self,
         history: List[Dict[str, str]],
-        current_message: str,
+        current_message: Union[str, Dict[str, Any]],
         system_prompt: str
-    ) -> List[Dict[str, str]]:
+    ) -> List[Dict[str, Any]]:
         """
         Build message list for LLM API.
-        
+
         Args:
             history: Previous conversation history
-            current_message: Current user message
+            current_message: Current user message (string or vision dict)
             system_prompt: System prompt
-            
+
         Returns:
             List of message dictionaries
         """
         messages = []
-        
+
         # Add system prompt if provided
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
-        
+
         # Add history messages
         messages.extend(history)
-        
+
         # Add current message
-        messages.append({"role": "user", "content": current_message})
-        
+        if isinstance(current_message, dict) and current_message.get("type") == "vision":
+            # Build vision message content using standard OpenAI format
+            # Reference: https://platform.openai.com/docs/guides/vision
+            # Format: {"type": "image_url", "image_url": {"url": "data:image/...;base64,..."}}
+            vision_content = [
+                {"type": "text", "text": current_message.get("text", "")},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{current_message['mime_type']};base64,{current_message['image_base64']}"
+                    }
+                }
+            ]
+            messages.append({"role": "user", "content": vision_content})
+            logger.info(f"[_build_messages] Built vision message: text_len={len(current_message.get('text', ''))}, mime_type={current_message.get('mime_type')}, image_data_len={len(current_message.get('image_base64', ''))}")
+        else:
+            # Regular text message
+            message_text = current_message if isinstance(current_message, str) else current_message.get("text", "")
+            messages.append({"role": "user", "content": message_text})
+
+        logger.info(f"[_build_messages] Built {len(messages)} messages, last message content type: {type(messages[-1]['content'])}")
         return messages
     
     async def _call_llm_streaming(
@@ -192,7 +211,7 @@ class ChatService(ChatServiceBase):
             Content chunks from the API
         """
         client = await get_http_client()
-        
+
         model_type = model_config.get("model", "openai")
         api_key = model_config.get("api_key", "")
         base_url = model_config.get("base_url", "https://api.openai.com/v1")
@@ -230,7 +249,7 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call OpenAI-compatible API with streaming.
-        
+
         Args:
             client: HTTP client
             api_key: API key
@@ -238,7 +257,7 @@ class ChatService(ChatServiceBase):
             model_id: Model ID
             messages: Message list
             default_headers: Additional headers to include in the request
-            
+
         Yields:
             Content chunks
         """
@@ -246,21 +265,79 @@ class ChatService(ChatServiceBase):
         headers = {
             "Content-Type": "application/json",
         }
-        
+
         # Only add Authorization header if api_key is provided
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
-        
+
         # Merge default_headers (custom headers take precedence)
         if default_headers:
             headers.update(default_headers)
-        
+
+        # Check if any messages contain vision content (array format)
+        # Some OpenAI-compatible APIs don't support vision, so we need to convert to text
+        # First try to send with vision support, and fall back to text if needed
+        processed_messages = []
+        has_vision = False
+
+        # Check if this API likely supports vision based on base_url
+        # For now, we'll be optimistic and assume most APIs support vision if they claim to be OpenAI-compatible
+        # You can customize this list based on your specific APIs
+        supports_vision = any(domain in base_url.lower() for domain in [
+            "api.openai.com",
+            "api.anthropic.com",
+            "generativelanguage.googleapis.com",
+            "copilot.weibo.com",  # Your API supports vision with modalities parameter
+        ])
+
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                # This is a multi-part content (vision message)
+                has_vision = True
+
+                if supports_vision:
+                    # Keep the original vision format
+                    processed_messages.append(msg)
+                    logger.info(f"[_call_openai_streaming] Keeping vision format for supported API")
+                else:
+                    # Extract text and note that there's an image
+                    # For non-vision APIs, we convert to text-only
+                    text_parts = []
+                    image_count = 0
+                    for block in content:
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "image_url":
+                            image_count += 1
+                            # Add a note about the image
+                            text_parts.append(f"[用户上传了图片 {image_count},但当前模型不支持图片识别]")
+
+                    # Combine into a single text message
+                    combined_text = "\n".join(text_parts)
+                    processed_messages.append({
+                        "role": msg["role"],
+                        "content": combined_text
+                    })
+                    logger.warning(f"[_call_openai_streaming] Converted vision message to text (API doesn't support vision): image_count={image_count}")
+            else:
+                processed_messages.append(msg)
+
+        if has_vision and not supports_vision:
+            logger.warning(f"[_call_openai_streaming] Vision content detected but API ({base_url}) may not support it. Using text-only fallback.")
+
         payload = {
             "model": model_id,
-            "messages": messages,
+            "messages": processed_messages,
             "stream": True,
         }
-        
+
+        # Note: Some APIs (like official OpenAI) may support modalities parameter
+        # However, copilot.weibo.com doesn't accept it in the same format
+        # The vision support is automatic based on message content format
+        if has_vision and supports_vision:
+            logger.info(f"[_call_openai_streaming] Sending vision message (modalities auto-detected by API)")
+
         # Log request details (mask API key for security)
         masked_key = f"{api_key[:8]}...{api_key[-4:]}" if api_key and len(api_key) > 12 else ("EMPTY" if not api_key else "***")
         logger.info(f"Calling OpenAI API: {url}, model: {model_id}")
@@ -353,11 +430,43 @@ class ChatService(ChatServiceBase):
                     # Convert string content to Claude's array format
                     formatted_content = [{"type": "text", "text": content}]
                 elif isinstance(content, list):
-                    # Already in array format
-                    formatted_content = content
+                    # Already in array format, but need to convert image_url to Claude's format
+                    formatted_content = []
+                    for block in content:
+                        if block.get("type") == "text":
+                            formatted_content.append(block)
+                        elif block.get("type") == "image_url":
+                            # Convert OpenAI format to Claude format
+                            # OpenAI: {"type": "image_url", "image_url": {"url": "data:..."}}
+                            # Claude: {"type": "image", "source": {"type": "base64", "media_type": "...", "data": "..."}}
+
+                            # Get the image URL (handle nested structure)
+                            image_url_data = block.get("image_url", {})
+                            if isinstance(image_url_data, dict):
+                                image_url = image_url_data.get("url", "")
+                            else:
+                                image_url = image_url_data
+
+                            if image_url.startswith("data:"):
+                                # Parse data URL: data:image/png;base64,iVBORw0K...
+                                parts = image_url.split(",", 1)
+                                if len(parts) == 2:
+                                    header = parts[0]  # data:image/png;base64
+                                    base64_data = parts[1]
+                                    # Extract media type
+                                    media_type = header.split(":")[1].split(";")[0]  # image/png
+                                    formatted_content.append({
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": media_type,
+                                            "data": base64_data
+                                        }
+                                    })
+                                    logger.info(f"[_call_claude_streaming] Converted image to Claude format: media_type={media_type}, data_len={len(base64_data)}")
                 else:
                     formatted_content = [{"type": "text", "text": str(content)}]
-                
+
                 chat_messages.append({
                     "role": msg["role"],
                     "content": formatted_content
@@ -381,7 +490,30 @@ class ChatService(ChatServiceBase):
                 logger.info(f"[DEBUG] Header {k}: {masked_v}")
             else:
                 logger.info(f"[DEBUG] Header {k}: {v}")
-        logger.info(f"[DEBUG] Claude request payload: {json.dumps(payload, ensure_ascii=False, indent=2)}")
+
+        # Log payload structure (mask base64 data for brevity)
+        debug_payload = {
+            "model": payload["model"],
+            "max_tokens": payload["max_tokens"],
+            "stream": payload["stream"],
+            "messages": []
+        }
+        for msg in payload["messages"]:
+            debug_msg = {"role": msg["role"], "content": []}
+            for block in msg["content"]:
+                if block.get("type") == "text":
+                    debug_msg["content"].append({"type": "text", "text_len": len(block.get("text", ""))})
+                elif block.get("type") == "image":
+                    debug_msg["content"].append({
+                        "type": "image",
+                        "media_type": block["source"]["media_type"],
+                        "data_len": len(block["source"]["data"])
+                    })
+            debug_payload["messages"].append(debug_msg)
+        if system_content:
+            debug_payload["system_len"] = len(system_content)
+        logger.info(f"[DEBUG] Claude request payload structure: {json.dumps(debug_payload, ensure_ascii=False, indent=2)}")
+
         
         async with client.stream("POST", url, json=payload, headers=headers) as response:
             response.raise_for_status()
