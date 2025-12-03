@@ -371,7 +371,7 @@
   },
   "quota": {
     "load_failed": "积分信息获取失败",
-    "brief": "{{quota_source}}配额 {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
+    "brief": "{{quota_source}}积分 {{monthly_usage}} / {{monthly_quota}} (+{{permanent_quota}})",
     "detail_monthly": "你的当月积分为 {{monthly_quota}}，已经使用 {{monthly_usage}}，剩余 {{monthly_left}}。",
     "detail_permanent": "永久积分为 {{permanent_quota}}，已经使用 {{permanent_usage}}，剩余 {{permanent_left}}。",
     "detail_tip": "当月积分每月月初重置，永久积分可参与活动获取。"
