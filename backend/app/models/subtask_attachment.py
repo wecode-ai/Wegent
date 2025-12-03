@@ -63,8 +63,8 @@ class SubtaskAttachment(Base):
     
     # Processing status
     status = Column(
-        SQLEnum(AttachmentStatus), 
-        nullable=False, 
+        SQLEnum(AttachmentStatus, values_callable=lambda obj: [e.value for e in obj]),
+        nullable=False,
         default=AttachmentStatus.UPLOADING
     )
     error_message = Column(String(500), nullable=True)

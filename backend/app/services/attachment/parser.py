@@ -294,16 +294,34 @@ class DocumentParser:
     
     def _parse_text(self, binary_data: bytes) -> str:
         """Parse plain text or markdown file."""
+        # Try common encodings in order of preference
+        encodings_to_try = ["utf-8", "utf-8-sig", "gbk", "gb2312", "gb18030", "latin-1"]
+        
+        # First, try to detect encoding using chardet
         try:
-            # Detect encoding
             detected = chardet.detect(binary_data)
-            encoding = detected.get("encoding", "utf-8") or "utf-8"
-            
-            return binary_data.decode(encoding)
-            
+            detected_encoding = detected.get("encoding")
+            if detected_encoding and detected_encoding.lower() not in ["ascii", "charmap"]:
+                # Insert detected encoding at the beginning if it's valid
+                encodings_to_try.insert(0, detected_encoding)
+        except Exception:
+            pass  # Ignore chardet errors
+        
+        # Try each encoding
+        last_error = None
+        for encoding in encodings_to_try:
+            try:
+                return binary_data.decode(encoding)
+            except (UnicodeDecodeError, LookupError) as e:
+                last_error = e
+                continue
+        
+        # If all encodings fail, try with error handling
+        try:
+            return binary_data.decode("utf-8", errors="replace")
         except Exception as e:
             logger.error(f"Error parsing text file: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse text file: {str(e)}")
+            raise DocumentParseError(f"Failed to parse text file: {str(last_error or e)}")
 
 
 # Global parser instance

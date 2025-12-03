@@ -8,8 +8,8 @@
 
 import { getToken } from './user'
 
-// API base URL
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || ''
+// API base URL - use relative path for browser compatibility
+const API_BASE_URL = ''
 
 /**
  * Attachment status enum
