@@ -109,16 +109,19 @@ export default function ChatArea({
   }, [appMode]);
 
   // Restore user preferences from localStorage when teams load
+  // Only runs for new tasks (no messages), not when switching to existing tasks
   useEffect(() => {
     console.log('[ChatArea] Preference restoration effect triggered', {
       teamsLength: teams.length,
       hasRestoredPreferences,
+      hasMessages,
       selectedTeam: selectedTeam?.name || 'null',
       selectedTeamId: selectedTeam?.id || 'null',
       initialTeamId: initialTeamIdRef.current,
     });
 
-    if (hasRestoredPreferences || !teams.length) return;
+    // Skip if already restored, no teams, or viewing existing task (has messages)
+    if (hasRestoredPreferences || !teams.length || hasMessages) return;
 
     const lastTeamId = initialTeamIdRef.current;
     console.log('[ChatArea] Trying to restore team with ID:', lastTeamId);
@@ -148,7 +151,7 @@ export default function ChatArea({
       setSelectedTeam(teams[0]);
     }
     setHasRestoredPreferences(true);
-  }, [teams, hasRestoredPreferences, selectedTeam]);
+  }, [teams, hasRestoredPreferences, hasMessages]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {

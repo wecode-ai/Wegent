@@ -168,11 +168,14 @@ export default function ModelSelector({
   const prevTeamIdRef = React.useRef<number | null>(null);
   // Track if initial model selection has been done
   const hasInitializedRef = React.useRef(false);
+  // Track user's explicit model selection to preserve after task send
+  const userSelectedModelRef = React.useRef<Model | null>(null);
 
   // Unified model selection logic:
   // 1. On initial load: restore from localStorage or set default
   // 2. On team change: re-validate model selection
   // 3. On model list change: check compatibility
+  // 4. Preserve user selection after task sends (when team ID doesn't actually change)
   useEffect(() => {
     const currentTeamId = selectedTeam?.id ?? null;
     const teamChanged = prevTeamIdRef.current !== null && prevTeamIdRef.current !== currentTeamId;
@@ -180,6 +183,10 @@ export default function ModelSelector({
 
     // Case 1: Team changed - re-validate model selection
     if (teamChanged) {
+      console.log('[ModelSelector] Team changed, resetting model selection');
+      // Clear user selection on team change
+      userSelectedModelRef.current = null;
+
       if (showDefaultOption) {
         // New team supports default option, set to default
         setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
@@ -226,19 +233,43 @@ export default function ModelSelector({
           });
           if (foundModel) {
             setSelectedModel(foundModel);
+            // Store as user selection for preservation
+            userSelectedModelRef.current = foundModel;
           }
         }
       }
       return;
     }
 
-    // Case 3: Model list changed after initialization - check compatibility
+    // Case 3: Preserve user's explicit selection (e.g., after sending a task)
+    // If user has explicitly selected a model and it's compatible, keep it
+    if (
+      hasInitializedRef.current &&
+      userSelectedModelRef.current &&
+      !teamChanged &&
+      filteredModels.length > 0
+    ) {
+      const userModel = userSelectedModelRef.current;
+      // Check if user's model is still valid
+      const isUserModelValid =
+        userModel.name === DEFAULT_MODEL_NAME ||
+        filteredModels.some(m => m.name === userModel.name && m.type === userModel.type);
+
+      if (isUserModelValid && selectedModel?.name !== userModel.name) {
+        console.log('[ModelSelector] Restoring user selected model:', userModel.name);
+        setSelectedModel(userModel);
+        return;
+      }
+    }
+
+    // Case 4: Model list changed after initialization - check compatibility
     if (hasInitializedRef.current && selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
       const isStillCompatible = filteredModels.some(
         m => m.name === selectedModel.name && m.type === selectedModel.type
       );
       if (!isStillCompatible && filteredModels.length > 0) {
         setSelectedModel(null);
+        userSelectedModelRef.current = null;
       }
     }
   }, [selectedTeam?.id, showDefaultOption, filteredModels, selectedModel, setSelectedModel]);
@@ -261,7 +292,10 @@ export default function ModelSelector({
   // Value format: "modelName:modelType" to uniquely identify models
   const handleModelSelect = (value: string) => {
     if (value === DEFAULT_MODEL_NAME) {
-      setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      const defaultModel = { name: DEFAULT_MODEL_NAME, provider: '', modelId: '' };
+      setSelectedModel(defaultModel);
+      // Save user's explicit selection
+      userSelectedModelRef.current = defaultModel;
       setIsOpen(false);
       return;
     }
@@ -270,6 +304,8 @@ export default function ModelSelector({
     const model = filteredModels.find(m => m.name === modelName && m.type === modelType);
     if (model) {
       setSelectedModel(model);
+      // Save user's explicit selection
+      userSelectedModelRef.current = model;
     }
     setIsOpen(false);
   };
