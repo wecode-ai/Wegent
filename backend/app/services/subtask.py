@@ -6,7 +6,7 @@ import logging
 from typing import List, Optional
 
 from fastapi import HTTPException
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.subtask import Subtask, SubtaskStatus
 from app.schemas.subtask import SubtaskCreate, SubtaskUpdate
@@ -67,10 +67,12 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
         limit: int = 100,
     ) -> List[Subtask]:
         """
-        Get subtasks by task ID, sorted by message_id
+        Get subtasks by task ID, sorted by message_id.
+        Eagerly loads attachments relationship.
         """
         return (
             db.query(Subtask)
+            .options(joinedload(Subtask.attachments))
             .filter(Subtask.task_id == task_id, Subtask.user_id == user_id)
             .order_by(Subtask.message_id.asc(), Subtask.created_at.asc())
             .offset(skip)

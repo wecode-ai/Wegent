@@ -260,6 +260,7 @@ export interface TaskDetailSubtask {
   updated_at: string;
   completed_at: string;
   bots: Bot[];
+  attachments?: Attachment[];
 }
 
 export interface Task {
@@ -391,4 +392,28 @@ export interface DifyParameterField {
 
 export interface DifyParametersSchema {
   user_input_form: DifyParameterField[];
+}
+
+// Attachment Types
+export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed';
+
+export interface Attachment {
+  id: number;
+  filename: string;
+  file_size: number;
+  mime_type: string;
+  status: AttachmentStatus;
+  text_length?: number | null;
+  error_message?: string | null;
+  subtask_id?: number | null;
+  file_extension: string;
+  created_at: string;
+}
+
+export interface AttachmentUploadState {
+  file: File | null;
+  attachment: Attachment | null;
+  isUploading: boolean;
+  uploadProgress: number;
+  error: string | null;
 }

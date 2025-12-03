@@ -5,7 +5,9 @@
 from app.api.endpoints import admin, auth, oidc, quota, repository, users
 from app.api.endpoints.adapter import (
     agents,
+    attachments,
     bots,
+    chat,
     dify,
     executors,
     models,
@@ -26,6 +28,8 @@ api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
+api_router.include_router(attachments.router, prefix="/attachments", tags=["attachments"])
 api_router.include_router(repository.router, prefix="/git", tags=["repository"])
 api_router.include_router(executors.router, prefix="/executors", tags=["executors"])
 api_router.include_router(quota.router, prefix="/quota", tags=["quota"])
