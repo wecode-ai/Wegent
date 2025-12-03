@@ -93,7 +93,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         setUsername(editInfo.user_name || '');
         setType(editInfo.type);
       } else {
-        setDomain('');
+        // For add mode, default to github.com when type is github
+        setDomain('github.com');
         setToken('');
         setUsername('');
         setType('github');
@@ -136,7 +137,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     }
     setTokenSaving(true);
     try {
-      await saveGitToken(user, domainToSave, tokenToSave, usernameToSave, type);
+      // Pass existing id when editing to update instead of create new record
+      const existingId = mode === 'edit' && editInfo?.id ? editInfo.id : undefined;
+      await saveGitToken(user, domainToSave, tokenToSave, usernameToSave, type, existingId);
       onClose();
       await refresh();
     } catch (error) {
@@ -148,7 +151,6 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       setTokenSaving(false);
     }
   };
-
   return (
     <Modal
       isOpen={isOpen}

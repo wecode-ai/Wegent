@@ -17,12 +17,20 @@ export interface User {
 
 /** Git account information */
 export interface GitInfo {
+  /** Unique identifier for this git info entry (UUID) */
+  id?: string;
   git_domain: string;
   git_token: string;
   /** Type: "github" | "gitlab" | "gitee" | "gerrit" */
   type: 'github' | 'gitlab' | 'gitee' | 'gerrit';
   /** Username (required for Gerrit) */
   user_name?: string;
+  /** Git user ID (from provider) */
+  git_id?: string;
+  /** Git login name */
+  git_login?: string;
+  /** Git email */
+  git_email?: string;
 }
 
 // Bot Types
