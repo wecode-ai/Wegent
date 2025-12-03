@@ -798,18 +798,23 @@ async def _cleanup_validation_container(executor_name: str) -> None:
         logger.info(f"Cleaning up validation container: {executor_name}")
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                delete_url,
-                json={"executor_name": executor_name}
+                delete_url, json={"executor_name": executor_name}
             )
 
             if response.status_code == 200:
                 result = response.json()
                 if result.get("status") == "success":
-                    logger.info(f"Successfully cleaned up validation container: {executor_name}")
+                    logger.info(
+                        f"Successfully cleaned up validation container: {executor_name}"
+                    )
                 else:
-                    logger.warning(f"Failed to cleanup validation container {executor_name}: {result.get('error_msg', 'Unknown error')}")
+                    logger.warning(
+                        f"Failed to cleanup validation container {executor_name}: {result.get('error_msg', 'Unknown error')}"
+                    )
             else:
-                logger.warning(f"Failed to cleanup validation container {executor_name}: HTTP {response.status_code}")
+                logger.warning(
+                    f"Failed to cleanup validation container {executor_name}: HTTP {response.status_code}"
+                )
     except Exception as e:
         logger.error(f"Error cleaning up validation container {executor_name}: {e}")
         # Don't raise exception - cleanup failure should not break validation status update

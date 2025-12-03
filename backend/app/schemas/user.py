@@ -24,6 +24,7 @@ class TokenData(BaseModel):
 class GitInfo(BaseModel):
     """Git information model"""
 
+    id: Optional[str] = None  # Unique identifier for this git info entry (UUID)
     git_domain: str
     git_token: str
     type: str

@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import uuid
 from typing import Any, Dict, List, Optional
 
 from fastapi import BackgroundTasks, HTTPException, status
@@ -90,6 +91,10 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 # Encrypt the token before storing
                 if is_token_encrypted(plain_token) is False:
                     git_item["git_token"] = encrypt_git_token(plain_token)
+
+                # Generate unique ID if not present
+                if not git_item.get("id"):
+                    git_item["id"] = str(uuid.uuid4())
 
             except ValidationException:
                 raise
@@ -185,9 +190,6 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if obj_in.git_info is not None:
             # Get existing git_info
             existing_git_info = user.git_info or []
-            existing_domains = {
-                item.get("git_domain"): item for item in existing_git_info
-            }
 
             # Convert incoming git_info to dict
             incoming_git_info = [git_item.model_dump() for git_item in obj_in.git_info]
@@ -198,13 +200,54 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
                 if user.email is None or user.email == "":
                     user.email = incoming_git_info[0]["git_email"]
 
+            # Build a map of existing items by id for efficient lookup
+            existing_by_id = {
+                item.get("id"): item for item in existing_git_info if item.get("id")
+            }
+
+            # Use (git_domain, git_token) as fallback unique key for items without id
+            def get_domain_token_key(item: Dict[str, Any]) -> str:
+                domain = item.get("git_domain", "")
+                token = item.get("git_token", "")
+                return f"{domain}:{token}"
+
+            existing_by_domain_token = {
+                get_domain_token_key(item): item for item in existing_git_info
+            }
+
             # Merge: update existing items or add new ones
             for git_item in incoming_git_info:
-                domain = git_item.get("git_domain")
-                existing_domains[domain] = git_item
+                item_id = git_item.get("id")
+
+                if item_id and item_id in existing_by_id:
+                    # Update existing item by id (handles domain change case)
+                    old_item = existing_by_id[item_id]
+                    old_key = get_domain_token_key(old_item)
+                    # Remove old entry from domain_token map
+                    if old_key in existing_by_domain_token:
+                        del existing_by_domain_token[old_key]
+                    # Update the item in id map
+                    existing_by_id[item_id] = git_item
+                else:
+                    # New item or item without id - use domain:token as key
+                    key = get_domain_token_key(git_item)
+                    existing_by_domain_token[key] = git_item
+
+            # Combine items: prioritize items with id, then add items only in domain_token map
+            result_items = {}
+            for item in existing_by_id.values():
+                result_items[item.get("id")] = item
+            for item in existing_by_domain_token.values():
+                item_id = item.get("id")
+                if item_id and item_id not in result_items:
+                    result_items[item_id] = item
+                elif not item_id:
+                    # Items without id, use domain:token as key
+                    key = get_domain_token_key(item)
+                    result_items[key] = item
 
             # Convert back to list
-            user.git_info = list(existing_domains.values())
+            user.git_info = list(result_items.values())
 
         if obj_in.password:
             user.password_hash = security.get_password_hash(obj_in.password)
@@ -214,14 +257,22 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         db.refresh(user)
         return user
 
-    def delete_git_token(self, db: Session, *, user: User, git_domain: str) -> User:
+    def delete_git_token(
+        self,
+        db: Session,
+        *,
+        user: User,
+        git_info_id: str = None,
+        git_domain: str = None,
+    ) -> User:
         """
-        Delete a specific git token by domain
+        Delete a specific git token by id or domain
 
         Args:
             db: Database session
             user: Current user object
-            git_domain: Git domain to delete
+            git_info_id: Unique ID of the git_info entry to delete (preferred)
+            git_domain: Git domain to delete (fallback, will delete all tokens for this domain)
 
         Returns:
             Updated user object
@@ -229,10 +280,16 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if user.git_info is None:
             user.git_info = []
 
-        # Filter out the git_info item with the specified domain
-        user.git_info = [
-            item for item in user.git_info if item.get("git_domain") != git_domain
-        ]
+        if git_info_id:
+            # Delete by unique ID (precise deletion)
+            user.git_info = [
+                item for item in user.git_info if item.get("id") != git_info_id
+            ]
+        elif git_domain:
+            # Fallback: delete by domain (will delete all tokens for this domain)
+            user.git_info = [
+                item for item in user.git_info if item.get("git_domain") != git_domain
+            ]
 
         db.add(user)
         db.commit()
@@ -312,6 +369,11 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             plain_token = git_item["git_token"]
             if is_token_encrypted(plain_token):
                 git_item["git_token"] = decrypt_git_token(plain_token)
+
+            # Generate unique ID for legacy data that doesn't have one
+            if not git_item.get("id"):
+                git_item["id"] = str(uuid.uuid4())
+
             decrypt_git_info.append(git_item)
         user.git_info = decrypt_git_info
         return user
