@@ -209,9 +209,10 @@ async def delete_attachment(
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
     
-    if attachment.subtask_id is not None:
+    # subtask_id == 0 means unlinked, > 0 means linked to a subtask
+    if attachment.subtask_id > 0:
         raise HTTPException(
-            status_code=400, 
+            status_code=400,
             detail="Cannot delete attachment that is linked to a message"
         )
     
