@@ -16,6 +16,7 @@ RUN sed -i 's|http://deb.debian.org|http://mirrors.cloud.aliyuncs.com|g' /etc/ap
 
 # Copy requirements.txt and install dependencies
 COPY backend/requirements.txt .
+ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno"}}'
 RUN pip install --no-cache-dir -r requirements.txt -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com
 
 # Copy application code
