@@ -611,6 +611,20 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Convert subtasks to dict and replace bot_ids with bot objects
         subtasks_dict = []
         for subtask in subtasks:
+            # Convert attachments to dict format
+            attachments_list = []
+            if hasattr(subtask, 'attachments') and subtask.attachments:
+                for attachment in subtask.attachments:
+                    attachments_list.append({
+                        "id": attachment.id,
+                        "filename": attachment.original_filename,
+                        "file_size": attachment.file_size,
+                        "mime_type": attachment.mime_type,
+                        "status": attachment.status.value if hasattr(attachment.status, 'value') else attachment.status,
+                        "file_extension": attachment.file_extension,
+                        "created_at": attachment.created_at,
+                    })
+            
             # Convert subtask to dict
             subtask_dict = {
                 # Subtask base fields
@@ -637,6 +651,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "bots": [
                     bots.get(bot_id) for bot_id in subtask.bot_ids if bot_id in bots
                 ],
+                # Add attachments
+                "attachments": attachments_list,
             }
             subtasks_dict.append(subtask_dict)
 

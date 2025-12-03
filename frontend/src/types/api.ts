@@ -260,6 +260,7 @@ export interface TaskDetailSubtask {
   updated_at: string;
   completed_at: string;
   bots: Bot[];
+  attachments?: Attachment[];
 }
 
 export interface Task {

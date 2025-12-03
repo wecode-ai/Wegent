@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Send, CircleStop } from 'lucide-react';
+import { Send, CircleStop, Upload } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -108,6 +108,7 @@ export default function ChatArea({
   const searchParams = useSearchParams();
   const [floatingMetrics, setFloatingMetrics] = useState({ width: 0, left: 0 });
   const [inputHeight, setInputHeight] = useState(0);
+  const [isDragging, setIsDragging] = useState(false);
 
   // New: Get selectedTask to determine if there are messages
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
@@ -321,6 +322,47 @@ export default function ChatArea({
       }
     }
   }, [hasMessages]);
+
+  // Drag and drop handlers
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Only allow if Chat Shell
+    if (!selectedTeam || !isChatShell(selectedTeam)) return;
+
+    if (isLoading || isStreaming || attachmentState.attachment) return;
+    setIsDragging(true);
+  }, [isLoading, isStreaming, attachmentState.attachment, selectedTeam]);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Check if we're actually leaving the container (and not just entering a child)
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDragging(false);
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+
+    // Only allow if Chat Shell
+    if (!selectedTeam || !isChatShell(selectedTeam)) return;
+
+    if (isLoading || isStreaming || attachmentState.attachment) return;
+
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      handleFileSelect(file);
+    }
+  }, [isLoading, isStreaming, attachmentState.attachment, handleFileSelect, selectedTeam]);
 
   const handleSendMessage = async () => {
     const message = taskInputMessage.trim();
@@ -691,7 +733,24 @@ export default function ChatArea({
                 )}
 
                 {/* Chat Input Card */}
-                <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
+                <div
+                  className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                  onDragEnter={handleDragEnter}
+                  onDragLeave={handleDragLeave}
+                  onDragOver={handleDragOver}
+                  onDrop={handleDrop}
+                >
+                  {/* Drag Overlay */}
+                  {isDragging && (
+                    <div className="absolute inset-0 z-50 rounded-2xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
+                      <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
+                        <Upload className="h-8 w-8 text-primary" />
+                      </div>
+                      <p className="text-lg font-medium text-primary">释放以上传文件</p>
+                      <p className="text-sm text-text-muted mt-1">支持 PDF, Word, TXT, Markdown 等格式</p>
+                    </div>
+                  )}
+
                   {/* File Upload Preview - show above input when file is selected */}
                   {(attachmentState.attachment || attachmentState.isUploading || attachmentState.error) && (
                     <div className="px-3 pt-2">
@@ -873,7 +932,24 @@ export default function ChatArea({
               )}
 
               {/* Chat Input Card */}
-              <div className="relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg">
+              <div
+                className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                onDragEnter={handleDragEnter}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                onDrop={handleDrop}
+              >
+                {/* Drag Overlay */}
+                {isDragging && (
+                  <div className="absolute inset-0 z-50 rounded-2xl bg-base/95 backdrop-blur-sm flex flex-col items-center justify-center border-2 border-dashed border-primary transition-all animate-in fade-in duration-200">
+                    <div className="p-4 rounded-full bg-primary/10 mb-4 animate-bounce">
+                      <Upload className="h-8 w-8 text-primary" />
+                    </div>
+                    <p className="text-lg font-medium text-primary">释放以上传文件</p>
+                    <p className="text-sm text-text-muted mt-1">支持 PDF, Word, TXT, Markdown 等格式</p>
+                  </div>
+                )}
+
                 {/* File Upload Preview - show above input when file is selected */}
                 {(attachmentState.attachment || attachmentState.isUploading || attachmentState.error) && (
                   <div className="px-3 pt-2">
