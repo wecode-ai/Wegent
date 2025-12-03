@@ -1,0 +1,348 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+'use client';
+
+import { useState, useCallback } from 'react';
+import { WikiProject, WikiGeneration } from '@/types/wiki';
+import { GitRepoInfo, GitBranch } from '@/types/api';
+import {
+  fetchWikiProjects,
+  createWikiGeneration,
+  cancelWikiGeneration,
+  fetchWikiGenerations,
+} from '@/apis/wiki';
+
+interface UseWikiProjectsOptions {
+  accountId?: number;
+}
+
+/**
+ * Parse source type from git URL
+ */
+function parseSourceType(gitUrl: string): 'github' | 'gitlab' | 'gitee' | 'unknown' {
+  const lowerUrl = gitUrl.toLowerCase();
+  if (lowerUrl.includes('github.com') || lowerUrl.includes('github')) {
+    return 'github';
+  }
+  if (lowerUrl.includes('gitlab') || lowerUrl.includes('git.')) {
+    return 'gitlab';
+  }
+  if (lowerUrl.includes('gitee.com')) {
+    return 'gitee';
+  }
+  return 'unknown';
+}
+
+/**
+ * Extract domain from git URL
+ */
+function extractDomain(gitUrl: string): string {
+  try {
+    const url = new URL(gitUrl);
+    return url.hostname;
+  } catch {
+    // Try to extract from git@ format
+    const match = gitUrl.match(/@([^:]+):/);
+    if (match) {
+      return match[1];
+    }
+    return '';
+  }
+}
+
+export function useWikiProjects(options: UseWikiProjectsOptions = {}) {
+  const { accountId } = options;
+
+  // State
+  const [projects, setProjects] = useState<(WikiProject & { generations?: WikiGeneration[] })[]>(
+    []
+  );
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [cancellingIds, setCancellingIds] = useState<Set<number>>(new Set());
+
+  // Modal state
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null);
+  const [formData, setFormData] = useState({
+    source_url: '',
+    branch_name: '',
+    language: 'en',
+  });
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Confirm dialog state
+  const [confirmDialogOpen, setConfirmDialogOpen] = useState(false);
+  const [pendingCancelProjectId, setPendingCancelProjectId] = useState<number | null>(null);
+
+  // Load projects with generations
+  const loadProjects = useCallback(async () => {
+    try {
+      setLoading(true);
+      const response = await fetchWikiProjects();
+
+      const projectsWithGenerations = await Promise.all(
+        response.items.map(async project => {
+          try {
+            const generationsResponse = await fetchWikiGenerations(project.id, 1, 10, accountId);
+            return {
+              ...project,
+              generations: generationsResponse.items,
+            };
+          } catch (err) {
+            console.error(`Failed to load generations for project ${project.id}:`, err);
+            return {
+              ...project,
+              generations: [],
+            };
+          }
+        })
+      );
+
+      setProjects(projectsWithGenerations);
+      setError(null);
+    } catch (err) {
+      console.error('Failed to load wiki projects:', err);
+      setError('Failed to load projects');
+    } finally {
+      setLoading(false);
+    }
+  }, [accountId]);
+
+  // Open add repo modal
+  const handleAddRepo = useCallback(() => {
+    setIsModalOpen(true);
+    setSelectedRepo(null);
+    setSelectedBranch(null);
+    setFormData({
+      source_url: '',
+      branch_name: '',
+      language: 'en',
+    });
+    setFormErrors({});
+  }, []);
+
+  // Close modal
+  const handleCloseModal = useCallback(() => {
+    setIsModalOpen(false);
+    setSelectedRepo(null);
+    setSelectedBranch(null);
+  }, []);
+
+  // Handle repo change from selector
+  const handleRepoChange = useCallback((repo: GitRepoInfo | null) => {
+    setSelectedRepo(repo);
+    setSelectedBranch(null);
+    if (repo) {
+      setFormData(prev => ({
+        ...prev,
+        source_url: repo.git_url,
+      }));
+      // Clear source_url error
+      setFormErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors.source_url;
+        return newErrors;
+      });
+    }
+  }, []);
+
+  // Handle branch change from selector
+  const handleBranchChange = useCallback((branch: GitBranch | null) => {
+    setSelectedBranch(branch);
+    if (branch) {
+      setFormData(prev => ({
+        ...prev,
+        branch_name: branch.name,
+      }));
+      // Clear branch_name error
+      setFormErrors(prev => {
+        const newErrors = { ...prev };
+        delete newErrors.branch_name;
+        return newErrors;
+      });
+    }
+  }, []);
+
+  // Handle language change
+  const handleLanguageChange = useCallback((language: string) => {
+    setFormData(prev => ({
+      ...prev,
+      language,
+    }));
+  }, []);
+
+  // Handle form input change (for backward compatibility)
+  const handleInputChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+      const { name, value } = e.target;
+      setFormData(prev => ({
+        ...prev,
+        [name]: value,
+      }));
+
+      if (formErrors[name]) {
+        setFormErrors(prev => {
+          const newErrors = { ...prev };
+          delete newErrors[name];
+          return newErrors;
+        });
+      }
+    },
+    [formErrors]
+  );
+
+  // Submit form
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+
+      // Validate using selected repo and branch
+      const errors: Record<string, string> = {};
+      if (!selectedRepo) {
+        errors.source_url = 'Please select a repository';
+      }
+      if (!selectedBranch) {
+        errors.branch_name = 'Please select a branch';
+      }
+
+      if (Object.keys(errors).length > 0) {
+        setFormErrors(errors);
+        return;
+      }
+
+      setIsSubmitting(true);
+
+      try {
+        const sourceUrl = selectedRepo!.git_url;
+        const sourceType = parseSourceType(sourceUrl);
+        const sourceDomain = extractDomain(sourceUrl);
+
+        const requestData = {
+          project_name: selectedRepo!.git_repo,
+          source_url: sourceUrl,
+          source_id: selectedRepo!.git_repo,
+          source_domain: sourceDomain,
+          project_type: 'git',
+          source_type: sourceType,
+          generation_type: 'full',
+          language: formData.language,
+          source_snapshot: {
+            type: 'git',
+            branch_name: selectedBranch!.name,
+            commit_id: '',
+            commit_message: '',
+            commit_time: new Date().toISOString(),
+            commit_author: '',
+            path: '',
+            version: '',
+            url: sourceUrl,
+            snapshot_time: new Date().toISOString(),
+            file_count: 0,
+          },
+          team_id: 0,
+          ext: {},
+        };
+
+        await createWikiGeneration(requestData);
+        handleCloseModal();
+        await loadProjects();
+      } catch (err) {
+        console.error('Failed to add repository:', err);
+        setFormErrors({ submit: 'Failed to add repository, please try again' });
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [selectedRepo, selectedBranch, formData.language, handleCloseModal, loadProjects]
+  );
+
+  // Open cancel confirmation dialog
+  const handleCancelClick = useCallback((projectId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setPendingCancelProjectId(projectId);
+    setConfirmDialogOpen(true);
+  }, []);
+
+  // Confirm cancel generation
+  const confirmCancelGeneration = useCallback(async () => {
+    if (!pendingCancelProjectId) return;
+
+    const projectId = pendingCancelProjectId;
+    setConfirmDialogOpen(false);
+    setPendingCancelProjectId(null);
+
+    const project = projects.find(p => p.id === projectId);
+    if (!project || !project.generations || project.generations.length === 0) {
+      return;
+    }
+
+    const activeGenerations = project.generations.filter(
+      gen => gen.status === 'RUNNING' || gen.status === 'PENDING'
+    );
+
+    if (activeGenerations.length === 0) {
+      return;
+    }
+
+    const latestActiveGeneration = [...activeGenerations].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )[0];
+
+    const generationId = latestActiveGeneration.id;
+
+    if (cancellingIds.has(generationId)) {
+      return;
+    }
+
+    setCancellingIds(prev => new Set(prev).add(generationId));
+
+    try {
+      await cancelWikiGeneration(generationId);
+      await loadProjects();
+    } catch (err) {
+      console.error('Failed to cancel generation:', err);
+    } finally {
+      setCancellingIds(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(generationId);
+        return newSet;
+      });
+    }
+  }, [pendingCancelProjectId, projects, cancellingIds, loadProjects]);
+
+  return {
+    // State
+    projects,
+    loading,
+    error,
+    cancellingIds,
+    // Modal state
+    isModalOpen,
+    formData,
+    formErrors,
+    isSubmitting,
+    selectedRepo,
+    selectedBranch,
+    // Confirm dialog state
+    confirmDialogOpen,
+    pendingCancelProjectId,
+    // Methods
+    loadProjects,
+    handleAddRepo,
+    handleCloseModal,
+    handleInputChange,
+    handleRepoChange,
+    handleBranchChange,
+    handleLanguageChange,
+    handleSubmit,
+    handleCancelClick,
+    confirmCancelGeneration,
+    setConfirmDialogOpen,
+    setPendingCancelProjectId,
+  };
+}

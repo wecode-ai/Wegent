@@ -5,12 +5,12 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ChatBubbleLeftIcon, CodeBracketIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { ChatBubbleLeftIcon, CodeBracketIcon, BookOpenIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface MobileNavTabsProps {
-  activePage: 'chat' | 'code' | 'dashboard';
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
 }
 
 export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
@@ -29,6 +29,12 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
       label: t('navigation.code'),
       icon: CodeBracketIcon,
       path: paths.code.getHref(),
+    },
+    {
+      key: 'wiki' as const,
+      label: t('navigation.wiki'),
+      icon: BookOpenIcon,
+      path: paths.wiki.getHref(),
     },
     {
       key: 'dashboard' as const,
