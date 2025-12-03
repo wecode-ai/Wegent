@@ -155,6 +155,29 @@ export function getFileIcon(extension: string): string {
 }
 
 /**
+ * Image file extensions
+ */
+export const IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp'];
+
+/**
+ * Check if a file extension is an image type
+ */
+export function isImageExtension(extension: string): boolean {
+  const ext = extension.toLowerCase();
+  return IMAGE_EXTENSIONS.includes(ext);
+}
+
+/**
+ * Get image preview URL for an attachment
+ *
+ * @param attachmentId - Attachment ID
+ * @returns Preview URL
+ */
+export function getAttachmentPreviewUrl(attachmentId: number): string {
+  return `${API_BASE_URL}/api/attachments/${attachmentId}/download`;
+}
+
+/**
  * Upload a file attachment
  *
  * @param file - File to upload

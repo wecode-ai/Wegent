@@ -58,8 +58,8 @@ class SubtaskAttachment(Base):
     # Binary data storage (LONGBLOB for MySQL - supports up to 4GB)
     binary_data = Column(LONGBLOB, nullable=False)
 
-    # Image base64 encoding (for vision models)
-    image_base64 = Column(Text, nullable=True)
+    # Image base64 encoding (for vision models, LONGTEXT for large images)
+    image_base64 = Column(LONGTEXT, nullable=True)
 
     # Extracted text content (LONGTEXT for MySQL - supports up to 4GB)
     extracted_text = Column(LONGTEXT, nullable=True)

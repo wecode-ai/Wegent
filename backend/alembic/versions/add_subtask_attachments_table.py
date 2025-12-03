@@ -5,14 +5,19 @@
 """Add subtask_attachments table for file upload support
 
 Revision ID: add_subtask_attachments
-Revises: 
+Revises: a1b2c3d4e5f6
 Create Date: 2025-12-03
 
+This migration creates the subtask_attachments table with:
+- LONGBLOB for binary_data to support large files (up to 4GB)
+- LONGTEXT for extracted_text to support large documents
+- LONGTEXT for image_base64 to support base64-encoded images for vision models
 """
 from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 
 
 # revision identifiers, used by Alembic.
@@ -23,7 +28,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    """Create subtask_attachments table."""
+    """Create subtask_attachments table with proper column types for large data."""
     op.create_table(
         'subtask_attachments',
         sa.Column('id', sa.Integer(), nullable=False, autoincrement=True),
@@ -33,8 +38,12 @@ def upgrade() -> None:
         sa.Column('file_extension', sa.String(20), nullable=False),
         sa.Column('file_size', sa.Integer(), nullable=False),
         sa.Column('mime_type', sa.String(100), nullable=False),
-        sa.Column('binary_data', sa.LargeBinary(), nullable=False),
-        sa.Column('extracted_text', sa.Text(), nullable=True),
+        # Use LONGBLOB for binary_data to support large files (up to 4GB)
+        sa.Column('binary_data', LONGBLOB(), nullable=False),
+        # Use LONGTEXT for image_base64 to support large base64-encoded images
+        sa.Column('image_base64', LONGTEXT(), nullable=True),
+        # Use LONGTEXT for extracted_text to support large documents
+        sa.Column('extracted_text', LONGTEXT(), nullable=True),
         sa.Column('text_length', sa.Integer(), nullable=True),
         sa.Column('status', sa.Enum('uploading', 'parsing', 'ready', 'failed', name='attachmentstatus'), nullable=False),
         sa.Column('error_message', sa.String(500), nullable=True),
