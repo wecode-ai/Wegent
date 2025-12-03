@@ -57,7 +57,7 @@ async def upload_attachment(
 ):
     """
     Upload a document file for chat attachment.
-    
+
     Supported file types:
     - PDF (.pdf)
     - Word (.doc, .docx)
@@ -65,11 +65,12 @@ async def upload_attachment(
     - Excel (.xls, .xlsx, .csv)
     - Plain text (.txt)
     - Markdown (.md)
-    
+    - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
+
     Limits:
-    - Maximum file size: 5 MB
+    - Maximum file size: 20 MB
     - Maximum extracted text: 50,000 characters
-    
+
     Returns:
         Attachment details including ID and processing status
     """

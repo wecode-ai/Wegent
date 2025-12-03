@@ -2,18 +2,13 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import React, { useRef, useCallback } from 'react'
-import { Paperclip, X, Loader2 } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import React, { useRef, useCallback } from 'react';
+import { Paperclip, X, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   SUPPORTED_EXTENSIONS,
   MAX_FILE_SIZE,
@@ -21,24 +16,24 @@ import {
   isValidFileSize,
   formatFileSize,
   getFileIcon,
-} from '@/apis/attachments'
-import type { Attachment } from '@/types/api'
+} from '@/apis/attachments';
+import type { Attachment } from '@/types/api';
 
 interface FileUploadProps {
   /** Currently selected/uploaded attachment */
-  attachment: Attachment | null
+  attachment: Attachment | null;
   /** Whether upload is in progress */
-  isUploading: boolean
+  isUploading: boolean;
   /** Upload progress (0-100) */
-  uploadProgress: number
+  uploadProgress: number;
   /** Error message if any */
-  error: string | null
+  error: string | null;
   /** Whether the component is disabled */
-  disabled?: boolean
+  disabled?: boolean;
   /** Callback when file is selected */
-  onFileSelect: (file: File) => void
+  onFileSelect: (file: File) => void;
   /** Callback to remove the attachment */
-  onRemove: () => void
+  onRemove: () => void;
 }
 
 export default function FileUpload({
@@ -50,70 +45,66 @@ export default function FileUpload({
   onFileSelect,
   onRemove,
 }: FileUploadProps) {
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleClick = useCallback(() => {
     if (!disabled && !isUploading && !attachment) {
-      fileInputRef.current?.click()
+      fileInputRef.current?.click();
     }
-  }, [disabled, isUploading, attachment])
+  }, [disabled, isUploading, attachment]);
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
+      const file = e.target.files?.[0];
       if (file) {
         // Validate file before passing to parent
         if (!isSupportedExtension(file.name)) {
           // Let parent handle the error
-          onFileSelect(file)
-          return
+          onFileSelect(file);
+          return;
         }
         if (!isValidFileSize(file.size)) {
-          onFileSelect(file)
-          return
+          onFileSelect(file);
+          return;
         }
-        onFileSelect(file)
+        onFileSelect(file);
       }
       // Reset input so same file can be selected again
       if (fileInputRef.current) {
-        fileInputRef.current.value = ''
+        fileInputRef.current.value = '';
       }
     },
     [onFileSelect]
-  )
+  );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    e.stopPropagation()
-  }, [])
+    e.preventDefault();
+    e.stopPropagation();
+  }, []);
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
-      e.preventDefault()
-      e.stopPropagation()
+      e.preventDefault();
+      e.stopPropagation();
 
-      if (disabled || isUploading || attachment) return
+      if (disabled || isUploading || attachment) return;
 
-      const file = e.dataTransfer.files?.[0]
+      const file = e.dataTransfer.files?.[0];
       if (file) {
-        onFileSelect(file)
+        onFileSelect(file);
       }
     },
     [disabled, isUploading, attachment, onFileSelect]
-  )
+  );
 
   // Build accept string for file input
-  const acceptString = SUPPORTED_EXTENSIONS.join(',')
+  const acceptString = SUPPORTED_EXTENSIONS.join(',');
 
   // Tooltip content
-  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB`
+  const tooltipContent = `支持的文件类型: PDF, Word, PPT, Excel, TXT, Markdown, 图片(JPG, PNG, GIF, BMP, WebP)\n最大文件大小: ${MAX_FILE_SIZE / (1024 * 1024)} MB`;
 
   return (
-    <div
-      className="flex items-center gap-2"
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
-    >
+    <div className="flex items-center gap-2" onDragOver={handleDragOver} onDrop={handleDrop}>
       {/* Hidden file input */}
       <input
         ref={fileInputRef}
@@ -169,9 +160,7 @@ export default function FileUpload({
                 : 'bg-muted border-border'
           }`}
         >
-          <span className="text-base">
-            {getFileIcon(attachment.file_extension)}
-          </span>
+          <span className="text-base">{getFileIcon(attachment.file_extension)}</span>
           <div className="flex flex-col min-w-0 max-w-[150px]">
             <span className="text-xs font-medium truncate" title={attachment.filename}>
               {attachment.filename}
@@ -205,5 +194,5 @@ export default function FileUpload({
         </span>
       )}
     </div>
-  )
+  );
 }
