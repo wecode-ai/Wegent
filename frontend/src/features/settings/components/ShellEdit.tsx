@@ -26,6 +26,7 @@ import {
   ValidationStage,
   ValidationStatusResponse,
 } from '@/apis/shells';
+import SoftwareRequirements from './SoftwareRequirements';
 
 // Polling configuration
 const POLLING_INTERVAL = 2000; // 2 seconds
@@ -501,6 +502,14 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
             </SelectContent>
           </Select>
           <p className="text-xs text-text-muted">{t('shells.base_shell_hint')}</p>
+
+          {/* Software Requirements Display */}
+          {baseShellRef && (() => {
+            const selectedShell = baseShells.find(s => s.name === baseShellRef);
+            return selectedShell ? (
+              <SoftwareRequirements shellType={selectedShell.shellType} />
+            ) : null;
+          })()}
         </div>
 
         {/* Base Image */}
