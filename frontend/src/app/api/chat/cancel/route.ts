@@ -18,10 +18,19 @@ export async function POST(request: NextRequest) {
     // Get the request body
     const body = await request.json();
 
+    console.log('[CANCEL_DEBUG] Cancel request received:', {
+      subtask_id: body.subtask_id,
+      partial_content_len: body.partial_content?.length || 0,
+    });
+
     // Get authorization header
     const authHeader = request.headers.get('Authorization');
 
     // Forward request to backend
+    console.log(
+      '[CANCEL_DEBUG] Forwarding cancel request to backend:',
+      `${BACKEND_URL}/api/chat/cancel`
+    );
     const backendResponse = await fetch(`${BACKEND_URL}/api/chat/cancel`, {
       method: 'POST',
       headers: {
@@ -33,6 +42,11 @@ export async function POST(request: NextRequest) {
 
     if (!backendResponse.ok) {
       const errorText = await backendResponse.text();
+      console.error(
+        '[CANCEL_DEBUG] Backend cancel request failed:',
+        backendResponse.status,
+        errorText
+      );
       return new NextResponse(errorText, {
         status: backendResponse.status,
         headers: {
@@ -42,9 +56,10 @@ export async function POST(request: NextRequest) {
     }
 
     const data = await backendResponse.json();
+    console.log('[CANCEL_DEBUG] Backend cancel response:', data);
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Chat cancel proxy error:', error);
+    console.error('[CANCEL_DEBUG] Chat cancel proxy error:', error);
     return NextResponse.json({ error: 'Failed to proxy chat cancel request' }, { status: 500 });
   }
 }

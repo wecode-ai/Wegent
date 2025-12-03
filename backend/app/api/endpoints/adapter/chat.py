@@ -56,8 +56,6 @@ def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
     """Get shell type for a bot."""
     bot_crd = Bot.model_validate(bot.json)
     
-    logger.info(f"[chat.py] _get_shell_type: bot={bot.name}, shellRef.name={bot_crd.spec.shellRef.name}, shellRef.namespace={bot_crd.spec.shellRef.namespace}")
-    
     # First check user's custom shells
     shell = (
         db.query(Kind)
@@ -73,7 +71,6 @@ def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
     
     # If not found, check public shells
     if not shell:
-        logger.info(f"[chat.py] _get_shell_type: user shell not found, checking public shells")
         from app.models.public_shell import PublicShell
         
         public_shell = (
@@ -86,17 +83,13 @@ def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
         )
         if public_shell and public_shell.json:
             shell_crd = Shell.model_validate(public_shell.json)
-            logger.info(f"[chat.py] _get_shell_type: found public shell, shellType={shell_crd.spec.shellType}")
             return shell_crd.spec.shellType
-        logger.info(f"[chat.py] _get_shell_type: public shell not found either")
         return ""
     
     if shell and shell.json:
         shell_crd = Shell.model_validate(shell.json)
-        logger.info(f"[chat.py] _get_shell_type: found user shell, shellType={shell_crd.spec.shellType}")
         return shell_crd.spec.shellType
     
-    logger.info(f"[chat.py] _get_shell_type: shell has no json")
     return ""
 
 
@@ -108,10 +101,7 @@ def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
     """
     team_crd = Team.model_validate(team.json)
     
-    logger.info(f"[chat.py] _should_use_direct_chat: team={team.name}, members_count={len(team_crd.spec.members)}")
-    
     for member in team_crd.spec.members:
-        logger.info(f"[chat.py] _should_use_direct_chat: checking member botRef={member.botRef.name}/{member.botRef.namespace}")
         # Find bot
         bot = (
             db.query(Kind)
@@ -126,18 +116,14 @@ def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
         )
         
         if not bot:
-            logger.info(f"[chat.py] _should_use_direct_chat: bot not found, returning False")
             return False
         
         shell_type = _get_shell_type(db, bot, team.user_id)
         is_direct_chat = ChatServiceBase.is_direct_chat_shell(shell_type)
-        logger.info(f"[chat.py] _should_use_direct_chat: shell_type={shell_type}, is_direct_chat={is_direct_chat}")
         
         if not is_direct_chat:
-            logger.info(f"[chat.py] _should_use_direct_chat: shell_type '{shell_type}' is not direct chat, returning False")
             return False
     
-    logger.info(f"[chat.py] _should_use_direct_chat: all bots use Chat Shell, returning True")
     return True
 
 
@@ -372,9 +358,6 @@ async def stream_chat(
     - {"content": "", "done": true, "result": {...}} - Completion
     - {"error": "..."} - Error message
     """
-    logger.info(f"[chat.py] stream_chat called: team_id={request.team_id}, task_id={request.task_id}, user_id={current_user.id}, attachment_id={request.attachment_id}")
-    logger.info(f"[chat.py] message preview: {request.message[:50]}...")
-    
     # Validate team exists
     team = (
         db.query(Kind)
@@ -422,7 +405,6 @@ async def stream_chat(
         final_message = attachment_service.build_message_with_attachment(
             request.message, attachment
         )
-        logger.info(f"[chat.py] Message with attachment built, original_len={len(request.message)}, final_len={len(final_message)}")
     
     # Create task and subtasks (use original message for storage, final_message for LLM)
     task, assistant_subtask = _create_task_and_subtasks(
@@ -448,7 +430,6 @@ async def stream_chat(
                 subtask_id=user_subtask.id,
                 user_id=current_user.id,
             )
-            logger.info(f"[chat.py] Attachment {attachment.id} linked to user subtask {user_subtask.id}")
     
     # Get first bot for model config and system prompt
     team_crd = Team.model_validate(team.json)
@@ -522,12 +503,17 @@ async def stream_chat(
     
     # Process DEFAULT_HEADERS with placeholder replacement
     raw_default_headers = model_config.get("default_headers", {})
+
+    logger.info(f"Raw default headers before processing: {raw_default_headers}")
+    logger.info(f"Data sources for header processing: {data_sources}")
+
     if raw_default_headers:
         processed_headers = build_default_headers_with_placeholders(
             raw_default_headers, data_sources
         )
         model_config["default_headers"] = processed_headers
-        logger.info(f"[chat.py] Processed default_headers: keys={list(processed_headers.keys())}")
+    
+    logger.info(f"Streaming chat for model_config={model_config}")
     
     # Create streaming response with task_id and subtask_id in first message
     import json
@@ -636,6 +622,7 @@ async def cancel_chat(
     Cancel an ongoing chat stream.
     
     For Chat Shell type, this endpoint:
+    - Signals the streaming loop to stop via cancellation event
     - Updates the subtask status to COMPLETED (not CANCELLED) to show the truncated message
     - Saves the partial content received before cancellation
     - Updates the task status to COMPLETED so the conversation can continue
@@ -645,8 +632,6 @@ async def cancel_chat(
     Returns:
         {"success": bool, "message": str}
     """
-    logger.info(f"[chat.py] cancel_chat called: subtask_id={request.subtask_id}, user_id={current_user.id}")
-    
     # Find the subtask
     subtask = (
         db.query(Subtask)
@@ -667,6 +652,11 @@ async def cancel_chat(
             "message": f"Subtask is already in {subtask.status.value} state"
         }
     
+    # Signal the streaming loop to stop via Redis (cross-worker)
+    # This will cause the LLM API call to be interrupted
+    from app.services.chat.session_manager import session_manager
+    await session_manager.cancel_stream(request.subtask_id)
+    
     # For Chat Shell, we mark as COMPLETED instead of CANCELLED
     # This allows the truncated message to be displayed normally
     # and the user can continue the conversation
@@ -680,11 +670,9 @@ async def cancel_chat(
     # Save partial content if provided
     if request.partial_content:
         subtask.result = {"value": request.partial_content}
-        logger.info(f"[chat.py] cancel_chat: saving partial content as completed result, length={len(request.partial_content)}")
     else:
         # If no partial content, set empty result
         subtask.result = {"value": ""}
-        logger.info(f"[chat.py] cancel_chat: no partial content, setting empty result")
     
     # Also update the task status to COMPLETED so conversation can continue
     task = (
@@ -714,8 +702,6 @@ async def cancel_chat(
         flag_modified(task, "json")
     
     db.commit()
-    
-    logger.info(f"[chat.py] cancel_chat: subtask {request.subtask_id} stopped and marked as completed")
     
     return {
         "success": True,

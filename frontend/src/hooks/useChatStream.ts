@@ -163,10 +163,6 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
 
     // Get the current streaming content from ref (reliable access)
     const partialContent = streamingContentRef.current;
-    console.log(
-      '[useChatStream] stopStream called, partialContent length:',
-      partialContent?.length || 0
-    );
 
     // Get task ID and subtask ID before aborting
     const currentTaskId = taskId;
@@ -183,12 +179,6 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
           subtask_id: currentSubtaskId,
           partial_content: partialContent || undefined,
         });
-        console.log(
-          '[useChatStream] Chat stopped successfully, subtask_id:',
-          currentSubtaskId,
-          'partial_content_length:',
-          partialContent?.length || 0
-        );
 
         // Call onComplete to trigger refresh and show the saved partial content
         // The backend marks the task as COMPLETED, so we treat this as a successful completion
@@ -196,10 +186,12 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
           optionsRef.current.onComplete?.(currentTaskId, currentSubtaskId);
         }
       } catch (error) {
-        console.error('[useChatStream] Failed to stop chat:', error);
+        console.error('[CANCEL_DEBUG] Failed to stop chat:', error);
         // Even if backend cancel fails, we should still stop the frontend streaming
         // to prevent UI from being stuck in streaming state
       }
+    } else {
+      console.warn('[CANCEL_DEBUG] stopStream: no subtaskId available, cannot call cancelChat API');
     }
 
     // Only update UI state after backend has confirmed cancellation
