@@ -12,7 +12,7 @@ for cross-worker communication in multi-worker deployments.
 
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -137,7 +137,7 @@ class SessionManager:
     async def append_user_and_assistant_messages(
         self,
         task_id: int,
-        user_message: str,
+        user_message: Any,
         assistant_message: str
     ) -> bool:
         """
@@ -147,7 +147,7 @@ class SessionManager:
         
         Args:
             task_id: The task ID
-            user_message: The user's message
+            user_message: The user's message (string or vision dict)
             assistant_message: The assistant's response
             
         Returns:
@@ -155,7 +155,28 @@ class SessionManager:
         """
         try:
             history = await self.get_chat_history(task_id)
-            history.append({"role": "user", "content": user_message})
+            
+            # Normalize user message content for storage
+            # If it's a vision message dict, convert to standard OpenAI format
+            if isinstance(user_message, dict) and user_message.get("type") == "vision":
+                # Convert vision message to OpenAI format (array of content blocks)
+                user_content = [
+                    {"type": "text", "text": user_message.get("text", "")},
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{user_message['mime_type']};base64,{user_message['image_base64']}"
+                        }
+                    }
+                ]
+            elif isinstance(user_message, str):
+                # Regular text message
+                user_content = user_message
+            else:
+                # Fallback: convert to string
+                user_content = str(user_message)
+            
+            history.append({"role": "user", "content": user_content})
             history.append({"role": "assistant", "content": assistant_message})
             return await self.save_chat_history(task_id, history)
             
