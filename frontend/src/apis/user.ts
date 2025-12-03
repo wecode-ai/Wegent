@@ -110,8 +110,9 @@ export const userApis = {
     return apiClient.put('/users/me', data);
   },
 
-  async deleteGitToken(gitDomain: string): Promise<User> {
-    return apiClient.delete(`/users/me/git-token/${encodeURIComponent(gitDomain)}`);
+  async deleteGitToken(gitDomain: string, gitInfoId?: string): Promise<User> {
+    const params = gitInfoId ? `?git_info_id=${encodeURIComponent(gitInfoId)}` : '';
+    return apiClient.delete(`/users/me/git-token/${encodeURIComponent(gitDomain)}${params}`);
   },
 
   isAuthenticated(): boolean {

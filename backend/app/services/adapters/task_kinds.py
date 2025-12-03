@@ -1048,6 +1048,10 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             or "chat"
         )
 
+        model_id = task_crd.metadata.labels and task_crd.metadata.labels.get(
+            "modelId"
+        )
+
         return {
             "id": task.id,
             "type": type,
@@ -1069,6 +1073,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "created_at": created_at or task.created_at,
             "updated_at": updated_at or task.updated_at,
             "completed_at": completed_at,
+            "model_id": model_id,
         }
 
     def _convert_team_to_dict(
