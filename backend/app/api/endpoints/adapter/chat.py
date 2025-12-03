@@ -1,0 +1,723 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+"""
+Chat Shell API endpoints.
+
+Provides streaming chat API for Chat Shell type, bypassing Docker Executor.
+"""
+
+import logging
+from datetime import datetime
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+
+from app.api.dependencies import get_db
+from app.core import security
+from app.models.kind import Kind
+from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.user import User
+from app.schemas.kind import Bot, Shell, Task, Team
+from app.services.chat.base import ChatServiceBase
+from app.services.chat.chat_service import chat_service
+from app.services.chat.model_resolver import (
+    build_default_headers_with_placeholders,
+    get_bot_system_prompt,
+    get_model_config_for_bot,
+)
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+class StreamChatRequest(BaseModel):
+    """Request body for streaming chat."""
+    
+    message: str
+    team_id: int
+    task_id: Optional[int] = None  # Optional for multi-turn conversations
+    model_id: Optional[str] = None  # Optional model override
+    force_override_bot_model: bool = False
+    attachment_id: Optional[int] = None  # Optional attachment ID for file upload
+    # Git info (optional, for record keeping)
+    git_url: Optional[str] = None
+    git_repo: Optional[str] = None
+    git_repo_id: Optional[int] = None
+    git_domain: Optional[str] = None
+    branch_name: Optional[str] = None
+
+
+def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
+    """Get shell type for a bot."""
+    bot_crd = Bot.model_validate(bot.json)
+    
+    logger.info(f"[chat.py] _get_shell_type: bot={bot.name}, shellRef.name={bot_crd.spec.shellRef.name}, shellRef.namespace={bot_crd.spec.shellRef.namespace}")
+    
+    # First check user's custom shells
+    shell = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == user_id,
+            Kind.kind == "Shell",
+            Kind.name == bot_crd.spec.shellRef.name,
+            Kind.namespace == bot_crd.spec.shellRef.namespace,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    
+    # If not found, check public shells
+    if not shell:
+        logger.info(f"[chat.py] _get_shell_type: user shell not found, checking public shells")
+        from app.models.public_shell import PublicShell
+        
+        public_shell = (
+            db.query(PublicShell)
+            .filter(
+                PublicShell.name == bot_crd.spec.shellRef.name,
+                PublicShell.is_active == True,
+            )
+            .first()
+        )
+        if public_shell and public_shell.json:
+            shell_crd = Shell.model_validate(public_shell.json)
+            logger.info(f"[chat.py] _get_shell_type: found public shell, shellType={shell_crd.spec.shellType}")
+            return shell_crd.spec.shellType
+        logger.info(f"[chat.py] _get_shell_type: public shell not found either")
+        return ""
+    
+    if shell and shell.json:
+        shell_crd = Shell.model_validate(shell.json)
+        logger.info(f"[chat.py] _get_shell_type: found user shell, shellType={shell_crd.spec.shellType}")
+        return shell_crd.spec.shellType
+    
+    logger.info(f"[chat.py] _get_shell_type: shell has no json")
+    return ""
+
+
+def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
+    """
+    Check if the team should use direct chat mode.
+    
+    Returns True only if ALL bots in the team use Chat Shell type.
+    """
+    team_crd = Team.model_validate(team.json)
+    
+    logger.info(f"[chat.py] _should_use_direct_chat: team={team.name}, members_count={len(team_crd.spec.members)}")
+    
+    for member in team_crd.spec.members:
+        logger.info(f"[chat.py] _should_use_direct_chat: checking member botRef={member.botRef.name}/{member.botRef.namespace}")
+        # Find bot
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Bot",
+                Kind.name == member.botRef.name,
+                Kind.namespace == member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        
+        if not bot:
+            logger.info(f"[chat.py] _should_use_direct_chat: bot not found, returning False")
+            return False
+        
+        shell_type = _get_shell_type(db, bot, team.user_id)
+        is_direct_chat = ChatServiceBase.is_direct_chat_shell(shell_type)
+        logger.info(f"[chat.py] _should_use_direct_chat: shell_type={shell_type}, is_direct_chat={is_direct_chat}")
+        
+        if not is_direct_chat:
+            logger.info(f"[chat.py] _should_use_direct_chat: shell_type '{shell_type}' is not direct chat, returning False")
+            return False
+    
+    logger.info(f"[chat.py] _should_use_direct_chat: all bots use Chat Shell, returning True")
+    return True
+
+
+def _create_task_and_subtasks(
+    db: Session,
+    user: User,
+    team: Kind,
+    message: str,
+    request: StreamChatRequest,
+    task_id: Optional[int] = None
+) -> tuple[Kind, Subtask]:
+    """
+    Create or get task and create subtasks for chat.
+    
+    Returns:
+        Tuple of (task, assistant_subtask)
+    """
+    team_crd = Team.model_validate(team.json)
+    
+    # Get bot IDs from team members
+    bot_ids = []
+    for member in team_crd.spec.members:
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Bot",
+                Kind.name == member.botRef.name,
+                Kind.namespace == member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if bot:
+            bot_ids.append(bot.id)
+    
+    if not bot_ids:
+        raise HTTPException(status_code=400, detail="No valid bots found in team")
+    
+    task = None
+    
+    if task_id:
+        # Get existing task
+        task = (
+            db.query(Kind)
+            .filter(
+                Kind.id == task_id,
+                Kind.user_id == user.id,
+                Kind.kind == "Task",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        
+        if not task:
+            raise HTTPException(status_code=404, detail="Task not found")
+        
+        # Check task status
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status and task_crd.status.status == "RUNNING":
+            raise HTTPException(status_code=400, detail="Task is still running")
+    
+    if not task:
+        # Create new task
+        from app.services.adapters.task_kinds import task_kinds_service
+        
+        # Create task ID first
+        new_task_id = task_kinds_service.create_task_id(db, user.id)
+        
+        # Validate task ID
+        if not task_kinds_service.validate_task_id(db, new_task_id):
+            raise HTTPException(status_code=500, detail="Failed to create task ID")
+        
+        # Create workspace
+        workspace_name = f"workspace-{new_task_id}"
+        workspace_json = {
+            "kind": "Workspace",
+            "spec": {
+                "repository": {
+                    "gitUrl": request.git_url or "",
+                    "gitRepo": request.git_repo or "",
+                    "gitRepoId": request.git_repo_id or 0,
+                    "gitDomain": request.git_domain or "",
+                    "branchName": request.branch_name or "",
+                }
+            },
+            "status": {"state": "Available"},
+            "metadata": {"name": workspace_name, "namespace": "default"},
+            "apiVersion": "agent.wecode.io/v1",
+        }
+        
+        workspace = Kind(
+            user_id=user.id,
+            kind="Workspace",
+            name=workspace_name,
+            namespace="default",
+            json=workspace_json,
+            is_active=True,
+        )
+        db.add(workspace)
+        
+        # Create task
+        title = message[:50] + "..." if len(message) > 50 else message
+        task_json = {
+            "kind": "Task",
+            "spec": {
+                "title": title,
+                "prompt": message,
+                "teamRef": {"name": team.name, "namespace": team.namespace},
+                "workspaceRef": {"name": workspace_name, "namespace": "default"},
+            },
+            "status": {
+                "state": "Available",
+                "status": "PENDING",
+                "progress": 0,
+                "result": None,
+                "errorMessage": "",
+                "createdAt": datetime.now().isoformat(),
+                "updatedAt": datetime.now().isoformat(),
+                "completedAt": None,
+            },
+            "metadata": {
+                "name": f"task-{new_task_id}",
+                "namespace": "default",
+                "labels": {
+                    "type": "online",
+                    "taskType": "chat",
+                    "autoDeleteExecutor": "false",
+                    "source": "chat_shell",
+                    **({"modelId": request.model_id} if request.model_id else {}),
+                    **({"forceOverrideBotModel": "true"} if request.force_override_bot_model else {}),
+                },
+            },
+            "apiVersion": "agent.wecode.io/v1",
+        }
+        
+        task = Kind(
+            id=new_task_id,
+            user_id=user.id,
+            kind="Task",
+            name=f"task-{new_task_id}",
+            namespace="default",
+            json=task_json,
+            is_active=True,
+        )
+        db.add(task)
+        task_id = new_task_id
+    
+    # Get existing subtasks to determine message_id
+    existing_subtasks = (
+        db.query(Subtask)
+        .filter(Subtask.task_id == task_id, Subtask.user_id == user.id)
+        .order_by(Subtask.message_id.desc())
+        .all()
+    )
+    
+    next_message_id = 1
+    parent_id = 0
+    if existing_subtasks:
+        next_message_id = existing_subtasks[0].message_id + 1
+        parent_id = existing_subtasks[0].message_id
+    
+    # Create USER subtask
+    user_subtask = Subtask(
+        user_id=user.id,
+        task_id=task_id,
+        team_id=team.id,
+        title=f"User message",
+        bot_ids=bot_ids,
+        role=SubtaskRole.USER,
+        executor_namespace="",
+        executor_name="",
+        prompt=message,
+        status=SubtaskStatus.COMPLETED,
+        progress=100,
+        message_id=next_message_id,
+        parent_id=parent_id,
+        error_message="",
+        completed_at=datetime.now(),
+        result=None,
+    )
+    db.add(user_subtask)
+    
+    # Create ASSISTANT subtask
+    # Note: completed_at is set to a placeholder value because the DB column doesn't allow NULL
+    # It will be updated when the stream completes
+    assistant_subtask = Subtask(
+        user_id=user.id,
+        task_id=task_id,
+        team_id=team.id,
+        title=f"Assistant response",
+        bot_ids=bot_ids,
+        role=SubtaskRole.ASSISTANT,
+        executor_namespace="",
+        executor_name="",
+        prompt="",
+        status=SubtaskStatus.PENDING,
+        progress=0,
+        message_id=next_message_id + 1,
+        parent_id=next_message_id,
+        error_message="",
+        result=None,
+        completed_at=datetime.now(),  # Placeholder, will be updated when stream completes
+    )
+    db.add(assistant_subtask)
+    
+    db.commit()
+    db.refresh(task)
+    db.refresh(assistant_subtask)
+    
+    return task, assistant_subtask
+
+
+@router.post("/stream")
+async def stream_chat(
+    request: StreamChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Stream chat response for Chat Shell type.
+    
+    This endpoint directly calls LLM APIs without going through Docker Executor.
+    Only works for teams where all bots use Chat Shell type.
+    
+    Supports file attachments via attachment_id parameter. When provided,
+    the attachment's extracted text will be prepended to the user message.
+    
+    Returns SSE stream with the following events:
+    - {"task_id": int, "subtask_id": int, "content": "", "done": false} - First message with IDs
+    - {"content": "...", "done": false} - Content chunks
+    - {"content": "", "done": true, "result": {...}} - Completion
+    - {"error": "..."} - Error message
+    """
+    logger.info(f"[chat.py] stream_chat called: team_id={request.team_id}, task_id={request.task_id}, user_id={current_user.id}, attachment_id={request.attachment_id}")
+    logger.info(f"[chat.py] message preview: {request.message[:50]}...")
+    
+    # Validate team exists
+    team = (
+        db.query(Kind)
+        .filter(
+            Kind.id == request.team_id,
+            Kind.kind == "Team",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    
+    # Check if team supports direct chat
+    if not _should_use_direct_chat(db, team, current_user.id):
+        raise HTTPException(
+            status_code=400,
+            detail="This team does not support direct chat. Please use the task API instead."
+        )
+    
+    # Handle attachment if provided
+    attachment = None
+    final_message = request.message
+    if request.attachment_id:
+        from app.models.subtask_attachment import AttachmentStatus
+        from app.services.attachment import attachment_service
+        
+        attachment = attachment_service.get_attachment(
+            db=db,
+            attachment_id=request.attachment_id,
+            user_id=current_user.id,
+        )
+        
+        if attachment is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        
+        if attachment.status != AttachmentStatus.READY:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Attachment is not ready: {attachment.status.value}"
+            )
+        
+        # Build message with attachment content
+        final_message = attachment_service.build_message_with_attachment(
+            request.message, attachment
+        )
+        logger.info(f"[chat.py] Message with attachment built, original_len={len(request.message)}, final_len={len(final_message)}")
+    
+    # Create task and subtasks (use original message for storage, final_message for LLM)
+    task, assistant_subtask = _create_task_and_subtasks(
+        db, current_user, team, request.message, request, request.task_id
+    )
+    
+    # Link attachment to the user subtask if provided
+    if attachment:
+        # Find the user subtask (the one before assistant_subtask)
+        user_subtask = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == task.id,
+                Subtask.message_id == assistant_subtask.message_id - 1,
+                Subtask.role == SubtaskRole.USER,
+            )
+            .first()
+        )
+        if user_subtask:
+            attachment_service.link_attachment_to_subtask(
+                db=db,
+                attachment_id=attachment.id,
+                subtask_id=user_subtask.id,
+                user_id=current_user.id,
+            )
+            logger.info(f"[chat.py] Attachment {attachment.id} linked to user subtask {user_subtask.id}")
+    
+    # Get first bot for model config and system prompt
+    team_crd = Team.model_validate(team.json)
+    first_member = team_crd.spec.members[0]
+    
+    bot = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == team.user_id,
+            Kind.kind == "Bot",
+            Kind.name == first_member.botRef.name,
+            Kind.namespace == first_member.botRef.namespace,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    
+    if not bot:
+        raise HTTPException(status_code=400, detail="Bot not found")
+    
+    # Get model config
+    try:
+        model_config = get_model_config_for_bot(
+            db,
+            bot,
+            team.user_id,
+            override_model_name=request.model_id,
+            force_override=request.force_override_bot_model,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    
+    # Get system prompt
+    system_prompt = get_bot_system_prompt(
+        db, bot, team.user_id, first_member.prompt
+    )
+    
+    # Build data_sources for placeholder replacement in DEFAULT_HEADERS
+    # This mirrors the executor's member_builder.py logic
+    bot_crd = Bot.model_validate(bot.json)
+    bot_json = bot.json or {}
+    bot_spec = bot_json.get("spec", {})
+    agent_config = bot_spec.get("agent_config", {})
+    
+    # Get user info for data sources
+    user_info = {
+        "id": current_user.id,
+        "name": current_user.user_name,
+    }
+    
+    # Build task_data similar to executor format
+    task_data = {
+        "task_id": task.id,
+        "team_id": team.id,
+        "user": user_info,
+        "git_url": request.git_url or "",
+        "git_repo": request.git_repo or "",
+        "git_domain": request.git_domain or "",
+        "branch_name": request.branch_name or "",
+        "prompt": request.message,
+    }
+    
+    # Build data_sources for placeholder replacement
+    data_sources = {
+        "agent_config": agent_config,
+        "model_config": model_config,  # Contains api_key, base_url, model_id, etc.
+        "task_data": task_data,
+        "user": user_info,
+        "env": model_config.get("default_headers", {}),  # For backward compatibility
+    }
+    
+    # Process DEFAULT_HEADERS with placeholder replacement
+    raw_default_headers = model_config.get("default_headers", {})
+    if raw_default_headers:
+        processed_headers = build_default_headers_with_placeholders(
+            raw_default_headers, data_sources
+        )
+        model_config["default_headers"] = processed_headers
+        logger.info(f"[chat.py] Processed default_headers: keys={list(processed_headers.keys())}")
+    
+    # Create streaming response with task_id and subtask_id in first message
+    import json
+    from fastapi.responses import StreamingResponse
+    
+    async def generate_with_ids():
+        # Send first message with IDs
+        first_msg = {
+            "task_id": task.id,
+            "subtask_id": assistant_subtask.id,
+            "content": "",
+            "done": False,
+        }
+        yield f"data: {json.dumps(first_msg)}\n\n"
+        
+        # Get the actual stream from chat service (use final_message with attachment content)
+        stream_response = await chat_service.chat_stream(
+            subtask_id=assistant_subtask.id,
+            task_id=task.id,
+            message=final_message,
+            model_config=model_config,
+            system_prompt=system_prompt,
+        )
+        
+        # Forward the stream
+        async for chunk in stream_response.body_iterator:
+            yield chunk
+    
+    return StreamingResponse(
+        generate_with_ids(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
+
+
+@router.get("/check-direct-chat/{team_id}")
+async def check_direct_chat(
+    team_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Check if a team supports direct chat mode.
+    
+    Returns:
+        {"supports_direct_chat": bool, "shell_type": str}
+    """
+    team = (
+        db.query(Kind)
+        .filter(
+            Kind.id == team_id,
+            Kind.kind == "Team",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    
+    if not team:
+        raise HTTPException(status_code=404, detail="Team not found")
+    
+    supports_direct_chat = _should_use_direct_chat(db, team, current_user.id)
+    
+    # Get shell type of first bot
+    shell_type = ""
+    team_crd = Team.model_validate(team.json)
+    if team_crd.spec.members:
+        first_member = team_crd.spec.members[0]
+        bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Bot",
+                Kind.name == first_member.botRef.name,
+                Kind.namespace == first_member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if bot:
+            shell_type = _get_shell_type(db, bot, team.user_id)
+    
+    return {
+        "supports_direct_chat": supports_direct_chat,
+        "shell_type": shell_type,
+    }
+
+
+class CancelChatRequest(BaseModel):
+    """Request body for cancelling a chat stream."""
+    
+    subtask_id: int
+    partial_content: str | None = None  # Partial content received before cancellation
+
+
+@router.post("/cancel")
+async def cancel_chat(
+    request: CancelChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Cancel an ongoing chat stream.
+    
+    For Chat Shell type, this endpoint:
+    - Updates the subtask status to COMPLETED (not CANCELLED) to show the truncated message
+    - Saves the partial content received before cancellation
+    - Updates the task status to COMPLETED so the conversation can continue
+    
+    This allows users to see the partial response and continue the conversation.
+    
+    Returns:
+        {"success": bool, "message": str}
+    """
+    logger.info(f"[chat.py] cancel_chat called: subtask_id={request.subtask_id}, user_id={current_user.id}")
+    
+    # Find the subtask
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.id == request.subtask_id,
+            Subtask.user_id == current_user.id,
+        )
+        .first()
+    )
+    
+    if not subtask:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+    
+    # Check if subtask is in a cancellable state
+    if subtask.status not in [SubtaskStatus.PENDING, SubtaskStatus.RUNNING]:
+        return {
+            "success": False,
+            "message": f"Subtask is already in {subtask.status.value} state"
+        }
+    
+    # For Chat Shell, we mark as COMPLETED instead of CANCELLED
+    # This allows the truncated message to be displayed normally
+    # and the user can continue the conversation
+    subtask.status = SubtaskStatus.COMPLETED
+    subtask.progress = 100
+    subtask.completed_at = datetime.now()
+    subtask.updated_at = datetime.now()
+    # Don't set error_message for stopped chat - it's not an error
+    subtask.error_message = ""
+    
+    # Save partial content if provided
+    if request.partial_content:
+        subtask.result = {"value": request.partial_content}
+        logger.info(f"[chat.py] cancel_chat: saving partial content as completed result, length={len(request.partial_content)}")
+    else:
+        # If no partial content, set empty result
+        subtask.result = {"value": ""}
+        logger.info(f"[chat.py] cancel_chat: no partial content, setting empty result")
+    
+    # Also update the task status to COMPLETED so conversation can continue
+    task = (
+        db.query(Kind)
+        .filter(
+            Kind.id == subtask.task_id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    
+    if task:
+        from sqlalchemy.orm.attributes import flag_modified
+        
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status:
+            # Set to COMPLETED instead of CANCELLED
+            # This allows the user to continue the conversation
+            task_crd.status.status = "COMPLETED"
+            task_crd.status.errorMessage = ""  # No error message for stopped chat
+            task_crd.status.updatedAt = datetime.now()
+            task_crd.status.completedAt = datetime.now()
+        
+        task.json = task_crd.model_dump(mode="json")
+        task.updated_at = datetime.now()
+        flag_modified(task, "json")
+    
+    db.commit()
+    
+    logger.info(f"[chat.py] cancel_chat: subtask {request.subtask_id} stopped and marked as completed")
+    
+    return {
+        "success": True,
+        "message": "Chat stopped successfully"
+    }

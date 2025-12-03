@@ -1,0 +1,179 @@
+// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Hook for managing file attachment state and upload.
+ */
+
+import { useState, useCallback } from 'react'
+import {
+  uploadAttachment,
+  deleteAttachment,
+  isSupportedExtension,
+  isValidFileSize,
+  MAX_FILE_SIZE,
+  SUPPORTED_EXTENSIONS,
+} from '@/apis/attachments'
+import type { AttachmentUploadState } from '@/types/api'
+
+interface UseAttachmentReturn {
+  /** Current attachment state */
+  state: AttachmentUploadState
+  /** Handle file selection and upload */
+  handleFileSelect: (file: File) => Promise<void>
+  /** Remove current attachment */
+  handleRemove: () => Promise<void>
+  /** Reset state */
+  reset: () => void
+  /** Check if ready to send (no upload in progress, attachment ready or no attachment) */
+  isReadyToSend: boolean
+}
+
+export function useAttachment(): UseAttachmentReturn {
+  const [state, setState] = useState<AttachmentUploadState>({
+    file: null,
+    attachment: null,
+    isUploading: false,
+    uploadProgress: 0,
+    error: null,
+  })
+
+  const handleFileSelect = useCallback(async (file: File) => {
+    // Validate file type
+    if (!isSupportedExtension(file.name)) {
+      setState(prev => ({
+        ...prev,
+        file: null,
+        attachment: null,
+        isUploading: false,
+        uploadProgress: 0,
+        error: `不支持的文件类型。支持的类型: ${SUPPORTED_EXTENSIONS.join(', ')}`,
+      }))
+      return
+    }
+
+    // Validate file size
+    if (!isValidFileSize(file.size)) {
+      setState(prev => ({
+        ...prev,
+        file: null,
+        attachment: null,
+        isUploading: false,
+        uploadProgress: 0,
+        error: `文件大小超过 ${MAX_FILE_SIZE / (1024 * 1024)} MB 限制`,
+      }))
+      return
+    }
+
+    // Start upload
+    setState(prev => ({
+      ...prev,
+      file,
+      attachment: null,
+      isUploading: true,
+      uploadProgress: 0,
+      error: null,
+    }))
+
+    try {
+      const attachment = await uploadAttachment(file, progress => {
+        setState(prev => ({
+          ...prev,
+          uploadProgress: progress,
+        }))
+      })
+
+      // Check if parsing succeeded
+      if (attachment.status === 'failed') {
+        setState(prev => ({
+          ...prev,
+          file: null,
+          attachment: null,
+          isUploading: false,
+          uploadProgress: 0,
+          error: attachment.error_message || '文件解析失败',
+        }))
+        // Try to delete the failed attachment
+        try {
+          await deleteAttachment(attachment.id)
+        } catch {
+          // Ignore delete errors
+        }
+        return
+      }
+
+      setState(prev => ({
+        ...prev,
+        attachment: {
+          id: attachment.id,
+          filename: attachment.filename,
+          file_size: attachment.file_size,
+          mime_type: attachment.mime_type,
+          status: attachment.status,
+          text_length: attachment.text_length,
+          error_message: attachment.error_message,
+          subtask_id: null,
+          file_extension: file.name.substring(file.name.lastIndexOf('.')),
+          created_at: new Date().toISOString(),
+        },
+        isUploading: false,
+        uploadProgress: 100,
+        error: null,
+      }))
+    } catch (err) {
+      setState(prev => ({
+        ...prev,
+        file: null,
+        attachment: null,
+        isUploading: false,
+        uploadProgress: 0,
+        error: (err as Error).message || '上传失败',
+      }))
+    }
+  }, [])
+
+  const handleRemove = useCallback(async () => {
+    const attachmentId = state.attachment?.id
+
+    // Reset state immediately for better UX
+    setState({
+      file: null,
+      attachment: null,
+      isUploading: false,
+      uploadProgress: 0,
+      error: null,
+    })
+
+    // Try to delete from server if it exists and is not linked to a subtask
+    if (attachmentId && !state.attachment?.subtask_id) {
+      try {
+        await deleteAttachment(attachmentId)
+      } catch {
+        // Ignore delete errors - attachment might already be linked
+      }
+    }
+  }, [state.attachment])
+
+  const reset = useCallback(() => {
+    setState({
+      file: null,
+      attachment: null,
+      isUploading: false,
+      uploadProgress: 0,
+      error: null,
+    })
+  }, [])
+
+  const isReadyToSend =
+    !state.isUploading &&
+    (state.attachment === null || state.attachment.status === 'ready')
+
+  return {
+    state,
+    handleFileSelect,
+    handleRemove,
+    reset,
+    isReadyToSend,
+  }
+}
