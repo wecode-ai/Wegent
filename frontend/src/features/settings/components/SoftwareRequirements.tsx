@@ -13,12 +13,12 @@ import { useTranslation } from '@/hooks/useTranslation';
 
 // Software requirement data structure
 export interface SoftwareRequirement {
-  name: string;           // Software name (e.g., node, python, claude-code)
-  command: string;        // Check command (e.g., node --version)
-  minVersion: string;     // Minimum version requirement (e.g., 20.0.0)
-  versionRegex?: string;  // Version extraction regex (optional)
-  required: boolean;      // Whether it's required
-  description?: string;   // Software description (optional)
+  name: string; // Software name (e.g., node, python, claude-code)
+  command: string; // Check command (e.g., node --version)
+  minVersion: string; // Minimum version requirement (e.g., 20.0.0)
+  versionRegex?: string; // Version extraction regex (optional)
+  required: boolean; // Whether it's required
+  description?: string; // Software description (optional)
 }
 
 // Shell type to requirements mapping
@@ -39,17 +39,10 @@ const shellRequirements: Record<string, SoftwareRequirement[]> = {
       description: 'Python interpreter for agent execution',
     },
     {
-      name: 'SQLite',
-      command: 'sqlite3 --version',
-      minVersion: '3.50.0',
-      required: true,
-      description: 'Database for local data storage',
-    },
-    {
       name: 'claude-code',
-      command: 'claude-code --version',
+      command: 'claude --version',
       minVersion: '0.1.0',
-      required: false,
+      required: true,
       description: 'Claude Code CLI (recommended)',
     },
   ],
@@ -60,6 +53,13 @@ const shellRequirements: Record<string, SoftwareRequirement[]> = {
       minVersion: '3.12.0',
       required: true,
       description: 'Python interpreter for agent execution',
+    },
+    {
+      name: 'SQLite',
+      command: 'sqlite3 --version',
+      minVersion: '3.50.0',
+      required: true,
+      description: 'Database for local data storage',
     },
   ],
   Dify: [],
@@ -97,11 +97,9 @@ const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }
       <h3 className="text-base font-medium mb-2 text-text-primary">
         {t('shells.software_requirements_title')}
       </h3>
-      <p className="text-xs text-text-muted mb-3">
-        {t('shells.software_requirements_hint')}
-      </p>
+      <p className="text-xs text-text-muted mb-3">{t('shells.software_requirements_hint')}</p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {requirements.map((req) => (
+        {requirements.map(req => (
           <div
             key={req.name}
             className="flex flex-col p-3 bg-muted rounded-lg hover:bg-hover transition-colors"
@@ -109,23 +107,19 @@ const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-2 min-w-0 flex-1">
                 {req.required ? (
-                  <Badge variant="destructive" className="text-xs shrink-0">
+                  <Badge variant="error" className="text-xs shrink-0">
                     {t('shells.required')}
                   </Badge>
                 ) : (
-                  <Badge variant="outline" className="text-xs shrink-0">
+                  <Badge variant="secondary" className="text-xs shrink-0">
                     {t('shells.optional')}
                   </Badge>
                 )}
                 <span className="font-medium text-text-primary truncate">{req.name}</span>
               </div>
-              <span className="text-text-muted text-xs shrink-0 ml-2">
-                ≥ {req.minVersion}
-              </span>
+              <span className="text-text-muted text-xs shrink-0 ml-2">≥ {req.minVersion}</span>
             </div>
-            {req.description && (
-              <p className="text-xs text-text-muted mb-2">{req.description}</p>
-            )}
+            {req.description && <p className="text-xs text-text-muted mb-2">{req.description}</p>}
             <div className="flex items-center gap-2">
               <code className="text-xs bg-code-bg px-2 py-1 rounded text-text-secondary flex-1 truncate">
                 {req.command}
@@ -140,12 +134,7 @@ const SoftwareRequirements: React.FC<SoftwareRequirementsProps> = ({ shellType }
                 {copiedCommand === req.command ? (
                   <CheckIcon className="w-4 h-4 text-green-600" />
                 ) : (
-                  <svg
-                    className="w-4 h-4"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path
                       strokeLinecap="round"
                       strokeLinejoin="round"
