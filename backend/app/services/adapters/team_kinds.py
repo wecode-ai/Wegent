@@ -158,11 +158,24 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         return self._convert_to_team_dict(team, db, user_id)
 
     def get_user_teams(
-        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        workflow_enabled: Optional[bool] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get user's Team list (only active teams) including shared teams
         Uses database union query for better performance and pagination
+
+        Args:
+            db: Database session
+            user_id: User ID
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            workflow_enabled: Optional filter for teams with external API bots
         """
         # Query for user's own teams
         own_teams_query = db.query(
@@ -259,6 +272,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             team_dict = self._convert_to_team_dict(
                 temp_team, db, team_data.context_user_id
             )
+
+            # Check if team has external API bots (workflow enabled)
+            team_has_workflow = self._check_team_has_external_api_bots(
+                db, temp_team, team_data.context_user_id
+            )
+            team_dict["workflow_enabled"] = team_has_workflow
+            team_dict["has_parameters"] = team_has_workflow  # Same as workflow_enabled
+
+            # Apply workflow_enabled filter if specified
+            if workflow_enabled is not None:
+                if workflow_enabled and not team_has_workflow:
+                    continue
+                elif not workflow_enabled and team_has_workflow:
+                    continue
 
             # For own teams, check if share_status is set in metadata.labels
             if team_data.share_status == 0:  # This is an own team
@@ -577,10 +604,34 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         db.delete(team)
         db.commit()
 
-    def count_user_teams(self, db: Session, *, user_id: int) -> int:
+    def count_user_teams(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        workflow_enabled: Optional[bool] = None,
+    ) -> int:
         """
         Count user's active teams including shared teams
+
+        Args:
+            db: Database session
+            user_id: User ID
+            workflow_enabled: Optional filter for teams with external API bots
         """
+        # If workflow_enabled filter is applied, we need to check each team
+        # This is less efficient but necessary for accurate counting
+        if workflow_enabled is not None:
+            # Get all teams and filter
+            all_teams = self.get_user_teams(
+                db=db,
+                user_id=user_id,
+                skip=0,
+                limit=10000,  # Large limit to get all
+                workflow_enabled=workflow_enabled,
+            )
+            return len(all_teams)
+
         # Count user's own teams
         own_teams_count = (
             db.query(Kind)
@@ -604,6 +655,51 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         )
 
         return own_teams_count + shared_teams_count
+
+    def _check_team_has_external_api_bots(
+        self, db: Session, team: Kind, user_id: int
+    ) -> bool:
+        """
+        Check if a team has any external API bots (like Dify)
+
+        Args:
+            db: Database session
+            team: Team Kind object
+            user_id: User ID for context
+
+        Returns:
+            True if team has external API bots, False otherwise
+        """
+        team_crd = Team.model_validate(team.json)
+
+        for member in team_crd.spec.members:
+            # Find bot in kinds table
+            bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Bot",
+                    Kind.name == member.botRef.name,
+                    Kind.namespace == member.botRef.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if bot:
+                bot_crd = Bot.model_validate(bot.json)
+                # Check if bot uses external API shell
+                shell_type = get_shell_type(
+                    db,
+                    bot_crd.spec.shellRef.name,
+                    bot_crd.spec.shellRef.namespace,
+                    user_id,
+                )
+
+                if shell_type == "external_api":
+                    return True
+
+        return False
 
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """

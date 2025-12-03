@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
@@ -32,18 +34,31 @@ router = APIRouter()
 def list_teams(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    workflow_enabled: Optional[bool] = Query(
+        None, description="Filter teams with workflow enabled (external API bots)"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Get current user's Team list (paginated)"""
+    """Get current user's Team list (paginated)
+
+    Optionally filter by workflow_enabled to get only teams that have
+    external API bots (like Dify) with workflow capabilities.
+    """
     skip = (page - 1) * limit
     items = team_kinds_service.get_user_teams(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        workflow_enabled=workflow_enabled,
     )
     if page == 1 and len(items) < limit:
         total = len(items)
     else:
-        total = team_kinds_service.count_user_teams(db=db, user_id=current_user.id)
+        total = team_kinds_service.count_user_teams(
+            db=db, user_id=current_user.id, workflow_enabled=workflow_enabled
+        )
     return {"total": total, "items": items}
 
 

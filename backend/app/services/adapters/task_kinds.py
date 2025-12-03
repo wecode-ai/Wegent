@@ -254,18 +254,44 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         return self._convert_to_task_dict(task, db, user.id)
 
     def get_user_tasks_with_pagination(
-        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        team_id: Optional[int] = None,
+        task_type: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's Task list with pagination (only active tasks, excluding DELETE status)
         Optimized version using batch queries to reduce database calls
+
+        Args:
+            db: Database session
+            user_id: User ID
+            skip: Number of records to skip
+            limit: Maximum number of records to return
+            team_id: Optional filter by team ID
+            task_type: Optional filter by task type (chat/code)
         """
-        query = db.query(Kind).filter(
+        # Build base filters
+        filters = [
             Kind.user_id == user_id,
             Kind.kind == "Task",
             Kind.is_active == True,
             text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
-        )
+        ]
+
+        # Add task_type filter if provided
+        if task_type:
+            filters.append(
+                text(
+                    "JSON_EXTRACT(json, '$.metadata.labels.taskType') = :task_type"
+                ).bindparams(task_type=task_type)
+            )
+
+        query = db.query(Kind).filter(*filters)
 
         total = query.with_entities(func.count(Kind.id)).scalar()
         tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
@@ -280,9 +306,20 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         for task in tasks:
             task_crd = Task.model_validate(task.json)
             task_related_data = related_data_batch.get(str(task.id), {})
+
+            # Filter by team_id if provided
+            if team_id is not None:
+                task_team_id = task_related_data.get("team_id")
+                if task_team_id != team_id:
+                    continue
+
             result.append(
                 self._convert_to_task_dict_optimized(task, task_related_data, task_crd)
             )
+
+        # Adjust total count if filtered by team_id (need to recount)
+        if team_id is not None:
+            total = len(result)
 
         return result, total
 

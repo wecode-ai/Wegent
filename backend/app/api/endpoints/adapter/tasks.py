@@ -7,12 +7,14 @@ from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
+from app.schemas.sse import StreamTaskCreate
 from app.schemas.task import (
     TaskCreate,
     TaskDetail,
@@ -22,6 +24,7 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.task_streaming import task_streaming_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -68,6 +71,103 @@ def create_task_with_optional_id(
     )
 
 
+@router.post("/stream")
+async def create_and_stream_task(
+    stream_request: StreamTaskCreate,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Create and execute a task with SSE streaming response.
+
+    Returns a Server-Sent Events stream with real-time task execution progress.
+    Compatible with Dify Workflow SSE event format.
+
+    Event types:
+    - workflow_started: Task execution started
+    - node_started: Bot/Subtask started execution
+    - node_finished: Bot/Subtask completed
+    - workflow_finished: Task execution completed
+    - error: Execution error occurred
+    - ping: Keep-alive ping
+    """
+    # Convert StreamTaskCreate to TaskCreate
+    task_create = TaskCreate(
+        team_id=stream_request.team_id,
+        team_name=stream_request.team_name,
+        team_namespace=stream_request.team_namespace,
+        prompt=stream_request.prompt,
+        title=stream_request.title,
+        type=stream_request.type,
+        task_type=stream_request.task_type,
+        model_id=stream_request.model_id,
+        force_override_bot_model=stream_request.force_override_bot_model,
+        git_url=stream_request.git_url,
+        git_repo=stream_request.git_repo,
+        git_repo_id=stream_request.git_repo_id,
+        git_domain=stream_request.git_domain,
+        branch_name=stream_request.branch_name,
+    )
+
+    # Create the task
+    task_result = task_kinds_service.create_task_or_append(
+        db=db, obj_in=task_create, user=current_user, task_id=None
+    )
+    task_id = task_result["id"]
+
+    logger.info(f"Created streaming task {task_id} for user {current_user.id}")
+
+    # Return SSE streaming response
+    return StreamingResponse(
+        task_streaming_service.stream_task_execution(
+            db=db,
+            task_id=task_id,
+            user_id=current_user.id,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",  # Disable nginx buffering
+        },
+    )
+
+
+@router.get("/stream/{task_id}")
+async def stream_existing_task(
+    task_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Stream execution progress for an existing task.
+
+    Useful for reconnecting to a task stream after disconnection.
+    """
+    # Verify task exists and belongs to user
+    task = task_kinds_service.get_task_by_id(
+        db=db, task_id=task_id, user_id=current_user.id
+    )
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    logger.info(f"Streaming existing task {task_id} for user {current_user.id}")
+
+    return StreamingResponse(
+        task_streaming_service.stream_task_execution(
+            db=db,
+            task_id=task_id,
+            user_id=current_user.id,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task_with_id(
     task_id: int,
@@ -85,13 +185,23 @@ def create_task_with_id(
 def get_tasks(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    team_id: Optional[int] = Query(None, description="Filter by team ID"),
+    task_type: Optional[str] = Query(None, description="Filter by task type (chat/code)"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Get current user's task list (paginated), excluding DELETE status tasks"""
+    """Get current user's task list (paginated), excluding DELETE status tasks.
+
+    Supports optional filtering by team_id and task_type.
+    """
     skip = (page - 1) * limit
     items, total = task_kinds_service.get_user_tasks_with_pagination(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        team_id=team_id,
+        task_type=task_type,
     )
     return {"total": total, "items": items}
 
