@@ -80,13 +80,11 @@ export default function GitHubIntegration() {
     setShowModal(true);
   };
 
-  // Token deletion logic unchanged
-
-  const handleDelete = async (domain: string) => {
-    if (!user) return; // Fix type issue
-    // Unified error prompt using antd message.error, no local error state needed
+  // Token deletion - uses git_info id for precise deletion
+  const handleDelete = async (gitInfo: GitInfo) => {
+    if (!user) return;
     try {
-      const success = await deleteGitToken(user, domain);
+      const success = await deleteGitToken(user, gitInfo);
       if (!success) {
         toast({
           variant: 'destructive',
@@ -115,8 +113,8 @@ export default function GitHubIntegration() {
         ) : (
           <>
             {platforms.length > 0 ? (
-              platforms.map(info => (
-                <div key={info.git_domain}>
+              platforms.map((info, index) => (
+                <div key={info.id || `${info.git_domain}-${index}`}>
                   <div className="flex items-center justify-between py-0.5">
                     <div className="flex items-center space-x-2 w-0 flex-1 min-w-0">
                       {info.type === 'gitlab' || info.type === 'gitee' ? (
@@ -130,6 +128,11 @@ export default function GitHubIntegration() {
                         <div className="flex items-center space-x-1">
                           <h3 className="text-base font-medium text-text-primary truncate mb-0">
                             {info.git_domain}
+                            {info.git_login && (
+                              <span className="text-xs text-text-muted ml-2">
+                                ({info.git_login})
+                              </span>
+                            )}
                           </h3>
                         </div>
                         <div>
@@ -153,7 +156,7 @@ export default function GitHubIntegration() {
                       <Button
                         variant="ghost"
                         size="icon"
-                        onClick={() => handleDelete(info.git_domain)}
+                        onClick={() => handleDelete(info)}
                         title={t('integrations.delete')}
                         className="h-8 w-8 hover:text-error"
                       >
@@ -161,10 +164,9 @@ export default function GitHubIntegration() {
                       </Button>
                     </div>
                   </div>
-                  {platforms.length > 1 &&
-                    info.git_domain !== platforms[platforms.length - 1].git_domain && (
-                      <div className="border-t border-border mt-1 pt-1" />
-                    )}
+                  {index < platforms.length - 1 && (
+                    <div className="border-t border-border mt-1 pt-1" />
+                  )}
                 </div>
               ))
             ) : (
