@@ -6,7 +6,14 @@
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
-import type { TaskDetail, TaskDetailSubtask, Team, GitRepoInfo, GitBranch } from '@/types/api';
+import type {
+  TaskDetail,
+  TaskDetailSubtask,
+  Team,
+  GitRepoInfo,
+  GitBranch,
+  Attachment,
+} from '@/types/api';
 import { Bot, User, Copy, Check, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -16,6 +23,7 @@ import ThinkingComponent from './ThinkingComponent';
 import ClarificationForm from './ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from './ClarificationAnswerSummary';
+import AttachmentPreview from './AttachmentPreview';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
 
@@ -35,6 +43,7 @@ interface Message {
     confidence?: number;
     value?: unknown;
   }> | null;
+  attachments?: Attachment[];
 }
 
 interface ResultWithThinking {
@@ -283,6 +292,7 @@ export default function MessagesArea({
               : sub?.bots?.[0]?.name?.trim() || 'Bot',
           thinking: thinkingData,
           subtaskStatus: sub.status, // Add subtask status
+          attachments: sub.attachments,
         });
       });
     }
@@ -563,6 +573,23 @@ export default function MessagesArea({
     });
   };
 
+  const renderAttachments = (attachments?: Attachment[]) => {
+    if (!attachments || attachments.length === 0) return null;
+
+    return (
+      <div className="flex flex-wrap gap-2 mb-3">
+        {attachments.map(attachment => (
+          <AttachmentPreview
+            key={attachment.id}
+            attachment={attachment}
+            compact={false}
+            showDownload={true}
+          />
+        ))}
+      </div>
+    );
+  };
+
   // Helper function to parse Markdown clarification questions
   const parseMarkdownClarification = (content: string): ClarificationData | null => {
     // First, check if content is wrapped in a markdown code block
@@ -801,6 +828,7 @@ export default function MessagesArea({
                       <span className="font-semibold">{headerLabel}</span>
                       {timestampLabel && <span>{timestampLabel}</span>}
                     </div>
+                    {isUserMessage && renderAttachments(msg.attachments)}
                     {renderMessageBody(msg, index)}
                   </div>
                 </div>

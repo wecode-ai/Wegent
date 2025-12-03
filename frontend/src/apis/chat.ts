@@ -252,9 +252,63 @@ export async function checkDirectChat(teamId: number): Promise<CheckDirectChatRe
 }
 
 /**
+ * Request parameters for cancelling a chat stream
+ */
+export interface CancelChatRequest {
+  /** Subtask ID to cancel */
+  subtask_id: number;
+  /** Partial content received before cancellation (optional) */
+  partial_content?: string;
+}
+
+/**
+ * Response from cancel chat API
+ */
+export interface CancelChatResponse {
+  success: boolean;
+  message: string;
+}
+
+/**
+ * Cancel an ongoing chat stream.
+ *
+ * @param request - Cancel request parameters
+ * @returns Cancel result
+ */
+export async function cancelChat(request: CancelChatRequest): Promise<CancelChatResponse> {
+  const token = getToken();
+
+  const response = await fetch(`${API_BASE_URL}/chat/cancel`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+    body: JSON.stringify(request),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMsg = errorText;
+    try {
+      const json = JSON.parse(errorText);
+      if (json && typeof json.detail === 'string') {
+        errorMsg = json.detail;
+      }
+    } catch {
+      // Not JSON
+    }
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+/**
  * Chat API exports
  */
 export const chatApis = {
   streamChat,
   checkDirectChat,
+  cancelChat,
 };

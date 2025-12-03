@@ -9,7 +9,7 @@
  */
 
 import { useState, useCallback, useRef } from 'react';
-import { streamChat, StreamChatRequest, ChatStreamData } from '@/apis/chat';
+import { streamChat, cancelChat, StreamChatRequest, ChatStreamData } from '@/apis/chat';
 
 /**
  * Options for useChatStream hook
@@ -81,6 +81,7 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
 
   const abortRef = useRef<(() => void) | null>(null);
   const optionsRef = useRef(options);
+  const subtaskIdRef = useRef<number | null>(null);
 
   // Keep options ref updated
   optionsRef.current = options;
@@ -110,11 +111,12 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
         }
         if (data.subtask_id) {
           setSubtaskId(data.subtask_id);
+          subtaskIdRef.current = data.subtask_id;
         }
 
         // Append content
         if (data.content) {
-          setStreamingContent((prev) => prev + data.content);
+          setStreamingContent(prev => prev + data.content);
           optionsRef.current.onChunk?.(data.content);
         }
       },
@@ -136,11 +138,42 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
   }, []);
 
   /**
-   * Stop the current streaming request.
+   * Stop the current streaming request and cancel on backend.
+   * Saves partial content that was received before cancellation.
    */
-  const stopStream = useCallback(() => {
+  const stopStream = useCallback(async () => {
+    // First abort the frontend fetch request
     abortRef.current?.();
+
+    // Get the current streaming content before clearing state
+    // We need to access the current state value directly
+    let partialContent = '';
+    setStreamingContent(prev => {
+      partialContent = prev;
+      return prev; // Don't change the state, just read it
+    });
+
     setIsStreaming(false);
+
+    // Then call backend to cancel the subtask with partial content
+    const currentSubtaskId = subtaskIdRef.current;
+    if (currentSubtaskId) {
+      try {
+        await cancelChat({
+          subtask_id: currentSubtaskId,
+          partial_content: partialContent || undefined,
+        });
+        console.log(
+          '[useChatStream] Chat cancelled successfully, subtask_id:',
+          currentSubtaskId,
+          'partial_content_length:',
+          partialContent?.length || 0
+        );
+      } catch (error) {
+        console.error('[useChatStream] Failed to cancel chat:', error);
+        // Don't throw - the stream is already stopped on frontend
+      }
+    }
   }, []);
 
   /**

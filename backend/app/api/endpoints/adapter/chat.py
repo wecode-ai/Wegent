@@ -617,3 +617,93 @@ async def check_direct_chat(
         "supports_direct_chat": supports_direct_chat,
         "shell_type": shell_type,
     }
+
+
+class CancelChatRequest(BaseModel):
+    """Request body for cancelling a chat stream."""
+    
+    subtask_id: int
+    partial_content: str | None = None  # Partial content received before cancellation
+
+
+@router.post("/cancel")
+async def cancel_chat(
+    request: CancelChatRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Cancel an ongoing chat stream.
+    
+    This endpoint updates the subtask status to CANCELLED and
+    also updates the associated task status.
+    
+    Returns:
+        {"success": bool, "message": str}
+    """
+    logger.info(f"[chat.py] cancel_chat called: subtask_id={request.subtask_id}, user_id={current_user.id}")
+    
+    # Find the subtask
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.id == request.subtask_id,
+            Subtask.user_id == current_user.id,
+        )
+        .first()
+    )
+    
+    if not subtask:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+    
+    # Check if subtask is in a cancellable state
+    if subtask.status not in [SubtaskStatus.PENDING, SubtaskStatus.RUNNING]:
+        return {
+            "success": False,
+            "message": f"Subtask is already in {subtask.status.value} state"
+        }
+    
+    # Update subtask status to CANCELLED
+    subtask.status = SubtaskStatus.CANCELLED
+    subtask.completed_at = datetime.now()
+    subtask.updated_at = datetime.now()
+    subtask.error_message = "Cancelled by user"
+    
+    # Save partial content if provided
+    if request.partial_content:
+        subtask.result = {"value": request.partial_content}
+        logger.info(f"[chat.py] cancel_chat: saving partial content, length={len(request.partial_content)}")
+    
+    # Also update the task status
+    task = (
+        db.query(Kind)
+        .filter(
+            Kind.id == subtask.task_id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+    
+    if task:
+        from sqlalchemy.orm.attributes import flag_modified
+        
+        task_crd = Task.model_validate(task.json)
+        if task_crd.status:
+            task_crd.status.status = "CANCELLED"
+            task_crd.status.errorMessage = "Cancelled by user"
+            task_crd.status.updatedAt = datetime.now()
+            task_crd.status.completedAt = datetime.now()
+        
+        task.json = task_crd.model_dump(mode="json")
+        task.updated_at = datetime.now()
+        flag_modified(task, "json")
+    
+    db.commit()
+    
+    logger.info(f"[chat.py] cancel_chat: subtask {request.subtask_id} cancelled successfully")
+    
+    return {
+        "success": True,
+        "message": "Chat cancelled successfully"
+    }

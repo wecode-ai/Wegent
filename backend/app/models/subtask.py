@@ -54,6 +54,14 @@ class Subtask(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime)
 
+    # Relationship to SubtaskAttachment
+    attachments = relationship(
+        "SubtaskAttachment",
+        backref="subtask",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+
     __table_args__ = (
         {
             "sqlite_autoincrement": True,
