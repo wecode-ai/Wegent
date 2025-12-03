@@ -54,12 +54,12 @@ class Subtask(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime)
 
-    # Relationship to SubtaskAttachment
+    # Relationship to SubtaskAttachment (no foreign key constraint, use primaryjoin)
     attachments = relationship(
         "SubtaskAttachment",
+        primaryjoin="Subtask.id == foreign(SubtaskAttachment.subtask_id)",
         backref="subtask",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
+        viewonly=True,  # Read-only since no FK constraint
     )
 
     __table_args__ = (
