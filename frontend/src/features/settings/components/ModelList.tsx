@@ -212,7 +212,14 @@ const ModelList: React.FC = () => {
   };
 
   const getProviderLabel = (modelType: string) => {
-    return modelType === 'openai' ? 'OpenAI' : 'Anthropic';
+    switch (modelType) {
+      case 'openai':
+        return 'OpenAI';
+      case 'gemini':
+        return 'Gemini';
+      default:
+        return 'Anthropic';
+    }
   };
 
   if (editingModel || isCreating) {
