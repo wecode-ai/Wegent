@@ -173,8 +173,13 @@ export async function streamChat(
                 if (parsed.error) {
                   callbacks.onError(new Error(parsed.error));
                 }
-              } catch {
-                // Ignore parse errors for incomplete chunks
+              } catch (parseError) {
+                // Log parse errors for debugging, but don't throw
+                // This can happen if JSON is split across chunks
+                console.warn('[chat.ts] Failed to parse SSE data:', {
+                  line: line.substring(0, 100),
+                  error: parseError,
+                });
               }
             }
           }

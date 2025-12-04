@@ -21,15 +21,15 @@ export function useTypewriter(content: string, speed = 15) {
   // Update ref when content changes
   useEffect(() => {
     contentRef.current = content;
-    // Handle reset immediately
-    if (content.length === 0 && displayedContent.length > 0) {
+    // Handle reset immediately only when content is explicitly empty
+    if (content.length === 0) {
       setDisplayedContent('');
     }
-  }, [content, displayedContent.length]);
+  }, [content]);
 
   useEffect(() => {
     const timer = setInterval(() => {
-      setDisplayedContent((current) => {
+      setDisplayedContent(current => {
         const target = contentRef.current;
 
         // If current is longer than target (e.g. content truncated/reset but not caught above),
