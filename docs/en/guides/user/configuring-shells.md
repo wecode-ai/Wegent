@@ -36,8 +36,19 @@ Bot = Ghost (Soul) + Shell (Body) + Model (Brain)
 ### Database Relationship
 
 Shell resources are stored in the following database tables:
-- `public_shells`: Stores Shell configuration information
-- `kinds`: Defines resource type as `Shell`
+- `public_shells`: Stores system-provided public Shell configurations (shared across all users)
+- `kinds`: Stores user-defined custom Shell configurations (user_id specific)
+
+### Shell Resolution Order
+
+When a Bot references a Shell, the system follows this lookup order:
+1. **User-defined Shells**: First checks the `kinds` table for user-specific Shells in the specified namespace
+2. **Public Shells**: If not found, falls back to system-provided public Shells in the `public_shells` table
+
+This allows users to:
+- Use preset public Shells (like `ClaudeCode`, `Agno`, `Dify`) without creating them
+- Override public Shells by creating custom Shells with the same name
+- Define private Shells that only they can access
 
 ---
 
