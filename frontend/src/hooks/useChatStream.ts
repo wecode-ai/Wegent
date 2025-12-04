@@ -10,6 +10,7 @@
 
 import { useState, useCallback, useRef } from 'react';
 import { streamChat, cancelChat, StreamChatRequest, ChatStreamData } from '@/apis/chat';
+import { parseError } from '@/utils/errorParser';
 
 /**
  * Options for useChatStream hook
@@ -131,9 +132,18 @@ export function useChatStream(options: UseChatStreamOptions = {}): UseChatStream
         }
       },
       onError: (err: Error) => {
-        setError(err);
+        // Parse error to provide better error information
+        const parsed = parseError(err);
+        const enhancedError = new Error(parsed.message) as Error & {
+          type?: string;
+          originalError?: string;
+        };
+        enhancedError.type = parsed.type;
+        enhancedError.originalError = parsed.originalError;
+
+        setError(enhancedError);
         setIsStreaming(false);
-        optionsRef.current.onError?.(err);
+        optionsRef.current.onError?.(enhancedError);
       },
       onComplete: (completedTaskId: number, completedSubtaskId: number) => {
         setIsStreaming(false);

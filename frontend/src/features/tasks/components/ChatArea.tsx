@@ -31,6 +31,8 @@ import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useChatStream } from '@/hooks/useChatStream';
 import { useAttachment } from '@/hooks/useAttachment';
+import { useTranslation } from '@/hooks/useTranslation';
+import { getUserFriendlyErrorMessage } from '@/utils/errorParser';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 // Threshold for combined team name + model name length to trigger compact quota mode
@@ -52,6 +54,7 @@ export default function ChatArea({
   taskType = 'chat',
 }: ChatAreaProps) {
   const { toast } = useToast();
+  const { t } = useTranslation();
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -138,9 +141,10 @@ export default function ChatArea({
       onError: error => {
         setPendingUserMessage(null);
         setPendingAttachment(null);
+        const friendlyMessage = getUserFriendlyErrorMessage(error, t);
         toast({
           variant: 'destructive',
-          title: error.message,
+          title: friendlyMessage,
         });
       },
     });
