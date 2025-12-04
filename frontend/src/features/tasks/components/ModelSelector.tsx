@@ -25,7 +25,7 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { isPredefinedModel } from '@/features/settings/services/bots';
+import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
 
 // Model type for component props (extended with type information)
 export interface Model {
@@ -355,6 +355,20 @@ export default function ModelSelector({
   // Check if model selection is required (for legacy teams without predefined models)
   const isModelRequired = !showDefaultOption && !selectedModel;
 
+  // Get bound model names from team bots for display
+  const getBoundModelNames = useCallback((): string[] => {
+    if (!selectedTeam?.bots || selectedTeam.bots.length === 0) {
+      return [];
+    }
+    return selectedTeam.bots
+      .map(botInfo => {
+        const config = botInfo.bot?.agent_config;
+        if (!config) return '';
+        return getModelFromConfig(config as Record<string, unknown>);
+      })
+      .filter(Boolean);
+  }, [selectedTeam?.bots]);
+
   // Get display text for trigger
   const getTriggerDisplayText = () => {
     if (!selectedModel) {
@@ -368,7 +382,16 @@ export default function ModelSelector({
       return t('task_submit.select_model', '选择模型');
     }
     if (selectedModel.name === DEFAULT_MODEL_NAME) {
-      return t('task_submit.default_model', '默认');
+      const defaultLabel = t('task_submit.default_model', '默认');
+      const boundModelNames = getBoundModelNames();
+
+      if (boundModelNames.length === 1) {
+        return `${defaultLabel} (${boundModelNames[0]})`;
+      } else if (boundModelNames.length > 1) {
+        // Multiple bots - show first model name + count of others
+        return `${defaultLabel} (${boundModelNames[0]} +${boundModelNames.length - 1})`;
+      }
+      return defaultLabel;
     }
     const displayText = getModelDisplayText(selectedModel);
     if (forceOverride && !isMixedTeam) {
