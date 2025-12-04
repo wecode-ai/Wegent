@@ -12,14 +12,19 @@ const compat = new FlatCompat({
     allConfig: js.configs.all
 });
 
-export default defineConfig([{
-    extends: compat.extends("next/core-web-vitals", "next/typescript"),
-
-    rules: {
-        "@typescript-eslint/no-unused-vars": ["error", {
-            argsIgnorePattern: "^_",
-            varsIgnorePattern: "^_",
-            caughtErrorsIgnorePattern: "^_",
-        }],
+export default defineConfig([
+    {
+        ignores: ["scripts/**/*.cjs", "scripts/**/*.js"],
     },
-}]);
+    {
+        extends: compat.extends("next/core-web-vitals", "next/typescript"),
+
+        rules: {
+            "@typescript-eslint/no-unused-vars": ["error", {
+                argsIgnorePattern: "^_",
+                varsIgnorePattern: "^_",
+                caughtErrorsIgnorePattern: "^_",
+            }],
+        },
+    }
+]);

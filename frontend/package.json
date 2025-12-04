@@ -9,6 +9,8 @@
     "lint": "next lint",
     "format": "prettier --write .",
     "prepare": "cd .. && husky frontend/.husky",
+    "postinstall": "node scripts/download-fonts.cjs",
+    "download-fonts": "node scripts/download-fonts.cjs",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
