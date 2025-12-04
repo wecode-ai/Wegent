@@ -63,7 +63,7 @@ export default function NotificationSettings() {
     localStorage.removeItem('user_onboarding_completed');
     localStorage.removeItem('onboarding_in_progress');
     localStorage.removeItem('onboarding_current_step');
-    router.push('/code');
+    router.push('/chat');
   };
 
   return (

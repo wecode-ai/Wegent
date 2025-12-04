@@ -805,7 +805,10 @@ export default function ChatArea({
                   <div
                     className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
                   >
-                    <div className="flex-1 min-w-0 overflow-hidden flex items-center gap-3">
+                    <div
+                      className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
+                      data-tour="input-controls"
+                    >
                       {/* File Upload Button - only show when no file is selected */}
                       {!attachmentState.attachment &&
                         !attachmentState.isUploading &&
@@ -905,6 +908,7 @@ export default function ChatArea({
                             (shouldHideChatInput ? false : !taskInputMessage.trim())
                           }
                           className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                          data-tour="send-button"
                         >
                           {isLoading ? (
                             <LoadingDots />

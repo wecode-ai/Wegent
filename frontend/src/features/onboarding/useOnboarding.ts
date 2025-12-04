@@ -93,22 +93,6 @@ export const useOnboarding = ({
       onNextClick: (_element, _step, { state }) => {
         const activeIndex = state.activeIndex ?? 0;
         setCurrentStep(activeIndex + 1);
-
-        // Check if we need to navigate to code page after step 3 (team selector)
-        // Step indices: 0=mode-toggle, 1=task-input, 2=team-selector
-        if (activeIndex === 2 && currentPage === 'chat') {
-          // Save state before navigation
-          setOnboardingInProgress(true);
-          setCurrentStep(3); // Next step will be repo-selector on code page
-
-          // Navigate to code page
-          router.push('/code');
-
-          // Destroy current driver instance
-          driverInstance.current?.destroy();
-          return;
-        }
-
         driverInstance.current?.moveNext();
       },
       onPrevClick: () => {
@@ -135,7 +119,7 @@ export const useOnboarding = ({
     localStorage.removeItem(ONBOARDING_COMPLETED_KEY);
     localStorage.removeItem(ONBOARDING_IN_PROGRESS_KEY);
     localStorage.removeItem(ONBOARDING_CURRENT_STEP_KEY);
-    router.push('/code');
+    router.push('/chat');
   };
 
   useEffect(() => {
@@ -156,8 +140,8 @@ export const useOnboarding = ({
       return () => clearTimeout(timer);
     }
 
-    // Resume tour if in progress (after page navigation)
-    if (isOnboardingInProgress() && currentPage === 'code') {
+    // Resume tour if in progress
+    if (isOnboardingInProgress()) {
       const timer = setTimeout(() => {
         startTour();
       }, 500);
