@@ -558,6 +558,7 @@ async def stream_chat(
             message=final_message,
             model_config=model_config,
             system_prompt=system_prompt,
+            user_id=current_user.id,
         )
         
         # Forward the stream

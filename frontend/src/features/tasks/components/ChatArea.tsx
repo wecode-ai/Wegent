@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, CircleStop, Upload } from 'lucide-react';
+import { Send, CircleStop, Upload, Brain } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -26,6 +26,7 @@ import { useTaskContext } from '../contexts/taskContext';
 import { useChatStreamContext } from '../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
+import MemoryPanel from './MemoryPanel';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
 import { useToast } from '@/hooks/use-toast';
@@ -106,6 +107,7 @@ export default function ChatArea({
   const [floatingMetrics, setFloatingMetrics] = useState({ width: 0, left: 0 });
   const [inputHeight, setInputHeight] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+  const [isMemoryPanelOpen, setIsMemoryPanelOpen] = useState(false);
 
   // New: Get selectedTask to determine if there are messages
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
@@ -921,6 +923,16 @@ export default function ChatArea({
                       )}
                     </div>
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
+                      {/* Memory Panel Button */}
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setIsMemoryPanelOpen(true)}
+                        className="h-6 w-6 rounded-full flex-shrink-0 translate-y-0.5"
+                        title="View memories"
+                      >
+                        <Brain className="h-4 w-4 text-text-secondary" />
+                      </Button>
                       {!shouldHideQuotaUsage && (
                         <QuotaUsage className="flex-shrink-0" compact={shouldUseCompactQuota} />
                       )}
@@ -1232,6 +1244,9 @@ export default function ChatArea({
           </div>
         )}
       </div>
+
+      {/* Memory Panel */}
+      <MemoryPanel isOpen={isMemoryPanelOpen} onClose={() => setIsMemoryPanelOpen(false)} />
     </div>
   );
 }

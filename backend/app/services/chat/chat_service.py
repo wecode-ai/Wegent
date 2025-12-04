@@ -22,6 +22,7 @@ from fastapi.responses import StreamingResponse
 from app.core.config import settings
 from app.services.chat.base import ChatServiceBase, get_http_client
 from app.services.chat.session_manager import session_manager
+from app.services.chat.memory_service import memory_service
 
 logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
@@ -55,6 +56,7 @@ class ChatService(ChatServiceBase):
         message: Union[str, Dict[str, Any]],
         model_config: Dict[str, Any],
         system_prompt: str = "",
+        user_id: Optional[int] = None,
     ) -> StreamingResponse:
         """
         Stream chat response from LLM API.
@@ -65,6 +67,7 @@ class ChatService(ChatServiceBase):
             message: User message (string or vision dict)
             model_config: Model configuration (api_key, base_url, model_id, model)
             system_prompt: Bot's system prompt
+            user_id: Optional user ID for long-term memory retrieval
 
         Returns:
             StreamingResponse with SSE events
@@ -95,12 +98,30 @@ class ChatService(ChatServiceBase):
                 
                 # Update status to RUNNING
                 await self._update_subtask_status(subtask_id, "RUNNING")
-                
+
                 # Get chat history
                 history = await session_manager.get_chat_history(task_id)
-                
-                # Build messages list
-                messages = self._build_messages(history, message, system_prompt)
+
+                # Retrieve and inject long-term memories from mem0
+                memory_context = ""
+                if user_id and memory_service.is_configured:
+                    try:
+                        # Get message text for memory search
+                        query_text = message if isinstance(message, str) else message.get("text", "")
+                        if query_text:
+                            memories = await memory_service.search_memories(
+                                user_id=user_id,
+                                query=query_text,
+                                limit=10,
+                            )
+                            memory_context = memory_service.format_memories_for_context(memories)
+                            if memory_context:
+                                logger.debug(f"Injected {len(memories)} memories for user {user_id}")
+                    except Exception as e:
+                        logger.warning(f"Failed to retrieve memories for user {user_id}: {e}")
+
+                # Build messages list with memory context
+                messages = self._build_messages(history, message, system_prompt, memory_context)
                 
                 # Call LLM API and stream response with cancellation support
                 cancelled = False
@@ -154,6 +175,26 @@ class ChatService(ChatServiceBase):
                     await session_manager.append_user_and_assistant_messages(
                         task_id, message, full_response
                     )
+
+                    # Save conversation to long-term memory asynchronously
+                    if user_id and memory_service.is_configured and full_response:
+                        try:
+                            # Prepare conversation messages for memory extraction
+                            user_text = message if isinstance(message, str) else message.get("text", "")
+                            conv_messages = [
+                                {"role": "user", "content": user_text},
+                                {"role": "assistant", "content": full_response},
+                            ]
+                            # Fire and forget - don't block the response
+                            asyncio.create_task(
+                                memory_service.add_memory(
+                                    user_id=user_id,
+                                    messages=conv_messages,
+                                    metadata={"task_id": task_id, "subtask_id": subtask_id},
+                                )
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to save memory for user {user_id}: {e}")
                     
                     # Update status to COMPLETED and wait for it to complete
                     # This ensures the database is updated before we publish the done signal
@@ -231,7 +272,8 @@ class ChatService(ChatServiceBase):
         self,
         history: List[Dict[str, str]],
         current_message: Union[str, Dict[str, Any]],
-        system_prompt: str
+        system_prompt: str,
+        memory_context: str = "",
     ) -> List[Dict[str, Any]]:
         """
         Build message list for LLM API.
@@ -240,15 +282,24 @@ class ChatService(ChatServiceBase):
             history: Previous conversation history
             current_message: Current user message (string or vision dict)
             system_prompt: System prompt
+            memory_context: Optional memory context to inject
 
         Returns:
             List of message dictionaries
         """
         messages = []
 
+        # Build combined system prompt with memory context
+        combined_system = system_prompt or ""
+        if memory_context:
+            if combined_system:
+                combined_system = f"{combined_system}\n\n{memory_context}"
+            else:
+                combined_system = memory_context
+
         # Add system prompt if provided
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
+        if combined_system:
+            messages.append({"role": "system", "content": combined_system})
 
         # Add history messages
         messages.extend(history)

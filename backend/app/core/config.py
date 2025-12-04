@@ -113,6 +113,11 @@ class Settings(BaseSettings):
     MAX_UPLOAD_FILE_SIZE_MB: int = 50  # Maximum file size in MB
     MAX_EXTRACTED_TEXT_LENGTH: int = 1000000  # Maximum extracted text length
 
+    # mem0 long-term memory configuration
+    MEM0_BASE_URL: str = ""  # mem0 service URL (e.g., http://localhost:8080)
+    MEM0_API_KEY: str = ""  # mem0 API key (if required)
+    MEM0_ENABLED: bool = True  # Enable/disable mem0 integration
+
 
     class Config:
         env_file = ".env"
