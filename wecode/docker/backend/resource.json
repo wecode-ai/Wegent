@@ -514,7 +514,7 @@
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Team",
         "metadata": {
-            "name": "深度调研",
+            "name": "深度研究",
             "namespace": "default",
             "labels": {
                 "share_status": "1"
