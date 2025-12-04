@@ -8,6 +8,7 @@ Attachment API endpoints for file upload and management.
 
 import logging
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -173,15 +174,18 @@ async def download_attachment(
         attachment_id=attachment_id,
         user_id=current_user.id,
     )
-    
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
+    
+    # Encode filename for Content-Disposition header to support non-ASCII characters
+    # Use RFC 5987 encoding: filename*=UTF-8''encoded_filename
+    encoded_filename = quote(attachment.original_filename)
     
     return Response(
         content=attachment.binary_data,
         media_type=attachment.mime_type,
         headers={
-            "Content-Disposition": f'attachment; filename="{attachment.original_filename}"'
+            "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
         }
     )
 
