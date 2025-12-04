@@ -8,10 +8,10 @@ Chat Shell direct chat service.
 Provides streaming chat functionality by directly calling LLM APIs
 (OpenAI, Claude) without going through the Docker Executor.
 """
-
 import asyncio
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
@@ -23,6 +23,7 @@ from app.core.config import settings
 from app.services.chat.base import ChatServiceBase, get_http_client
 from app.services.chat.session_manager import session_manager
 
+logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 # Thread pool for database operations
@@ -75,6 +76,10 @@ class ChatService(ChatServiceBase):
             # Register this stream for cancellation support (async for Redis)
             cancel_event = await session_manager.register_stream(subtask_id)
             
+            # Track accumulated response for incremental saving
+            full_response = ""
+            client_disconnected = False
+            
             try:
                 # Try to acquire semaphore with timeout
                 try:
@@ -98,8 +103,13 @@ class ChatService(ChatServiceBase):
                 messages = self._build_messages(history, message, system_prompt)
                 
                 # Call LLM API and stream response with cancellation support
-                full_response = ""
                 cancelled = False
+                
+                # Incremental save timing
+                last_redis_save = time.time()
+                last_db_save = time.time()
+                redis_interval = settings.STREAMING_REDIS_SAVE_INTERVAL
+                db_interval = settings.STREAMING_DB_SAVE_INTERVAL
                 
                 async for chunk in self._call_llm_streaming_with_cancel(
                     model_config, messages, subtask_id, cancel_event
@@ -110,44 +120,92 @@ class ChatService(ChatServiceBase):
                         break
                     
                     full_response += chunk
-                    yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
+                    
+                    try:
+                        yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
+                    except (GeneratorExit, Exception) as e:
+                        # Client disconnected
+                        logger.info(f"Client disconnected for subtask {subtask_id}: {type(e).__name__}")
+                        client_disconnected = True
+                        break
+                    
+                    # Publish chunk to Redis Pub/Sub for real-time updates
+                    await session_manager.publish_streaming_chunk(subtask_id, chunk)
+                    
+                    # Incremental save to Redis (high frequency)
+                    current_time = time.time()
+                    if current_time - last_redis_save >= redis_interval:
+                        await session_manager.save_streaming_content(subtask_id, full_response)
+                        last_redis_save = current_time
+                    
+                    # Incremental save to database (low frequency)
+                    if current_time - last_db_save >= db_interval:
+                        await self._save_partial_response(subtask_id, full_response, is_streaming=True)
+                        last_db_save = current_time
                 
-                # Handle cancellation vs normal completion
-                if cancelled:
-                    # Don't save to chat history - the cancel endpoint will handle saving partial content
-                    # Don't update status here - the cancel endpoint already updated it
+                # Handle different completion scenarios
+                if client_disconnected:
+                    # Client disconnected - save partial content and mark as completed
+                    await self._handle_client_disconnect(
+                        subtask_id, task_id, full_response, message
+                    )
+                    # Don't yield anything - client is gone
+                elif cancelled:
+                    # User explicitly cancelled - the cancel endpoint handles saving
                     yield f"data: {json.dumps({'content': '', 'done': True, 'cancelled': True})}\n\n"
                 else:
-                    # Save chat history (only for successful completion)
+                    # Normal completion
+                    # Save chat history
                     await session_manager.append_user_and_assistant_messages(
                         task_id, message, full_response
                     )
                     
-                    # Update status to COMPLETED
+                    # Update status to COMPLETED and wait for it to complete
+                    # This ensures the database is updated before we publish the done signal
                     result = {"value": full_response}
-                    await self._update_subtask_status(subtask_id, "COMPLETED", result=result)
+                    await self._update_subtask_status_sync(subtask_id, "COMPLETED", result=result)
+                    
+                    # Clean up Redis streaming cache
+                    await session_manager.delete_streaming_content(subtask_id)
+                    
+                    # Publish stream done signal with result data (no need to read from DB)
+                    await session_manager.publish_streaming_done(subtask_id, result=result)
+                    
                     yield f"data: {json.dumps({'content': '', 'done': True, 'result': result})}\n\n"
                 
             except asyncio.CancelledError:
                 # Handle asyncio cancellation (e.g., client disconnect)
-                logger.info(f"Stream cancelled (asyncio) for subtask {subtask_id}")
-                # Don't update status - let the cancel endpoint handle it
+                logger.info(f"Stream cancelled (asyncio) for subtask {subtask_id}, saving partial content")
+                # Save partial content on disconnect
+                await self._handle_client_disconnect(
+                    subtask_id, task_id, full_response, message
+                )
+                raise  # Re-raise to properly clean up
                 
             except asyncio.TimeoutError:
                 error_msg = "API call timeout"
                 logger.error(f"Chat stream timeout for subtask {subtask_id}")
+                # Save partial content before marking as failed
+                if full_response:
+                    await self._save_partial_response(subtask_id, full_response, is_streaming=False)
                 yield f"data: {json.dumps({'error': error_msg})}\n\n"
                 await self._update_subtask_status(subtask_id, "FAILED", error=error_msg)
                 
             except httpx.RequestError as e:
                 error_msg = f"Network error: {str(e)}"
                 logger.error(f"Chat stream network error for subtask {subtask_id}: {e}")
+                # Save partial content before marking as failed
+                if full_response:
+                    await self._save_partial_response(subtask_id, full_response, is_streaming=False)
                 yield f"data: {json.dumps({'error': error_msg})}\n\n"
                 await self._update_subtask_status(subtask_id, "FAILED", error=error_msg)
                 
             except Exception as e:
                 error_msg = str(e)
                 logger.error(f"Chat stream error for subtask {subtask_id}: {e}", exc_info=True)
+                # Save partial content before marking as failed
+                if full_response:
+                    await self._save_partial_response(subtask_id, full_response, is_streaming=False)
                 yield f"data: {json.dumps({'error': error_msg})}\n\n"
                 await self._update_subtask_status(subtask_id, "FAILED", error=error_msg)
                 
@@ -956,7 +1014,11 @@ class ChatService(ChatServiceBase):
         error: Optional[str] = None
     ):
         """
-        Update subtask status asynchronously.
+        Update subtask status asynchronously (fire-and-forget).
+        
+        This method schedules the database update in a thread pool and returns
+        immediately without waiting for completion. Use _update_subtask_status_sync
+        when you need to ensure the update is complete before proceeding.
         """
         loop = asyncio.get_event_loop()
         
@@ -990,6 +1052,58 @@ class ChatService(ChatServiceBase):
             finally:
                 db.close()
         
+        await loop.run_in_executor(_db_executor, _update)
+    
+    async def _update_subtask_status_sync(
+        self,
+        subtask_id: int,
+        status: str,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None
+    ):
+        """
+        Update subtask status synchronously (waits for completion).
+        
+        This method waits for the database update to complete before returning.
+        Use this when you need to ensure the update is committed before proceeding
+        (e.g., before publishing a stream done signal that clients will act on).
+        """
+        loop = asyncio.get_event_loop()
+        
+        def _update():
+            from app.db.session import SessionLocal
+            from app.models.subtask import Subtask, SubtaskStatus
+            
+            db = SessionLocal()
+            try:
+                subtask = db.query(Subtask).get(subtask_id)
+                if subtask:
+                    subtask.status = SubtaskStatus(status)
+                    subtask.updated_at = datetime.now()
+                    
+                    if result is not None:
+                        subtask.result = result
+                    
+                    if error is not None:
+                        subtask.error_message = error
+                    
+                    if status in ["COMPLETED", "FAILED", "CANCELLED"]:
+                        subtask.completed_at = datetime.now()
+                    
+                    db.commit()
+                    
+                    # Also update task status
+                    self._update_task_status_sync(db, subtask.task_id)
+                    
+                    logger.debug(f"Subtask {subtask_id} status updated to {status} (sync)")
+            except Exception as e:
+                logger.error(f"Error updating subtask {subtask_id} status: {e}")
+                db.rollback()
+                raise  # Re-raise to signal failure
+            finally:
+                db.close()
+        
+        # Wait for the update to complete
         await loop.run_in_executor(_db_executor, _update)
     
     def _update_task_status_sync(self, db, task_id: int):
@@ -1053,6 +1167,112 @@ class ChatService(ChatServiceBase):
         except Exception as e:
             logger.error(f"Error updating task {task_id} status: {e}")
             db.rollback()
+    
+    async def _save_partial_response(
+        self,
+        subtask_id: int,
+        content: str,
+        is_streaming: bool = True
+    ):
+        """
+        Save partial response during streaming.
+        
+        This is called periodically during streaming to persist content
+        to the database, ensuring data is not lost on refresh or disconnect.
+        
+        Args:
+            subtask_id: Subtask ID
+            content: Current accumulated content
+            is_streaming: Whether still streaming (affects result metadata)
+        """
+        loop = asyncio.get_event_loop()
+        
+        def _save():
+            from app.db.session import SessionLocal
+            from app.models.subtask import Subtask
+            
+            db = SessionLocal()
+            try:
+                subtask = db.query(Subtask).get(subtask_id)
+                if subtask:
+                    # Update result field with partial content
+                    subtask.result = {
+                        "value": content,
+                        "streaming": is_streaming  # Mark if still streaming
+                    }
+                    subtask.updated_at = datetime.now()
+                    db.commit()
+                    logger.debug(f"Saved partial response for subtask {subtask_id}: {len(content)} chars, streaming={is_streaming}")
+            except Exception as e:
+                logger.error(f"Error saving partial response for subtask {subtask_id}: {e}")
+                db.rollback()
+            finally:
+                db.close()
+        
+        await loop.run_in_executor(_db_executor, _save)
+    
+    async def _handle_client_disconnect(
+        self,
+        subtask_id: int,
+        task_id: int,
+        partial_content: str,
+        user_message: Any
+    ):
+        """
+        Handle client disconnect during streaming.
+        
+        Strategy:
+        1. Save partial content to database
+        2. Mark subtask as COMPLETED (not FAILED) so user sees partial content
+        3. Save to chat history for context continuity
+        4. Clean up Redis streaming cache
+        
+        This allows:
+        - User can see partial content when they return
+        - Conversation can continue from where it left off
+        - No error state, just incomplete response
+        
+        Args:
+            subtask_id: Subtask ID
+            task_id: Task ID
+            partial_content: Content accumulated before disconnect
+            user_message: Original user message (for chat history)
+        """
+        logger.info(f"Handling client disconnect for subtask {subtask_id}, saved {len(partial_content)} chars")
+        
+        # Only save if we have meaningful content
+        min_chars = settings.STREAMING_MIN_CHARS_TO_SAVE
+        if len(partial_content) < min_chars:
+            logger.info(f"Partial content too short ({len(partial_content)} < {min_chars}), not saving")
+            # Still update status to COMPLETED with empty result
+            result = {
+                "value": partial_content,
+                "incomplete": True,
+                "reason": "client_disconnect"
+            }
+            await self._update_subtask_status(subtask_id, "COMPLETED", result=result)
+            await session_manager.delete_streaming_content(subtask_id)
+            return
+        
+        # 1. Save partial content to database (mark as not streaming)
+        await self._save_partial_response(subtask_id, partial_content, is_streaming=False)
+        
+        # 2. Update status to COMPLETED with incomplete flag
+        result = {
+            "value": partial_content,
+            "incomplete": True,
+            "reason": "client_disconnect"
+        }
+        await self._update_subtask_status(subtask_id, "COMPLETED", result=result)
+        
+        # 3. Save to chat history (for context continuity)
+        if partial_content:
+            await session_manager.append_user_and_assistant_messages(
+                task_id, user_message, partial_content
+            )
+        
+        # 4. Clean up Redis streaming cache
+        await session_manager.delete_streaming_content(subtask_id)
 
 
 # Global chat service instance

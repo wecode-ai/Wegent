@@ -79,11 +79,12 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
   const [saving, setSaving] = useState(false);
   const [testing, setTesting] = useState(false);
   // Determine if current model_id is in preset options
-  const modelOptions = providerType === 'openai' 
-    ? OPENAI_MODEL_OPTIONS 
-    : providerType === 'gemini'
-      ? GEMINI_MODEL_OPTIONS
-      : ANTHROPIC_MODEL_OPTIONS;
+  const modelOptions =
+    providerType === 'openai'
+      ? OPENAI_MODEL_OPTIONS
+      : providerType === 'gemini'
+        ? GEMINI_MODEL_OPTIONS
+        : ANTHROPIC_MODEL_OPTIONS;
 
   useEffect(() => {
     if (model?.spec.modelConfig?.env?.model_id) {
@@ -248,7 +249,12 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
         spec: {
           modelConfig: {
             env: {
-              model: providerType === 'openai' ? 'openai' : providerType === 'gemini' ? 'gemini' : 'claude',
+              model:
+                providerType === 'openai'
+                  ? 'openai'
+                  : providerType === 'gemini'
+                    ? 'gemini'
+                    : 'claude',
               model_id: finalModelId,
               api_key: apiKey,
               ...(baseUrl && { base_url: baseUrl }),
@@ -300,14 +306,11 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
     return () => window.removeEventListener('keydown', handleEsc);
   }, [handleBack]);
 
-  const apiKeyPlaceholder = providerType === 'openai' 
-    ? 'sk-...' 
-    : providerType === 'gemini'
-      ? 'AIza...'
-      : 'sk-ant-...';
+  const apiKeyPlaceholder =
+    providerType === 'openai' ? 'sk-...' : providerType === 'gemini' ? 'AIza...' : 'sk-ant-...';
   const baseUrlPlaceholder =
-    providerType === 'openai' 
-      ? 'https://api.openai.com/v1' 
+    providerType === 'openai'
+      ? 'https://api.openai.com/v1'
       : providerType === 'gemini'
         ? 'https://generativelanguage.googleapis.com'
         : 'https://api.anthropic.com';

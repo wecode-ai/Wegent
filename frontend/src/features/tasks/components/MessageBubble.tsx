@@ -6,7 +6,7 @@
 
 import React, { memo, useState } from 'react';
 import type { TaskDetail, Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
-import { Bot, Copy, Check, Download } from 'lucide-react';
+import { Bot, Copy, Check, Download, AlertCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import ThinkingComponent from './ThinkingComponent';
@@ -34,6 +34,12 @@ export interface Message {
     value?: unknown;
   }> | null;
   attachments?: Attachment[];
+  /** Recovered content from Redis/DB when user refreshes during streaming */
+  recoveredContent?: string;
+  /** Flag indicating this message has recovered content */
+  isRecovered?: boolean;
+  /** Flag indicating the content is incomplete (client disconnected) */
+  isIncomplete?: boolean;
 }
 
 // CopyButton component for copying markdown content
@@ -560,6 +566,66 @@ const MessageBubble = memo(
       );
     };
 
+    // Render recovered content notice
+    const renderRecoveryNotice = () => {
+      if (!msg.isRecovered) return null;
+
+      return (
+        <div className="bg-muted border-l-4 border-primary p-3 mt-2 rounded-r-lg">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-text-primary">
+                {msg.isIncomplete
+                  ? t('messages.content_incomplete') || '回答未完成'
+                  : t('messages.content_recovered') || '已恢复内容'}
+              </p>
+              <p className="text-xs text-text-muted mt-1">
+                {msg.isIncomplete
+                  ? t('messages.content_incomplete_desc') || '连接已断开，这是生成的部分内容'
+                  : t('messages.content_recovered_desc') || '页面刷新后已恢复之前的内容'}
+              </p>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    // Render recovered content with typewriter effect (content is already processed by RecoveredMessageBubble)
+    const renderRecoveredContent = () => {
+      if (!msg.recoveredContent || msg.subtaskStatus !== 'RUNNING') return null;
+
+      return (
+        <div className="space-y-2">
+          {msg.recoveredContent ? (
+            <>
+              <MarkdownEditor.Markdown
+                source={msg.recoveredContent}
+                style={{ background: 'transparent' }}
+                wrapperElement={{ 'data-color-mode': theme }}
+                components={{
+                  a: ({ href, children, ...props }) => (
+                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                      {children}
+                    </a>
+                  ),
+                }}
+              />
+              {/* Blinking cursor to indicate streaming is in progress */}
+              <div className="absolute bottom-2 left-2 z-10 h-8 flex items-center px-2">
+                <span className="animate-pulse text-primary">▊</span>
+              </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-2 text-text-muted">
+              <span className="animate-pulse">●</span>
+              <span className="text-sm">{t('messages.thinking') || 'Thinking...'}</span>
+            </div>
+          )}
+        </div>
+      );
+    };
+
     return (
       <div className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}>
         <div
@@ -574,10 +640,20 @@ const MessageBubble = memo(
                 {headerIcon}
                 <span className="font-semibold">{headerLabel}</span>
                 {timestampLabel && <span>{timestampLabel}</span>}
+                {msg.isRecovered && (
+                  <span className="text-primary text-xs">
+                    ({t('messages.recovered') || '已恢复'})
+                  </span>
+                )}
               </div>
             )}
             {isUserMessage && renderAttachments(msg.attachments)}
-            {renderMessageBody(msg, index)}
+            {/* Show recovered content if available, otherwise show normal content */}
+            {msg.recoveredContent && msg.subtaskStatus === 'RUNNING'
+              ? renderRecoveredContent()
+              : renderMessageBody(msg, index)}
+            {/* Show incomplete notice for completed but incomplete messages */}
+            {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
           </div>
         </div>
       </div>
@@ -591,6 +667,9 @@ const MessageBubble = memo(
       prevProps.msg.subtaskStatus === nextProps.msg.subtaskStatus &&
       prevProps.msg.subtaskId === nextProps.msg.subtaskId &&
       prevProps.msg.timestamp === nextProps.msg.timestamp &&
+      prevProps.msg.recoveredContent === nextProps.msg.recoveredContent &&
+      prevProps.msg.isRecovered === nextProps.msg.isRecovered &&
+      prevProps.msg.isIncomplete === nextProps.msg.isIncomplete &&
       prevProps.theme === nextProps.theme
     );
   }

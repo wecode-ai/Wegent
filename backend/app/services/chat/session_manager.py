@@ -11,6 +11,7 @@ for cross-worker communication in multi-worker deployments.
 """
 
 import asyncio
+import json
 import logging
 from typing import Any, Dict, List, Optional, Union
 
@@ -23,6 +24,11 @@ logger = logging.getLogger(__name__)
 CANCEL_KEY_PREFIX = "chat:cancel:"
 # Cancellation flag TTL in seconds (5 minutes should be enough for any chat)
 CANCEL_FLAG_TTL = 300
+
+# Redis key prefix for streaming content cache
+STREAMING_KEY_PREFIX = "chat:streaming:"
+# Redis Pub/Sub channel prefix for streaming updates
+STREAMING_CHANNEL_PREFIX = "chat:stream_channel:"
 
 
 class SessionManager:
@@ -329,6 +335,170 @@ class SessionManager:
             logger.warning(f"Failed to check Redis cancel flag for subtask {subtask_id}: {e}")
         
         return False
+    
+    # ==================== Streaming Content Cache ====================
+    
+    def _get_streaming_key(self, subtask_id: int) -> str:
+        """Generate Redis key for streaming content cache."""
+        return f"{STREAMING_KEY_PREFIX}{subtask_id}"
+    
+    async def save_streaming_content(
+        self,
+        subtask_id: int,
+        content: str,
+        expire: int = None
+    ) -> bool:
+        """
+        Save streaming content to Redis (temporary cache).
+        
+        This is used for fast recovery when user refreshes during streaming.
+        Content is saved frequently (every 1 second) to minimize data loss.
+        
+        Args:
+            subtask_id: Subtask ID
+            content: Current accumulated content
+            expire: Expiration time in seconds (default from settings)
+            
+        Returns:
+            bool: True if save was successful
+        """
+        try:
+            key = self._get_streaming_key(subtask_id)
+            expire_time = expire or settings.STREAMING_REDIS_TTL
+            return await self._cache.set(key, content, expire=expire_time)
+        except Exception as e:
+            logger.error(f"Error saving streaming content for subtask {subtask_id}: {e}")
+            return False
+    
+    async def get_streaming_content(self, subtask_id: int) -> Optional[str]:
+        """
+        Get streaming content from Redis cache.
+        
+        Used for recovery when user refreshes during streaming.
+        
+        Args:
+            subtask_id: Subtask ID
+            
+        Returns:
+            str or None: Cached streaming content, or None if not found
+        """
+        try:
+            key = self._get_streaming_key(subtask_id)
+            content = await self._cache.get(key)
+            if content is not None and isinstance(content, str):
+                return content
+            return None
+        except Exception as e:
+            logger.error(f"Error getting streaming content for subtask {subtask_id}: {e}")
+            return None
+    
+    async def delete_streaming_content(self, subtask_id: int) -> bool:
+        """
+        Delete streaming content from Redis cache.
+        
+        Called after streaming completes (success, cancel, or error).
+        
+        Args:
+            subtask_id: Subtask ID
+            
+        Returns:
+            bool: True if delete was successful
+        """
+        try:
+            key = self._get_streaming_key(subtask_id)
+            return await self._cache.delete(key)
+        except Exception as e:
+            logger.error(f"Error deleting streaming content for subtask {subtask_id}: {e}")
+            return False
+    
+    def _get_channel_key(self, subtask_id: int) -> str:
+        """Generate Redis Pub/Sub channel key for streaming updates."""
+        return f"{STREAMING_CHANNEL_PREFIX}{subtask_id}"
+    
+    async def publish_streaming_chunk(self, subtask_id: int, chunk: str) -> bool:
+        """
+        Publish a streaming chunk to Redis Pub/Sub.
+        
+        This allows other clients (e.g., reconnected browsers) to receive
+        real-time updates for an ongoing stream.
+        
+        Args:
+            subtask_id: Subtask ID
+            chunk: Content chunk to publish
+            
+        Returns:
+            bool: True if publish was successful
+        """
+        try:
+            channel = self._get_channel_key(subtask_id)
+            # Get a Redis client for pub/sub
+            redis_client = await self._cache._get_client()
+            try:
+                await redis_client.publish(channel, chunk)
+                return True
+            finally:
+                await redis_client.close()
+        except Exception as e:
+            logger.error(f"Error publishing streaming chunk for subtask {subtask_id}: {e}")
+            return False
+    
+    async def publish_streaming_done(
+        self,
+        subtask_id: int,
+        result: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Publish a "done" signal to Redis Pub/Sub with optional result data.
+        
+        The done signal is JSON-encoded and contains:
+        - __type__: "STREAM_DONE" (marker to identify this as a done signal)
+        - result: The final result data (optional)
+        
+        Args:
+            subtask_id: Subtask ID
+            result: Optional result data to include in the done signal
+            
+        Returns:
+            bool: True if publish was successful
+        """
+        try:
+            channel = self._get_channel_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            try:
+                # Encode done signal with result data
+                done_message = json.dumps({
+                    "__type__": "STREAM_DONE",
+                    "result": result
+                })
+                await redis_client.publish(channel, done_message)
+                return True
+            finally:
+                await redis_client.close()
+        except Exception as e:
+            logger.error(f"Error publishing stream done for subtask {subtask_id}: {e}")
+            return False
+    
+    async def subscribe_streaming_channel(self, subtask_id: int):
+        """
+        Subscribe to a streaming channel for real-time updates.
+        
+        Args:
+            subtask_id: Subtask ID
+            
+        Returns:
+            Tuple of (Redis client, PubSub object) or (None, None)
+            Caller is responsible for closing the client when done.
+        """
+        try:
+            channel = self._get_channel_key(subtask_id)
+            redis_client = await self._cache._get_client()
+            pubsub = redis_client.pubsub()
+            await pubsub.subscribe(channel)
+            # Return both client and pubsub so caller can close client when done
+            return redis_client, pubsub
+        except Exception as e:
+            logger.error(f"Error subscribing to streaming channel for subtask {subtask_id}: {e}")
+            return None, None
 
 
 # Global session manager instance

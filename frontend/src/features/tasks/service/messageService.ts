@@ -15,13 +15,6 @@ import { chatApis, StreamChatCallbacks } from '@/apis/chat';
 export function isChatShell(team: Team | null): boolean {
   // Case-insensitive comparison since backend may return 'chat' or 'Chat'
   const result = team?.agent_type?.toLowerCase() === 'chat';
-  console.log('[messageService] isChatShell check:', {
-    teamId: team?.id,
-    teamName: team?.name,
-    agentType: team?.agent_type,
-    agentTypeLower: team?.agent_type?.toLowerCase(),
-    isChatShell: result,
-  });
   return result;
 }
 

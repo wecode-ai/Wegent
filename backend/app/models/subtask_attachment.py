@@ -10,12 +10,19 @@ Stores file binary data and extracted text content for chat attachments.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy import Enum as SQLEnum
 from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 from sqlalchemy.sql import func
 
 from app.db.base import Base
+
+
+# Type adapter for binary data - uses LONGBLOB for MySQL, LargeBinary for others
+BinaryDataType = LargeBinary().with_variant(LONGBLOB, "mysql")
+
+# Type adapter for long text - uses LONGTEXT for MySQL, Text for others
+LongTextType = Text().with_variant(LONGTEXT, "mysql")
 
 
 class AttachmentStatus(str, PyEnum):
@@ -56,18 +63,18 @@ class SubtaskAttachment(Base):
     file_size = Column(Integer, nullable=False)  # File size in bytes
     mime_type = Column(String(100), nullable=False)
     
-    # Binary data storage (LONGBLOB for MySQL - supports up to 4GB)
-    binary_data = Column(LONGBLOB, nullable=False)
+    # Binary data storage (LONGBLOB for MySQL, LargeBinary for SQLite - supports up to 4GB)
+    binary_data = Column(BinaryDataType, nullable=False)
 
-    # Image base64 encoding (for vision models, LONGTEXT for large images)
+    # Image base64 encoding (for vision models, LONGTEXT for MySQL, Text for SQLite)
     # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
     # Empty string or None means no image data
-    image_base64 = Column(LONGTEXT, nullable=True, default="")
+    image_base64 = Column(LongTextType, nullable=True, default="")
 
-    # Extracted text content (LONGTEXT for MySQL - supports up to 4GB)
+    # Extracted text content (LONGTEXT for MySQL, Text for SQLite - supports up to 4GB)
     # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
     # Empty string or None means no extracted text
-    extracted_text = Column(LONGTEXT, nullable=True, default="")
+    extracted_text = Column(LongTextType, nullable=True, default="")
     text_length = Column(Integer, nullable=False, default=0)  # Character count of extracted text
     
     # Processing status
