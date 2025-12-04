@@ -74,8 +74,12 @@ alembic revision --autogenerate -m "description"
 For detailed migration documentation, see `alembic/README`.
 
 5. Run development server
+
+**Important:** The backend depends on the `shared` module located in the project root. You must run the server from the backend directory with the parent directory in PYTHONPATH.
+
 ```bash
-uvicorn app.main:app --reload
+cd backend
+PYTHONPATH=.. uvicorn app.main:app --reload
 ```
 
 ## API Documentation
