@@ -221,7 +221,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 combined_query.c.share_status,
                 combined_query.c.context_user_id,
             )
-            .order_by(combined_query.c.team_created_at.desc())
+            .order_by(combined_query.c.team_updated_at.desc(), combined_query.c.team_id.desc())
             .offset(skip)
             .limit(limit)
         )
