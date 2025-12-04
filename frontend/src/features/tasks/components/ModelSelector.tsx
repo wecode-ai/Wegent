@@ -125,6 +125,14 @@ export default function ModelSelector({
     return allBotsHavePredefinedModel(selectedTeam);
   }, [selectedTeam]);
 
+  // Auto-enable force override when team has predefined models (showDefaultOption is true)
+  // This ensures that when a team already has bound models, the override option is checked by default
+  useEffect(() => {
+    if (showDefaultOption && !disabled) {
+      setForceOverride(true);
+    }
+  }, [showDefaultOption, setForceOverride, disabled]);
+
   // Get compatible provider based on team agent_type
   // agent_type 'agno' -> provider 'openai', agent_type 'claude'/'claudecode' -> provider 'claude'
   const compatibleProvider = useMemo((): string | null => {
