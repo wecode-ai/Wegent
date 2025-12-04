@@ -124,10 +124,10 @@ class ChatService(ChatServiceBase):
                     try:
                         yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
                     except (GeneratorExit, Exception) as e:
-                        # Client disconnected
-                        logger.info(f"Client disconnected for subtask {subtask_id}: {type(e).__name__}")
+                        # Client disconnected - but continue streaming in background
+                        logger.info(f"Client disconnected for subtask {subtask_id}: {type(e).__name__}, continuing in background")
                         client_disconnected = True
-                        break
+                        # Don't break - continue accumulating content
                     
                     # Publish chunk to Redis Pub/Sub for real-time updates
                     await session_manager.publish_streaming_chunk(subtask_id, chunk)
@@ -144,17 +144,12 @@ class ChatService(ChatServiceBase):
                         last_db_save = current_time
                 
                 # Handle different completion scenarios
-                if client_disconnected:
-                    # Client disconnected - save partial content and mark as completed
-                    await self._handle_client_disconnect(
-                        subtask_id, task_id, full_response, message
-                    )
-                    # Don't yield anything - client is gone
-                elif cancelled:
+                if cancelled:
                     # User explicitly cancelled - the cancel endpoint handles saving
-                    yield f"data: {json.dumps({'content': '', 'done': True, 'cancelled': True})}\n\n"
+                    if not client_disconnected:
+                        yield f"data: {json.dumps({'content': '', 'done': True, 'cancelled': True})}\n\n"
                 else:
-                    # Normal completion
+                    # Normal completion (or client disconnected but stream finished)
                     # Save chat history
                     await session_manager.append_user_and_assistant_messages(
                         task_id, message, full_response
@@ -171,15 +166,21 @@ class ChatService(ChatServiceBase):
                     # Publish stream done signal with result data (no need to read from DB)
                     await session_manager.publish_streaming_done(subtask_id, result=result)
                     
-                    yield f"data: {json.dumps({'content': '', 'done': True, 'result': result})}\n\n"
+                    # Only yield if client is still connected
+                    if not client_disconnected:
+                        yield f"data: {json.dumps({'content': '', 'done': True, 'result': result})}\n\n"
                 
             except asyncio.CancelledError:
-                # Handle asyncio cancellation (e.g., client disconnect)
-                logger.info(f"Stream cancelled (asyncio) for subtask {subtask_id}, saving partial content")
-                # Save partial content on disconnect
-                await self._handle_client_disconnect(
-                    subtask_id, task_id, full_response, message
-                )
+                # Handle asyncio cancellation (e.g., server shutdown)
+                logger.info(f"Stream cancelled (asyncio) for subtask {subtask_id}")
+                # Save what we have so far
+                if full_response:
+                    await session_manager.append_user_and_assistant_messages(
+                        task_id, message, full_response
+                    )
+                    result = {"value": full_response, "incomplete": True, "reason": "server_shutdown"}
+                    await self._update_subtask_status(subtask_id, "COMPLETED", result=result)
+                    await session_manager.delete_streaming_content(subtask_id)
                 raise  # Re-raise to properly clean up
                 
             except asyncio.TimeoutError:
