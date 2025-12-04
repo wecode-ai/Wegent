@@ -17,6 +17,8 @@ from typing import Tuple, Optional
 
 import chardet
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -59,11 +61,15 @@ class DocumentParser:
         ".webp": "image/webp",
     }
     
-    # Maximum file size (20 MB)
-    MAX_FILE_SIZE = 20 * 1024 * 1024
+    @classmethod
+    def get_max_file_size(cls) -> int:
+        """Get maximum file size from configuration (in bytes)."""
+        return settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
     
-    # Maximum extracted text length (50000 characters)
-    MAX_TEXT_LENGTH = 1000000
+    @classmethod
+    def get_max_text_length(cls) -> int:
+        """Get maximum extracted text length from configuration."""
+        return settings.MAX_EXTRACTED_TEXT_LENGTH
     
     @classmethod
     def is_supported_extension(cls, extension: str) -> bool:
@@ -78,12 +84,12 @@ class DocumentParser:
     @classmethod
     def validate_file_size(cls, size: int) -> bool:
         """Check if file size is within limits."""
-        return size <= cls.MAX_FILE_SIZE
+        return size <= cls.get_max_file_size()
     
     @classmethod
     def validate_text_length(cls, text: str) -> bool:
         """Check if extracted text length is within limits."""
-        return len(text) <= cls.MAX_TEXT_LENGTH
+        return len(text) <= cls.get_max_text_length()
     
     def parse(self, binary_data: bytes, extension: str) -> Tuple[str, int, Optional[str]]:
         """
@@ -128,7 +134,7 @@ class DocumentParser:
             # Validate text length
             if not self.validate_text_length(text):
                 raise DocumentParseError(
-                    f"Extracted text exceeds maximum length ({self.MAX_TEXT_LENGTH} characters)"
+                    f"Extracted text exceeds maximum length ({self.get_max_text_length()} characters)"
                 )
 
             return text, len(text), image_base64
