@@ -10,8 +10,9 @@ Stores file binary data and extracted text content for chat attachments.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy import Enum as SQLEnum
+from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 from sqlalchemy.sql import func
 
 from app.db.base import Base
@@ -55,18 +56,18 @@ class SubtaskAttachment(Base):
     file_size = Column(Integer, nullable=False)  # File size in bytes
     mime_type = Column(String(100), nullable=False)
     
-    # Binary data storage (LargeBinary for cross-database compatibility)
-    binary_data = Column(LargeBinary, nullable=False)
+    # Binary data storage (LONGBLOB for MySQL - supports up to 4GB)
+    binary_data = Column(LONGBLOB, nullable=False)
 
-    # Image base64 encoding (for vision models)
-    # Note: Using Text for cross-database compatibility (works with both SQLite and MySQL)
+    # Image base64 encoding (for vision models, LONGTEXT for large images)
+    # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
     # Empty string or None means no image data
-    image_base64 = Column(Text, nullable=True, default="")
+    image_base64 = Column(LONGTEXT, nullable=True, default="")
 
-    # Extracted text content
-    # Note: Using Text for cross-database compatibility (works with both SQLite and MySQL)
+    # Extracted text content (LONGTEXT for MySQL - supports up to 4GB)
+    # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
     # Empty string or None means no extracted text
-    extracted_text = Column(Text, nullable=True, default="")
+    extracted_text = Column(LONGTEXT, nullable=True, default="")
     text_length = Column(Integer, nullable=False, default=0)  # Character count of extracted text
     
     # Processing status
