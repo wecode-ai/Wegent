@@ -82,9 +82,9 @@ export const SUPPORTED_MIME_TYPES = [
 ];
 
 /**
- * Maximum file size (20 MB)
+ * Maximum file size (50 MB)
  */
-export const MAX_FILE_SIZE = 20 * 1024 * 1024;
+export const MAX_FILE_SIZE = 50 * 1024 * 1024;
 
 /**
  * Check if a file extension is supported

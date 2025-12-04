@@ -45,7 +45,7 @@ services:
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-backend:1.0.17
+    image: ghcr.io/wecode-ai/wegent-backend:1.0.18
     container_name: wegent-backend
     restart: always
     ports:
@@ -69,6 +69,8 @@ services:
       CODE_TASK_EXECUTOR_DELETE_AFTER_HOURS: 2
       INIT_DATA_DIR: /app/init_data
       INIT_DATA_ENABLED: "True"
+      MAX_UPLOAD_FILE_SIZE_MB: 50
+      MAX_EXTRACTED_TEXT_LENGTH: 1000000
     depends_on:
       mysql:
         condition: service_healthy
@@ -80,7 +82,7 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-web:1.0.17
+    image: ghcr.io/wecode-ai/wegent-web:1.0.18
     container_name: wegent-frontend
     restart: always
     ports:
