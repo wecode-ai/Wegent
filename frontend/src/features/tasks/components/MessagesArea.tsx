@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useEffect, useLayoutEffect } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
 import type {
   TaskDetail,
@@ -20,9 +20,9 @@ import { useTranslation } from '@/hooks/useTranslation';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
+import { useMultipleStreamingRecovery, type RecoveryState } from '@/hooks/useStreamingRecovery';
 import MessageBubble, { type Message } from './MessageBubble';
 import AttachmentPreview from './AttachmentPreview';
-import { useState } from 'react';
 
 interface ResultWithThinking {
   thinking?: unknown[];
@@ -111,6 +111,58 @@ const BubbleTools = ({
     </div>
   );
 };
+/**
+ * Component to render a recovered message with typewriter effect.
+ * This is a separate component because hooks cannot be used in loops.
+ */
+interface RecoveredMessageBubbleProps {
+  msg: Message;
+  index: number;
+  recovery: RecoveryState;
+  selectedTaskDetail: TaskDetail | null;
+  selectedTeam?: Team | null;
+  selectedRepo?: GitRepoInfo | null;
+  selectedBranch?: GitBranch | null;
+  theme: 'light' | 'dark';
+  t: (key: string) => string;
+}
+
+function RecoveredMessageBubble({
+  msg,
+  index,
+  recovery,
+  selectedTaskDetail,
+  selectedTeam,
+  selectedRepo,
+  selectedBranch,
+  theme,
+  t,
+}: RecoveredMessageBubbleProps) {
+  // Use typewriter effect for recovered content that is still streaming
+  const displayContent = useTypewriter(recovery.content || '');
+
+  // Create a modified message with the typewriter-processed content
+  const modifiedMsg: Message = {
+    ...msg,
+    // Replace recoveredContent with typewriter-processed content
+    recoveredContent: recovery.streaming ? displayContent : recovery.content,
+    isRecovered: true,
+    isIncomplete: recovery.incomplete,
+  };
+
+  return (
+    <MessageBubble
+      msg={modifiedMsg}
+      index={index}
+      selectedTaskDetail={selectedTaskDetail}
+      selectedTeam={selectedTeam}
+      selectedRepo={selectedRepo}
+      selectedBranch={selectedBranch}
+      theme={theme}
+      t={t}
+    />
+  );
+}
 
 interface MessagesAreaProps {
   selectedTeam?: Team | null;
@@ -126,6 +178,8 @@ interface MessagesAreaProps {
   pendingAttachment?: Attachment | null;
   /** Callback to notify parent when content changes and scroll may be needed */
   onContentChange?: () => void;
+  /** Current streaming subtask ID (for deduplication) */
+  streamingSubtaskId?: number | null;
 }
 
 export default function MessagesArea({
@@ -137,6 +191,7 @@ export default function MessagesArea({
   pendingUserMessage,
   pendingAttachment,
   onContentChange,
+  streamingSubtaskId,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
@@ -174,14 +229,57 @@ export default function MessagesArea({
     };
   }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail, isChatShell]);
 
+  // Prepare subtasks for recovery check
+  const subtasksForRecovery = useMemo(() => {
+    if (!selectedTaskDetail?.subtasks) return null;
+    return selectedTaskDetail.subtasks.map(sub => ({
+      id: sub.id,
+      status: sub.status,
+      role: sub.role,
+    }));
+  }, [selectedTaskDetail?.subtasks]);
+
+  // Get team ID for offset-based streaming recovery
+  const teamId = selectedTeam?.id || selectedTaskDetail?.team?.id || null;
+
+  // Use recovery hook to get streaming content for RUNNING subtasks
+  // When stream completes, refresh task detail to update status
+  // Pass streamingSubtaskId to prevent recovery for actively streaming subtasks
+  const recoveryMap = useMultipleStreamingRecovery(
+    subtasksForRecovery,
+    teamId,
+    () => {
+      // Refresh task detail when any subtask stream completes
+      refreshSelectedTaskDetail(false);
+    },
+    streamingSubtaskId
+  );
+
   // Calculate messages from taskDetail
-  function generateTaskMessages(detail: TaskDetail | null): Message[] {
+  // Now accepts isStreaming and streamingSubtaskId to filter out currently streaming subtask
+  function generateTaskMessages(
+    detail: TaskDetail | null,
+    currentlyStreaming: boolean,
+    currentStreamingSubtaskId: number | null
+  ): Message[] {
     if (!detail) return [];
     const messages: Message[] = [];
 
     // When subtasks exist, synthesize according to useTaskActionData logic
     if (Array.isArray(detail.subtasks) && detail.subtasks.length > 0) {
       detail.subtasks.forEach((sub: TaskDetailSubtask) => {
+        // Only skip AI subtasks that are currently streaming to avoid duplication
+        // Always show user messages (role === 'USER') even if they match streamingSubtaskId
+        // This ensures user messages are always visible
+        if (
+          sub.role !== 'USER' &&
+          currentlyStreaming &&
+          currentStreamingSubtaskId &&
+          sub.id === currentStreamingSubtaskId
+        ) {
+          return;
+        }
+
         const promptContent = sub.prompt || '';
         let content;
         let msgType: 'user' | 'ai';
@@ -259,6 +357,18 @@ export default function MessagesArea({
           }
         }
 
+        // Check if we have recovered content for this subtask
+        const recovery = recoveryMap.get(sub.id);
+        let recoveredContent: string | undefined;
+        let isRecovered = false;
+        let isIncomplete = false;
+
+        if (recovery?.recovered && recovery.content) {
+          recoveredContent = recovery.content;
+          isRecovered = true;
+          isIncomplete = recovery.incomplete;
+        }
+
         messages.push({
           type: msgType,
           content: content,
@@ -271,6 +381,9 @@ export default function MessagesArea({
           subtaskStatus: sub.status, // Add subtask status
           subtaskId: sub.id, // Add subtask ID for stable key
           attachments: sub.attachments as Attachment[], // Add attachments
+          recoveredContent, // Add recovered content if available
+          isRecovered, // Flag to indicate this is recovered content
+          isIncomplete, // Flag to indicate content is incomplete
         });
       });
     }
@@ -278,7 +391,97 @@ export default function MessagesArea({
     return messages;
   }
 
-  const displayMessages = generateTaskMessages(selectedTaskDetail);
+  const displayMessages = generateTaskMessages(
+    selectedTaskDetail,
+    isStreaming || false,
+    streamingSubtaskId || null
+  );
+
+  // Check if pending user message is already in displayMessages (to avoid duplication)
+  // Check if pending user message is already in displayMessages (to avoid duplication)
+  // This happens when refreshTasks() is called and the backend returns the message
+  const isPendingMessageAlreadyDisplayed = useMemo(() => {
+    if (!pendingUserMessage) return false;
+
+    // IMPORTANT: Don't hide pending message while streaming is active
+    // The user message subtask might be filtered out by streamingSubtaskId logic,
+    // so we need to keep showing the pending message until streaming completes
+    if (isStreaming) return false;
+
+    // Check if ANY user message in displayMessages matches the pending message
+    // This handles the case where the message might not be the last one
+    const userMessages = displayMessages.filter(msg => msg.type === 'user');
+    if (userMessages.length === 0) return false;
+
+    const pendingTrimmed = pendingUserMessage.trim();
+    // Check all user messages for a match
+    // Use includes() as a fallback in case of minor formatting differences
+    const isDisplayed = userMessages.some(msg => {
+      const msgTrimmed = msg.content.trim();
+      // Exact match
+      if (msgTrimmed === pendingTrimmed) return true;
+      // Check if one contains the other (handles cases where backend might add/remove whitespace)
+      if (msgTrimmed.includes(pendingTrimmed) || pendingTrimmed.includes(msgTrimmed)) return true;
+      return false;
+    });
+
+    return isDisplayed;
+  }, [displayMessages, pendingUserMessage, isStreaming]);
+  // Check if streaming content is already in displayMessages (to avoid duplication)
+  // This happens when the stream completes and the backend returns the AI response
+  const isStreamingContentAlreadyDisplayed = useMemo(() => {
+    if (!streamingContent) return false;
+
+    // If we have a streaming subtask ID, check if that specific subtask has completed content
+    if (streamingSubtaskId) {
+      const streamingSubtaskMessage = displayMessages.find(
+        msg => msg.type === 'ai' && msg.subtaskId === streamingSubtaskId
+      );
+      if (streamingSubtaskMessage) {
+        // Check if this subtask has actual content (not just progress bar)
+        if (streamingSubtaskMessage.content && streamingSubtaskMessage.content.includes('${$$}$')) {
+          const parts = streamingSubtaskMessage.content.split('${$$}$');
+          if (parts.length >= 2) {
+            const aiContent = parts[1];
+            // If AI content is not empty and not a progress bar, it's already displayed
+            if (aiContent && !aiContent.includes('__PROGRESS_BAR__')) {
+              return true;
+            }
+          }
+        }
+        // Also check subtask status
+        const subtaskStatus = streamingSubtaskMessage.subtaskStatus;
+        if (subtaskStatus && subtaskStatus !== 'RUNNING' && subtaskStatus !== 'PENDING') {
+          return true;
+        }
+      }
+      // If the streaming subtask is not in displayMessages yet, don't hide streaming content
+      return false;
+    }
+
+    // Fallback: check the last AI message (for backward compatibility)
+    const aiMessages = displayMessages.filter(msg => msg.type === 'ai');
+    if (aiMessages.length === 0) return false;
+    const lastAiMessage = aiMessages[aiMessages.length - 1];
+    // If the last AI message's subtask is completed (not RUNNING/PENDING),
+    // the streaming content is already saved to backend
+    const subtaskStatus = lastAiMessage.subtaskStatus;
+    if (subtaskStatus && subtaskStatus !== 'RUNNING' && subtaskStatus !== 'PENDING') {
+      return true;
+    }
+    // Also check if the content has actual AI response (not just progress bar)
+    if (lastAiMessage.content && lastAiMessage.content.includes('${$$}$')) {
+      const parts = lastAiMessage.content.split('${$$}$');
+      if (parts.length >= 2) {
+        const aiContent = parts[1];
+        // If AI content is not empty and not a progress bar, it's already displayed
+        if (aiContent && !aiContent.includes('__PROGRESS_BAR__')) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }, [displayMessages, streamingContent, streamingSubtaskId]);
 
   // Notify parent component when content changes (for scroll management)
   useLayoutEffect(() => {
@@ -299,22 +502,46 @@ export default function MessagesArea({
       {/* Messages Area - only shown when there are messages or loading */}
       {(displayMessages.length > 0 || pendingUserMessage || isStreaming) && (
         <div className="flex-1 space-y-8 messages-container">
-          {displayMessages.map((msg, index) => (
-            <MessageBubble
-              key={msg.subtaskId || `msg-${index}-${msg.timestamp}`}
-              msg={msg}
-              index={index}
-              selectedTaskDetail={selectedTaskDetail}
-              selectedTeam={selectedTeam}
-              selectedRepo={selectedRepo}
-              selectedBranch={selectedBranch}
-              theme={theme as 'light' | 'dark'}
-              t={t}
-            />
-          ))}
+          {displayMessages.map((msg, index) => {
+            // Check if this message has recovery state and is still streaming
+            const recovery = msg.subtaskId ? recoveryMap.get(msg.subtaskId) : undefined;
 
-          {/* Pending user message (optimistic update) */}
-          {pendingUserMessage && (
+            // Use RecoveredMessageBubble for messages with active recovery (streaming)
+            if (recovery?.recovered && recovery.streaming) {
+              return (
+                <RecoveredMessageBubble
+                  key={msg.subtaskId || `msg-${index}-${msg.timestamp}`}
+                  msg={msg}
+                  index={index}
+                  recovery={recovery}
+                  selectedTaskDetail={selectedTaskDetail}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  theme={theme as 'light' | 'dark'}
+                  t={t}
+                />
+              );
+            }
+
+            // Use regular MessageBubble for other messages
+            return (
+              <MessageBubble
+                key={msg.subtaskId || `msg-${index}-${msg.timestamp}`}
+                msg={msg}
+                index={index}
+                selectedTaskDetail={selectedTaskDetail}
+                selectedTeam={selectedTeam}
+                selectedRepo={selectedRepo}
+                selectedBranch={selectedBranch}
+                theme={theme as 'light' | 'dark'}
+                t={t}
+              />
+            );
+          })}
+
+          {/* Pending user message (optimistic update) - only show if not already in displayMessages */}
+          {pendingUserMessage && !isPendingMessageAlreadyDisplayed && (
             <div className="flex justify-end my-6">
               <div className="flex max-w-[75%] w-auto flex-col gap-3 items-end">
                 <div className="relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm bg-muted">
@@ -334,68 +561,74 @@ export default function MessagesArea({
             </div>
           )}
 
-          {/* Streaming AI response */}
-          {(isStreaming || streamingContent) && streamingContent !== undefined && (
-            <div className="flex justify-start">
-              <div className="flex w-full flex-col gap-3 items-start">
-                <div className="relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm bg-surface">
-                  <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
-                    <Bot className="w-4 h-4" />
-                    <span className="font-semibold">
-                      {selectedTeam?.name || t('messages.bot') || 'Bot'}
-                    </span>
-                  </div>
-                  {displayContent ? (
-                    <>
-                      <MarkdownEditor.Markdown
-                        source={displayContent}
-                        style={{ background: 'transparent' }}
-                        wrapperElement={{ 'data-color-mode': theme }}
-                        components={{
-                          a: ({ href, children, ...props }) => (
-                            <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                              {children}
-                            </a>
-                          ),
-                        }}
-                      />
-                      {/* Show copy button when streaming is complete */}
-                      {!isStreaming && (
-                        <BubbleTools
-                          contentToCopy={streamingContent || ''}
-                          tools={[
-                            {
-                              key: 'download',
-                              title: t('messages.download') || 'Download',
-                              icon: <Download className="h-4 w-4 text-text-muted" />,
-                              onClick: () => {
-                                const blob = new Blob([streamingContent || ''], {
-                                  type: 'text/plain;charset=utf-8',
-                                });
-                                const url = URL.createObjectURL(blob);
-                                const a = document.createElement('a');
-                                a.href = url;
-                                a.download = 'message.md';
-                                a.click();
-                                URL.revokeObjectURL(url);
-                              },
-                            },
-                          ]}
-                        />
-                      )}
-                    </>
-                  ) : (
-                    <div className="flex items-center gap-2 text-text-muted">
-                      <span className="animate-pulse">●</span>
-                      <span className="text-sm">{t('messages.thinking') || 'Thinking...'}</span>
+          {/* Streaming AI response - only show if not already in displayMessages */}
+          {(isStreaming || streamingContent) &&
+            streamingContent !== undefined &&
+            !isStreamingContentAlreadyDisplayed && (
+              <div className="flex justify-start">
+                <div className="flex w-full flex-col gap-3 items-start">
+                  <div className="relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm bg-surface">
+                    <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                      <Bot className="w-4 h-4" />
+                      <span className="font-semibold">
+                        {selectedTeam?.name || t('messages.bot') || 'Bot'}
+                      </span>
                     </div>
-                  )}
-                  {/* Blinking cursor - only show when actively streaming */}
-                  {isStreaming && <span className="animate-pulse text-primary">▊</span>}
+                    {displayContent ? (
+                      <>
+                        <MarkdownEditor.Markdown
+                          source={displayContent}
+                          style={{ background: 'transparent' }}
+                          wrapperElement={{ 'data-color-mode': theme }}
+                          components={{
+                            a: ({ href, children, ...props }) => (
+                              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                                {children}
+                              </a>
+                            ),
+                          }}
+                        />
+                        {/* Show copy button when streaming is complete */}
+                        {!isStreaming && (
+                          <BubbleTools
+                            contentToCopy={streamingContent || ''}
+                            tools={[
+                              {
+                                key: 'download',
+                                title: t('messages.download') || 'Download',
+                                icon: <Download className="h-4 w-4 text-text-muted" />,
+                                onClick: () => {
+                                  const blob = new Blob([streamingContent || ''], {
+                                    type: 'text/plain;charset=utf-8',
+                                  });
+                                  const url = URL.createObjectURL(blob);
+                                  const a = document.createElement('a');
+                                  a.href = url;
+                                  a.download = 'message.md';
+                                  a.click();
+                                  URL.revokeObjectURL(url);
+                                },
+                              },
+                            ]}
+                          />
+                        )}
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-2 text-text-muted">
+                        <span className="animate-pulse">●</span>
+                        <span className="text-sm">{t('messages.thinking') || 'Thinking...'}</span>
+                      </div>
+                    )}
+                    {/* Blinking cursor - only show when actively streaming */}
+                    {isStreaming && (
+                      <div className="absolute bottom-2 left-2 z-10 h-8 flex items-center px-2">
+                        <span className="animate-pulse text-primary">▊</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          )}
+            )}
         </div>
       )}
     </div>

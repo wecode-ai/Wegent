@@ -52,6 +52,12 @@ class Settings(BaseSettings):
     CHAT_HISTORY_MAX_MESSAGES: int = 50  # Maximum messages to keep in history
     CHAT_API_TIMEOUT_SECONDS: int = 300  # LLM API call timeout (5 minutes)
 
+    # Streaming incremental save configuration
+    STREAMING_REDIS_SAVE_INTERVAL: float = 1.0  # Redis save interval (seconds)
+    STREAMING_DB_SAVE_INTERVAL: float = 5.0  # Database save interval (seconds)
+    STREAMING_REDIS_TTL: int = 300  # Redis streaming cache TTL (seconds)
+    STREAMING_MIN_CHARS_TO_SAVE: int = 50  # Minimum characters to save on disconnect
+
     # Task append expiration (hours)
     APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
     APPEND_CODE_TASK_EXPIRE_HOURS: int = 24
