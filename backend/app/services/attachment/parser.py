@@ -63,7 +63,7 @@ class DocumentParser:
     MAX_FILE_SIZE = 20 * 1024 * 1024
     
     # Maximum extracted text length (50000 characters)
-    MAX_TEXT_LENGTH = 50000
+    MAX_TEXT_LENGTH = 1000000
     
     @classmethod
     def is_supported_extension(cls, extension: str) -> bool:
