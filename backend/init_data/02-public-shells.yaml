@@ -58,5 +58,6 @@ spec:
   supportModel:
     - claude
     - openai
+    - gemini
 status:
   state: Available

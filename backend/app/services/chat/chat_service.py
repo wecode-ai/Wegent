@@ -242,6 +242,11 @@ class ChatService(ChatServiceBase):
                 client, api_key, base_url, model_id, messages, default_headers
             ):
                 yield chunk
+        elif model_type == "gemini":
+            async for chunk in self._call_gemini_streaming(
+                client, api_key, base_url, model_id, messages, default_headers
+            ):
+                yield chunk
         else:
             async for chunk in self._call_openai_streaming(
                 client, api_key, base_url, model_id, messages, default_headers
@@ -273,6 +278,14 @@ class ChatService(ChatServiceBase):
         # Build request based on model type with cancellation support
         if model_type == "claude":
             async for chunk in self._call_claude_streaming_with_cancel(
+                client, api_key, base_url, model_id, messages, default_headers, subtask_id, cancel_event
+            ):
+                # Check cancellation before yielding each chunk
+                if cancel_event.is_set():
+                    return
+                yield chunk
+        elif model_type == "gemini":
+            async for chunk in self._call_gemini_streaming_with_cancel(
                 client, api_key, base_url, model_id, messages, default_headers, subtask_id, cancel_event
             ):
                 # Check cancellation before yielding each chunk
@@ -572,6 +585,261 @@ class ChatService(ChatServiceBase):
                             content = delta.get("content", "")
                             if content:
                                 yield content
+                    except json.JSONDecodeError:
+                        continue
+    
+    async def _call_gemini_streaming(
+        self,
+        client: httpx.AsyncClient,
+        api_key: str,
+        base_url: str,
+        model_id: str,
+        messages: List[Dict[str, str]],
+        default_headers: Dict[str, Any] = None
+    ) -> AsyncGenerator[str, None]:
+        """
+        Call Gemini API with streaming.
+        
+        Gemini uses a different message format:
+        - Endpoint: {base_url}/v1beta/models/{model_id}:streamGenerateContent
+        - API key is passed as query parameter
+        - Messages use 'parts' array instead of 'content' string
+        - Role mapping: assistant -> model
+        """
+        # Build URL with API key as query parameter
+        base_url_stripped = base_url.rstrip('/')
+        # Handle both full URL and base domain cases
+        if "generativelanguage.googleapis.com" in base_url_stripped:
+            if "/v1beta" in base_url_stripped or "/v1" in base_url_stripped:
+                # URL already has version path
+                url = f"{base_url_stripped}/models/{model_id}:streamGenerateContent"
+            else:
+                url = f"{base_url_stripped}/v1beta/models/{model_id}:streamGenerateContent"
+        else:
+            url = f"{base_url_stripped}/v1beta/models/{model_id}:streamGenerateContent"
+        
+        # Add SSE format to query params
+        url = f"{url}?alt=sse"
+        
+        headers = {
+            "Content-Type": "application/json",
+        }
+        
+        # Add API key to header
+        if api_key:
+            headers["x-goog-api-key"] = api_key
+        
+        # Merge default_headers (custom headers take precedence)
+        if default_headers:
+            headers.update(default_headers)
+        
+        # Convert messages to Gemini format
+        system_instruction = None
+        gemini_contents = []
+        
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            
+            if role == "system":
+                # Gemini uses systemInstruction separately
+                if isinstance(content, str):
+                    system_instruction = {"parts": [{"text": content}]}
+                continue
+            
+            # Map roles: assistant -> model
+            gemini_role = "model" if role == "assistant" else "user"
+            
+            # Convert content to parts format
+            if isinstance(content, str):
+                parts = [{"text": content}]
+            elif isinstance(content, list):
+                # Handle multi-part content (vision messages)
+                parts = []
+                for block in content:
+                    if block.get("type") == "text":
+                        parts.append({"text": block.get("text", "")})
+                    elif block.get("type") == "image_url":
+                        image_url_data = block.get("image_url", {})
+                        if isinstance(image_url_data, dict):
+                            image_url = image_url_data.get("url", "")
+                        else:
+                            image_url = image_url_data
+                        
+                        # Convert data URL to Gemini inline_data format
+                        if image_url.startswith("data:"):
+                            data_parts = image_url.split(",", 1)
+                            if len(data_parts) == 2:
+                                header = data_parts[0]
+                                base64_data = data_parts[1]
+                                mime_type = header.split(":")[1].split(";")[0]
+                                parts.append({
+                                    "inline_data": {
+                                        "mime_type": mime_type,
+                                        "data": base64_data
+                                    }
+                                })
+            else:
+                parts = [{"text": str(content)}]
+            
+            gemini_contents.append({
+                "role": gemini_role,
+                "parts": parts
+            })
+        
+        payload = {
+            "contents": gemini_contents,
+        }
+        
+        if system_instruction:
+            payload["systemInstruction"] = system_instruction
+        
+        async with client.stream("POST", url, json=payload, headers=headers) as response:
+            if response.status_code >= 400:
+                error_body = await response.aread()
+                logger.error(f"Gemini API error: status={response.status_code}, body={error_body.decode('utf-8', errors='replace')}")
+            response.raise_for_status()
+            
+            async for line in response.aiter_lines():
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk_data = json.loads(data)
+                        candidates = chunk_data.get("candidates", [])
+                        if candidates:
+                            content_obj = candidates[0].get("content", {})
+                            parts = content_obj.get("parts", [])
+                            for part in parts:
+                                text = part.get("text", "")
+                                if text:
+                                    yield text
+                    except json.JSONDecodeError:
+                        continue
+    
+    async def _call_gemini_streaming_with_cancel(
+        self,
+        client: httpx.AsyncClient,
+        api_key: str,
+        base_url: str,
+        model_id: str,
+        messages: List[Dict[str, str]],
+        default_headers: Dict[str, Any],
+        subtask_id: int,
+        cancel_event: asyncio.Event
+    ) -> AsyncGenerator[str, None]:
+        """
+        Call Gemini API with streaming and cancellation support.
+        """
+        # Build URL with API key as query parameter
+        base_url_stripped = base_url.rstrip('/')
+        if "generativelanguage.googleapis.com" in base_url_stripped:
+            if "/v1beta" in base_url_stripped or "/v1" in base_url_stripped:
+                url = f"{base_url_stripped}/models/{model_id}:streamGenerateContent"
+            else:
+                url = f"{base_url_stripped}/v1beta/models/{model_id}:streamGenerateContent"
+        else:
+            url = f"{base_url_stripped}/v1beta/models/{model_id}:streamGenerateContent"
+        
+        url = f"{url}?alt=sse"
+        
+        headers = {
+            "Content-Type": "application/json",
+        }
+        
+        # Add API key to header
+        if api_key:
+            headers["x-goog-api-key"] = api_key
+        
+        if default_headers:
+            headers.update(default_headers)
+        
+        # Convert messages to Gemini format
+        system_instruction = None
+        gemini_contents = []
+        
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            
+            if role == "system":
+                if isinstance(content, str):
+                    system_instruction = {"parts": [{"text": content}]}
+                continue
+            
+            gemini_role = "model" if role == "assistant" else "user"
+            
+            if isinstance(content, str):
+                parts = [{"text": content}]
+            elif isinstance(content, list):
+                parts = []
+                for block in content:
+                    if block.get("type") == "text":
+                        parts.append({"text": block.get("text", "")})
+                    elif block.get("type") == "image_url":
+                        image_url_data = block.get("image_url", {})
+                        if isinstance(image_url_data, dict):
+                            image_url = image_url_data.get("url", "")
+                        else:
+                            image_url = image_url_data
+                        
+                        if image_url.startswith("data:"):
+                            data_parts = image_url.split(",", 1)
+                            if len(data_parts) == 2:
+                                header = data_parts[0]
+                                base64_data = data_parts[1]
+                                mime_type = header.split(":")[1].split(";")[0]
+                                parts.append({
+                                    "inline_data": {
+                                        "mime_type": mime_type,
+                                        "data": base64_data
+                                    }
+                                })
+            else:
+                parts = [{"text": str(content)}]
+            
+            gemini_contents.append({
+                "role": gemini_role,
+                "parts": parts
+            })
+        
+        payload = {
+            "contents": gemini_contents,
+        }
+        
+        if system_instruction:
+            payload["systemInstruction"] = system_instruction
+        
+        async with client.stream("POST", url, json=payload, headers=headers) as response:
+            if response.status_code >= 400:
+                error_body = await response.aread()
+                logger.error(f"Gemini API error: status={response.status_code}, body={error_body.decode('utf-8', errors='replace')}")
+            response.raise_for_status()
+            
+            async for line in response.aiter_lines():
+                # Check cancellation at each line
+                if cancel_event.is_set():
+                    return
+                
+                if not line or line.startswith(":"):
+                    continue
+                if line.startswith("data: "):
+                    data = line[6:]
+                    if data == "[DONE]":
+                        break
+                    try:
+                        chunk_data = json.loads(data)
+                        candidates = chunk_data.get("candidates", [])
+                        if candidates:
+                            content_obj = candidates[0].get("content", {})
+                            parts = content_obj.get("parts", [])
+                            for part in parts:
+                                text = part.get("text", "")
+                                if text:
+                                    yield text
                     except json.JSONDecodeError:
                         continue
     

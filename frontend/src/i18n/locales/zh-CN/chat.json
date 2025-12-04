@@ -111,6 +111,9 @@
   },
   "send_shortcut_ctrl": "Ctrl+Enter 发送",
   "send_shortcut_cmd": "Cmd+Enter 发送",
+  "errors": {
+    "payload_too_large": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小"
+  },
   "clarification": {
     "title": "需求规范澄清 (Spec Clarification)",
     "recommended": "推荐",

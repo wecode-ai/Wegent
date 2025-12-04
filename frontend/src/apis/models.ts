@@ -86,7 +86,7 @@ export interface UnifiedModelListResponse {
 
 // Test Connection Types
 export interface TestConnectionRequest {
-  provider_type: 'openai' | 'anthropic';
+  provider_type: 'openai' | 'anthropic' | 'gemini';
   model_id: string;
   api_key: string;
   base_url?: string;

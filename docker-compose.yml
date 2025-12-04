@@ -45,7 +45,7 @@ services:
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-backend:1.0.16
+    image: ghcr.io/wecode-ai/wegent-backend:1.0.17
     container_name: wegent-backend
     restart: always
     ports:
@@ -80,7 +80,7 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-web:1.0.16
+    image: ghcr.io/wecode-ai/wegent-web:1.0.17
     container_name: wegent-frontend
     restart: always
     ports:
