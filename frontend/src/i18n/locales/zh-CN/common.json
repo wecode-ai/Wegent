@@ -495,7 +495,7 @@
     "name_readonly_hint": "模型名称创建后不可修改",
     "provider_type": "模型协议",
     "select_provider": "选择模型协议",
-    "provider_hint": "Agno 使用 OpenAI 协议，Claude Code 使用 Anthropic 协议",
+    "provider_hint": "Agno 使用 OpenAI 协议，Claude Code 使用 Anthropic 协议，Gemini 使用 Google 协议",
     "api_key": "API Key",
     "base_url": "Base URL",
     "base_url_hint": "使用默认端点留空，使用代理或自定义端点时填写",

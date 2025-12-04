@@ -494,7 +494,7 @@
     "name_readonly_hint": "Model name cannot be changed after creation",
     "provider_type": "Model Protocol",
     "select_provider": "Select Protocol",
-    "provider_hint": "Agno uses OpenAI protocol, Claude Code uses Anthropic protocol",
+    "provider_hint": "Agno uses OpenAI protocol, Claude Code uses Anthropic protocol, Gemini uses Google protocol",
     "api_key": "API Key",
     "base_url": "Base URL",
     "base_url_hint": "Leave empty for default endpoint, fill in for proxy or custom endpoint",
