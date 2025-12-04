@@ -16,7 +16,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 export const metadata: Metadata = {
-  title: 'Wegent AI Assistant',
+  title: 'Wegent AI',
   description: 'AI-powered assistant in browser.',
   icons: {
     icon: '/weibo-logo.png',

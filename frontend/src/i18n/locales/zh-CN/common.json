@@ -272,7 +272,7 @@
   },
   "auth": {
     "login_title": "登录 Wegent AI",
-    "login_subtitle": "您的开发者 AI 助手",
+    "login_subtitle": "您的 AI 助手",
     "oidc_login_failed": "OIDC 登录失败：",
     "login_success": "登录成功",
     "loading": "加载中..."
