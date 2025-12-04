@@ -211,16 +211,45 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Track previous task detail status to detect status changes
+  const prevTaskDetailStatusRef = useRef<string | null>(null);
+
   useEffect(() => {
     if (selectedTask) {
       // Mark task as viewed when selected
       markTaskAsViewed(selectedTask.id, selectedTask.status);
+      // Trigger re-render of task list to update unread indicator
+      setViewStatusVersion(prev => prev + 1);
       refreshSelectedTaskDetail(false); // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask]);
+
+  // Monitor selectedTaskDetail status changes
+  // When task transitions to terminal state while being viewed, mark as read
+  useEffect(() => {
+    if (!selectedTaskDetail) {
+      prevTaskDetailStatusRef.current = null;
+      return;
+    }
+
+    const currentStatus = selectedTaskDetail.status;
+    const prevStatus = prevTaskDetailStatusRef.current;
+    const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
+
+    // If status changed to terminal state while user is viewing this task
+    if (prevStatus && prevStatus !== currentStatus && terminalStates.includes(currentStatus)) {
+      // Mark as viewed immediately since user is already viewing this task
+      markTaskAsViewed(selectedTaskDetail.id, currentStatus);
+      // Trigger re-render of task list to update unread indicator
+      setViewStatusVersion(prev => prev + 1);
+    }
+
+    // Update previous status reference
+    prevTaskDetailStatusRef.current = currentStatus;
+  }, [selectedTaskDetail]);
 
   // Search tasks
   const searchTasks = async (term: string) => {
