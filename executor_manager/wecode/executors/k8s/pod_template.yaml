@@ -70,7 +70,7 @@ spec:
           value: |-
             {{ repo_proxy_config }}
         - name: TASK_API_DOMAIN
-          value: http://wegent-backend-web.wb-plat-ide:8080
+          value: {{ task_api_domain }}
         - name: DEBUG_RUN
           value: DEBUG
         - name: CALLBACK_URL
