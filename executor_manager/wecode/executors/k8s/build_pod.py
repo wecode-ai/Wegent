@@ -110,7 +110,8 @@ def build_pod_configuration(
         'volume_mounts': volumes_info.get("volume_mounts", []),
         'init_container': init_container,
         'container_entrypoint': container_entrypoint,
-        'use_base_image': use_init_container
+        'use_base_image': use_init_container,
+        'task_api_domain': os.getenv("TASK_API_DOMAIN", "http://wegent-backend-web.wb-plat-ide:8080")
     }
 
     # Render the template
