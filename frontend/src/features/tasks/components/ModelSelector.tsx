@@ -427,7 +427,7 @@ export default function ModelSelector({
                   'disabled:cursor-not-allowed disabled:opacity-50'
                 )}
               >
-                <span className="truncate flex-1 min-w-0" title={getTriggerDisplayText()}>
+                <span className="truncate flex-1 min-w-0" title={selectedModel?.name || ''}>
                   {getTriggerDisplayText()}
                 </span>
               </button>

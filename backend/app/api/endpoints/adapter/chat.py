@@ -50,6 +50,9 @@ class StreamChatRequest(BaseModel):
     git_repo_id: Optional[int] = None
     git_domain: Optional[str] = None
     branch_name: Optional[str] = None
+    # Resume/reconnect parameters for offset-based streaming
+    subtask_id: Optional[int] = None  # For resuming an existing stream
+    offset: Optional[int] = None  # Character offset for resuming (0 = new stream)
 
 
 def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
@@ -352,12 +355,31 @@ async def stream_chat(
     Supports file attachments via attachment_id parameter. When provided,
     the attachment's extracted text will be prepended to the user message.
     
+    **Offset-based Resume Mode:**
+    When `subtask_id` and `offset` are provided, the endpoint enters resume mode:
+    - Fetches cached content from Redis/DB
+    - Sends content from `offset` position onwards
+    - Subscribes to Pub/Sub for real-time updates
+    - Each chunk includes `offset` for client-side tracking
+    
     Returns SSE stream with the following events:
-    - {"task_id": int, "subtask_id": int, "content": "", "done": false} - First message with IDs
-    - {"content": "...", "done": false} - Content chunks
-    - {"content": "", "done": true, "result": {...}} - Completion
+    - {"task_id": int, "subtask_id": int, "offset": 0, "content": "", "done": false} - First message with IDs
+    - {"offset": int, "content": "...", "done": false} - Content chunks with offset
+    - {"offset": int, "content": "", "done": true, "result": {...}} - Completion
     - {"error": "..."} - Error message
     """
+    import json
+    from fastapi.responses import StreamingResponse
+    
+    # Check if this is a resume request
+    if request.subtask_id is not None and request.offset is not None:
+        return await _handle_resume_stream(
+            request.subtask_id,
+            request.offset,
+            db,
+            current_user,
+        )
+    
     # Validate team exists
     team = (
         db.query(Kind)
@@ -549,6 +571,255 @@ async def stream_chat(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
+            # Return task_id and subtask_id in headers for immediate access
+            "X-Task-Id": str(task.id),
+            "X-Subtask-Id": str(assistant_subtask.id),
+        }
+    )
+
+
+async def _handle_resume_stream(
+    subtask_id: int,
+    offset: int,
+    db: Session,
+    current_user: User,
+):
+    """
+    Handle resume/reconnect stream request with offset-based continuation.
+    
+    This function implements the offset-based streaming protocol:
+    1. Verify subtask ownership and status
+    2. Get cached content from Redis/DB
+    3. Send content from offset position onwards
+    4. Subscribe to Pub/Sub for real-time updates
+    5. Each chunk includes offset for client-side tracking
+    
+    Args:
+        subtask_id: The subtask ID to resume
+        offset: Character offset to resume from (0 = send all cached content)
+        db: Database session
+        current_user: Current authenticated user
+        
+    Returns:
+        StreamingResponse with offset-based SSE events
+    """
+    import json
+    from fastapi.responses import StreamingResponse
+    from app.services.chat.session_manager import session_manager
+    
+    # Verify subtask ownership
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.id == subtask_id,
+            Subtask.user_id == current_user.id,
+        )
+        .first()
+    )
+    
+    if not subtask:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+    
+    # Check subtask status
+    if subtask.status == SubtaskStatus.COMPLETED:
+        # Already completed - send final content
+        content = ""
+        if subtask.result:
+            content = subtask.result.get("value", "")
+        
+        async def generate_completed():
+            # Send content from offset
+            if offset < len(content):
+                remaining = content[offset:]
+                yield f"data: {json.dumps({'offset': offset, 'content': remaining, 'done': False})}\n\n"
+            
+            # Send completion
+            yield f"data: {json.dumps({'offset': len(content), 'content': '', 'done': True, 'result': subtask.result})}\n\n"
+        
+        return StreamingResponse(
+            generate_completed(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+                "X-Task-Id": str(subtask.task_id),
+                "X-Subtask-Id": str(subtask_id),
+            }
+        )
+    
+    if subtask.status == SubtaskStatus.FAILED:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Subtask failed: {subtask.error_message}"
+        )
+    
+    if subtask.status not in [SubtaskStatus.RUNNING, SubtaskStatus.PENDING]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot resume stream for subtask in {subtask.status.value} state"
+        )
+    
+    async def generate_resume():
+        import asyncio
+        
+        current_offset = offset
+        
+        try:
+            # 1. Get cached content from Redis first
+            cached_content = await session_manager.get_streaming_content(subtask_id)
+            
+            # If no Redis content, try database
+            if not cached_content and subtask.result:
+                cached_content = subtask.result.get("value", "")
+            
+            # 2. Send cached content from offset position
+            if cached_content and current_offset < len(cached_content):
+                remaining = cached_content[current_offset:]
+                yield f"data: {json.dumps({'offset': current_offset, 'content': remaining, 'done': False, 'cached': True})}\n\n"
+                current_offset = len(cached_content)
+            
+            # Check if subtask already completed before subscribing
+            db.refresh(subtask)
+            if subtask.status == SubtaskStatus.COMPLETED:
+                final_content = ""
+                if subtask.result:
+                    final_content = subtask.result.get("value", "")
+                
+                # Send any remaining content
+                if current_offset < len(final_content):
+                    remaining = final_content[current_offset:]
+                    yield f"data: {json.dumps({'offset': current_offset, 'content': remaining, 'done': False})}\n\n"
+                    current_offset = len(final_content)
+                
+                yield f"data: {json.dumps({'offset': current_offset, 'content': '', 'done': True, 'result': subtask.result})}\n\n"
+                return
+            
+            if subtask.status == SubtaskStatus.FAILED:
+                yield f"data: {json.dumps({'error': f'Subtask failed: {subtask.error_message}'})}\n\n"
+                return
+            
+            # 3. Subscribe to Redis Pub/Sub for real-time updates
+            redis_client, pubsub = await session_manager.subscribe_streaming_channel(subtask_id)
+            if not pubsub:
+                # No pub/sub available - check if stream is still active
+                # If not, the stream might have completed while we were connecting
+                logger.warning(f"Could not subscribe to streaming channel for subtask {subtask_id}")
+                
+                # Re-check subtask status
+                db.refresh(subtask)
+                if subtask.status == SubtaskStatus.COMPLETED:
+                    final_content = ""
+                    if subtask.result:
+                        final_content = subtask.result.get("value", "")
+                    
+                    # Send any remaining content
+                    if current_offset < len(final_content):
+                        remaining = final_content[current_offset:]
+                        yield f"data: {json.dumps({'offset': current_offset, 'content': remaining, 'done': False})}\n\n"
+                        current_offset = len(final_content)
+                    
+                    yield f"data: {json.dumps({'offset': current_offset, 'content': '', 'done': True, 'result': subtask.result})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'error': 'Stream not available'})}\n\n"
+                return
+            
+            try:
+                # 4. Listen for new chunks with timeout and status check
+                last_status_check = asyncio.get_event_loop().time()
+                status_check_interval = 2.0  # Check status every 2 seconds
+                
+                while True:
+                    try:
+                        # Use get_message with timeout instead of listen()
+                        message = await asyncio.wait_for(
+                            pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
+                            timeout=2.0
+                        )
+                        
+                        if message and message["type"] == "message":
+                            chunk = message["data"]
+                            if isinstance(chunk, bytes):
+                                chunk = chunk.decode('utf-8')
+                            # Check for stream done signal (now JSON format with result)
+                            # Try to parse as JSON first
+                            try:
+                                done_data = json.loads(chunk)
+                                # Ensure it's a dict before checking __type__
+                                if isinstance(done_data, dict) and done_data.get("__type__") == "STREAM_DONE":
+                                    # Extract result directly from Pub/Sub message
+                                    final_result = done_data.get("result")
+                                    yield f"data: {json.dumps({'offset': current_offset, 'content': '', 'done': True, 'result': final_result})}\n\n"
+                                    break
+                            except json.JSONDecodeError:
+                                pass  # Not JSON, treat as regular chunk
+                                pass  # Not JSON, treat as regular chunk
+                            
+                            # Legacy support: check for old format
+                            if chunk == "__STREAM_DONE__":
+                                # Fallback to database for old format
+                                db.refresh(subtask)
+                                yield f"data: {json.dumps({'offset': current_offset, 'content': '', 'done': True, 'result': subtask.result})}\n\n"
+                                break
+                            
+                            # Send new chunk with offset
+                            yield f"data: {json.dumps({'offset': current_offset, 'content': chunk, 'done': False})}\n\n"
+                            current_offset += len(chunk)
+                    
+                    except asyncio.TimeoutError:
+                        pass  # Timeout is expected, continue to status check
+                    
+                    # Periodically check subtask status in case we missed the done signal
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_status_check >= status_check_interval:
+                        last_status_check = current_time
+                        db.refresh(subtask)
+                        
+                        if subtask.status == SubtaskStatus.COMPLETED:
+                            # Status check detected completion - get result from database
+                            # This is a fallback path when Pub/Sub message was missed
+                            final_result = subtask.result
+                            
+                            final_content = ""
+                            if final_result:
+                                final_content = final_result.get("value", "")
+                            
+                            # Send any remaining content
+                            if current_offset < len(final_content):
+                                remaining = final_content[current_offset:]
+                                yield f"data: {json.dumps({'offset': current_offset, 'content': remaining, 'done': False})}\n\n"
+                                current_offset = len(final_content)
+                            
+                            yield f"data: {json.dumps({'offset': current_offset, 'content': '', 'done': True, 'result': final_result})}\n\n"
+                            break
+                        
+                        if subtask.status == SubtaskStatus.FAILED:
+                            yield f"data: {json.dumps({'error': f'Subtask failed: {subtask.error_message}'})}\n\n"
+                            break
+                        
+                        if subtask.status not in [SubtaskStatus.RUNNING, SubtaskStatus.PENDING]:
+                            yield f"data: {json.dumps({'error': f'Unexpected subtask status: {subtask.status.value}'})}\n\n"
+                            break
+            finally:
+                # Cleanup: unsubscribe and close client
+                await pubsub.unsubscribe()
+                await pubsub.close()
+                if redis_client:
+                    await redis_client.close()
+        
+        except Exception as e:
+            logger.error(f"Error in resume stream for subtask {subtask_id}: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_resume(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "X-Task-Id": str(subtask.task_id),
+            "X-Subtask-Id": str(subtask_id),
         }
     )
 
@@ -707,3 +978,231 @@ async def cancel_chat(
         "success": True,
         "message": "Chat stopped successfully"
     }
+
+
+@router.get("/streaming-content/{subtask_id}")
+async def get_streaming_content(
+    subtask_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get streaming content for a subtask (from Redis or DB).
+    
+    Used for recovery when user refreshes during streaming.
+    This endpoint tries to get the most recent content from:
+    1. Redis streaming cache (most recent, updated every 1 second)
+    2. Database result field (fallback, updated every 5 seconds)
+    
+    Returns:
+        {
+            "content": str,           # The accumulated content
+            "source": str,            # "redis" or "database"
+            "streaming": bool,        # Whether still streaming
+            "status": str,            # Subtask status
+            "incomplete": bool        # Whether content is incomplete (client disconnected)
+        }
+    """
+    # Verify subtask ownership
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.id == subtask_id,
+            Subtask.user_id == current_user.id,
+        )
+        .first()
+    )
+    
+    if not subtask:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+    
+    # 1. Try to get from Redis first (most recent)
+    from app.services.chat.session_manager import session_manager
+    redis_content = await session_manager.get_streaming_content(subtask_id)
+    
+    if redis_content:
+        return {
+            "content": redis_content,
+            "source": "redis",
+            "streaming": True,
+            "status": subtask.status.value,
+            "incomplete": False
+        }
+    
+    # 2. Fallback to database
+    db_content = ""
+    is_streaming = False
+    is_incomplete = False
+    
+    if subtask.result:
+        db_content = subtask.result.get("value", "")
+        is_streaming = subtask.result.get("streaming", False)
+        is_incomplete = subtask.result.get("incomplete", False)
+    
+    return {
+        "content": db_content,
+        "source": "database",
+        "streaming": is_streaming,
+        "status": subtask.status.value,
+        "incomplete": is_incomplete
+    }
+
+
+@router.get("/resume-stream/{subtask_id}")
+async def resume_stream(
+    subtask_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Resume streaming for a running subtask after page refresh.
+    
+    This endpoint allows users to refresh the page and continue receiving
+    streaming content from an ongoing Chat Shell task, similar to OpenAI's implementation.
+    
+    Flow:
+    1. Verify subtask ownership and status (must be RUNNING)
+    2. Send cached content from Redis immediately
+    3. Subscribe to Redis Pub/Sub channel for real-time updates
+    4. Continue streaming new content as it arrives
+    5. End stream when "__STREAM_DONE__" signal is received
+    
+    Returns SSE stream with:
+    - {"content": "...", "done": false, "cached": true} - Cached content (first message)
+    - {"content": "...", "done": false} - New streaming content
+    - {"content": "", "done": true} - Stream completion
+    """
+    import json
+    from fastapi.responses import StreamingResponse
+    
+    # Verify subtask ownership
+    subtask = (
+        db.query(Subtask)
+        .filter(
+            Subtask.id == subtask_id,
+            Subtask.user_id == current_user.id,
+        )
+        .first()
+    )
+    
+    if not subtask:
+        raise HTTPException(status_code=404, detail="Subtask not found")
+    
+    # Only allow resuming RUNNING subtasks
+    if subtask.status != SubtaskStatus.RUNNING:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot resume stream for subtask in {subtask.status.value} state"
+        )
+    
+    async def generate_resume():
+        import asyncio
+        from app.services.chat.session_manager import session_manager
+        
+        try:
+            # 1. Send cached content first (from Redis)
+            cached_content = await session_manager.get_streaming_content(subtask_id)
+            if cached_content:
+                yield f"data: {json.dumps({'content': cached_content, 'done': False, 'cached': True})}\n\n"
+            
+            # Check if subtask already completed before subscribing
+            db.refresh(subtask)
+            if subtask.status == SubtaskStatus.COMPLETED:
+                yield f"data: {json.dumps({'content': '', 'done': True, 'result': subtask.result})}\n\n"
+                return
+            
+            if subtask.status == SubtaskStatus.FAILED:
+                yield f"data: {json.dumps({'error': f'Subtask failed: {subtask.error_message}'})}\n\n"
+                return
+            
+            # 2. Subscribe to Redis Pub/Sub for real-time updates
+            redis_client, pubsub = await session_manager.subscribe_streaming_channel(subtask_id)
+            if not pubsub:
+                # No pub/sub available - check if stream completed
+                logger.warning(f"Could not subscribe to streaming channel for subtask {subtask_id}")
+                db.refresh(subtask)
+                if subtask.status == SubtaskStatus.COMPLETED:
+                    yield f"data: {json.dumps({'content': '', 'done': True, 'result': subtask.result})}\n\n"
+                else:
+                    yield f"data: {json.dumps({'content': '', 'done': True, 'error': 'Stream not available'})}\n\n"
+                return
+            
+            try:
+                # 3. Listen for new chunks with timeout and status check
+                last_status_check = asyncio.get_event_loop().time()
+                status_check_interval = 2.0  # Check status every 2 seconds
+                
+                while True:
+                    try:
+                        # Use get_message with timeout instead of listen()
+                        message = await asyncio.wait_for(
+                            pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0),
+                            timeout=2.0
+                        )
+                        
+                        if message and message["type"] == "message":
+                            chunk = message["data"]
+                            if isinstance(chunk, bytes):
+                                chunk = chunk.decode('utf-8')
+                            
+                            # Check for stream done signal (now JSON format with result)
+                            try:
+                                done_data = json.loads(chunk)
+                                # Ensure it's a dict before checking __type__
+                                if isinstance(done_data, dict) and done_data.get("__type__") == "STREAM_DONE":
+                                    # Extract result directly from Pub/Sub message
+                                    final_result = done_data.get("result")
+                                    yield f"data: {json.dumps({'content': '', 'done': True, 'result': final_result})}\n\n"
+                                    break
+                            except json.JSONDecodeError:
+                                pass  # Not JSON, treat as regular chunk
+                            
+                            # Legacy support: check for old format
+                            if chunk == "__STREAM_DONE__":
+                                yield f"data: {json.dumps({'content': '', 'done': True})}\n\n"
+                                break
+                            
+                            # Send new chunk
+                            yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
+                    
+                    except asyncio.TimeoutError:
+                        pass  # Timeout is expected, continue to status check
+                    
+                    # Periodically check subtask status in case we missed the done signal
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_status_check >= status_check_interval:
+                        last_status_check = current_time
+                        db.refresh(subtask)
+                        
+                        if subtask.status == SubtaskStatus.COMPLETED:
+                            yield f"data: {json.dumps({'content': '', 'done': True, 'result': subtask.result})}\n\n"
+                            break
+                        
+                        if subtask.status == SubtaskStatus.FAILED:
+                            yield f"data: {json.dumps({'error': f'Subtask failed: {subtask.error_message}'})}\n\n"
+                            break
+                        
+                        if subtask.status not in [SubtaskStatus.RUNNING, SubtaskStatus.PENDING]:
+                            yield f"data: {json.dumps({'error': f'Unexpected subtask status: {subtask.status.value}'})}\n\n"
+                            break
+            finally:
+                # Cleanup: unsubscribe and close client
+                await pubsub.unsubscribe()
+                await pubsub.close()
+                if redis_client:
+                    await redis_client.close()
+        
+        except Exception as e:
+            logger.error(f"Error in resume_stream for subtask {subtask_id}: {e}", exc_info=True)
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+    
+    return StreamingResponse(
+        generate_resume(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+            "Content-Encoding": "none",
+        }
+    )

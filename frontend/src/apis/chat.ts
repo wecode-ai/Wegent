@@ -32,6 +32,12 @@ export interface ChatStreamData {
   result?: {
     value: string;
   };
+  /** Character offset for this chunk (for offset-based streaming) */
+  offset?: number;
+  /** Whether this is cached content (from resume) */
+  cached?: boolean;
+  /** Whether stream was cancelled */
+  cancelled?: boolean;
 }
 
 /**
@@ -56,6 +62,10 @@ export interface StreamChatRequest {
   git_repo_id?: number;
   git_domain?: string;
   branch_name?: string;
+  /** Subtask ID for resuming an existing stream (optional) */
+  subtask_id?: number;
+  /** Character offset for resuming (0 = send all cached content) */
+  offset?: number;
 }
 
 /**
@@ -134,8 +144,26 @@ export async function streamChat(
     }
 
     const decoder = new TextDecoder();
-    let taskId = request.task_id || 0;
-    let subtaskId = 0;
+
+    // Get task_id and subtask_id from response headers (available immediately)
+    const headerTaskId = response.headers.get('X-Task-Id');
+    const headerSubtaskId = response.headers.get('X-Subtask-Id');
+
+    let taskId = headerTaskId ? parseInt(headerTaskId, 10) : request.task_id || 0;
+    let subtaskId = headerSubtaskId ? parseInt(headerSubtaskId, 10) : 0;
+
+    console.log('[chat.ts] Got task_id from headers:', taskId, 'subtask_id:', subtaskId);
+
+    // If we got task_id from headers, immediately notify via onMessage
+    // This allows the caller to update state before streaming starts
+    if (headerTaskId && !request.task_id) {
+      callbacks.onMessage({
+        task_id: taskId,
+        subtask_id: subtaskId,
+        content: '',
+        done: false,
+      });
+    }
 
     // Process stream asynchronously
     (async () => {
@@ -303,6 +331,102 @@ export async function cancelChat(request: CancelChatRequest): Promise<CancelChat
 
   return response.json();
 }
+/**
+ * Response from get streaming content API
+ */
+export interface StreamingContentResponse {
+  /** The accumulated content */
+  content: string;
+  /** Source of the content: "redis" (most recent) or "database" (fallback) */
+  source: 'redis' | 'database';
+  /** Whether still streaming */
+  streaming: boolean;
+  /** Subtask status */
+  status: string;
+  /** Whether content is incomplete (client disconnected) */
+  incomplete: boolean;
+}
+
+/**
+ * Get streaming content for a subtask (for recovery on refresh).
+ *
+ * This endpoint tries to get the most recent content from:
+ * 1. Redis streaming cache (most recent, updated every 1 second)
+ * 2. Database result field (fallback, updated every 5 seconds)
+ *
+ * @param subtaskId - Subtask ID to get content for
+ * @returns Streaming content and metadata
+ */
+export async function getStreamingContent(subtaskId: number): Promise<StreamingContentResponse> {
+  const token = getToken();
+
+  const response = await fetch(`${API_BASE_URL}/chat/streaming-content/${subtaskId}`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMsg = errorText;
+    try {
+      const json = JSON.parse(errorText);
+      if (json && typeof json.detail === 'string') {
+        errorMsg = json.detail;
+      }
+    } catch {
+      // Not JSON
+    }
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+/**
+ * Resume streaming for a running subtask after page refresh.
+ * Returns an EventSource-like stream that continues from where it left off.
+ *
+ * @deprecated Use resumeStreamWithOffset instead for offset-based streaming
+ * @param subtaskId - Subtask ID to resume streaming for
+ * @returns EventSource for receiving streaming updates
+ */
+export function resumeStream(subtaskId: number): EventSource {
+  return new EventSource(`/api/chat/resume-stream/${subtaskId}`);
+}
+
+/**
+ * Resume streaming using the unified stream endpoint with offset-based continuation.
+ *
+ * This is the preferred method for resuming streams as it:
+ * - Uses the same endpoint as new streams
+ * - Supports offset-based continuation (no duplicate data)
+ * - Provides offset information in each chunk for tracking
+ *
+ * @param subtaskId - Subtask ID to resume
+ * @param offset - Character offset to resume from (0 = send all cached content)
+ * @param teamId - Team ID (required for the stream endpoint)
+ * @param callbacks - Event callbacks
+ * @returns Object with abort function
+ */
+export async function resumeStreamWithOffset(
+  subtaskId: number,
+  offset: number,
+  teamId: number,
+  callbacks: StreamChatCallbacks
+): Promise<{ abort: () => void }> {
+  // Use the unified stream endpoint with resume parameters
+  const request: StreamChatRequest = {
+    message: '', // Empty message for resume
+    team_id: teamId,
+    subtask_id: subtaskId,
+    offset: offset,
+  };
+
+  const result = await streamChat(request, callbacks);
+  return { abort: result.abort };
+}
 
 /**
  * Chat API exports
@@ -311,4 +435,7 @@ export const chatApis = {
   streamChat,
   checkDirectChat,
   cancelChat,
+  getStreamingContent,
+  resumeStream,
+  resumeStreamWithOffset,
 };
