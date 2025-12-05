@@ -10,13 +10,13 @@ Stores file binary data and extracted text content for chat attachments.
 from datetime import datetime
 from enum import Enum as PyEnum
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, LargeBinary, String, Text
+from sqlalchemy import Column, DateTime
 from sqlalchemy import Enum as SQLEnum
+from sqlalchemy import ForeignKey, Integer, LargeBinary, String, Text
 from sqlalchemy.dialects.mysql import LONGBLOB, LONGTEXT
 from sqlalchemy.sql import func
 
 from app.db.base import Base
-
 
 # Type adapter for binary data - uses LONGBLOB for MySQL, LargeBinary for others
 BinaryDataType = LargeBinary().with_variant(LONGBLOB, "mysql")
@@ -27,6 +27,7 @@ LongTextType = Text().with_variant(LONGTEXT, "mysql")
 
 class AttachmentStatus(str, PyEnum):
     """Attachment processing status."""
+
     UPLOADING = "uploading"
     PARSING = "parsing"
     READY = "ready"
@@ -36,7 +37,7 @@ class AttachmentStatus(str, PyEnum):
 class SubtaskAttachment(Base):
     """
     Subtask attachment storage for uploaded document files.
-    
+
     Stores the original file binary data and extracted text content.
     Supports PDF, Word, PowerPoint, Excel, TXT, and Markdown files.
     """
@@ -44,25 +45,20 @@ class SubtaskAttachment(Base):
     __tablename__ = "subtask_attachments"
 
     id = Column(Integer, primary_key=True, index=True)
-    
+
     # Reference to subtasks table (no foreign key constraint for flexibility)
     # 0 means unlinked, > 0 means linked to a subtask
-    subtask_id = Column(
-        Integer,
-        nullable=False,
-        default=0,
-        index=True
-    )
-    
+    subtask_id = Column(Integer, nullable=False, default=0, index=True)
+
     # Foreign key to users table
     user_id = Column(Integer, nullable=False, index=True)
-    
+
     # File metadata
     original_filename = Column(String(255), nullable=False)
     file_extension = Column(String(20), nullable=False)
     file_size = Column(Integer, nullable=False)  # File size in bytes
     mime_type = Column(String(100), nullable=False)
-    
+
     # Binary data storage (LONGBLOB for MySQL, LargeBinary for SQLite - supports up to 4GB)
     binary_data = Column(BinaryDataType, nullable=False)
 
@@ -75,16 +71,18 @@ class SubtaskAttachment(Base):
     # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
     # Empty string or None means no extracted text
     extracted_text = Column(LongTextType, nullable=True, default="")
-    text_length = Column(Integer, nullable=False, default=0)  # Character count of extracted text
-    
+    text_length = Column(
+        Integer, nullable=False, default=0
+    )  # Character count of extracted text
+
     # Processing status
     status = Column(
         SQLEnum(AttachmentStatus, values_callable=lambda obj: [e.value for e in obj]),
         nullable=False,
-        default=AttachmentStatus.UPLOADING
+        default=AttachmentStatus.UPLOADING,
     )
     error_message = Column(String(500), nullable=False, default="")
-    
+
     # Timestamps
     created_at = Column(DateTime, nullable=False, default=func.now())
 

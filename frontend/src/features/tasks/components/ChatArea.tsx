@@ -536,9 +536,21 @@ export default function ChatArea({
                 params.set('taskId', String(completedTaskId));
                 router.push(`?${params.toString()}`);
 
-                // For new tasks, we immediately clear stream as navigation happens
-                contextResetStream(completedTaskId);
-                setStreamingTaskId(null);
+                // Wait for task detail to be loaded before clearing stream
+                // This prevents the flash of empty content when URL changes
+                try {
+                  // Give TaskParamSync time to trigger and load the task detail
+                  // We use a small delay to ensure the URL change has been processed
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                  // Then wait for the actual refresh to complete
+                  await refreshSelectedTaskDetail(false);
+                } catch (error) {
+                  console.error('Failed to refresh task detail after stream:', error);
+                } finally {
+                  // Only clear stream content after data is refreshed (or failed)
+                  contextResetStream(completedTaskId);
+                  setStreamingTaskId(null);
+                }
               } else if (selectedTaskDetail?.id) {
                 // If this was a follow-up message (second+ message), refresh task detail
                 // to show the new subtasks (user message + AI response)
