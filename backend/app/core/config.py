@@ -85,6 +85,7 @@ class Settings(BaseSettings):
 
     # Team sharing configuration
     TEAM_SHARE_BASE_URL: str = "http://localhost:3000/chat"
+    TASK_SHARE_BASE_URL: str = "http://localhost:3000"
     TEAM_SHARE_QUERY_PARAM: str = "teamShare"
 
     # AES encryption configuration for share tokens
