@@ -38,8 +38,11 @@ export default function NotificationSettings() {
   }, []);
 
   useEffect(() => {
-    if (user?.preferences?.send_key) {
-      setSendKey(user.preferences.send_key);
+    // Only update sendKey when user data is loaded and has preferences
+    // Use 'enter' as default if send_key is not set
+    if (user) {
+      const userSendKey = user.preferences?.send_key || 'enter';
+      setSendKey(userSendKey);
     }
   }, [user]);
 

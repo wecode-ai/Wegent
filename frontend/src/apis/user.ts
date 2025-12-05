@@ -12,7 +12,7 @@ import type { GitInfo, User, UserPreferences } from '@/types/api';
 // Type definitions
 export interface LoginRequest {
   user_name: string;
-  *: string;
+  password: string;
 }
 
 export interface LoginResponse {

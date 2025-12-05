@@ -63,6 +63,9 @@ export default function ChatInput({
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (disabled || isComposing) return;
 
+    // On mobile, Enter always creates new line (no easy Shift+Enter on mobile keyboards)
+    // Users can tap the send button to send messages
+
     if (sendKey === 'cmd_enter') {
       // Cmd/Ctrl+Enter sends message, Enter creates new line
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -71,8 +74,9 @@ export default function ChatInput({
       }
       // Enter without modifier creates new line (default behavior)
     } else {
-      // Enter sends message, Shift+Enter creates new line
-      if (e.key === 'Enter' && !e.shiftKey) {
+      if (isMobile) {
+        return;
+      } else if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         handleSendMessage();
       }

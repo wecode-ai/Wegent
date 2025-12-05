@@ -2,17 +2,18 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, EmailStr
-
+from pydantic import BaseModel, EmailStr, field_validator
 
 
 class UserPreferences(BaseModel):
     """User preferences model"""
 
     send_key: Literal["enter", "cmd_enter"] = "enter"
+
 
 class Token(BaseModel):
     """Token response model"""
@@ -74,6 +75,26 @@ class UserInDB(UserBase):
     preferences: Optional[UserPreferences] = None
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("preferences", mode="before")
+    @classmethod
+    def parse_preferences(cls, v):
+        """Parse preferences from JSON string or dict to UserPreferences object"""
+        if v is None or v == "" or v == "null":
+            return None
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if not parsed:  # Empty dict or None after parsing
+                    return None
+                return UserPreferences(**parsed)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        if isinstance(v, dict):
+            if not v:  # Empty dict
+                return None
+            return UserPreferences(**v)
+        return v
 
     class Config:
         from_attributes = True
