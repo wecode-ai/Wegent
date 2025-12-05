@@ -2,6 +2,47 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+[project]
+name = "wegent-backend"
+version = "1.0.0"
+description = "Wegent Backend API Service"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "alembic>=1.13.1",
+    "asyncmy>=0.2.9",
+    "authlib>=1.3.0",
+    "bcrypt>=4.1.0,<5.0.0",
+    "chardet>=5.0.0",
+    "cryptography>=42.0.4",
+    "email-validator>=2.0.0",
+    "fastapi>=0.109.1",
+    "httpx>=0.26.0",
+    "mysql-connector-python>=8.3.0",
+    "orjson>=3.9.0",
+    "passlib[bcrypt]>=1.7.4",
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.1.0",
+    "pyjwt>=2.8.0",
+    "pymysql>=1.1.0",
+    "python-jose[cryptography]>=3.3.0",
+    "python-multipart>=0.0.6",
+    "pyyaml>=6.0.1",
+    "redis>=5.0.1",
+    "requests>=2.31.0",
+    "sqlalchemy>=2.0.25",
+    "uvicorn[standard]>=0.27.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "pytest-httpx>=0.36.0",
+]
+
 [tool.black]
 line-length = 88
 target-version = ['py310']
@@ -31,3 +72,10 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 skip = ["alembic", ".venv", "venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

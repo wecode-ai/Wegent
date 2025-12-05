@@ -5,8 +5,16 @@
 FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
 WORKDIR /app/executor_manager
 
-COPY executor_manager/requirements.txt /app/executor_manager/requirements.txt
-RUN pip install -r /app/executor_manager/requirements.txt
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH="/root/.local/bin:${PATH}" && \
+    uv --version
+
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Copy pyproject.toml and install dependencies
+COPY executor_manager/pyproject.toml /app/executor_manager/pyproject.toml
+RUN cd /app/executor_manager && uv pip install --system --no-cache -r pyproject.toml
 
 ENV PYTHONPATH=/app
 COPY executor_manager /app/executor_manager

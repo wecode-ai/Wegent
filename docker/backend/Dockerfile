@@ -7,10 +7,16 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
 # Set working directory
 WORKDIR /app
 
-# Copy requirements.txt and install dependencies
-COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH="/root/.local/bin:${PATH}" && \
+    uv --version
 
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Copy pyproject.toml and install dependencies
+COPY backend/pyproject.toml .
+RUN uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
 COPY backend /app

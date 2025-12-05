@@ -25,7 +25,7 @@
 
 #### 可选软件（用于开发）
 
-- **Python**: 3.9+
+- **Python**: 3.10+
 - **Node.js**: 18+
 - **MySQL**: 8.0+
 - **Redis**: 7+
@@ -137,7 +137,7 @@ docker-compose logs -f
 sudo apt-get update
 
 # 安装 Python
-sudo apt-get install python3.9 python3-pip python3-venv
+sudo apt-get install python3.10 python3-pip python3-venv
 
 # 安装 Node.js
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
@@ -157,7 +157,7 @@ sudo apt-get install git
 
 ```bash
 # 使用 Homebrew 安装
-brew install python@3.9 node@18 mysql redis git
+brew install python@3.10 node@18 mysql redis git
 ```
 
 ### 步骤 2: 设置数据库
@@ -205,7 +205,7 @@ source venv/bin/activate  # Linux/macOS
 # venv\Scripts\activate  # Windows
 
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 
 # 配置环境变量
 cp .env.example .env

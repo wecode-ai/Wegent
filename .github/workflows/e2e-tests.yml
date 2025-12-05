@@ -8,7 +8,7 @@ on:
 env:
   # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
   NEXT_PUBLIC_API_URL: http://localhost:8000
-  # Use pymysql driver (installed via requirements.txt)
+  # Use pymysql driver (installed via pyproject.toml)
   DATABASE_URL: mysql+pymysql://root:123456@localhost:3306/task_manager
   REDIS_URL: redis://localhost:6379
   ENVIRONMENT: development
@@ -53,13 +53,14 @@ jobs:
         with:
           python-version: '3.11'
           cache: 'pip'
-          cache-dependency-path: backend/requirements.txt
+          cache-dependency-path: backend/pyproject.toml
 
       - name: Install backend dependencies
         working-directory: backend
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          source $HOME/.cargo/env
+          uv sync
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -95,7 +96,8 @@ jobs:
           # Add project root to PYTHONPATH so 'shared' module can be imported
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          source $HOME/.cargo/env
+          uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 &
           echo "Backend server starting (with auto migration and YAML init enabled)..."
 
       - name: Start frontend server

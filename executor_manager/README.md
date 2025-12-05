@@ -2,11 +2,53 @@
 
 [中文](README_zh.md) | English
 
-## Local Development
+## Quick Start (Recommended)
+
+Use the one-click startup script for automatic setup:
+
+```bash
+cd executor_manager
+./start.sh
+```
+
+The script will automatically:
+- Check Python version (3.8+ required)
+- Install uv if not present
+- Sync dependencies with uv
+- Check Docker installation and status
+- Create Docker network if needed
+- Set PYTHONPATH
+- Detect Docker host IP
+- Start the Executor Manager server
+
+**Custom Configuration:**
+```bash
+# Use custom port
+./start.sh --port 8002
+
+# Use custom executor image
+./start.sh --executor-image ghcr.io/wecode-ai/wegent-executor:1.0.18
+
+# Use custom backend API
+./start.sh --task-api-domain http://backend:8000
+
+# View all options
+./start.sh --help
+```
+
+**Port Validation:**
+- The script validates port numbers (1-65535)
+- Checks if ports are already in use
+- Provides clear error messages with troubleshooting hints
+
+## Manual Setup
+
+If you prefer manual setup:
 
 ### Prerequisites
 
-- [uv](https://github.com/astral-sh/uv) installed.
+- [uv](https://github.com/astral-sh/uv) installed
+- Docker installed and running
 
 ### Setup
 
@@ -33,7 +75,7 @@ EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:{version} DOCKER_HOST_ADDR={Loc
 ```
 
 > EXECUTOR_IMAGE: Check docker-compose.yml for the latest wegent-executor image version
-> DOCKER_HOST_ADDR: Set it to the host machine’s IP address (the IP that containers can reach)
+> DOCKER_HOST_ADDR: Set it to the host machine's IP address (the IP that containers can reach)
 
 ### Testing
 

@@ -229,7 +229,7 @@ The `.github/workflows/test.yml` workflow runs automatically on:
 ### Workflow Jobs
 
 1. **test-backend**: Python backend tests
-   - Matrix strategy: Python 3.9 and 3.10
+   - Matrix strategy: Python 3.10 and 3.11
    - Coverage reports uploaded to Codecov
    - Dependency caching for faster builds
 
@@ -239,12 +239,12 @@ The `.github/workflows/test.yml` workflow runs automatically on:
    - Tests AI agent factory and base classes
 
 3. **test-executor-manager**: Task manager tests
-   - Python 3.9
+   - Python 3.10
    - Coverage for executors module
    - Tests Docker executor and dispatcher
 
 4. **test-shared**: Shared utilities tests
-   - Python 3.9
+   - Python 3.10
    - Coverage for utils module
    - Tests cryptography and data masking
 
@@ -457,7 +457,7 @@ npm test -- src/__tests__/utils/test_example.test.ts
 
 **Import errors in tests:**
 - Ensure you're running pytest from the correct directory
-- Check that modules are installed: `pip install -r requirements.txt`
+- Check that modules are installed: `uv sync`
 
 **Database errors:**
 - Tests use SQLite in-memory DB, no setup needed

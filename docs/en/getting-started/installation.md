@@ -25,7 +25,7 @@ This guide provides detailed installation and configuration instructions for the
 
 #### Optional Software (for development)
 
-- **Python**: 3.9+
+- **Python**: 3.10+
 - **Node.js**: 18+
 - **MySQL**: 8.0+
 - **Redis**: 7+
@@ -137,7 +137,7 @@ Visit the following URLs to verify installation:
 sudo apt-get update
 
 # Install Python
-sudo apt-get install python3.9 python3-pip python3-venv
+sudo apt-get install python3.10 python3-pip python3-venv
 
 # Install Node.js
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
@@ -157,7 +157,7 @@ sudo apt-get install git
 
 ```bash
 # Install using Homebrew
-brew install python@3.9 node@18 mysql redis git
+brew install python@3.10 node@18 mysql redis git
 ```
 
 ### Step 2: Setup Database
@@ -205,7 +205,7 @@ source venv/bin/activate  # Linux/macOS
 # venv\Scripts\activate  # Windows
 
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 
 # Configure environment variables
 cp .env.example .env

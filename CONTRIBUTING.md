@@ -42,7 +42,7 @@ Wegent is an AI agent management platform based on Kubernetes-style CRD design, 
 - Docker >= 20.10
 - Docker Compose >= 2.0
 - Node.js >= 18.0 (for frontend development)
-- Python >= 3.9 (for backend development)
+- Python >= 3.10 (for backend development)
 - Git
 
 ### Quick Start
@@ -77,7 +77,8 @@ npm run dev
 
 ```bash
 cd backend
-pip install -r requirements.txt
+./start.sh
+# Or manually: uv sync && source .venv/bin/activate
 # Configure environment variables
 export DATABASE_URL="mysql://user:password@localhost/wegent"
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -87,8 +88,8 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 ```bash
 cd executor
-pip install -r requirements.txt
-python main.py
+./start.sh
+# Or manually: uv sync && source .venv/bin/activate && python main.py
 ```
 
 ## 🏗️ Project Architecture
@@ -111,7 +112,7 @@ Wegent/
 │   │   ├── models/    # Data models
 │   │   ├── schemas/   # Pydantic schemas
 │   │   └── services/  # Business logic
-│   └── requirements.txt
+│   └── pyproject.toml # Dependencies
 ├── executor/          # Task executor
 ├── executor_manager/  # Executor manager
 ├── shared/           # Shared utilities and models
@@ -353,7 +354,7 @@ All tests run automatically via GitHub Actions on:
 - All pull requests
 
 The test suite includes:
-- Backend tests (Python 3.9, 3.10)
+- Backend tests (Python 3.10, 3.11, 3.12)
 - Executor tests
 - Executor Manager tests
 - Shared utilities tests
