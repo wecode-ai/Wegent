@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useCallback, useState, useEffect, useMemo } from 'react';
+import React, {
+  useCallback,
+  useState,
+  useEffect,
+  useMemo,
+  useImperativeHandle,
+  forwardRef,
+} from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Loader2, XIcon, SettingsIcon, Edit } from 'lucide-react';
@@ -34,6 +41,32 @@ import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapte
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify';
 
+/** Interface for bot data returned by getBotData */
+export interface BotFormData {
+  name: string;
+  shell_name: string;
+  agent_config: Record<string, unknown>;
+  system_prompt: string;
+  mcp_servers: Record<string, unknown>;
+  skills: string[];
+}
+
+/** Interface for validation result */
+export interface BotValidationResult {
+  isValid: boolean;
+  error?: string;
+}
+
+/** Ref interface exposed by BotEdit */
+export interface BotEditRef {
+  /** Get current bot form data */
+  getBotData: () => BotFormData | null;
+  /** Validate bot form data */
+  validateBot: () => BotValidationResult;
+  /** Save bot (create or update) and return the bot id */
+  saveBot: () => Promise<number | null>;
+}
+
 interface BotEditProps {
   bots: Bot[];
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
@@ -51,20 +84,26 @@ interface BotEditProps {
   onCancelEdit?: () => void;
   /** List of allowed agent types for filtering. If not provided, all agents are shown */
   allowedAgents?: AgentType[];
+  /** Whether to hide action buttons (save/edit/cancel) - useful when parent handles saving */
+  hideActions?: boolean;
 }
-const BotEdit: React.FC<BotEditProps> = ({
-  bots,
-  setBots,
-  editingBotId,
-  cloningBot,
-  onClose,
-  toast,
-  embedded = false,
-  readOnly = false,
-  onEditClick,
-  onCancelEdit,
-  allowedAgents,
-}) => {
+const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
+  {
+    bots,
+    setBots,
+    editingBotId,
+    cloningBot,
+    onClose,
+    toast,
+    embedded = false,
+    readOnly = false,
+    onEditClick,
+    onCancelEdit,
+    allowedAgents,
+    hideActions = false,
+  },
+  ref
+) => {
   const { t, i18n } = useTranslation('common');
 
   const [botSaving, setBotSaving] = useState(false);
@@ -461,6 +500,164 @@ const BotEdit: React.FC<BotEditProps> = ({
     return () => window.removeEventListener('keydown', handleEsc);
   }, [handleBack]);
 
+  // Validate bot form data
+  const validateBot = useCallback((): BotValidationResult => {
+    if (!botName.trim() || !agentName.trim()) {
+      return { isValid: false, error: t('bot.errors.required') };
+    }
+
+    // For Dify agent, validate config
+    if (isDifyAgent) {
+      const trimmedConfig = agentConfig.trim();
+      if (!trimmedConfig) {
+        return { isValid: false, error: t('bot.errors.agent_config_json') };
+      }
+      try {
+        const parsed = JSON.parse(trimmedConfig);
+        const env = (parsed as Record<string, unknown>)?.env as Record<string, unknown> | undefined;
+        if (!env?.DIFY_API_KEY || !env?.DIFY_BASE_URL) {
+          return { isValid: false, error: t('bot.errors.dify_required_fields') };
+        }
+      } catch {
+        return { isValid: false, error: t('bot.errors.agent_config_json') };
+      }
+    } else if (isCustomModel) {
+      if (!selectedProtocol) {
+        return { isValid: false, error: t('bot.errors.protocol_required') };
+      }
+      const trimmedConfig = agentConfig.trim();
+      if (!trimmedConfig) {
+        return { isValid: false, error: t('bot.errors.agent_config_json') };
+      }
+      try {
+        JSON.parse(trimmedConfig);
+      } catch {
+        return { isValid: false, error: t('bot.errors.agent_config_json') };
+      }
+    }
+
+    // Validate MCP config if present (not for Dify)
+    if (!isDifyAgent && mcpConfig.trim()) {
+      try {
+        JSON.parse(mcpConfig);
+      } catch {
+        return { isValid: false, error: t('bot.errors.mcp_config_json') };
+      }
+    }
+
+    return { isValid: true };
+  }, [botName, agentName, isDifyAgent, agentConfig, isCustomModel, selectedProtocol, mcpConfig, t]);
+
+  // Get bot form data for external use
+  const getBotData = useCallback((): BotFormData | null => {
+    const validation = validateBot();
+    if (!validation.isValid) {
+      return null;
+    }
+
+    let parsedAgentConfig: Record<string, unknown> = {};
+
+    if (isDifyAgent) {
+      parsedAgentConfig = JSON.parse(agentConfig.trim());
+    } else if (isCustomModel) {
+      const configObj = JSON.parse(agentConfig.trim());
+      parsedAgentConfig = { ...configObj, protocol: selectedProtocol };
+    } else {
+      parsedAgentConfig = createPredefinedModelConfig(selectedModel, selectedModelType) as Record<
+        string,
+        unknown
+      >;
+    }
+
+    let parsedMcpConfig: Record<string, unknown> = {};
+    if (!isDifyAgent && mcpConfig.trim()) {
+      parsedMcpConfig = JSON.parse(mcpConfig);
+      if (parsedMcpConfig && agentName && isValidAgentType(agentName)) {
+        parsedMcpConfig = adaptMcpConfigForAgent(parsedMcpConfig, agentName);
+      }
+    }
+
+    return {
+      name: botName.trim(),
+      shell_name: agentName.trim(),
+      agent_config: parsedAgentConfig,
+      system_prompt: isDifyAgent ? '' : prompt.trim() || '',
+      mcp_servers: parsedMcpConfig,
+      skills: selectedSkills.length > 0 ? selectedSkills : [],
+    };
+  }, [
+    validateBot,
+    isDifyAgent,
+    agentConfig,
+    isCustomModel,
+    selectedProtocol,
+    selectedModel,
+    selectedModelType,
+    mcpConfig,
+    agentName,
+    botName,
+    prompt,
+    selectedSkills,
+  ]);
+
+  // Save bot and return the bot id
+  const saveBot = useCallback(async (): Promise<number | null> => {
+    const validation = validateBot();
+    if (!validation.isValid) {
+      toast({
+        variant: 'destructive',
+        title: validation.error,
+      });
+      return null;
+    }
+
+    const botData = getBotData();
+    if (!botData) {
+      return null;
+    }
+
+    setBotSaving(true);
+    try {
+      const botReq: CreateBotRequest = {
+        name: botData.name,
+        shell_name: botData.shell_name,
+        agent_config: botData.agent_config,
+        system_prompt: botData.system_prompt,
+        mcp_servers: botData.mcp_servers,
+        skills: botData.skills,
+      };
+
+      if (editingBotId && editingBotId > 0) {
+        const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest);
+        setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)));
+        return updated.id;
+      } else {
+        const created = await botApis.createBot(botReq);
+        setBots(prev => [created, ...prev]);
+        return created.id;
+      }
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: (error as Error)?.message || t('bot.errors.save_failed'),
+      });
+      return null;
+    } finally {
+      setBotSaving(false);
+    }
+  }, [validateBot, getBotData, editingBotId, setBots, toast, t]);
+
+  // Expose methods via ref
+  useImperativeHandle(
+    ref,
+    () => ({
+      getBotData,
+      validateBot,
+      saveBot,
+    }),
+    [getBotData, validateBot, saveBot]
+  );
+
   // Save logic
   const handleSave = async () => {
     console.log('[DEBUG] handleSave called', {
@@ -618,7 +815,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   };
   return (
     <div
-      className={`flex flex-col w-full bg-surface rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'min-h-0' : 'min-h-[650px]'}`}
+      className={`flex flex-col w-full bg-surface rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'h-full min-h-0' : 'min-h-[650px]'}`}
     >
       {/* Top navigation bar */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
@@ -643,28 +840,29 @@ const BotEdit: React.FC<BotEditProps> = ({
         ) : (
           <div /> /* Placeholder for flex spacing */
         )}
-        {readOnly ? (
-          <Button onClick={onEditClick} variant="outline">
-            <Edit className="mr-2 h-4 w-4" />
-            {t('actions.edit')}
-          </Button>
-        ) : (
-          <div className="flex items-center gap-2">
-            {embedded && onCancelEdit && (
-              <Button onClick={onCancelEdit} variant="outline">
-                {t('common.cancel')}
-              </Button>
-            )}
-            <Button onClick={handleSave} disabled={botSaving}>
-              {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {botSaving ? t('actions.saving') : t('actions.save')}
+        {!hideActions &&
+          (readOnly ? (
+            <Button onClick={onEditClick} variant="outline">
+              <Edit className="mr-2 h-4 w-4" />
+              {t('actions.edit')}
             </Button>
-          </div>
-        )}
+          ) : (
+            <div className="flex items-center gap-2">
+              {embedded && onCancelEdit && (
+                <Button onClick={onCancelEdit} variant="outline">
+                  {t('common.cancel')}
+                </Button>
+              )}
+              <Button onClick={handleSave} disabled={botSaving}>
+                {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {botSaving ? t('actions.saving') : t('actions.save')}
+              </Button>
+            </div>
+          ))}
       </div>
 
       {/* Main content area - using responsive layout */}
-      <div className="flex flex-col lg:flex-row gap-4 flex-grow mx-2 min-h-0 overflow-hidden">
+      <div className="flex flex-col lg:flex-row gap-4 flex-1 mx-2 min-h-0 overflow-hidden">
         <div
           className={`flex flex-col space-y-3 overflow-y-auto w-full flex-shrink-0 ${isDifyAgent ? 'lg:w-full' : 'lg:w-2/5 xl:w-1/3'}`}
         >
@@ -1378,5 +1576,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     </div>
   );
 };
+
+const BotEdit = forwardRef(BotEditInner);
 
 export default BotEdit;
