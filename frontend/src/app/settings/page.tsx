@@ -24,6 +24,7 @@ import ShellList from '@/features/settings/components/ShellList';
 import { UserProvider } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
+import PoweredByFooter from '@/components/common/PoweredByFooter';
 
 function DashboardContent() {
   const router = useRouter();
@@ -293,7 +294,7 @@ function DashboardContent() {
           </div>
         </div>
       </div>
-      {/* No Bot Creation Modal needed here as it's now part of the BotList component */}
+      <PoweredByFooter />
     </div>
   );
 }

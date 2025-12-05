@@ -548,6 +548,9 @@
     "use_bot_model": "Use Bot's predefined model",
     "model_required": "Please select a model"
   },
+  "footer": {
+    "powered_by": "Powered by AI应用平台"
+  },
   "shells": {
     "title": "Shell Management",
     "description": "Manage custom shells with your own base images",

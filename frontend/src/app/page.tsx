@@ -9,6 +9,7 @@ import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
+import PoweredByFooter from '@/components/common/PoweredByFooter';
 import { getToken } from '@/apis/user';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -53,6 +54,7 @@ export default function Home() {
           {t('actions.start')}
         </Button>
       </div>
+      <PoweredByFooter />
     </main>
   );
 }
