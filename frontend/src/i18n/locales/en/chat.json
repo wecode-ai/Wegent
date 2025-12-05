@@ -143,5 +143,20 @@
     "required_field": "This question is required",
     "additional_thoughts": "Additional Thoughts or Remarks",
     "additional_placeholder": "Enter additional thoughts, requirements, or special notes here..."
+  },
+  "export": {
+    "export_pdf": "Export PDF",
+    "no_messages": "No messages to export",
+    "select_at_least_one": "Please select at least one message",
+    "selected_count": "Selected: {{count}} message(s)",
+    "select_all": "Select All",
+    "deselect_all": "Deselect All",
+    "cancel": "Cancel",
+    "confirm": "Export PDF",
+    "exporting": "Exporting...",
+    "success": "PDF exported successfully",
+    "failed": "Failed to export PDF",
+    "select_from_here": "Select from here",
+    "select_below": "Select below"
   }
 }
