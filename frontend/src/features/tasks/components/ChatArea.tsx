@@ -205,9 +205,19 @@ export default function ChatArea({
   // 2. There is a pending user message for the current task (optimistic UI for new chat)
   // 3. The current task is streaming
   // 4. We're creating a new task (no selected task) and have an active stream
+  // 5. CRITICAL: Once we have messages, keep showing them even during data refresh
+  //    to prevent the "flash of empty state" bug
   const hasMessages = React.useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream = !selectedTaskDetail?.id && streamingTaskId && isStreamingTaskActive;
+    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
+
+    // Once we have a task with subtasks, always show messages view
+    // This prevents flashing back to empty state during refresh
+    if (hasSelectedTask && hasSubtasks) {
+      return true;
+    }
+
     return Boolean(hasSelectedTask || pendingUserMessage || isStreaming || hasNewTaskStream);
   }, [selectedTaskDetail, pendingUserMessage, isStreaming, streamingTaskId, isStreamingTaskActive]);
 
@@ -1294,8 +1304,8 @@ export default function ChatArea({
                     </>
                   )}
                 </div>
-                {/* Export PDF Button - only show when has messages and not streaming */}
-                {exportableMessages.length > 0 && !isStreaming && (
+                {/* Export PDF Button - show when has messages, disabled during streaming */}
+                {exportableMessages.length > 0 && (
                   <ExportPdfButton
                     messages={exportableMessages}
                     taskName={
@@ -1303,6 +1313,7 @@ export default function ChatArea({
                       selectedTaskDetail?.prompt?.slice(0, 50) ||
                       'Chat'
                     }
+                    disabled={isStreaming}
                   />
                 )}
               </div>
