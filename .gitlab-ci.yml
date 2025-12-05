@@ -215,6 +215,8 @@ wegent-preview-web:
     DOCKERFILE_PATH: wecode/docker/frontend_preview
   script:
     - build_image
+  when:
+    manual
   rules:
     - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH == "develop"'
       when: never
