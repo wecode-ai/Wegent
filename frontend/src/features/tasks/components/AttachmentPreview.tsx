@@ -320,7 +320,7 @@ export default function AttachmentPreview({
 
       return (
         <>
-          <div className="relative group mb-2">
+          <div className="relative group mb-2 max-w-full">
             <div
               className="cursor-pointer rounded-lg overflow-hidden border border-border hover:border-primary transition-colors"
               onClick={handleImageClick}
@@ -328,14 +328,14 @@ export default function AttachmentPreview({
               <img
                 src={imageUrl}
                 alt={attachment.filename}
-                className="max-w-[300px] max-h-[200px] object-contain bg-muted"
+                className="max-w-full max-h-[200px] object-contain bg-muted"
               />
             </div>
             {/* Overlay with filename and actions */}
             <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <span
-                  className="text-white text-xs truncate max-w-[200px]"
+                  className="text-white text-xs truncate flex-1 min-w-0"
                   title={attachment.filename}
                 >
                   {attachment.filename}
@@ -349,7 +349,7 @@ export default function AttachmentPreview({
                       e.stopPropagation();
                       handleDownload();
                     }}
-                    className="h-6 w-6 text-white hover:bg-white/20"
+                    className="h-6 w-6 text-white hover:bg-white/20 flex-shrink-0"
                     title="下载"
                   >
                     <Download className="h-4 w-4" />
@@ -396,9 +396,9 @@ export default function AttachmentPreview({
   }
 
   return (
-    <div className="flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2">
-      <span className="text-2xl">{icon}</span>
-      <div className="flex-1 min-w-0">
+    <div className="flex items-center gap-3 p-3 bg-muted rounded-lg border border-border mb-2 max-w-full">
+      <span className="text-2xl flex-shrink-0">{icon}</span>
+      <div className="flex-1 min-w-0 overflow-hidden">
         <div className="font-medium text-sm truncate" title={attachment.filename}>
           {attachment.filename}
         </div>

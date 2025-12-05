@@ -19,8 +19,7 @@ import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
 import FileUpload from './FileUpload';
-import ExportPdfButton, { type SelectableMessage } from './ExportPdfButton';
-import type { Team, GitRepoInfo, GitBranch, Attachment, TaskDetailSubtask } from '@/types/api';
+import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
 import { sendMessage, isChatShell } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
@@ -205,9 +204,19 @@ export default function ChatArea({
   // 2. There is a pending user message for the current task (optimistic UI for new chat)
   // 3. The current task is streaming
   // 4. We're creating a new task (no selected task) and have an active stream
+  // 5. CRITICAL: Once we have messages, keep showing them even during data refresh
+  //    to prevent the "flash of empty state" bug
   const hasMessages = React.useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream = !selectedTaskDetail?.id && streamingTaskId && isStreamingTaskActive;
+    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
+
+    // Once we have a task with subtasks, always show messages view
+    // This prevents flashing back to empty state during refresh
+    if (hasSelectedTask && hasSubtasks) {
+      return true;
+    }
+
     return Boolean(hasSelectedTask || pendingUserMessage || isStreaming || hasNewTaskStream);
   }, [selectedTaskDetail, pendingUserMessage, isStreaming, streamingTaskId, isStreamingTaskActive]);
 
@@ -215,55 +224,6 @@ export default function ChatArea({
   const shouldHideChatInput = React.useMemo(() => {
     return appMode === 'workflow';
   }, [appMode]);
-
-  // Generate messages for PDF export from task detail subtasks
-  const exportableMessages = useMemo<SelectableMessage[]>(() => {
-    if (!selectedTaskDetail?.subtasks) return [];
-
-    return selectedTaskDetail.subtasks
-      .map((sub: TaskDetailSubtask) => {
-        const isUser = sub.role === 'USER';
-        let content = sub.prompt || '';
-
-        // For AI messages, extract the result value
-        if (!isUser && sub.result) {
-          if (typeof sub.result === 'object' && 'value' in sub.result) {
-            const value = sub.result.value;
-            if (typeof value === 'string') {
-              content = value;
-            } else if (value !== null && value !== undefined) {
-              content = JSON.stringify(value);
-            }
-          } else if (typeof sub.result === 'string') {
-            content = sub.result;
-          }
-        }
-
-        // Extract attachments for user messages
-        const attachments = sub.attachments?.map(att => ({
-          id: att.id,
-          filename: att.filename,
-          file_size: att.file_size,
-          file_extension: att.file_extension,
-        }));
-
-        return {
-          id: sub.id,
-          type: isUser ? ('user' as const) : ('ai' as const),
-          content,
-          timestamp: new Date(sub.updated_at).getTime(),
-          botName: sub.bots?.[0]?.name || 'Bot',
-          userName: selectedTaskDetail?.user?.user_name,
-          teamName: selectedTaskDetail?.team?.name,
-          attachments,
-        };
-      })
-      .filter(msg => msg.content.trim() !== '');
-  }, [
-    selectedTaskDetail?.subtasks,
-    selectedTaskDetail?.team?.name,
-    selectedTaskDetail?.user?.user_name,
-  ]);
 
   // Restore user preferences from localStorage when teams load
   // Only runs for new tasks (no messages), not when switching to existing tasks
@@ -538,9 +498,21 @@ export default function ChatArea({
                 params.set('taskId', String(completedTaskId));
                 router.push(`?${params.toString()}`);
 
-                // For new tasks, we immediately clear stream as navigation happens
-                contextResetStream(completedTaskId);
-                setStreamingTaskId(null);
+                // Wait for task detail to be loaded before clearing stream
+                // This prevents the flash of empty content when URL changes
+                try {
+                  // Give TaskParamSync time to trigger and load the task detail
+                  // We use a small delay to ensure the URL change has been processed
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                  // Then wait for the actual refresh to complete
+                  await refreshSelectedTaskDetail(false);
+                } catch (error) {
+                  console.error('Failed to refresh task detail after stream:', error);
+                } finally {
+                  // Only clear stream content after data is refreshed (or failed)
+                  contextResetStream(completedTaskId);
+                  setStreamingTaskId(null);
+                }
               } else if (selectedTaskDetail?.id) {
                 // If this was a follow-up message (second+ message), refresh task detail
                 // to show the new subtasks (user message + AI response)
@@ -1282,17 +1254,6 @@ export default function ChatArea({
                     </>
                   )}
                 </div>
-                {/* Export PDF Button - only show when has messages and not streaming */}
-                {exportableMessages.length > 0 && !isStreaming && (
-                  <ExportPdfButton
-                    messages={exportableMessages}
-                    taskName={
-                      selectedTaskDetail?.title ||
-                      selectedTaskDetail?.prompt?.slice(0, 50) ||
-                      'Chat'
-                    }
-                  />
-                )}
               </div>
             </div>
           </div>

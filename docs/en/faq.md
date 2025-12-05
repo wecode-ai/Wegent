@@ -213,9 +213,9 @@ docker exec -it <executor-container-id> /bin/bash
 **A:**
 
 **Core Platform:**
-- Backend: Python 3.9+ (FastAPI)
+- Backend: Python 3.10+ (FastAPI)
 - Frontend: TypeScript (Next.js 15)
-- Executor: Python 3.9+
+- Executor: Python 3.10+
 
 **Agents can use:**
 - Python (recommended)

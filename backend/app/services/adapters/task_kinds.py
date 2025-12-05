@@ -105,11 +105,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             # Only check expiration for code tasks, chat tasks have no expiration
             if task_type == "code":
                 expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
-            
+
             task_shell_source = (
-                task_crd.chat_shell.labels
-                and task_crd.chat_shell.labels.get("source") 
-                or None)
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("source")
+                or None
+            )
             if task_shell_source != "chat_shell":
                 if (
                     datetime.now() - existing_task.updated_at

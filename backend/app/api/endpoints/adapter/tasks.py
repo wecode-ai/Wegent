@@ -290,7 +290,7 @@ async def cancel_task(
             except Exception as e:
                 logger.error(
                     f"Failed to update Chat Shell task {task_id} status: {str(e)}"
-)
+                )
             return {"message": "Chat stopped successfully", "status": "COMPLETED"}
         else:
             # No running subtask found, just mark task as completed
@@ -436,4 +436,3 @@ def join_shared_task(
         model_id=request.model_id,
         force_override_bot_model=request.force_override_bot_model or False,
     )
-
