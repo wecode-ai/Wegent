@@ -107,8 +107,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
             
             task_shell_source = (
-                task_crd.chat_shell.labels
-                and task_crd.chat_shell.labels.get("source") 
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("source")
                 or None)
             if task_shell_source != "chat_shell":
                 if (
