@@ -154,8 +154,8 @@
     "download": "下载"
   },
   "teams": {
-    "title": "团队列表",
-    "description": "查看所有团队及其机器人",
+    "title": "智能体列表",
+    "description": "智能体 = 机器人 + 机器人之间的协作模式，通过组合不同的机器人和协作方式来完成各种任务",
     "loading": "加载团队中...",
     "active": "活跃",
     "inactive": "非活跃",
@@ -168,7 +168,7 @@
     "copy": "复制团队",
     "more": "更多操作",
     "no_teams": "没有可用的团队",
-    "new_team": "新建团队",
+    "new_team": "新建智能体",
     "search_placeholder": "搜索团队...",
     "no_match": "没有匹配的团队",
     "manage": "团队设置",
@@ -209,9 +209,9 @@
   },
   "team": {
     "name": "名称",
-    "name_placeholder": "团队名称",
+    "name_placeholder": "智能体名称",
     "leader": "领导者",
-    "model": "模式",
+    "model": "协作模式",
     "bots": "候选人列表",
     "bot": "机器人",
     "select_leader": "选择领导者",
@@ -314,7 +314,7 @@
   "settings": {
     "integrations": "集成",
     "bot": "机器人",
-    "team": "机器人",
+    "team": "智能体",
     "models": "模型",
     "shells": "执行器",
     "sections": {

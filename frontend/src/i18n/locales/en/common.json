@@ -155,7 +155,7 @@
   },
   "teams": {
     "title": "Team List",
-    "description": "View all teams and their bots",
+    "description": "Agent = Bot + Collaboration Mode. Combine different bots and collaboration patterns to accomplish various tasks",
     "loading": "Loading teams...",
     "active": "Active",
     "inactive": "Inactive",

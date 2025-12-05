@@ -20,7 +20,7 @@ import { Bot, Team } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
 import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles';
 import { Tag } from '@/components/ui/tag';
-import BotEdit, { AgentType } from '../BotEdit';
+import BotEdit, { AgentType, BotEditRef } from '../BotEdit';
 
 export interface SoloModeEditorProps {
   bots: Bot[];
@@ -36,6 +36,10 @@ export interface SoloModeEditorProps {
   onCreateBot?: () => void;
   /** List of allowed agent types for filtering when creating bots */
   allowedAgents?: AgentType[];
+  /** Current team editing ID (0 = new team) */
+  editingTeamId?: number;
+  /** Ref to access BotEdit methods for external saving */
+  botEditRef?: React.RefObject<BotEditRef | null>;
 }
 
 export default function SoloModeEditor({
@@ -48,6 +52,8 @@ export default function SoloModeEditor({
   teamPromptMap,
   onOpenPromptDrawer,
   allowedAgents,
+  editingTeamId,
+  botEditRef,
 }: SoloModeEditorProps) {
   const { t } = useTranslation('common');
 
@@ -93,12 +99,20 @@ export default function SoloModeEditor({
     [promptSummary.variant]
   );
 
-  // State for inline bot editing mode (readOnly vs edit)
-  const [isEditingBot, setIsEditingBot] = useState(false);
-  // State for inline bot creation mode
-  const [isCreatingBot, setIsCreatingBot] = useState(false);
+  // Determine if this is a new team without a selected bot
+  const isNewTeamWithoutBot = editingTeamId === 0 && selectedBotId === null;
+
+  // State for inline bot creation mode - auto-enter for new teams
+  const [isCreatingBot, setIsCreatingBot] = useState(isNewTeamWithoutBot);
   // Track bots IDs to detect new bot creation
   const prevBotIdsRef = useRef<Set<number>>(new Set(bots.map(b => b.id)));
+
+  // Update isCreatingBot when editingTeamId or selectedBotId changes
+  useEffect(() => {
+    if (editingTeamId === 0 && selectedBotId === null) {
+      setIsCreatingBot(true);
+    }
+  }, [editingTeamId, selectedBotId]);
 
   // Get the selected bot
   const selectedBot = useMemo(() => {
@@ -110,30 +124,19 @@ export default function SoloModeEditor({
   const handleBotChange = useCallback(
     (botId: number) => {
       setSelectedBotId(botId);
-      setIsEditingBot(false);
+      setIsCreatingBot(false);
     },
     [setSelectedBotId]
   );
 
-  // Handle edit button click (switch from readOnly to edit mode)
-  const handleEditClick = useCallback(() => {
-    setIsEditingBot(true);
-  }, []);
-
-  // Handle cancel edit (switch back to readOnly mode)
-  const handleCancelEdit = useCallback(() => {
-    setIsEditingBot(false);
-  }, []);
-
   // Handle create new bot - show inline creation form
   const handleCreateBot = useCallback(() => {
     setIsCreatingBot(true);
-    setIsEditingBot(false);
   }, []);
 
   // Handle bot edit close
   const handleBotEditClose = useCallback(() => {
-    setIsEditingBot(false);
+    // No-op for solo mode - bot changes are saved with team
   }, []);
 
   // Handle bot creation close - just close the creation mode (used for cancel)
@@ -273,11 +276,12 @@ export default function SoloModeEditor({
       </div>
 
       {/* Bot details / edit area */}
-      <div className="flex-1 min-h-[500px] rounded-md border border-border bg-base overflow-hidden">
+      <div className="flex-1 min-h-0 rounded-md border border-border bg-base overflow-hidden">
         {isCreatingBot ? (
           /* Show BotEdit component in creation mode */
           <div className="h-full overflow-auto">
             <BotEdit
+              ref={botEditRef}
               bots={bots}
               setBots={setBots}
               editingBotId={0}
@@ -286,14 +290,16 @@ export default function SoloModeEditor({
               toast={toast}
               embedded={true}
               readOnly={false}
+              hideActions={true}
               onCancelEdit={handleCancelCreate}
               allowedAgents={allowedAgents}
             />
           </div>
         ) : selectedBotId !== null ? (
-          /* Show BotEdit component - either in readOnly or edit mode */
+          /* Show BotEdit component in edit mode - bot saves with team */
           <div className="h-full overflow-auto">
             <BotEdit
+              ref={botEditRef}
               bots={bots}
               setBots={setBots}
               editingBotId={selectedBotId}
@@ -301,9 +307,8 @@ export default function SoloModeEditor({
               onClose={handleBotEditClose}
               toast={toast}
               embedded={true}
-              readOnly={!isEditingBot}
-              onEditClick={handleEditClick}
-              onCancelEdit={handleCancelEdit}
+              readOnly={false}
+              hideActions={true}
               allowedAgents={allowedAgents}
             />
           </div>

@@ -209,15 +209,15 @@ export default function TeamList() {
 
   return (
     <>
-      <div className="space-y-3">
-        <div>
+      <div className="flex flex-col h-full min-h-0">
+        <div className="flex-shrink-0 mb-3">
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
           <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
         <div
           className={`bg-base border border-border rounded-md p-2 w-full ${
             isEditing
-              ? 'md:min-h-[70vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
+              ? 'flex-1 flex flex-col min-h-0 overflow-hidden'
               : isMobile
                 ? 'max-h-[calc(100vh-200px)] flex flex-col overflow-y-auto custom-scrollbar'
                 : 'max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'

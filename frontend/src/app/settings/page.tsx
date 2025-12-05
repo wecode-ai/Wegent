@@ -99,12 +99,12 @@ function DashboardContent() {
         </TopNavigation>
 
         {/* Dashboard Content with Tabs */}
-        <div className="flex-1 overflow-x-hidden">
-          <div className="w-full min-w-0">
+        <div className="flex-1 overflow-x-hidden flex flex-col min-h-0">
+          <div className="w-full min-w-0 flex-1 flex flex-col min-h-0">
             <Tab.Group
               selectedIndex={tabIndex}
               onChange={handleTabChange}
-              className={isDesktop ? 'flex' : 'block'}
+              className={isDesktop ? 'flex h-full' : 'flex flex-col h-full'}
             >
               {/* Conditional rendering based on screen size */}
               {isDesktop ? (
@@ -177,21 +177,21 @@ function DashboardContent() {
                     </Tab>
                   </Tab.List>
 
-                  <div className="flex-1 min-h-0 px-8 py-4 overflow-y-auto min-w-0">
-                    <Tab.Panels>
-                      <Tab.Panel className="focus:outline-none">
+                  <div className="flex-1 min-h-0 px-8 py-4 min-w-0 flex flex-col overflow-hidden">
+                    <Tab.Panels className="flex-1 flex flex-col min-h-0 overflow-hidden">
+                      <Tab.Panel className="focus:outline-none flex-1 flex flex-col min-h-0 overflow-y-auto">
                         <ModelList />
                       </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
+                      <Tab.Panel className="focus:outline-none flex-1 flex flex-col min-h-0 overflow-y-auto">
                         <ShellList />
                       </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
+                      <Tab.Panel className="focus:outline-none flex-1 flex flex-col min-h-0 overflow-hidden">
                         <TeamList />
                       </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
+                      <Tab.Panel className="focus:outline-none overflow-y-auto">
                         <GitHubIntegration />
                       </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
+                      <Tab.Panel className="focus:outline-none overflow-y-auto">
                         <NotificationSettings />
                       </Tab.Panel>
                     </Tab.Panels>
