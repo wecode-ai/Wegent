@@ -19,7 +19,7 @@ const path = require('path')
 const FONTS = [
   {
     name: 'SourceHanSansSC-VF.ttf',
-    url: 'https://github.com/adobe-fonts/source-han-sans/raw/release/Variable/TTF/SourceHanSansSC-VF.ttf',
+    url: 'http://maven.intra.weibo.com/nexus/service/local/repositories/releases/content/adobe-fonts/source-han-sans/1.0/source-han-sans-1.0.ttf',
     description: 'Source Han Sans SC Variable (CJK support for PDF)',
     minSize: 20 * 1024 * 1024, // 20MB minimum - actual file is ~25MB
   },
