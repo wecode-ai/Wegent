@@ -340,8 +340,7 @@ async def _create_task_and_subtasks(
     db.commit()
     db.refresh(task)
     db.refresh(assistant_subtask)
-
-    # Initialize Redis chat history from existing subtasks if needed
+# Initialize Redis chat history from existing subtasks if needed
     # This is crucial for shared tasks that were copied with historical messages
     if existing_subtasks:
         from app.services.chat.session_manager import session_manager
