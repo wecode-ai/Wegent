@@ -60,7 +60,14 @@ class SubtaskAttachment(Base):
     mime_type = Column(String(100), nullable=False)
 
     # Binary data storage (LONGBLOB for MySQL, LargeBinary for SQLite - supports up to 4GB)
-    binary_data = Column(BinaryDataType, nullable=False)
+    # When using external storage backends, this column may be NULL
+    binary_data = Column(BinaryDataType, nullable=True)
+
+    # External storage backend configuration
+    # storage_key: Reference key for external storage (format: attachments/{attachment_id})
+    storage_key = Column(String(500), nullable=True)
+    # storage_backend: Type of storage backend used (e.g., "mysql", "s3", "minio")
+    storage_backend = Column(String(50), nullable=True)
 
     # Image base64 encoding (for vision models, LONGTEXT for MySQL, Text for SQLite)
     # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
