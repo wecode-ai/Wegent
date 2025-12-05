@@ -10,6 +10,8 @@ WORKDIR /app
 
 # 复制依赖文件并安装依赖
 COPY frontend/package.json frontend/package-lock.json ./
+# 复制 scripts 目录（postinstall 脚本需要）
+COPY frontend/scripts ./scripts
 RUN npm ci && npm cache clean --force
 
 # 复制源码并构建
