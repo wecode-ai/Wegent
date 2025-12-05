@@ -549,6 +549,9 @@
     "use_bot_model": "使用 Bot 预设模型",
     "model_required": "请选择模型"
   },
+  "footer": {
+    "powered_by": "Powered by AI应用平台"
+  },
   "shells": {
     "title": "Shell 管理",
     "description": "使用自定义 Base Image 管理 Shell",

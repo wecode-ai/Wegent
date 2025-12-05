@@ -22,6 +22,7 @@ import OpenMenu from '@/features/tasks/components/OpenMenu';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
+import PoweredByFooter from '@/components/common/PoweredByFooter';
 import { Team } from '@/types/api';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { saveLastTab } from '@/utils/userPreferences';
@@ -216,6 +217,8 @@ export default function CodePage() {
           </div>
         </div>
       </div>
+      {/* Show footer only when no task is selected */}
+      {!hasTaskId && <PoweredByFooter />}
     </>
   );
 }

@@ -18,6 +18,7 @@ import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
+import PoweredByFooter from '@/components/common/PoweredByFooter';
 import { Team } from '@/types/api';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import { saveLastTab } from '@/utils/userPreferences';
@@ -30,9 +31,10 @@ export default function ChatPage() {
   // User state for git token check
   const { user } = useUser();
 
-  // Check for share_id in URL
+  // Check for share_id and taskId in URL
   const searchParams = useSearchParams();
   const hasShareId = !!searchParams.get('share_id');
+  const taskId = searchParams.get('taskId');
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -125,6 +127,8 @@ export default function ChatPage() {
           />
         </div>
       </div>
+      {/* Show footer only when no task is selected */}
+      {!taskId && <PoweredByFooter />}
     </>
   );
 }
