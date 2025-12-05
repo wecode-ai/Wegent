@@ -113,6 +113,13 @@ class Settings(BaseSettings):
     MAX_UPLOAD_FILE_SIZE_MB: int = 50  # Maximum file size in MB
     MAX_EXTRACTED_TEXT_LENGTH: int = 1000000  # Maximum extracted text length
 
+    # MinIO object storage configuration
+    MINIO_ENDPOINT: str = "minio:9000"  # MinIO server address
+    MINIO_ACCESS_KEY: str = "minioadmin"  # MinIO access key
+    MINIO_SECRET_KEY: str = "minioadmin"  # MinIO secret key
+    MINIO_BUCKET_NAME: str = "wegent-attachments"  # Bucket name for attachments
+    MINIO_SECURE: bool = False  # Use HTTPS for MinIO connection
+
 
     class Config:
         env_file = ".env"

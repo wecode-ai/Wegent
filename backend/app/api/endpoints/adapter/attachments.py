@@ -165,7 +165,7 @@ async def download_attachment(
 ):
     """
     Download the original file.
-    
+
     Returns:
         File binary data with appropriate content type
     """
@@ -176,13 +176,20 @@ async def download_attachment(
     )
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    
+
+    # Get binary data from appropriate storage (MinIO or MySQL)
+    try:
+        binary_data = attachment_service.get_attachment_binary(attachment)
+    except ValueError as e:
+        logger.error(f"Failed to retrieve attachment binary data: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve file data")
+
     # Encode filename for Content-Disposition header to support non-ASCII characters
     # Use RFC 5987 encoding: filename*=UTF-8''encoded_filename
     encoded_filename = quote(attachment.original_filename)
-    
+
     return Response(
-        content=attachment.binary_data,
+        content=binary_data,
         media_type=attachment.mime_type,
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"

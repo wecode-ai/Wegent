@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
 from app.services.attachment.parser import DocumentParser, DocumentParseError
+from app.services.storage.minio_client import minio_client
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +80,9 @@ class AttachmentService:
         
         # Use placeholder subtask_id if not provided (0 means unlinked)
         effective_subtask_id = subtask_id if subtask_id > 0 else self.UNLINKED_SUBTASK_ID
-        
+
         # Create attachment record with UPLOADING status
+        # Note: binary_data is set to empty bytes - actual data stored in MinIO
         # All fields must have non-null values as required by database
         attachment = SubtaskAttachment(
             subtask_id=effective_subtask_id,
@@ -89,7 +91,8 @@ class AttachmentService:
             file_extension=extension,
             file_size=file_size,
             mime_type=mime_type,
-            binary_data=binary_data,
+            binary_data=b"",  # Empty bytes - new data stored in MinIO
+            minio_object_key=None,  # Will be set after upload to MinIO
             image_base64="",  # Empty string as placeholder, will be updated after parsing
             extracted_text="",  # Empty string as placeholder, will be updated after parsing
             text_length=0,  # Will be updated after parsing
@@ -98,7 +101,28 @@ class AttachmentService:
         )
         db.add(attachment)
         db.flush()  # Get the ID
-        
+
+        # Upload file to MinIO
+        try:
+            object_key = minio_client.generate_object_key(
+                user_id=user_id,
+                attachment_id=attachment.id,
+                original_filename=filename,
+            )
+            minio_client.upload_file(
+                object_key=object_key,
+                data=binary_data,
+                content_type=mime_type,
+            )
+            attachment.minio_object_key = object_key
+            logger.info(f"Uploaded attachment {attachment.id} to MinIO: {object_key}")
+        except Exception as e:
+            logger.error(f"Failed to upload attachment to MinIO: {e}")
+            attachment.status = AttachmentStatus.FAILED
+            attachment.error_message = f"Failed to upload to storage: {str(e)}"
+            db.commit()
+            raise ValueError(f"Failed to upload file to storage: {str(e)}")
+
         # Update status to PARSING
         attachment.status = AttachmentStatus.PARSING
         db.flush()
@@ -215,35 +239,88 @@ class AttachmentService:
     ) -> bool:
         """
         Delete an attachment.
-        
+
         Only allows deletion of attachments that are not linked to a subtask.
-        
+        Also deletes the file from MinIO if stored there.
+
         Args:
             db: Database session
             attachment_id: Attachment ID
             user_id: User ID for ownership check
-            
+
         Returns:
             True if deleted, False if not found or cannot be deleted
         """
         attachment = self.get_attachment(db, attachment_id, user_id)
-        
+
         if attachment is None:
             return False
-        
+
         # Only allow deletion of unlinked attachments (subtask_id == 0 means unlinked)
         if attachment.subtask_id > 0:
             logger.warning(
                 f"Cannot delete attachment {attachment_id}: linked to subtask {attachment.subtask_id}"
             )
             return False
-        
+
+        # Delete from MinIO if stored there
+        if attachment.minio_object_key:
+            try:
+                minio_client.delete_file(attachment.minio_object_key)
+                logger.info(f"Deleted attachment {attachment_id} from MinIO: {attachment.minio_object_key}")
+            except Exception as e:
+                logger.error(f"Failed to delete attachment from MinIO: {e}")
+                # Continue with database deletion even if MinIO deletion fails
+
         db.delete(attachment)
         db.commit()
-        
+
         logger.info(f"Attachment {attachment_id} deleted")
-        
+
         return True
+
+    def get_attachment_binary(
+        self,
+        attachment: SubtaskAttachment,
+    ) -> bytes:
+        """
+        Get binary data for an attachment.
+
+        For new attachments, retrieves data from MinIO.
+        For legacy attachments, returns data from MySQL binary_data column.
+
+        Args:
+            attachment: SubtaskAttachment record
+
+        Returns:
+            File binary data
+
+        Raises:
+            ValueError: If binary data cannot be retrieved
+        """
+        # Check if data is stored in MinIO (new data)
+        if attachment.minio_object_key:
+            try:
+                data = minio_client.download_file(attachment.minio_object_key)
+                logger.debug(
+                    f"Retrieved attachment {attachment.id} from MinIO: "
+                    f"{attachment.minio_object_key} ({len(data)} bytes)"
+                )
+                return data
+            except Exception as e:
+                logger.error(f"Failed to retrieve attachment from MinIO: {e}")
+                raise ValueError(f"Failed to retrieve file from storage: {str(e)}")
+
+        # Legacy data stored in MySQL
+        if attachment.binary_data:
+            logger.debug(
+                f"Retrieved attachment {attachment.id} from MySQL: "
+                f"{len(attachment.binary_data)} bytes"
+            )
+            return attachment.binary_data
+
+        # No data available
+        raise ValueError(f"No binary data available for attachment {attachment.id}")
     
     def build_message_with_attachment(
         self,

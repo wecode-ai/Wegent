@@ -64,7 +64,14 @@ class SubtaskAttachment(Base):
     mime_type = Column(String(100), nullable=False)
     
     # Binary data storage (LONGBLOB for MySQL, LargeBinary for SQLite - supports up to 4GB)
+    # NOTE: For new uploads, binary data is stored in MinIO. This field is kept for backward
+    # compatibility with existing data. New records will have empty bytes here.
     binary_data = Column(BinaryDataType, nullable=False)
+
+    # MinIO object storage key
+    # If set, file binary data is stored in MinIO at this key path
+    # If NULL, file binary data is in the binary_data column (legacy data)
+    minio_object_key = Column(String(500), nullable=True, default=None)
 
     # Image base64 encoding (for vision models, LONGTEXT for MySQL, Text for SQLite)
     # Note: MySQL doesn't allow default values for TEXT/BLOB columns, so nullable=True
