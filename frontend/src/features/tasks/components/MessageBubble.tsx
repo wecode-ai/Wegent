@@ -152,9 +152,8 @@ const MessageBubble = memo(
     theme,
     t,
   }: MessageBubbleProps) {
-    const bubbleBaseClasses =
-      'relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm';
-    const bubbleTypeClasses = msg.type === 'user' ? 'bg-muted my-6' : 'bg-surface';
+    const bubbleBaseClasses = 'relative group w-full p-5 pb-10 text-text-primary';
+    const bubbleTypeClasses = msg.type === 'user' ? 'my-6' : '';
     const isUserMessage = msg.type === 'user';
 
     const formatTimestamp = (timestamp: number | undefined) => {
@@ -430,9 +429,7 @@ const MessageBubble = memo(
 
           // Flexible type detection
           // Matches: **Type**: value, Type: value, **类型**: value, 类型: value
-          const typeMatch = questionBlock.match(
-            /(?:\*\*)?(?:Type|类型)(?:\*\*)?[:\s：]+\s*(\w+)/i
-          );
+          const typeMatch = questionBlock.match(/(?:\*\*)?(?:Type|类型)(?:\*\*)?[:\s：]+\s*(\w+)/i);
           if (!typeMatch) continue;
 
           const typeValue = typeMatch[1].toLowerCase();
@@ -467,7 +464,8 @@ const MessageBubble = memo(
 
             while ((optionMatch = optionRegex.exec(questionBlock)) !== null) {
               const checkMark = optionMatch[1].trim();
-              const isRecommended = checkMark === '✓' || checkMark.toLowerCase() === 'x' || checkMark === '*';
+              const isRecommended =
+                checkMark === '✓' || checkMark.toLowerCase() === 'x' || checkMark === '*';
               const value = optionMatch[2].trim();
               const label = optionMatch[3]
                 .trim()
