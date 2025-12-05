@@ -848,7 +848,7 @@ export default function ChatArea({
         aria-hidden={!hasMessages}
         style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
       >
-        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6">
+        <div className="w-full max-w-5xl mx-auto px-4 sm:px-6">
           <MessagesArea
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
@@ -869,7 +869,7 @@ export default function ChatArea({
         {!hasMessages && (
           <div className="flex-1 flex items-center justify-center w-full">
             {/* Floating Input Area */}
-            <div ref={floatingInputRef} className="w-full max-w-4xl px-4 sm:px-6">
+            <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               <div className="w-full">
                 {/* External API Parameters Input - only show for Dify teams */}
                 {selectedTeam && selectedTeam.agent_type === 'dify' && (
@@ -883,7 +883,7 @@ export default function ChatArea({
 
                 {/* Chat Input Card */}
                 <div
-                  className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                  className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-md transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
                   onDragEnter={handleDragEnter}
                   onDragLeave={handleDragLeave}
                   onDragOver={handleDragOver}
@@ -1099,7 +1099,7 @@ export default function ChatArea({
 
               {/* Chat Input Card */}
               <div
-                className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-md transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
                 onDragEnter={handleDragEnter}
                 onDragLeave={handleDragLeave}
                 onDragOver={handleDragOver}
@@ -1257,7 +1257,7 @@ export default function ChatArea({
               </div>
 
               {/* Bottom Controls */}
-              <div className="flex flex-row gap-3 mb-2 ml-3 mt-3 items-center flex-wrap justify-between">
+              <div className="flex flex-row gap-3 ml-3 mt-3 items-center flex-wrap justify-between">
                 <div className="flex flex-row gap-3 items-center flex-wrap">
                   {showRepositorySelector && (
                     <>

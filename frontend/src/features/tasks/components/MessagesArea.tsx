@@ -506,11 +506,17 @@ export default function MessagesArea({
             // Check if this message has recovery state and is still streaming
             const recovery = msg.subtaskId ? recoveryMap.get(msg.subtaskId) : undefined;
 
+            // Generate a unique key combining subtaskId and message type to avoid duplicates
+            // This handles cases where user and AI messages might share the same subtaskId
+            const messageKey = msg.subtaskId
+              ? `${msg.type}-${msg.subtaskId}`
+              : `msg-${index}-${msg.timestamp}`;
+
             // Use RecoveredMessageBubble for messages with active recovery (streaming)
             if (recovery?.recovered && recovery.streaming) {
               return (
                 <RecoveredMessageBubble
-                  key={msg.subtaskId || `msg-${index}-${msg.timestamp}`}
+                  key={messageKey}
                   msg={msg}
                   index={index}
                   recovery={recovery}
@@ -527,7 +533,7 @@ export default function MessagesArea({
             // Use regular MessageBubble for other messages
             return (
               <MessageBubble
-                key={msg.subtaskId || `msg-${index}-${msg.timestamp}`}
+                key={messageKey}
                 msg={msg}
                 index={index}
                 selectedTaskDetail={selectedTaskDetail}
