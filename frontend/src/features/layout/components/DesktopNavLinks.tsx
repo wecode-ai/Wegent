@@ -10,7 +10,7 @@ import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface DesktopNavLinksProps {
-  activePage: 'chat' | 'code' | 'dashboard';
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
 }
 
 export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
@@ -32,6 +32,11 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
         key: 'code' as const,
         label: t('navigation.code'),
         onClick: () => router.push(paths.code.getHref()),
+      },
+      {
+        key: 'wiki' as const,
+        label: t('navigation.wiki'),
+        onClick: () => router.push(paths.wiki.getHref()),
       },
       {
         key: 'dashboard' as const,
