@@ -10,8 +10,8 @@ bypassing the Docker Executor container for lightweight chat scenarios.
 """
 
 from app.services.chat.chat_service import chat_service
-from app.services.chat.session_manager import session_manager
 from app.services.chat.model_resolver import get_model_config_for_bot
+from app.services.chat.session_manager import session_manager
 
 __all__ = [
     "chat_service",

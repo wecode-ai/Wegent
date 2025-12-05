@@ -216,8 +216,8 @@ export interface TaskDetail {
   result: Record<string, unknown>;
   error_message: string;
   created_at: string;
-  // updated_at: string
-  // completed_at: string
+  updated_at: string;
+  completed_at?: string;
   user: User;
   team: Team;
   subtasks: TaskDetailSubtask[];

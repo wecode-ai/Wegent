@@ -97,6 +97,7 @@ export default function TaskSidebar({
   };
 
   // Grouping logic
+  // Include viewStatusVersion in dependencies to recalculate unread counts when view status changes
   const groupTasksByDate = React.useMemo(() => {
     const now = new Date();
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -121,7 +122,8 @@ export default function TaskSidebar({
       thisWeekUnread: getUnreadCount(thisWeekTasks),
       earlierUnread: getUnreadCount(earlierTasks),
     };
-  }, [tasks, getUnreadCount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, getUnreadCount, viewStatusVersion]);
 
   // New task
   const handleNewAgentClick = () => {
@@ -147,9 +149,11 @@ export default function TaskSidebar({
   };
 
   // Calculate total unread count
+  // Include viewStatusVersion in dependencies to recalculate when view status changes
   const totalUnreadCount = React.useMemo(() => {
     return getUnreadCount(tasks);
-  }, [tasks, getUnreadCount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, getUnreadCount, viewStatusVersion]);
 
   // Scroll to bottom to load more
   useEffect(() => {

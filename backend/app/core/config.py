@@ -113,7 +113,6 @@ class Settings(BaseSettings):
     MAX_UPLOAD_FILE_SIZE_MB: int = 50  # Maximum file size in MB
     MAX_EXTRACTED_TEXT_LENGTH: int = 1000000  # Maximum extracted text length
 
-
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

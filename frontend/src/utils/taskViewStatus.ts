@@ -53,17 +53,33 @@ function pruneOldViewStatus(statusMap: TaskViewStatusMap): TaskViewStatusMap {
 
 /**
  * Mark a task as viewed
+ * @param taskId - The task ID
+ * @param status - The task status
+ * @param taskTimestamp - Optional: Use task's timestamp (completed_at or updated_at) instead of current time.
+ *                        This is important when the task reaches terminal state while user is viewing it,
+ *                        to avoid time sync issues between client and server.
  */
-export function markTaskAsViewed(taskId: number, status: TaskStatus): void {
+export function markTaskAsViewed(taskId: number, status: TaskStatus, taskTimestamp?: string): void {
   const statusMap = getTaskViewStatusMap();
 
+  // Use task timestamp if provided, otherwise use current time
+  // When task timestamp is provided, we use it to ensure viewedAt >= taskUpdatedAt
+  // This prevents the "unread" badge from showing due to client/server time differences
+  const viewedAt = taskTimestamp || new Date().toISOString();
+
+  console.log(
+    `[markTaskAsViewed] Task ${taskId}: status=${status}, providedTimestamp=${taskTimestamp}, viewedAt=${viewedAt}`
+  );
+
   statusMap[taskId] = {
-    viewedAt: new Date().toISOString(),
+    viewedAt,
     status,
   };
 
   const prunedMap = pruneOldViewStatus(statusMap);
   saveTaskViewStatusMap(prunedMap);
+
+  console.log(`[markTaskAsViewed] Task ${taskId}: saved to localStorage, viewedAt=${viewedAt}`);
 }
 
 /**
@@ -80,32 +96,48 @@ export function getTaskViewStatus(taskId: number): TaskViewStatus | null {
 export function isTaskUnread(task: Task): boolean {
   // Only show unread badge for terminal states
   if (!['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) {
+    console.log(
+      `[isTaskUnread] Task ${task.id} (${task.title.slice(0, 20)}...): status=${task.status}, not terminal state, returning false`
+    );
     return false;
   }
 
   const viewStatus = getTaskViewStatus(task.id);
 
   // If never viewed, it's unread
-  if (!viewStatus) return true;
+  if (!viewStatus) {
+    console.log(
+      `[isTaskUnread] Task ${task.id} (${task.title.slice(0, 20)}...): no viewStatus, returning true (unread)`
+    );
+    return true;
+  }
 
   // If task was updated after last view, it's unread
   // This handles the case where a task is re-run
   const taskUpdatedAt = new Date(task.completed_at || task.updated_at);
   const viewedAt = new Date(viewStatus.viewedAt);
 
-  return taskUpdatedAt > viewedAt;
+  const isUnread = taskUpdatedAt > viewedAt;
+  console.log(
+    `[isTaskUnread] Task ${task.id} (${task.title.slice(0, 20)}...): status=${task.status}, taskUpdatedAt=${task.completed_at || task.updated_at}, viewedAt=${viewStatus.viewedAt}, isUnread=${isUnread}`
+  );
+
+  return isUnread;
 }
 
 /**
  * Mark all tasks as viewed
+ * Uses task's own timestamp (completed_at or updated_at) to avoid client/server time sync issues
  */
 export function markAllTasksAsViewed(tasks: Task[]): void {
   const statusMap = getTaskViewStatusMap();
 
   tasks.forEach(task => {
     if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) {
+      // Use task's timestamp to ensure viewedAt >= taskUpdatedAt
+      const viewedAt = task.completed_at || task.updated_at;
       statusMap[task.id] = {
-        viewedAt: new Date().toISOString(),
+        viewedAt,
         status: task.status,
       };
     }

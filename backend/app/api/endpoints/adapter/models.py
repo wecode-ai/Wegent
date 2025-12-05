@@ -354,7 +354,7 @@ def test_model_connection(
             # Gemini uses REST API with API key in header
             gemini_base_url = base_url or "https://generativelanguage.googleapis.com"
             gemini_base_url = gemini_base_url.rstrip("/")
-            
+
             # Build URL for generateContent endpoint
             if "/v1beta" in gemini_base_url or "/v1" in gemini_base_url:
                 url = f"{gemini_base_url}/models/{model_id}:generateContent"

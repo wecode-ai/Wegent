@@ -29,7 +29,7 @@ router = APIRouter()
 
 class AttachmentResponse(BaseModel):
     """Response model for attachment operations."""
-    
+
     id: int
     filename: str
     file_size: int
@@ -37,14 +37,14 @@ class AttachmentResponse(BaseModel):
     status: str
     text_length: Optional[int] = None
     error_message: Optional[str] = None
-    
+
     class Config:
         from_attributes = True
 
 
 class AttachmentDetailResponse(AttachmentResponse):
     """Detailed response model including subtask_id."""
-    
+
     subtask_id: Optional[int] = None
     file_extension: str
     created_at: str
@@ -75,26 +75,28 @@ async def upload_attachment(
     Returns:
         Attachment details including ID and processing status
     """
-    logger.info(f"[attachments.py] upload_attachment: user_id={current_user.id}, filename={file.filename}")
-    
+    logger.info(
+        f"[attachments.py] upload_attachment: user_id={current_user.id}, filename={file.filename}"
+    )
+
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required")
-    
+
     # Read file content
     try:
         binary_data = await file.read()
     except Exception as e:
         logger.error(f"Error reading uploaded file: {e}")
         raise HTTPException(status_code=400, detail="Failed to read uploaded file")
-    
+
     # Validate file size before processing
     if not DocumentParser.validate_file_size(len(binary_data)):
         max_size_mb = DocumentParser.MAX_FILE_SIZE / (1024 * 1024)
         raise HTTPException(
-            status_code=400, 
-            detail=f"File size exceeds maximum limit ({max_size_mb} MB)"
+            status_code=400,
+            detail=f"File size exceeds maximum limit ({max_size_mb} MB)",
         )
-    
+
     try:
         attachment = attachment_service.upload_attachment(
             db=db,
@@ -102,7 +104,7 @@ async def upload_attachment(
             filename=file.filename,
             binary_data=binary_data,
         )
-        
+
         return AttachmentResponse(
             id=attachment.id,
             filename=attachment.original_filename,
@@ -112,7 +114,7 @@ async def upload_attachment(
             text_length=attachment.text_length,
             error_message=attachment.error_message,
         )
-        
+
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except DocumentParseError as e:
@@ -130,7 +132,7 @@ async def get_attachment(
 ):
     """
     Get attachment details by ID.
-    
+
     Returns:
         Attachment details including status and metadata
     """
@@ -139,10 +141,10 @@ async def get_attachment(
         attachment_id=attachment_id,
         user_id=current_user.id,
     )
-    
+
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    
+
     return AttachmentDetailResponse(
         id=attachment.id,
         filename=attachment.original_filename,
@@ -165,7 +167,7 @@ async def download_attachment(
 ):
     """
     Download the original file.
-    
+
     Returns:
         File binary data with appropriate content type
     """
@@ -176,17 +178,17 @@ async def download_attachment(
     )
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    
+
     # Encode filename for Content-Disposition header to support non-ASCII characters
     # Use RFC 5987 encoding: filename*=UTF-8''encoded_filename
     encoded_filename = quote(attachment.original_filename)
-    
+
     return Response(
         content=attachment.binary_data,
         media_type=attachment.mime_type,
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
-        }
+        },
     )
 
 
@@ -198,9 +200,9 @@ async def delete_attachment(
 ):
     """
     Delete an attachment.
-    
+
     Only attachments that are not linked to a subtask can be deleted.
-    
+
     Returns:
         Success message
     """
@@ -209,26 +211,26 @@ async def delete_attachment(
         attachment_id=attachment_id,
         user_id=current_user.id,
     )
-    
+
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
-    
+
     # subtask_id == 0 means unlinked, > 0 means linked to a subtask
     if attachment.subtask_id > 0:
         raise HTTPException(
             status_code=400,
-            detail="Cannot delete attachment that is linked to a message"
+            detail="Cannot delete attachment that is linked to a message",
         )
-    
+
     success = attachment_service.delete_attachment(
         db=db,
         attachment_id=attachment_id,
         user_id=current_user.id,
     )
-    
+
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete attachment")
-    
+
     return {"message": "Attachment deleted successfully"}
 
 
@@ -240,7 +242,7 @@ async def get_attachment_by_subtask(
 ):
     """
     Get attachment by subtask ID.
-    
+
     Returns:
         Attachment details or null if no attachment exists
     """
@@ -248,14 +250,14 @@ async def get_attachment_by_subtask(
         db=db,
         subtask_id=subtask_id,
     )
-    
+
     if attachment is None:
         return None
-    
+
     # Verify ownership
     if attachment.user_id != current_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
-    
+
     return AttachmentDetailResponse(
         id=attachment.id,
         filename=attachment.original_filename,
