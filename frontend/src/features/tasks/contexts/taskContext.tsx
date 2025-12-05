@@ -211,6 +211,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Mark task as viewed when selected OR when currently viewing task reaches terminal state
   useEffect(() => {
     if (selectedTask) {
       // Mark task as viewed when selected
@@ -221,6 +222,17 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedTask]);
+
+  // Auto-mark as viewed when currently viewing task reaches terminal state
+  useEffect(() => {
+    if (selectedTaskDetail) {
+      const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
+      if (terminalStates.includes(selectedTaskDetail.status)) {
+        markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status);
+        setViewStatusVersion(prev => prev + 1);
+      }
+    }
+  }, [selectedTaskDetail?.status]);
 
   // Search tasks
   const searchTasks = async (term: string) => {
