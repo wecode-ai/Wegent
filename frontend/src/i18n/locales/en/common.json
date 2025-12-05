@@ -654,5 +654,35 @@
     "handler_create_team_hint": "You need to create at least one team to copy this task.",
     "handler_copying": "Copying...",
     "handler_copy_to_tasks": "Continue chat"
+  },
+  "inAppBrowser": {
+    "title": "Open in Default Browser",
+    "detectedApp": "Detected that you are opening in {{app}}",
+    "detectedGeneric": "Detected that you are opening in an in-app browser",
+    "whyTitle": "Why use the default browser?",
+    "whyDescription": "In-app browsers may restrict login functionality from working properly. For the best experience, we recommend opening in your default browser (Safari, Chrome, etc.).",
+    "howToOpen": "How to open in default browser?",
+    "instructions": {
+      "wechat": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "dingtalk": [
+        "Tap the '···' menu in the top right corner",
+        "Select 'Open in Default Browser'"
+      ],
+      "alipay": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "qq": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "weibo": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "facebook": ["Tap the menu button in the top right corner", "Select 'Open in Browser'"],
+      "instagram": ["Tap the '···' menu in the top right corner", "Select 'Open in Browser'"],
+      "twitter": ["Tap the 'Share' button in the top right corner", "Select 'Open in Browser'"],
+      "default": [
+        "Tap the menu button in the top right corner",
+        "Select 'Open in Browser' or 'Open in Default Browser'"
+      ]
+    },
+    "copyUrl": "Copy Link",
+    "urlCopied": "Link copied! You can paste and open it in your default browser.",
+    "copyFailed": "Failed to copy. Please manually copy the URL from the address bar.",
+    "continueAnyway": "Continue Anyway (may encounter login issues)",
+    "footerNote": "Opening in default browser ensures all features work properly"
   }
 }
