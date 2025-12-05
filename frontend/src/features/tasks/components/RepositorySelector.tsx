@@ -26,11 +26,10 @@ function truncateMiddle(text: string, maxLength: number, startChars = 8, endChar
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGithub } from 'react-icons/fi';
 import { Loader2 } from 'lucide-react';
+import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { GitRepoInfo, TaskDetail } from '@/types/api';
 import { useUser } from '@/features/common/UserContext';
 import { useRouter } from 'next/navigation';
-import Modal from '@/features/common/Modal';
-import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from 'react-i18next';
 import { getLastRepo } from '@/utils/userPreferences';
@@ -59,7 +58,6 @@ export default function RepositorySelector({
   const [loading, setLoading] = useState<boolean>(false);
   const [isSearching, setIsSearching] = useState<boolean>(false); // User is searching (includes waiting period)
   const [error, setError] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Check if user has git_info configured
   const hasGitInfo = () => {
@@ -341,8 +339,7 @@ export default function RepositorySelector({
   /**
    * Navigate to settings page to configure git integration
    */
-  const handleModalClick = () => {
-    setIsModalOpen(false);
+  const handleIntegrationClick = () => {
     router.push(paths.settings.integrations.getHref());
   };
   const { t } = useTranslation();
@@ -400,31 +397,30 @@ export default function RepositorySelector({
               {item?.label ? truncateMiddle(item.label, isMobile ? 20 : 25) : ''}
             </span>
           )}
+          footer={
+            <div
+              className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
+              onClick={handleIntegrationClick}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  handleIntegrationClick();
+                }
+              }}
+            >
+              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+              <span className="font-medium group-hover:text-text-primary">
+                {t('branches.configure_integration')}
+              </span>
+            </div>
+          }
         />
         {isSearching && (
           <Loader2 className="w-3 h-3 text-text-muted animate-spin flex-shrink-0 absolute right-0" />
         )}
       </div>
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={t('guide.title')}
-        maxWidth="sm"
-      >
-        <div className="flex flex-col items-center">
-          <p className="text-sm text-text-secondary mb-6 text-center leading-relaxed">
-            {t('guide.description')}
-          </p>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={handleModalClick}
-            style={{ minWidth: '100px' }}
-          >
-            {t('branches.set_token')}
-          </Button>
-        </div>
-      </Modal>
     </div>
   );
 }

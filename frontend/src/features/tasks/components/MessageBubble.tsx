@@ -625,9 +625,9 @@ const MessageBubble = memo(
 
       return (
         <div className="flex flex-wrap gap-2 mb-3">
-          {attachments.map(attachment => (
+          {attachments.map((attachment, idx) => (
             <AttachmentPreview
-              key={attachment.id}
+              key={`attachment-${attachment.id}-${idx}`}
               attachment={attachment}
               compact={false}
               showDownload={true}
