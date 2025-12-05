@@ -90,7 +90,29 @@ export const sanitizeRedirectPath = (
 
   const cleanPath = '/' + resolvedParts.join('/');
 
-  // Return the clean path (without query/fragment for security)
-  // This prevents query parameter injection attacks
-  return cleanPath;
+  // Reconstruct the full path with query parameters and fragments
+  // We preserve these as they're needed for application routing (e.g., taskShare parameter)
+  // Security is already handled by earlier validation checks
+  const queryStart = normalized.indexOf('?');
+  const fragmentStart = normalized.indexOf('#');
+
+  let fullPath = cleanPath;
+
+  if (queryStart !== -1) {
+    if (fragmentStart !== -1 && fragmentStart > queryStart) {
+      // Both query and fragment present
+      fullPath =
+        cleanPath +
+        normalized.substring(queryStart, fragmentStart) +
+        normalized.substring(fragmentStart);
+    } else {
+      // Only query present
+      fullPath = cleanPath + normalized.substring(queryStart);
+    }
+  } else if (fragmentStart !== -1) {
+    // Only fragment present
+    fullPath = cleanPath + normalized.substring(fragmentStart);
+  }
+
+  return fullPath;
 };
