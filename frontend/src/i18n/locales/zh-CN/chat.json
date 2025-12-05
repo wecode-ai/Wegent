@@ -36,7 +36,14 @@
     "subtask_failed": "子任务失败",
     "unknown_error": "未知错误",
     "bot": "机器人",
-    "application_parameters": "应用参数"
+    "application_parameters": "应用参数",
+    "status_running": "执行中",
+    "status_pending": "等待中",
+    "status_processing": "处理中",
+    "status_completed": "已完成",
+    "status_failed": "已失败",
+    "status_cancelled": "已取消",
+    "status_cancelling": "取消中"
   },
   "shared_task": {
     "share_task": "分享",
