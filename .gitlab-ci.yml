@@ -221,6 +221,7 @@ wegent-preview-web:
     - changes:
       - frontend/**/*
       - wecode/docker/frontend/**/*
+      when: manual
 
 # Auto create MR from develop to main when branch merged to develop
 auto-create-develop-to-main-mr:
