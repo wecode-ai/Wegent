@@ -29,15 +29,15 @@ _client_lock = asyncio.Lock()
 async def get_http_client() -> httpx.AsyncClient:
     """
     Get or create the shared HTTP client instance.
-    
+
     Uses connection pooling for better performance when making
     multiple requests to LLM APIs.
-    
+
     Returns:
         httpx.AsyncClient: Shared HTTP client instance
     """
     global _http_client
-    
+
     if _http_client is None:
         async with _client_lock:
             # Double-check after acquiring lock
@@ -54,19 +54,19 @@ async def get_http_client() -> httpx.AsyncClient:
                     follow_redirects=True,
                 )
                 logger.info("Created shared HTTP client for chat service")
-    
+
     return _http_client
 
 
 async def close_http_client():
     """
     Close the shared HTTP client.
-    
+
     Should be called during application shutdown to properly
     release resources.
     """
     global _http_client
-    
+
     if _http_client is not None:
         async with _client_lock:
             if _http_client is not None:
@@ -78,21 +78,21 @@ async def close_http_client():
 class ChatServiceBase:
     """
     Base class for chat services.
-    
+
     Provides common functionality for direct LLM API calls.
     """
-    
+
     # Shell types that support direct chat (bypass executor)
     DIRECT_CHAT_SHELL_TYPES = ["Chat"]
-    
+
     @classmethod
     def is_direct_chat_shell(cls, shell_type: str) -> bool:
         """
         Check if the shell type supports direct chat.
-        
+
         Args:
             shell_type: The shell type to check
-            
+
         Returns:
             bool: True if the shell type supports direct chat
         """
