@@ -608,6 +608,8 @@ type LineType =
   | 'orderedList'
   | 'blockquote'
   | 'horizontalRule'
+  | 'tableSeparator'
+  | 'tableRow'
   | 'paragraph'
   | 'empty';
 
@@ -616,16 +618,87 @@ interface ParsedLine {
   content: string;
   level?: number; // For headings and lists
   listNumber?: number; // For ordered lists
+  tableCells?: string[]; // For table rows
+  tableAlignments?: ('left' | 'center' | 'right')[]; // For table separator
+}
+
+/**
+ * Parse table row cells from a markdown table line
+ */
+function parseTableCells(line: string): string[] {
+  // Remove leading and trailing pipes and split by pipe
+  const trimmed = line.trim();
+  const withoutPipes = trimmed.startsWith('|') ? trimmed.slice(1) : trimmed;
+  const withoutEndPipe = withoutPipes.endsWith('|') ? withoutPipes.slice(0, -1) : withoutPipes;
+  return withoutEndPipe.split('|').map(cell => cell.trim());
+}
+
+/**
+ * Check if a line is a table separator (e.g., |---|---|---|)
+ */
+function isTableSeparator(line: string): boolean {
+  const trimmed = line.trim();
+  // Table separator pattern: |:?-+:?|:?-+:?|... or :?-+:?|:?-+:?|...
+  return /^\|?[\s]*:?-+:?[\s]*(\|[\s]*:?-+:?[\s]*)+\|?$/.test(trimmed);
+}
+
+/**
+ * Check if a line looks like a table row
+ */
+function isTableRow(line: string): boolean {
+  const trimmed = line.trim();
+  // Table row must contain at least one pipe character
+  // and should have content (not just pipes)
+  if (!trimmed.includes('|')) return false;
+  // Check if it has actual content between pipes
+  const cells = parseTableCells(trimmed);
+  return cells.length >= 1 && cells.some(cell => cell.length > 0);
+}
+
+/**
+ * Parse table alignments from separator line
+ */
+function parseTableAlignments(line: string): ('left' | 'center' | 'right')[] {
+  const cells = parseTableCells(line);
+  return cells.map(cell => {
+    const trimmed = cell.trim();
+    const hasLeftColon = trimmed.startsWith(':');
+    const hasRightColon = trimmed.endsWith(':');
+    if (hasLeftColon && hasRightColon) return 'center';
+    if (hasRightColon) return 'right';
+    return 'left';
+  });
 }
 
 /**
  * Parse a single line to determine its markdown type
  */
-function parseLineType(line: string): ParsedLine {
+function parseLineType(line: string, context?: { inTable?: boolean }): ParsedLine {
   const trimmed = line.trim();
 
   if (trimmed === '') {
     return { type: 'empty', content: '' };
+  }
+
+  // Table separator (must check before horizontal rule)
+  if (isTableSeparator(trimmed)) {
+    return {
+      type: 'tableSeparator',
+      content: trimmed,
+      tableAlignments: parseTableAlignments(trimmed),
+    };
+  }
+
+  // Table row (check if in table context or looks like a table row)
+  if (context?.inTable || isTableRow(trimmed)) {
+    const cells = parseTableCells(trimmed);
+    if (cells.length >= 1) {
+      return {
+        type: 'tableRow',
+        content: trimmed,
+        tableCells: cells,
+      };
+    }
   }
 
   // Horizontal rule
@@ -716,7 +789,6 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
     heading5: 10,
     heading6: 10,
   };
-
   // Line heights for different elements
   const lineHeights: Record<string, number> = {
     heading1: 8,
@@ -729,6 +801,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
     list: 5,
     code: 4.5,
     blockquote: 5,
+    table: 6,
   };
 
   /**
@@ -1050,6 +1123,188 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
   };
 
   /**
+   * Render a table with headers and rows
+   * Supports text wrapping within cells
+   */
+  const renderTable = (
+    headers: string[],
+    alignments: ('left' | 'center' | 'right')[],
+    rows: string[][],
+    pageNum: { value: number }
+  ) => {
+    if (headers.length === 0) return;
+
+    const cellPadding = 2;
+    const cellLineHeight = 4; // Line height for text within cells
+    const numCols = headers.length;
+
+    // Calculate column widths - distribute evenly with minimum width
+    const minColWidth = 20;
+    const evenWidth = contentWidth / numCols;
+    const colWidths: number[] = [];
+
+    for (let col = 0; col < numCols; col++) {
+      colWidths.push(Math.max(minColWidth, evenWidth));
+    }
+
+    // Adjust column widths to fit content width exactly
+    const totalWidth = colWidths.reduce((sum, w) => sum + w, 0);
+    if (totalWidth !== contentWidth) {
+      const scale = contentWidth / totalWidth;
+      for (let i = 0; i < colWidths.length; i++) {
+        colWidths[i] *= scale;
+      }
+    }
+
+    const tableWidth = colWidths.reduce((sum, w) => sum + w, 0);
+
+    /**
+     * Calculate wrapped lines for a cell
+     */
+    const getCellLines = (text: string, colWidth: number, isBold: boolean): string[] => {
+      pdf.setFontSize(9);
+      setFontForText(pdf, text, isBold ? 'bold' : 'normal');
+      const maxTextWidth = colWidth - cellPadding * 2;
+      return pdf.splitTextToSize(text || '', maxTextWidth);
+    };
+
+    /**
+     * Calculate row height based on content (max lines in any cell)
+     */
+    const calculateRowHeight = (
+      rowData: string[],
+      isBold: boolean
+    ): { height: number; cellLines: string[][] } => {
+      const cellLines: string[][] = [];
+      let maxLines = 1;
+
+      for (let col = 0; col < numCols; col++) {
+        const lines = getCellLines(rowData[col] || '', colWidths[col], isBold);
+        cellLines.push(lines);
+        maxLines = Math.max(maxLines, lines.length);
+      }
+
+      const height = maxLines * cellLineHeight + cellPadding * 2;
+      return { height, cellLines };
+    };
+
+    /**
+     * Draw a single row with wrapped text
+     */
+    const drawRow = (
+      rowData: string[],
+      rowY: number,
+      rowHeight: number,
+      cellLines: string[][],
+      isBold: boolean,
+      isHeader: boolean,
+      isAlternate: boolean
+    ) => {
+      let xPos = margin;
+
+      // Draw row background
+      if (isHeader) {
+        pdf.setFillColor(246, 248, 250);
+        pdf.setDrawColor(220, 220, 220);
+        pdf.rect(margin, rowY, tableWidth, rowHeight, 'FD');
+      } else if (isAlternate) {
+        pdf.setFillColor(250, 250, 250);
+        pdf.rect(margin, rowY, tableWidth, rowHeight, 'F');
+      }
+
+      // Draw bottom border
+      pdf.setDrawColor(220, 220, 220);
+      pdf.line(margin, rowY + rowHeight, margin + tableWidth, rowY + rowHeight);
+
+      // Draw cell contents
+      for (let col = 0; col < numCols; col++) {
+        const cellWidth = colWidths[col];
+        const lines = cellLines[col];
+        const alignment = alignments[col] || 'left';
+
+        pdf.setFontSize(9);
+        if (isHeader) {
+          pdf.setTextColor(COLORS.heading.r, COLORS.heading.g, COLORS.heading.b);
+        } else {
+          pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b);
+        }
+        setFontForText(pdf, rowData[col] || '', isBold ? 'bold' : 'normal');
+
+        // Draw each line of text
+        const textStartY = rowY + cellPadding + cellLineHeight;
+        for (let lineIdx = 0; lineIdx < lines.length; lineIdx++) {
+          const lineText = lines[lineIdx];
+          const lineY = textStartY + lineIdx * cellLineHeight;
+
+          // Calculate text position based on alignment
+          let textX = xPos + cellPadding;
+          if (alignment === 'center') {
+            textX = xPos + cellWidth / 2;
+          } else if (alignment === 'right') {
+            textX = xPos + cellWidth - cellPadding;
+          }
+
+          const alignOption =
+            alignment === 'left' ? undefined : { align: alignment as 'center' | 'right' };
+          pdf.text(lineText, textX, lineY, alignOption);
+        }
+
+        // Draw vertical line (right border of cell)
+        pdf.setDrawColor(220, 220, 220);
+        pdf.line(xPos + cellWidth, rowY, xPos + cellWidth, rowY + rowHeight);
+
+        xPos += cellWidth;
+      }
+
+      // Draw left border
+      pdf.setDrawColor(220, 220, 220);
+      pdf.line(margin, rowY, margin, rowY + rowHeight);
+    };
+
+    // Calculate header height
+    const headerInfo = calculateRowHeight(headers, true);
+
+    // Calculate all row heights first to check if table fits on page
+    const rowInfos: { height: number; cellLines: string[][] }[] = [];
+    for (const row of rows) {
+      rowInfos.push(calculateRowHeight(row, false));
+    }
+
+    const totalTableHeight =
+      headerInfo.height + rowInfos.reduce((sum, info) => sum + info.height, 0);
+
+    // Check if we need a new page for the table
+    checkNewPage(Math.min(totalTableHeight, headerInfo.height + 20), pageNum);
+
+    // Draw header
+    const headerY = yPosition;
+    drawRow(headers, headerY, headerInfo.height, headerInfo.cellLines, true, true, false);
+    yPosition += headerInfo.height;
+
+    // Draw data rows
+    for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+      const row = rows[rowIdx];
+      const rowInfo = rowInfos[rowIdx];
+
+      // Check if we need a new page for this row
+      if (checkNewPage(rowInfo.height, pageNum)) {
+        // After page break, we might want to redraw header (optional)
+        // For now, just continue with the row
+      }
+
+      const rowY = yPosition;
+      drawRow(row, rowY, rowInfo.height, rowInfo.cellLines, false, false, rowIdx % 2 === 1);
+      yPosition += rowInfo.height;
+    }
+
+    // Draw top border
+    pdf.setDrawColor(220, 220, 220);
+    pdf.line(margin, headerY, margin + tableWidth, headerY);
+
+    yPosition += 3; // Space after table
+  };
+
+  /**
    * Render a markdown line based on its type
    */
   const renderMarkdownLine = (parsedLine: ParsedLine, pageNum: { value: number }) => {
@@ -1058,6 +1313,11 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
     switch (type) {
       case 'empty':
         yPosition += 3;
+        break;
+
+      case 'tableSeparator':
+      case 'tableRow':
+        // Tables are handled separately in renderMessage
         break;
 
       case 'horizontalRule':
@@ -1220,10 +1480,25 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
     let codeBlockContent = '';
     let codeLanguage = '';
 
+    // Table state
+    let inTable = false;
+    let tableHeaders: string[] = [];
+    let tableAlignments: ('left' | 'center' | 'right')[] = [];
+    let tableRows: string[][] = [];
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
       if (isCodeBlockDelimiter(line)) {
+        // Flush any pending table before code block
+        if (inTable && tableHeaders.length > 0) {
+          renderTable(tableHeaders, tableAlignments, tableRows, pageNum);
+          inTable = false;
+          tableHeaders = [];
+          tableAlignments = [];
+          tableRows = [];
+        }
+
         if (!inCodeBlock) {
           // Start of code block
           inCodeBlock = true;
@@ -1245,9 +1520,48 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
         codeBlockContent += (codeBlockContent ? '\n' : '') + line;
       } else {
         // Parse and render markdown line
-        const parsedLine = parseLineType(line);
-        renderMarkdownLine(parsedLine, pageNum);
+        const parsedLine = parseLineType(line, { inTable });
+
+        // Handle table parsing
+        if (parsedLine.type === 'tableRow' || parsedLine.type === 'tableSeparator') {
+          if (parsedLine.type === 'tableSeparator') {
+            // This is the separator line, the previous row was the header
+            if (!inTable && tableRows.length === 0 && i > 0) {
+              // Look back for header row
+              const prevLine = lines[i - 1];
+              const prevParsed = parseLineType(prevLine, { inTable: true });
+              if (prevParsed.type === 'tableRow' && prevParsed.tableCells) {
+                tableHeaders = prevParsed.tableCells;
+              }
+            }
+            tableAlignments = parsedLine.tableAlignments || [];
+            inTable = true;
+          } else if (parsedLine.type === 'tableRow' && parsedLine.tableCells) {
+            if (!inTable) {
+              // This might be a header row, wait for separator
+              // Don't render yet, just continue
+            } else {
+              // This is a data row
+              tableRows.push(parsedLine.tableCells);
+            }
+          }
+        } else {
+          // Not a table line, flush any pending table
+          if (inTable && tableHeaders.length > 0) {
+            renderTable(tableHeaders, tableAlignments, tableRows, pageNum);
+            inTable = false;
+            tableHeaders = [];
+            tableAlignments = [];
+            tableRows = [];
+          }
+          renderMarkdownLine(parsedLine, pageNum);
+        }
       }
+    }
+
+    // Flush any remaining table at end of content
+    if (inTable && tableHeaders.length > 0) {
+      renderTable(tableHeaders, tableAlignments, tableRows, pageNum);
     }
 
     // Handle unclosed code block
