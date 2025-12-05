@@ -14,10 +14,17 @@ RUN sed -i 's|http://deb.debian.org|http://mirrors.cloud.aliyuncs.com|g' /etc/ap
     echo "Asia/Shanghai" > /etc/timezone && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements.txt and install dependencies
-COPY backend/requirements.txt .
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH="/root/.local/bin:${PATH}" && \
+    uv --version
+
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Copy pyproject.toml and install dependencies
+COPY backend/pyproject.toml .
 ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno"}}'
-RUN pip install --no-cache-dir -r requirements.txt -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com
+RUN uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code
 COPY backend /app
