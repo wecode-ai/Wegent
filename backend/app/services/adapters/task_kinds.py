@@ -327,12 +327,15 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             # Parse timestamps
             created_at = task.created_at
             updated_at = task.updated_at
+            completed_at = None
             if task_crd.status:
                 try:
                     if task_crd.status.createdAt:
                         created_at = task_crd.status.createdAt
                     if task_crd.status.updatedAt:
                         updated_at = task_crd.status.updatedAt
+                    if task_crd.status.completedAt:
+                        completed_at = task_crd.status.completedAt
                 except:
                     pass
 
@@ -420,6 +423,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "type": type_value,
                     "created_at": created_at,
                     "updated_at": updated_at,
+                    "completed_at": completed_at,
                     "team_id": team_id,
                     "git_repo": git_repo,
                 }

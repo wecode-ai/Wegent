@@ -228,11 +228,32 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     if (selectedTaskDetail) {
       const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
       if (terminalStates.includes(selectedTaskDetail.status)) {
-        markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status);
+        // Use TaskDetail's completed_at/updated_at as the timestamp for marking as viewed
+        // This ensures consistency with isTaskUnread which uses Task's timestamps
+        // Note: TaskDetail now has these fields from the backend
+        const taskTimestamp =
+          selectedTaskDetail.completed_at ||
+          selectedTaskDetail.updated_at ||
+          new Date().toISOString();
+
+        console.log(`[taskContext] Auto-marking task ${selectedTaskDetail.id} as viewed:`, {
+          taskId: selectedTaskDetail.id,
+          taskStatus: selectedTaskDetail.status,
+          taskDetailCompletedAt: selectedTaskDetail.completed_at,
+          taskDetailUpdatedAt: selectedTaskDetail.updated_at,
+          usingTimestamp: taskTimestamp,
+        });
+
+        markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status, taskTimestamp);
         setViewStatusVersion(prev => prev + 1);
       }
     }
-  }, [selectedTaskDetail?.status]);
+  }, [
+    selectedTaskDetail?.status,
+    selectedTaskDetail?.id,
+    selectedTaskDetail?.completed_at,
+    selectedTaskDetail?.updated_at,
+  ]);
 
   // Search tasks
   const searchTasks = async (term: string) => {
