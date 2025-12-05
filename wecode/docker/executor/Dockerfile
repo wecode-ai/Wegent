@@ -23,15 +23,6 @@ ENV UV_EXTRA_INDEX_URL=""
 # Copy pyproject.toml and install dependencies
 COPY executor/pyproject.toml /app/executor/pyproject.toml
 
-RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
-    tar -xvf sqlite-autoconf-3500400.tar.gz && \
-    cd sqlite-autoconf-3500400 && \
-    ./configure --prefix=/usr/local && \
-    make -j$(nproc) && \
-    make install && \
-    cd .. && \
-    rm -rf sqlite-autoconf-3500400 sqlite-autoconf-3500400.tar.gz
-
 ENV PATH="/usr/local/bin:${PATH}"
 RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.6 && \
     cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
