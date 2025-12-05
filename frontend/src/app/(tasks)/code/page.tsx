@@ -54,6 +54,13 @@ export default function CodePage() {
   // Selected team state for sharing
   const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null);
 
+  // Share button state
+  const [shareButton, setShareButton] = useState<React.ReactNode>(null);
+
+  const handleShareButtonRender = (button: React.ReactNode) => {
+    setShareButton(button);
+  };
+
   // Workbench state - default to true when taskId exists
   const [isWorkbenchOpen, setIsWorkbenchOpen] = useState(true);
 
@@ -171,6 +178,7 @@ export default function CodePage() {
             variant="with-sidebar"
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
+            {shareButton}
             <GithubStarButton />
             <UserMenu />
             {hasTaskId && <OpenMenu openLinks={openLinks} />}
@@ -197,6 +205,7 @@ export default function CodePage() {
                 isTeamsLoading={isTeamsLoading}
                 selectedTeamForNewTask={selectedTeamForNewTask}
                 taskType="code"
+                onShareButtonRender={handleShareButtonRender}
               />
             </div>
 

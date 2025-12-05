@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
 import { useTaskContext } from '../contexts/taskContext';
 import type {
   TaskDetail,
@@ -14,15 +14,18 @@ import type {
   GitBranch,
   Attachment,
 } from '@/types/api';
-import { Bot, Copy, Check, Download } from 'lucide-react';
+import { Bot, Copy, Check, Download, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
+import { useToast } from '@/hooks/use-toast';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { useMultipleStreamingRecovery, type RecoveryState } from '@/hooks/useStreamingRecovery';
 import MessageBubble, { type Message } from './MessageBubble';
 import AttachmentPreview from './AttachmentPreview';
+import TaskShareModal from './TaskShareModal';
+import { taskApis } from '@/apis/tasks';
 
 interface ResultWithThinking {
   thinking?: unknown[];
@@ -174,6 +177,8 @@ interface MessagesAreaProps {
   isStreaming?: boolean;
   /** Pending user message for optimistic update */
   pendingUserMessage?: string | null;
+  /** Callback to render share button in parent component (e.g., TopNavigation) */
+  onShareButtonRender?: (button: React.ReactNode) => void;
   /** Pending attachment for optimistic update */
   pendingAttachment?: Attachment | null;
   /** Callback to notify parent when content changes and scroll may be needed */
@@ -192,13 +197,48 @@ export default function MessagesArea({
   pendingAttachment,
   onContentChange,
   streamingSubtaskId,
+  onShareButtonRender,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
+  const { toast } = useToast();
   const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
   const { theme } = useTheme();
 
+  // Task share modal state
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareUrl, setShareUrl] = useState('');
+  const [isSharing, setIsSharing] = useState(false);
+
   // Use Typewriter effect for streaming content
   const displayContent = useTypewriter(streamingContent || '');
+
+  // Handle task share - wrapped in useCallback to prevent infinite loops
+  const handleShareTask = useCallback(async () => {
+    if (!selectedTaskDetail?.id) {
+      toast({
+        variant: 'destructive',
+        title: t('shared_task.no_task_selected'),
+        description: t('shared_task.no_task_selected_desc'),
+      });
+      return;
+    }
+
+    setIsSharing(true);
+    try {
+      const response = await taskApis.shareTask(selectedTaskDetail.id);
+      setShareUrl(response.share_url);
+      setShowShareModal(true);
+    } catch (err) {
+      console.error('Failed to share task:', err);
+      toast({
+        variant: 'destructive',
+        title: t('shared_task.share_failed'),
+        description: (err as Error)?.message || t('shared_task.share_failed_desc'),
+      });
+    } finally {
+      setIsSharing(false);
+    }
+  }, [selectedTaskDetail?.id, toast, t]);
 
   // Check if team uses Chat Shell (streaming mode, no polling needed)
   // Case-insensitive comparison since backend may return 'chat' or 'Chat'
@@ -497,6 +537,33 @@ export default function MessagesArea({
     onContentChange,
   ]);
 
+  // Memoize share button to prevent infinite re-renders
+  const shareButton = useMemo(() => {
+    if (!selectedTaskDetail?.id || displayMessages.length === 0) {
+      return null;
+    }
+
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={handleShareTask}
+        disabled={isSharing}
+        className="flex items-center gap-2"
+      >
+        <Share2 className="h-4 w-4" />
+        {isSharing ? t('shared_task.sharing') : t('shared_task.share_task')}
+      </Button>
+    );
+  }, [selectedTaskDetail?.id, displayMessages.length, isSharing, handleShareTask, t]);
+
+  // Pass share button to parent for rendering in TopNavigation
+  useEffect(() => {
+    if (onShareButtonRender) {
+      onShareButtonRender(shareButton);
+    }
+  }, [onShareButtonRender, shareButton]);
+
   return (
     <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
       {/* Messages Area - only shown when there are messages or loading */}
@@ -637,6 +704,14 @@ export default function MessagesArea({
             )}
         </div>
       )}
+
+      {/* Task Share Modal */}
+      <TaskShareModal
+        visible={showShareModal}
+        onClose={() => setShowShareModal(false)}
+        taskTitle={selectedTaskDetail?.title || 'Untitled Task'}
+        shareUrl={shareUrl}
+      />
     </div>
   );
 }

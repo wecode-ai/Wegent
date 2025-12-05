@@ -43,6 +43,7 @@ interface ChatAreaProps {
   selectedTeamForNewTask?: Team | null;
   showRepositorySelector?: boolean;
   taskType?: 'chat' | 'code';
+  onShareButtonRender?: (button: React.ReactNode) => void;
 }
 
 export default function ChatArea({
@@ -51,6 +52,7 @@ export default function ChatArea({
   selectedTeamForNewTask,
   showRepositorySelector = true,
   taskType = 'chat',
+  onShareButtonRender,
 }: ChatAreaProps) {
   const { toast } = useToast();
 
@@ -859,6 +861,7 @@ export default function ChatArea({
             pendingAttachment={pendingAttachment}
             onContentChange={handleMessagesContentChange}
             streamingSubtaskId={streamingSubtaskId}
+            onShareButtonRender={onShareButtonRender}
           />
         </div>
       </div>

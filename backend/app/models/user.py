@@ -25,6 +25,9 @@ class User(Base):
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
+    # Relationships
+    shared_tasks = relationship("SharedTask", foreign_keys="[SharedTask.user_id]", back_populates="user")
+
     __table_args__ = (
         {
             "sqlite_autoincrement": True,

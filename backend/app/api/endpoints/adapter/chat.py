@@ -130,7 +130,7 @@ def _should_use_direct_chat(db: Session, team: Kind, user_id: int) -> bool:
     return True
 
 
-def _create_task_and_subtasks(
+async def _create_task_and_subtasks(
     db: Session,
     user: User,
     team: Kind,
@@ -341,6 +341,46 @@ def _create_task_and_subtasks(
     db.refresh(task)
     db.refresh(assistant_subtask)
 
+    # Initialize Redis chat history from existing subtasks if needed
+    # This is crucial for shared tasks that were copied with historical messages
+    if existing_subtasks:
+        from app.services.chat.session_manager import session_manager
+
+        # Check if history exists in Redis
+        redis_history = await session_manager.get_chat_history(task_id)
+
+        # If Redis history is empty but we have subtasks, rebuild history from DB
+        if not redis_history:
+            logger.info(f"Initializing chat history from DB for task {task_id} with {len(existing_subtasks)} existing subtasks")
+            history_messages = []
+
+            # Sort subtasks by message_id to ensure correct order
+            sorted_subtasks = sorted(existing_subtasks, key=lambda s: s.message_id)
+
+            for subtask in sorted_subtasks:
+                # Only include completed subtasks with results
+                if subtask.status == SubtaskStatus.COMPLETED:
+                    if subtask.role == SubtaskRole.USER:
+                        # User message - use prompt field
+                        if subtask.prompt:
+                            history_messages.append({
+                                "role": "user",
+                                "content": subtask.prompt
+                            })
+                    elif subtask.role == SubtaskRole.ASSISTANT:
+                        # Assistant message - use result.value field
+                        if subtask.result and isinstance(subtask.result, dict):
+                            content = subtask.result.get("value", "")
+                            if content:
+                                history_messages.append({
+                                    "role": "assistant",
+                                    "content": content
+                                })
+
+            # Save to Redis if we found any history
+            if history_messages:
+                await session_manager.save_chat_history(task_id, history_messages)
+                logger.info(f"Initialized {len(history_messages)} messages in Redis for task {task_id}")
     return task, assistant_subtask
 
 
@@ -434,7 +474,7 @@ async def stream_chat(
         )
 
     # Create task and subtasks (use original message for storage, final_message for LLM)
-    task, assistant_subtask = _create_task_and_subtasks(
+    task, assistant_subtask = await _create_task_and_subtasks(
         db, current_user, team, request.message, request, request.task_id
     )
 

@@ -38,6 +38,14 @@
     "bot": "Bot",
     "application_parameters": "Application Parameters"
   },
+  "shared_task": {
+    "share_task": "Share",
+    "sharing": "Sharing...",
+    "no_task_selected": "No task selected",
+    "no_task_selected_desc": "Please select a task to share",
+    "share_failed": "Failed to share task",
+    "share_failed_desc": "Please try again"
+  },
   "settings": {
     "model": "Model",
     "temperature": "Temperature",

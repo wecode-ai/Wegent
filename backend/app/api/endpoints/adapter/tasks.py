@@ -14,6 +14,13 @@ from app.core import security
 from app.core.config import settings
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
+from app.schemas.shared_task import (
+    JoinSharedTaskRequest,
+    JoinSharedTaskResponse,
+    PublicSharedTaskResponse,
+    TaskShareInfo,
+    TaskShareResponse,
+)
 from app.schemas.task import (
     TaskCreate,
     TaskDetail,
@@ -23,6 +30,7 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.shared_task import shared_task_service
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -282,8 +290,7 @@ async def cancel_task(
             except Exception as e:
                 logger.error(
                     f"Failed to update Chat Shell task {task_id} status: {str(e)}"
-                )
-
+)
             return {"message": "Chat stopped successfully", "status": "COMPLETED"}
         else:
             # No running subtask found, just mark task as completed
@@ -323,3 +330,110 @@ async def cancel_task(
         background_tasks.add_task(call_executor_cancel, task_id)
 
         return {"message": "Cancel request accepted", "status": "CANCELLING"}
+
+
+@router.post("/{task_id}/share", response_model=TaskShareResponse)
+def share_task(
+    task_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Generate a share link for a task.
+    The share link allows others to view the task history and copy it to their task list.
+    """
+    # Validate that the task belongs to the current user
+    if not shared_task_service.validate_task_exists(
+        db=db, task_id=task_id, user_id=current_user.id
+    ):
+        raise HTTPException(
+            status_code=404, detail="Task not found or you don't have permission"
+        )
+
+    return shared_task_service.share_task(
+        db=db, task_id=task_id, user_id=current_user.id
+    )
+
+
+@router.get("/share/info", response_model=TaskShareInfo)
+def get_task_share_info(
+    share_token: str = Query(..., description="Share token from URL"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get task share information from share token.
+    This endpoint doesn't require authentication, so anyone with the link can view.
+    """
+    return shared_task_service.get_share_info(db=db, share_token=share_token)
+
+
+@router.get("/share/public", response_model=PublicSharedTaskResponse)
+def get_public_shared_task(
+    token: str = Query(..., description="Share token from URL"),
+    db: Session = Depends(get_db),
+):
+    """
+    Get public shared task data for read-only viewing.
+    This endpoint doesn't require authentication - anyone with the link can view.
+    Only returns public data (no sensitive information like team config, bot details, etc.)
+    """
+    return shared_task_service.get_public_shared_task(db=db, share_token=token)
+
+
+@router.post("/share/join", response_model=JoinSharedTaskResponse)
+def join_shared_task(
+    request: JoinSharedTaskRequest,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Copy a shared task to the current user's task list.
+    This creates a new task with all the subtasks (messages) from the shared task.
+    """
+    from app.models.kind import Kind
+
+    # If team_id is provided, validate it belongs to the user
+    if request.team_id:
+        user_team = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == current_user.id,
+                Kind.kind == "Team",
+                Kind.id == request.team_id,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not user_team:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid team_id or team does not belong to you",
+            )
+    else:
+        # Get user's first active team if not specified
+        user_team = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == current_user.id,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not user_team:
+            raise HTTPException(
+                status_code=400,
+                detail="You need to have at least one team to copy a shared task",
+            )
+
+    return shared_task_service.join_shared_task(
+        db=db,
+        share_token=request.share_token,
+        user_id=current_user.id,
+        team_id=user_team.id,
+        model_id=request.model_id,
+        force_override_bot_model=request.force_override_bot_model or False,
+    )
+
