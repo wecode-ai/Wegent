@@ -109,6 +109,7 @@ def create_app():
     async def startup():
         # Initialize chat service HTTP client
         from app.services.chat.base import get_http_client
+
         await get_http_client()
         logger.info("✓ Chat service HTTP client initialized")
 
@@ -206,12 +207,13 @@ def create_app():
     @app.on_event("shutdown")
     async def shutdown():
         logger.info("Shutting down application...")
-        
+
         # Close chat service HTTP client
         from app.services.chat.base import close_http_client
+
         await close_http_client()
         logger.info("✓ Chat service HTTP client closed")
-        
+
         # Stop background jobs
         stop_background_jobs(app)
         logger.info("✓ Application shutdown completed")

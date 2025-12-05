@@ -60,9 +60,13 @@ async def call_chat_shell_cancel(subtask_id: int, partial_content: str = ""):
 
         success = await session_manager.cancel_stream(subtask_id)
         if success:
-            logger.info(f"Chat Shell stream cancelled successfully for subtask {subtask_id}")
+            logger.info(
+                f"Chat Shell stream cancelled successfully for subtask {subtask_id}"
+            )
         else:
-            logger.warning(f"Failed to cancel Chat Shell stream for subtask {subtask_id}")
+            logger.warning(
+                f"Failed to cancel Chat Shell stream for subtask {subtask_id}"
+            )
     except Exception as e:
         logger.error(
             f"Error cancelling Chat Shell stream for subtask {subtask_id}: {str(e)}"
@@ -264,6 +268,7 @@ async def cancel_task(
 
             # Update subtask status to COMPLETED (not CANCELLED, to show partial content)
             from datetime import datetime
+
             running_subtask.status = SubtaskStatus.COMPLETED
             running_subtask.progress = 100
             running_subtask.completed_at = datetime.now()
@@ -283,8 +288,9 @@ async def cancel_task(
                     f"Chat Shell task {task_id} cancelled and marked as COMPLETED"
                 )
             except Exception as e:
-                logger.error(f"Failed to update Chat Shell task {task_id} status: {str(e)}")
-
+                logger.error(
+                    f"Failed to update Chat Shell task {task_id} status: {str(e)}"
+)
             return {"message": "Chat stopped successfully", "status": "COMPLETED"}
         else:
             # No running subtask found, just mark task as completed
@@ -313,7 +319,9 @@ async def cancel_task(
                 f"Task {task_id} status updated to CANCELLING by user {current_user.id}"
             )
         except Exception as e:
-            logger.error(f"Failed to update task {task_id} status to CANCELLING: {str(e)}")
+            logger.error(
+                f"Failed to update task {task_id} status to CANCELLING: {str(e)}"
+            )
             raise HTTPException(
                 status_code=500, detail=f"Failed to update task status: {str(e)}"
             )

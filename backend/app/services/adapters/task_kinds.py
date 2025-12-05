@@ -333,12 +333,15 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             # Parse timestamps
             created_at = task.created_at
             updated_at = task.updated_at
+            completed_at = None
             if task_crd.status:
                 try:
                     if task_crd.status.createdAt:
                         created_at = task_crd.status.createdAt
                     if task_crd.status.updatedAt:
                         updated_at = task_crd.status.updatedAt
+                    if task_crd.status.completedAt:
+                        completed_at = task_crd.status.completedAt
                 except:
                     pass
 
@@ -426,6 +429,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "type": type_value,
                     "created_at": created_at,
                     "updated_at": updated_at,
+                    "completed_at": completed_at,
                     "team_id": team_id,
                     "git_repo": git_repo,
                 }
@@ -619,18 +623,24 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         for subtask in subtasks:
             # Convert attachments to dict format
             attachments_list = []
-            if hasattr(subtask, 'attachments') and subtask.attachments:
+            if hasattr(subtask, "attachments") and subtask.attachments:
                 for attachment in subtask.attachments:
-                    attachments_list.append({
-                        "id": attachment.id,
-                        "filename": attachment.original_filename,
-                        "file_size": attachment.file_size,
-                        "mime_type": attachment.mime_type,
-                        "status": attachment.status.value if hasattr(attachment.status, 'value') else attachment.status,
-                        "file_extension": attachment.file_extension,
-                        "created_at": attachment.created_at,
-                    })
-            
+                    attachments_list.append(
+                        {
+                            "id": attachment.id,
+                            "filename": attachment.original_filename,
+                            "file_size": attachment.file_size,
+                            "mime_type": attachment.mime_type,
+                            "status": (
+                                attachment.status.value
+                                if hasattr(attachment.status, "value")
+                                else attachment.status
+                            ),
+                            "file_extension": attachment.file_extension,
+                            "created_at": attachment.created_at,
+                        }
+                    )
+
             # Convert subtask to dict
             subtask_dict = {
                 # Subtask base fields
@@ -1070,9 +1080,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             or "chat"
         )
 
-        model_id = task_crd.metadata.labels and task_crd.metadata.labels.get(
-            "modelId"
-        )
+        model_id = task_crd.metadata.labels and task_crd.metadata.labels.get("modelId")
 
         return {
             "id": task.id,

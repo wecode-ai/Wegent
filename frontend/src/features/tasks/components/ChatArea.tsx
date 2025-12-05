@@ -19,7 +19,8 @@ import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
 import FileUpload from './FileUpload';
-import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
+import ExportPdfButton, { type SelectableMessage } from './ExportPdfButton';
+import type { Team, GitRepoInfo, GitBranch, Attachment, TaskDetailSubtask } from '@/types/api';
 import { sendMessage, isChatShell } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
@@ -214,6 +215,55 @@ export default function ChatArea({
   const shouldHideChatInput = React.useMemo(() => {
     return appMode === 'workflow';
   }, [appMode]);
+
+  // Generate messages for PDF export from task detail subtasks
+  const exportableMessages = useMemo<SelectableMessage[]>(() => {
+    if (!selectedTaskDetail?.subtasks) return [];
+
+    return selectedTaskDetail.subtasks
+      .map((sub: TaskDetailSubtask) => {
+        const isUser = sub.role === 'USER';
+        let content = sub.prompt || '';
+
+        // For AI messages, extract the result value
+        if (!isUser && sub.result) {
+          if (typeof sub.result === 'object' && 'value' in sub.result) {
+            const value = sub.result.value;
+            if (typeof value === 'string') {
+              content = value;
+            } else if (value !== null && value !== undefined) {
+              content = JSON.stringify(value);
+            }
+          } else if (typeof sub.result === 'string') {
+            content = sub.result;
+          }
+        }
+
+        // Extract attachments for user messages
+        const attachments = sub.attachments?.map(att => ({
+          id: att.id,
+          filename: att.filename,
+          file_size: att.file_size,
+          file_extension: att.file_extension,
+        }));
+
+        return {
+          id: sub.id,
+          type: isUser ? ('user' as const) : ('ai' as const),
+          content,
+          timestamp: new Date(sub.updated_at).getTime(),
+          botName: sub.bots?.[0]?.name || 'Bot',
+          userName: selectedTaskDetail?.user?.user_name,
+          teamName: selectedTaskDetail?.team?.name,
+          attachments,
+        };
+      })
+      .filter(msg => msg.content.trim() !== '');
+  }, [
+    selectedTaskDetail?.subtasks,
+    selectedTaskDetail?.team?.name,
+    selectedTaskDetail?.user?.user_name,
+  ]);
 
   // Restore user preferences from localStorage when teams load
   // Only runs for new tasks (no messages), not when switching to existing tasks
@@ -800,7 +850,7 @@ export default function ChatArea({
         aria-hidden={!hasMessages}
         style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
       >
-        <div className="w-full max-w-4xl mx-auto px-4 sm:px-6">
+        <div className="w-full max-w-5xl mx-auto px-4 sm:px-6">
           <MessagesArea
             selectedTeam={selectedTeam}
             selectedRepo={selectedRepo}
@@ -822,7 +872,7 @@ export default function ChatArea({
         {!hasMessages && (
           <div className="flex-1 flex items-center justify-center w-full">
             {/* Floating Input Area */}
-            <div ref={floatingInputRef} className="w-full max-w-4xl px-4 sm:px-6">
+            <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               <div className="w-full">
                 {/* External API Parameters Input - only show for Dify teams */}
                 {selectedTeam && selectedTeam.agent_type === 'dify' && (
@@ -836,7 +886,7 @@ export default function ChatArea({
 
                 {/* Chat Input Card */}
                 <div
-                  className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                  className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-md transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
                   onDragEnter={handleDragEnter}
                   onDragLeave={handleDragLeave}
                   onDragOver={handleDragOver}
@@ -1052,7 +1102,7 @@ export default function ChatArea({
 
               {/* Chat Input Card */}
               <div
-                className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-lg transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
+                className={`relative w-full flex flex-col rounded-2xl border border-border bg-base shadow-md transition-colors ${isDragging ? 'border-primary ring-2 ring-primary/20' : ''}`}
                 onDragEnter={handleDragEnter}
                 onDragLeave={handleDragLeave}
                 onDragOver={handleDragOver}
@@ -1210,25 +1260,38 @@ export default function ChatArea({
               </div>
 
               {/* Bottom Controls */}
-              <div className="flex flex-row gap-3 mb-2 ml-3 mt-3 items-center flex-wrap">
-                {showRepositorySelector && (
-                  <>
-                    <RepositorySelector
-                      selectedRepo={selectedRepo}
-                      handleRepoChange={setSelectedRepo}
-                      disabled={hasMessages}
-                      selectedTaskDetail={selectedTaskDetail}
-                    />
-
-                    {selectedRepo && (
-                      <BranchSelector
+              <div className="flex flex-row gap-3 ml-3 mt-3 items-center flex-wrap justify-between">
+                <div className="flex flex-row gap-3 items-center flex-wrap">
+                  {showRepositorySelector && (
+                    <>
+                      <RepositorySelector
                         selectedRepo={selectedRepo}
-                        selectedBranch={selectedBranch}
-                        handleBranchChange={setSelectedBranch}
+                        handleRepoChange={setSelectedRepo}
                         disabled={hasMessages}
+                        selectedTaskDetail={selectedTaskDetail}
                       />
-                    )}
-                  </>
+
+                      {selectedRepo && (
+                        <BranchSelector
+                          selectedRepo={selectedRepo}
+                          selectedBranch={selectedBranch}
+                          handleBranchChange={setSelectedBranch}
+                          disabled={hasMessages}
+                        />
+                      )}
+                    </>
+                  )}
+                </div>
+                {/* Export PDF Button - only show when has messages and not streaming */}
+                {exportableMessages.length > 0 && !isStreaming && (
+                  <ExportPdfButton
+                    messages={exportableMessages}
+                    taskName={
+                      selectedTaskDetail?.title ||
+                      selectedTaskDetail?.prompt?.slice(0, 50) ||
+                      'Chat'
+                    }
+                  />
                 )}
               </div>
             </div>

@@ -9,19 +9,22 @@ Supports: PDF, Word (.doc, .docx), PowerPoint (.ppt, .pptx),
 Excel (.xls, .xlsx, .csv), TXT, Markdown files, and Images (.jpg, .jpeg, .png, .gif, .bmp, .webp).
 """
 
-import csv
 import base64
+import csv
 import io
 import logging
-from typing import Tuple, Optional
+from typing import Optional, Tuple
 
 import chardet
+
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
 class DocumentParseError(Exception):
     """Exception raised when document parsing fails."""
+
     pass
 
 
@@ -38,7 +41,7 @@ class DocumentParser:
     - Markdown (.md)
     - Images (.jpg, .jpeg, .png, .gif, .bmp, .webp)
     """
-    
+
     # Supported file extensions and their MIME types
     SUPPORTED_EXTENSIONS = {
         ".pdf": "application/pdf",
@@ -58,34 +61,42 @@ class DocumentParser:
         ".bmp": "image/bmp",
         ".webp": "image/webp",
     }
-    
-    # Maximum file size (20 MB)
-    MAX_FILE_SIZE = 20 * 1024 * 1024
-    
-    # Maximum extracted text length (50000 characters)
-    MAX_TEXT_LENGTH = 1000000
-    
+
+    @classmethod
+    def get_max_file_size(cls) -> int:
+        """Get maximum file size from configuration (in bytes)."""
+        return settings.MAX_UPLOAD_FILE_SIZE_MB * 1024 * 1024
+
+    @classmethod
+    def get_max_text_length(cls) -> int:
+        """Get maximum extracted text length from configuration."""
+        return settings.MAX_EXTRACTED_TEXT_LENGTH
+
     @classmethod
     def is_supported_extension(cls, extension: str) -> bool:
         """Check if the file extension is supported."""
         return extension.lower() in cls.SUPPORTED_EXTENSIONS
-    
+
     @classmethod
     def get_mime_type(cls, extension: str) -> str:
         """Get MIME type for a file extension."""
-        return cls.SUPPORTED_EXTENSIONS.get(extension.lower(), "application/octet-stream")
-    
+        return cls.SUPPORTED_EXTENSIONS.get(
+            extension.lower(), "application/octet-stream"
+        )
+
     @classmethod
     def validate_file_size(cls, size: int) -> bool:
         """Check if file size is within limits."""
-        return size <= cls.MAX_FILE_SIZE
-    
+        return size <= cls.get_max_file_size()
+
     @classmethod
     def validate_text_length(cls, text: str) -> bool:
         """Check if extracted text length is within limits."""
-        return len(text) <= cls.MAX_TEXT_LENGTH
-    
-    def parse(self, binary_data: bytes, extension: str) -> Tuple[str, int, Optional[str]]:
+        return len(text) <= cls.get_max_text_length()
+
+    def parse(
+        self, binary_data: bytes, extension: str
+    ) -> Tuple[str, int, Optional[str]]:
         """
         Parse document and extract text content.
 
@@ -128,43 +139,43 @@ class DocumentParser:
             # Validate text length
             if not self.validate_text_length(text):
                 raise DocumentParseError(
-                    f"Extracted text exceeds maximum length ({self.MAX_TEXT_LENGTH} characters)"
+                    f"Extracted text exceeds maximum length ({self.get_max_text_length()} characters)"
                 )
 
             return text, len(text), image_base64
-            
+
         except DocumentParseError:
             raise
         except Exception as e:
             logger.error(f"Error parsing document: {e}", exc_info=True)
             raise DocumentParseError(f"Failed to parse document: {str(e)}")
-    
+
     def _parse_pdf(self, binary_data: bytes) -> str:
         """Parse PDF file and extract text."""
         try:
             from PyPDF2 import PdfReader
-            
+
             pdf_file = io.BytesIO(binary_data)
             reader = PdfReader(pdf_file)
-            
+
             # Check if PDF is encrypted
             if reader.is_encrypted:
                 raise DocumentParseError("Cannot parse encrypted PDF file")
-            
+
             text_parts = []
             for page in reader.pages:
                 page_text = page.extract_text()
                 if page_text:
                     text_parts.append(page_text)
-            
+
             return "\n\n".join(text_parts)
-            
+
         except DocumentParseError:
             raise
         except Exception as e:
             logger.error(f"Error parsing PDF: {e}", exc_info=True)
             raise DocumentParseError(f"Failed to parse PDF: {str(e)}")
-    
+
     def _parse_word(self, binary_data: bytes, extension: str) -> str:
         """Parse Word document and extract text."""
         try:
@@ -174,17 +185,17 @@ class DocumentParser:
                 raise DocumentParseError(
                     "Legacy .doc format is not fully supported. Please convert to .docx"
                 )
-            
+
             from docx import Document
-            
+
             doc_file = io.BytesIO(binary_data)
             doc = Document(doc_file)
-            
+
             text_parts = []
             for paragraph in doc.paragraphs:
                 if paragraph.text.strip():
                     text_parts.append(paragraph.text)
-            
+
             # Also extract text from tables
             for table in doc.tables:
                 for row in table.rows:
@@ -194,15 +205,15 @@ class DocumentParser:
                             row_text.append(cell.text.strip())
                     if row_text:
                         text_parts.append(" | ".join(row_text))
-            
+
             return "\n\n".join(text_parts)
-            
+
         except DocumentParseError:
             raise
         except Exception as e:
             logger.error(f"Error parsing Word document: {e}", exc_info=True)
             raise DocumentParseError(f"Failed to parse Word document: {str(e)}")
-    
+
     def _parse_powerpoint(self, binary_data: bytes, extension: str) -> str:
         """Parse PowerPoint file and extract text (text only, no images)."""
         try:
@@ -210,20 +221,20 @@ class DocumentParser:
                 raise DocumentParseError(
                     "Legacy .ppt format is not fully supported. Please convert to .pptx"
                 )
-            
+
             from pptx import Presentation
-            
+
             ppt_file = io.BytesIO(binary_data)
             prs = Presentation(ppt_file)
-            
+
             text_parts = []
             for slide_num, slide in enumerate(prs.slides, 1):
                 slide_text = [f"--- Slide {slide_num} ---"]
-                
+
                 for shape in slide.shapes:
                     if hasattr(shape, "text") and shape.text.strip():
                         slide_text.append(shape.text)
-                    
+
                     # Extract text from tables
                     if shape.has_table:
                         for row in shape.table.rows:
@@ -233,18 +244,18 @@ class DocumentParser:
                                     row_text.append(cell.text.strip())
                             if row_text:
                                 slide_text.append(" | ".join(row_text))
-                
+
                 if len(slide_text) > 1:  # More than just the slide header
                     text_parts.append("\n".join(slide_text))
-            
+
             return "\n\n".join(text_parts)
-            
+
         except DocumentParseError:
             raise
         except Exception as e:
             logger.error(f"Error parsing PowerPoint: {e}", exc_info=True)
             raise DocumentParseError(f"Failed to parse PowerPoint: {str(e)}")
-    
+
     def _parse_excel(self, binary_data: bytes, extension: str) -> str:
         """Parse Excel file and extract text."""
         try:
@@ -252,17 +263,17 @@ class DocumentParser:
                 raise DocumentParseError(
                     "Legacy .xls format is not fully supported. Please convert to .xlsx"
                 )
-            
+
             from openpyxl import load_workbook
-            
+
             excel_file = io.BytesIO(binary_data)
             wb = load_workbook(excel_file, read_only=True, data_only=True)
-            
+
             text_parts = []
             for sheet_name in wb.sheetnames:
                 sheet = wb[sheet_name]
                 sheet_text = [f"--- Sheet: {sheet_name} ---"]
-                
+
                 for row in sheet.iter_rows():
                     row_values = []
                     for cell in row:
@@ -270,41 +281,41 @@ class DocumentParser:
                             row_values.append(str(cell.value))
                     if row_values:
                         sheet_text.append(" | ".join(row_values))
-                
+
                 if len(sheet_text) > 1:
                     text_parts.append("\n".join(sheet_text))
-            
+
             wb.close()
             return "\n\n".join(text_parts)
-            
+
         except DocumentParseError:
             raise
         except Exception as e:
             logger.error(f"Error parsing Excel: {e}", exc_info=True)
             raise DocumentParseError(f"Failed to parse Excel: {str(e)}")
-    
+
     def _parse_csv(self, binary_data: bytes) -> str:
         """Parse CSV file and extract text."""
         try:
             # Detect encoding
             detected = chardet.detect(binary_data)
             encoding = detected.get("encoding", "utf-8") or "utf-8"
-            
+
             text = binary_data.decode(encoding)
             csv_file = io.StringIO(text)
-            
+
             reader = csv.reader(csv_file)
             rows = []
             for row in reader:
                 if any(cell.strip() for cell in row):
                     rows.append(" | ".join(cell.strip() for cell in row))
-            
+
             return "\n".join(rows)
-            
+
         except Exception as e:
             logger.error(f"Error parsing CSV: {e}", exc_info=True)
             raise DocumentParseError(f"Failed to parse CSV: {str(e)}")
-    
+
     def _parse_text(self, binary_data: bytes) -> str:
         """Parse plain text or markdown file."""
         # Try common encodings in order of preference
@@ -314,7 +325,10 @@ class DocumentParser:
         try:
             detected = chardet.detect(binary_data)
             detected_encoding = detected.get("encoding")
-            if detected_encoding and detected_encoding.lower() not in ["ascii", "charmap"]:
+            if detected_encoding and detected_encoding.lower() not in [
+                "ascii",
+                "charmap",
+            ]:
                 # Insert detected encoding at the beginning if it's valid
                 encodings_to_try.insert(0, detected_encoding)
         except Exception:
@@ -334,7 +348,9 @@ class DocumentParser:
             return binary_data.decode("utf-8", errors="replace")
         except Exception as e:
             logger.error(f"Error parsing text file: {e}", exc_info=True)
-            raise DocumentParseError(f"Failed to parse text file: {str(last_error or e)}")
+            raise DocumentParseError(
+                f"Failed to parse text file: {str(last_error or e)}"
+            )
 
     def _parse_image(self, binary_data: bytes, extension: str) -> Tuple[str, str]:
         """
@@ -362,7 +378,7 @@ class DocumentParser:
             text += f"文件大小: {len(binary_data)} 字节"
 
             # Try to extract EXIF data if available
-            if hasattr(img, '_getexif') and img._getexif():
+            if hasattr(img, "_getexif") and img._getexif():
                 text += "\n\n[EXIF 信息]"
                 exif_data = img._getexif()
                 if exif_data:
@@ -370,7 +386,7 @@ class DocumentParser:
                     text += "\n包含 EXIF 元数据"
 
             # Encode image to base64 for vision models
-            image_base64 = base64.b64encode(binary_data).decode('utf-8')
+            image_base64 = base64.b64encode(binary_data).decode("utf-8")
 
             return text, image_base64
 

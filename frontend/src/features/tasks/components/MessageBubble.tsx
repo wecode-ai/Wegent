@@ -152,9 +152,8 @@ const MessageBubble = memo(
     theme,
     t,
   }: MessageBubbleProps) {
-    const bubbleBaseClasses =
-      'relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm';
-    const bubbleTypeClasses = msg.type === 'user' ? 'bg-muted my-6' : 'bg-surface';
+    const bubbleBaseClasses = 'relative group w-full p-5 pb-10 text-text-primary';
+    const bubbleTypeClasses = msg.type === 'user' ? 'my-6' : '';
     const isUserMessage = msg.type === 'user';
 
     const formatTimestamp = (timestamp: number | undefined) => {
@@ -384,77 +383,142 @@ const MessageBubble = memo(
     };
 
     // Helper function to parse Markdown clarification questions
+    // Supports flexible formats: with/without code blocks, emoji variations, different header levels
     const parseMarkdownClarification = (content: string): ClarificationData | null => {
       let actualContent = content;
-      const codeBlockRegex = /^```(?:markdown)?\s*\n([\s\S]+?)\n```\s*$/;
-      const codeBlockMatch = content.match(codeBlockRegex);
 
+      // Try to extract content from code block (optional)
+      const codeBlockRegex = /```(?:markdown)?\s*\n([\s\S]+?)\n```/;
+      const codeBlockMatch = content.match(codeBlockRegex);
       if (codeBlockMatch) {
         actualContent = codeBlockMatch[1];
       }
 
-      if (
-        !actualContent.includes('## 🤔 需求澄清问题') &&
-        !actualContent.includes('## 🤔 Clarification Questions')
-      ) {
+      // Flexible header detection for clarification questions
+      // Matches: ## 🤔 需求澄清问题, ## Clarification Questions, ### 澄清问题, # 需求澄清, etc.
+      const clarificationHeaderRegex =
+        /^#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
+      if (!clarificationHeaderRegex.test(actualContent)) {
         return null;
       }
 
       const questions: ClarificationData['questions'] = [];
-      const questionRegex = /### Q(\d+): (.*?)(?=\n\*\*Type\*\*:|$)/g;
+
+      // Flexible question header detection
+      // Matches: ### Q1:, ### Q1：, **Q1:**, Q1:, Q1., 1., 1:, etc.
+      const questionRegex =
+        /(?:^|\n)(?:#{1,6}\s*)?(?:\*\*)?Q?(\d+)(?:\*\*)?[:.：]\s*(.*?)(?=\n(?:#{1,6}\s*)?(?:\*\*)?(?:Q?\d+|Type|类型)|\n\*\*(?:Type|类型)\*\*|$)/gi;
       const matches = Array.from(actualContent.matchAll(questionRegex));
 
       for (const match of matches) {
-        const questionNumber = parseInt(match[1]);
-        const questionText = match[2].trim();
+        try {
+          const questionNumber = parseInt(match[1]);
+          const questionText = match[2].trim();
 
-        const questionBlock = actualContent.substring(
-          match.index!,
-          actualContent.indexOf('\n### Q', match.index! + 1) !== -1
-            ? actualContent.indexOf('\n### Q', match.index! + 1)
-            : actualContent.length
-        );
+          if (!questionText) continue;
 
-        const typeMatch = questionBlock.match(/\*\*Type\*\*:\s*(\w+)/);
-        if (!typeMatch) continue;
+          // Find the question block (from current match to next question or end)
+          const startIndex = match.index!;
+          const nextQuestionMatch = actualContent
+            .substring(startIndex + match[0].length)
+            .match(/\n(?:#{1,6}\s*)?(?:\*\*)?Q?\d+[:.：]/i);
+          const endIndex = nextQuestionMatch
+            ? startIndex + match[0].length + nextQuestionMatch.index!
+            : actualContent.length;
+          const questionBlock = actualContent.substring(startIndex, endIndex);
 
-        const questionType = typeMatch[1] as 'single_choice' | 'multiple_choice' | 'text_input';
-        const questionId = `q${questionNumber}`;
+          // Flexible type detection
+          // Matches: **Type**: value, Type: value, **类型**: value, 类型: value
+          const typeMatch = questionBlock.match(/(?:\*\*)?(?:Type|类型)(?:\*\*)?[:\s：]+\s*(\w+)/i);
+          if (!typeMatch) continue;
 
-        if (questionType === 'text_input') {
-          questions.push({
-            question_id: questionId,
-            question_text: questionText,
-            question_type: 'text_input',
-          });
-        } else {
-          const options: ClarificationData['questions'][0]['options'] = [];
-          const optionRegex = /- \[([ ✓])\] `([^`]+)` - (.*?)(?=\n-|\n\*\*|\n###|\n##|$)/g;
-          let optionMatch;
+          const typeValue = typeMatch[1].toLowerCase();
+          let questionType: 'single_choice' | 'multiple_choice' | 'text_input';
 
-          while ((optionMatch = optionRegex.exec(questionBlock)) !== null) {
-            const isRecommended = optionMatch[1] === '✓';
-            const value = optionMatch[2];
-            const label = optionMatch[3]
-              .trim()
-              .replace(/\(recommended\)$/i, '')
-              .trim();
-
-            options.push({
-              value,
-              label,
-              recommended: isRecommended,
-            });
+          if (typeValue.includes('single') || typeValue === 'single_choice') {
+            questionType = 'single_choice';
+          } else if (typeValue.includes('multi') || typeValue === 'multiple_choice') {
+            questionType = 'multiple_choice';
+          } else if (typeValue.includes('text') || typeValue === 'text_input') {
+            questionType = 'text_input';
+          } else {
+            questionType = 'single_choice'; // default fallback
           }
 
-          if (options.length > 0) {
+          const questionId = `q${questionNumber}`;
+
+          if (questionType === 'text_input') {
             questions.push({
               question_id: questionId,
               question_text: questionText,
-              question_type: questionType,
-              options,
+              question_type: 'text_input',
             });
+          } else {
+            const options: ClarificationData['questions'][0]['options'] = [];
+
+            // Flexible option detection
+            // Matches: - [✓] `value` - Label, - [x] value - Label, - [ ] `value` - Label, - `value` - Label
+            const optionRegex =
+              /- \[([✓xX* ]?)\]\s*`?([^`\n-]+)`?\s*-\s*(.*?)(?=\n-|\n\*\*|\n#{1,6}|$)/g;
+            let optionMatch;
+
+            while ((optionMatch = optionRegex.exec(questionBlock)) !== null) {
+              const checkMark = optionMatch[1].trim();
+              const isRecommended =
+                checkMark === '✓' || checkMark.toLowerCase() === 'x' || checkMark === '*';
+              const value = optionMatch[2].trim();
+              const label = optionMatch[3]
+                .trim()
+                .replace(/\s*\((?:recommended|推荐)\)\s*$/i, '')
+                .trim();
+
+              if (value) {
+                options.push({
+                  value,
+                  label: label || value,
+                  recommended: isRecommended,
+                });
+              }
+            }
+
+            // Fallback: try simpler option format without checkbox
+            // Matches: - `value` - Label, - value - Label
+            if (options.length === 0) {
+              const simpleOptionRegex = /-\s*`?([^`\n-]+)`?\s*-\s*(.*?)(?=\n-|\n\*\*|\n#{1,6}|$)/g;
+              let simpleMatch;
+
+              while ((simpleMatch = simpleOptionRegex.exec(questionBlock)) !== null) {
+                const value = simpleMatch[1].trim();
+                const label = simpleMatch[2]
+                  .trim()
+                  .replace(/\s*\((?:recommended|推荐)\)\s*$/i, '')
+                  .trim();
+                const isRecommended =
+                  simpleMatch[2].toLowerCase().includes('recommended') ||
+                  simpleMatch[2].includes('推荐');
+
+                if (value && !value.startsWith('[')) {
+                  options.push({
+                    value,
+                    label: label || value,
+                    recommended: isRecommended,
+                  });
+                }
+              }
+            }
+
+            if (options.length > 0) {
+              questions.push({
+                question_id: questionId,
+                question_text: questionText,
+                question_type: questionType,
+                options,
+              });
+            }
           }
+        } catch {
+          // Continue parsing other questions even if one fails
+          continue;
         }
       }
 
@@ -467,23 +531,29 @@ const MessageBubble = memo(
     };
 
     // Helper function to parse Markdown final prompt
+    // Supports flexible formats: with/without code blocks, emoji variations, different header levels
     const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
       let actualContent = content;
-      const codeBlockRegex = /^```(?:markdown)?\s*\n([\s\S]+?)\n```\s*$/;
-      const codeBlockMatch = content.match(codeBlockRegex);
 
+      // Try to extract content from code block (optional)
+      const codeBlockRegex = /```(?:markdown)?\s*\n([\s\S]+?)\n```/;
+      const codeBlockMatch = content.match(codeBlockRegex);
       if (codeBlockMatch) {
         actualContent = codeBlockMatch[1];
       }
 
-      if (
-        !actualContent.includes('## ✅ 最终需求提示词') &&
-        !actualContent.includes('## ✅ Final Requirement Prompt')
-      ) {
+      // Flexible header detection for final prompt
+      // Matches: ## ✅ 最终需求提示词, ## Final Requirement Prompt, ### 最终提示词, # final prompt, etc.
+      const finalPromptHeaderRegex =
+        /^#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im;
+      if (!finalPromptHeaderRegex.test(actualContent)) {
         return null;
       }
 
-      const headingRegex = /## ✅ (?:最终需求提示词|Final Requirement Prompt)[^\n]*\n+([\s\S]+)/;
+      // Extract content after the header
+      // Matches various header formats and captures everything after
+      const headingRegex =
+        /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)[^\n]*\n+([\s\S]+)/i;
       const headingMatch = actualContent.match(headingRegex);
 
       if (!headingMatch) return null;

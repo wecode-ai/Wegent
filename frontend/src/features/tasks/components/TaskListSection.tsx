@@ -291,7 +291,11 @@ export default function TaskListSection({
   const shouldShowStatusIcon = (task: Task): boolean => {
     const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
     if (terminalStates.includes(task.status)) {
-      return isTaskUnread(task);
+      const unread = isTaskUnread(task);
+      console.log(
+        `[TaskListSection] shouldShowStatusIcon for task ${task.id}: status=${task.status}, isUnread=${unread}, completed_at=${task.completed_at}, updated_at=${task.updated_at}`
+      );
+      return unread;
     }
     return true;
   };
@@ -419,17 +423,19 @@ export default function TaskListSection({
                       {task.title}
                     </p>
 
-                    {/* Status icon on the right */}
-                    <div className="flex-shrink-0 relative">
-                      <div className="w-4 h-4 flex items-center justify-center">
-                        {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                    {/* Status icon on the right - only render container when needed */}
+                    {(shouldShowStatusIcon(task) || isTaskUnread(task)) && (
+                      <div className="flex-shrink-0 relative">
+                        <div className="w-4 h-4 flex items-center justify-center">
+                          {shouldShowStatusIcon(task) && getStatusIcon(task.status)}
+                        </div>
+                        {isTaskUnread(task) && (
+                          <span
+                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                          />
+                        )}
                       </div>
-                      {isTaskUnread(task) && (
-                        <span
-                          className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
-                        />
-                      )}
-                    </div>
+                    )}
 
                     {showMenu && (
                       <div className="flex-shrink-0">
