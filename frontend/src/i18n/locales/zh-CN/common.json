@@ -329,6 +329,13 @@
     "enable_success": "浏览器通知已成功启用",
     "disable_success": "浏览器通知已禁用"
   },
+  "send_shortcut": {
+    "title": "发送消息快捷键",
+    "description": "选择发送消息的键盘快捷键",
+    "enter_option": "Enter 发送，Shift+Enter 换行",
+    "cmd_enter_option": "Cmd/Ctrl+Enter 发送，Enter 换行",
+    "change_success": "发送快捷键已更新"
+  },
   "guide": {
     "title": "欢迎",
     "description": "在开始使用此应用之前，请先完成下面的设置！",
