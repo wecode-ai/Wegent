@@ -349,7 +349,7 @@ sequenceDiagram
 ```python
 {
     "framework": "FastAPI >= 0.68.0",
-    "language": "Python 3.9+",
+    "language": "Python 3.10+",
     "orm": "SQLAlchemy >= 2.0.28",
     "database": "PyMySQL 1.1.0",
     "auth": [

@@ -229,7 +229,7 @@ frontend/src/__tests__/
 ### 工作流任务
 
 1. **test-backend**：Python 后端测试
-   - 矩阵策略：Python 3.9 和 3.10
+   - 矩阵策略：Python 3.10 和 3.11
    - 覆盖率报告上传至 Codecov
    - 依赖缓存以加快构建速度
 
@@ -239,12 +239,12 @@ frontend/src/__tests__/
    - 测试 AI agent 工厂和基础类
 
 3. **test-executor-manager**：任务管理器测试
-   - Python 3.9
+   - Python 3.10
    - executors 模块的覆盖率
    - 测试 Docker 执行器和调度器
 
 4. **test-shared**：共享工具库测试
-   - Python 3.9
+   - Python 3.10
    - utils 模块的覆盖率
    - 测试加密和数据脱敏
 
@@ -457,7 +457,7 @@ npm test -- src/__tests__/utils/test_example.test.ts
 
 **测试中的导入错误：**
 - 确保您从正确的目录运行 pytest
-- 检查模块是否已安装：`pip install -r requirements.txt`
+- 检查模块是否已安装：`uv sync`
 
 **数据库错误：**
 - 测试使用 SQLite 内存数据库，无需设置

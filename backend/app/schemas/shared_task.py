@@ -99,4 +99,3 @@ class PublicSharedTaskResponse(BaseModel):
     sharer_id: int
     subtasks: List[PublicSubtaskData]
     created_at: datetime
-

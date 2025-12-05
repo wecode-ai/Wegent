@@ -14,7 +14,7 @@ import type {
   GitBranch,
   Attachment,
 } from '@/types/api';
-import { Bot, Copy, Check, Download, Share2, Link, FileText, ChevronDown } from 'lucide-react';
+import { Copy, Share2, Link, FileText, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -24,7 +24,6 @@ import {
 } from '@/components/ui/dropdown';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useToast } from '@/hooks/use-toast';
-import MarkdownEditor from '@uiw/react-markdown-editor';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { useMultipleStreamingRecovery, type RecoveryState } from '@/hooks/useStreamingRecovery';
@@ -42,88 +41,6 @@ interface ResultWithThinking {
   value?: unknown;
 }
 
-// CopyButton component for copying markdown content
-const CopyButton = ({ content, className }: { content: string; className?: string }) => {
-  const [copied, setCopied] = useState(false);
-  const { t } = useTranslation('chat');
-
-  const handleCopy = async () => {
-    // Prefer using Clipboard API
-    if (typeof navigator !== 'undefined' && navigator.clipboard && navigator.clipboard.writeText) {
-      try {
-        await navigator.clipboard.writeText(content);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2000);
-        return;
-      } catch (err) {
-        console.error('Failed to copy text: ', err);
-      }
-    }
-
-    // Fallback: use document.execCommand
-    try {
-      const textarea = document.createElement('textarea');
-      textarea.value = content;
-      textarea.style.cssText = 'position:fixed;opacity:0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      document.execCommand('copy');
-      document.body.removeChild(textarea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Fallback copy failed: ', err);
-    }
-  };
-
-  return (
-    <Button
-      variant="ghost"
-      size="icon"
-      onClick={handleCopy}
-      className={className ?? 'h-8 w-8 hover:bg-muted'}
-      title={t('messages.copy_markdown')}
-    >
-      {copied ? (
-        <Check className="h-4 w-4 text-green-500" />
-      ) : (
-        <Copy className="h-4 w-4 text-text-muted" />
-      )}
-    </Button>
-  );
-};
-
-// Bubble toolbar: supports copy button and extensible tool buttons
-const BubbleTools = ({
-  contentToCopy,
-  tools = [],
-}: {
-  contentToCopy: string;
-  tools?: Array<{
-    key: string;
-    title: string;
-    icon: React.ReactNode;
-    onClick: () => void;
-  }>;
-}) => {
-  return (
-    <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
-      <CopyButton content={contentToCopy} />
-      {tools.map(tool => (
-        <Button
-          key={tool.key}
-          variant="ghost"
-          size="icon"
-          onClick={tool.onClick}
-          title={tool.title}
-          className="h-8 w-8 hover:bg-muted"
-        >
-          {tool.icon}
-        </Button>
-      ))}
-    </div>
-  );
-};
 /**
  * Component to render a recovered message with typewriter effect.
  * This is a separate component because hooks cannot be used in loops.
@@ -754,8 +671,12 @@ export default function MessagesArea({
 
   return (
     <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
-      {/* Messages Area - only shown when there are messages or loading */}
-      {(displayMessages.length > 0 || pendingUserMessage || isStreaming) && (
+      {/* Messages Area - always render container to prevent layout shift */}
+      {/* Show messages when: 1) has display messages, 2) has pending message, 3) is streaming, 4) has selected task (even if loading) */}
+      {(displayMessages.length > 0 ||
+        pendingUserMessage ||
+        isStreaming ||
+        selectedTaskDetail?.id) && (
         <div className="flex-1 space-y-8 messages-container">
           {displayMessages.map((msg, index) => {
             // Check if this message has recovery state and is still streaming
@@ -803,7 +724,7 @@ export default function MessagesArea({
 
           {/* Pending user message (optimistic update) - only show if not already in displayMessages */}
           {pendingUserMessage && !isPendingMessageAlreadyDisplayed && (
-            <div className="flex justify-end my-6">
+            <div className="flex justify-end">
               <div className="flex max-w-[75%] w-auto flex-col gap-3 items-end">
                 <div className="relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm bg-muted">
                   {/* Show pending attachment */}
@@ -817,78 +738,53 @@ export default function MessagesArea({
                     </div>
                   )}
                   <div className="text-sm break-all">{pendingUserMessage}</div>
+                  {/* Copy button for pending user message */}
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={async () => {
+                        try {
+                          await navigator.clipboard.writeText(pendingUserMessage);
+                        } catch (err) {
+                          console.error('Failed to copy text: ', err);
+                        }
+                      }}
+                      className="h-8 w-8 hover:bg-muted opacity-100"
+                      title="Copy"
+                    >
+                      <Copy className="h-4 w-4 text-text-muted" />
+                    </Button>
+                  </div>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Streaming AI response - only show if not already in displayMessages */}
+          {/* Streaming AI response - use MessageBubble component for consistency */}
           {(isStreaming || streamingContent) &&
             streamingContent !== undefined &&
             !isStreamingContentAlreadyDisplayed && (
-              <div className="flex justify-start">
-                <div className="flex w-full flex-col gap-3 items-start">
-                  <div className="relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm bg-surface">
-                    <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
-                      <Bot className="w-4 h-4" />
-                      <span className="font-semibold">
-                        {selectedTeam?.name || t('messages.bot') || 'Bot'}
-                      </span>
-                    </div>
-                    {displayContent ? (
-                      <>
-                        <MarkdownEditor.Markdown
-                          source={displayContent}
-                          style={{ background: 'transparent' }}
-                          wrapperElement={{ 'data-color-mode': theme }}
-                          components={{
-                            a: ({ href, children, ...props }) => (
-                              <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                                {children}
-                              </a>
-                            ),
-                          }}
-                        />
-                        {/* Show copy button when streaming is complete */}
-                        {!isStreaming && (
-                          <BubbleTools
-                            contentToCopy={streamingContent || ''}
-                            tools={[
-                              {
-                                key: 'download',
-                                title: t('messages.download') || 'Download',
-                                icon: <Download className="h-4 w-4 text-text-muted" />,
-                                onClick: () => {
-                                  const blob = new Blob([streamingContent || ''], {
-                                    type: 'text/plain;charset=utf-8',
-                                  });
-                                  const url = URL.createObjectURL(blob);
-                                  const a = document.createElement('a');
-                                  a.href = url;
-                                  a.download = 'message.md';
-                                  a.click();
-                                  URL.revokeObjectURL(url);
-                                },
-                              },
-                            ]}
-                          />
-                        )}
-                      </>
-                    ) : (
-                      <div className="flex items-center gap-2 text-text-muted">
-                        <span className="animate-pulse">●</span>
-                        <span className="text-sm">{t('messages.thinking') || 'Thinking...'}</span>
-                      </div>
-                    )}
-                    {/* Blinking cursor - only show when actively streaming */}
-                    {isStreaming && (
-                      <div className="absolute bottom-2 left-2 z-10 h-8 flex items-center px-2">
-                        <span className="animate-pulse text-primary">▊</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <MessageBubble
+                key="streaming-message"
+                msg={{
+                  type: 'ai',
+                  content: `\${$$}$${streamingContent || ''}`,
+                  timestamp: Date.now(),
+                  botName: selectedTeam?.name || t('messages.bot') || 'Bot',
+                  subtaskStatus: 'RUNNING',
+                  recoveredContent: displayContent,
+                  isRecovered: false,
+                  isIncomplete: false,
+                }}
+                index={displayMessages.length}
+                selectedTaskDetail={selectedTaskDetail}
+                selectedTeam={selectedTeam}
+                selectedRepo={selectedRepo}
+                selectedBranch={selectedBranch}
+                theme={theme as 'light' | 'dark'}
+                t={t}
+              />
             )}
         </div>
       )}

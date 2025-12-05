@@ -56,9 +56,11 @@ docker-compose up -d
 **Backend:**
 ```bash
 cd backend
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+./start.sh
+# Or manually with uv:
+# uv sync
+# source .venv/bin/activate
+# uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **Frontend:**
@@ -71,8 +73,12 @@ npm run dev
 **Executor / Executor Manager:**
 ```bash
 cd executor  # or executor_manager
-pip install -r requirements.txt
-python main.py
+./start.sh
+# Or manually with uv:
+# uv sync
+# source .venv/bin/activate
+# python main.py  # for executor
+# uvicorn main:app --host 0.0.0.0 --port 8001  # for executor_manager
 ```
 
 ---

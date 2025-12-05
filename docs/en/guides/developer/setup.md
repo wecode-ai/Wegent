@@ -10,7 +10,7 @@ Before starting, ensure your development environment has the following software 
 
 ### Required Software
 
-- **Python 3.9+**: For backend service, Executor, and Executor Manager
+- **Python 3.10+**: For backend service, Executor, and Executor Manager
 - **Node.js 18+**: For frontend development
 - **MySQL 8.0+**: Database service
 - **Redis 7+**: Cache service
@@ -139,7 +139,7 @@ source venv/bin/activate
 # venv\Scripts\activate
 
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 ```
 
 #### Configure Environment Variables
@@ -180,7 +180,7 @@ backend/
 │   ├── schemas/         # Pydantic schemas
 │   └── services/        # Business logic layer
 ├── init_data/           # YAML initialization data
-└── requirements.txt     # Python dependencies
+└── pyproject.toml       # Python dependencies
 ```
 
 ---
@@ -253,7 +253,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 ```
 
 #### Run Development Server

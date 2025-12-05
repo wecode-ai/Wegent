@@ -213,9 +213,9 @@ docker exec -it <executor-container-id> /bin/bash
 **A:**
 
 **核心平台：**
-- 后端：Python 3.9+ (FastAPI)
+- 后端：Python 3.10+ (FastAPI)
 - 前端：TypeScript (Next.js 15)
-- Executor：Python 3.9+
+- Executor：Python 3.10+
 
 **智能体可以使用：**
 - Python（推荐）

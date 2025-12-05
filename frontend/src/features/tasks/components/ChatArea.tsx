@@ -204,9 +204,19 @@ export default function ChatArea({
   // 2. There is a pending user message for the current task (optimistic UI for new chat)
   // 3. The current task is streaming
   // 4. We're creating a new task (no selected task) and have an active stream
+  // 5. CRITICAL: Once we have messages, keep showing them even during data refresh
+  //    to prevent the "flash of empty state" bug
   const hasMessages = React.useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream = !selectedTaskDetail?.id && streamingTaskId && isStreamingTaskActive;
+    const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
+
+    // Once we have a task with subtasks, always show messages view
+    // This prevents flashing back to empty state during refresh
+    if (hasSelectedTask && hasSubtasks) {
+      return true;
+    }
+
     return Boolean(hasSelectedTask || pendingUserMessage || isStreaming || hasNewTaskStream);
   }, [selectedTaskDetail, pendingUserMessage, isStreaming, streamingTaskId, isStreamingTaskActive]);
 
@@ -488,9 +498,21 @@ export default function ChatArea({
                 params.set('taskId', String(completedTaskId));
                 router.push(`?${params.toString()}`);
 
-                // For new tasks, we immediately clear stream as navigation happens
-                contextResetStream(completedTaskId);
-                setStreamingTaskId(null);
+                // Wait for task detail to be loaded before clearing stream
+                // This prevents the flash of empty content when URL changes
+                try {
+                  // Give TaskParamSync time to trigger and load the task detail
+                  // We use a small delay to ensure the URL change has been processed
+                  await new Promise(resolve => setTimeout(resolve, 100));
+                  // Then wait for the actual refresh to complete
+                  await refreshSelectedTaskDetail(false);
+                } catch (error) {
+                  console.error('Failed to refresh task detail after stream:', error);
+                } finally {
+                  // Only clear stream content after data is refreshed (or failed)
+                  contextResetStream(completedTaskId);
+                  setStreamingTaskId(null);
+                }
               } else if (selectedTaskDetail?.id) {
                 // If this was a follow-up message (second+ message), refresh task detail
                 // to show the new subtasks (user message + AI response)

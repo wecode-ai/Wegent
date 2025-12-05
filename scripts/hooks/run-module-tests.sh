@@ -107,10 +107,11 @@ echo -e "${BLUE}═════════════════════�
 echo ""
 
 # Check each module for changes and run tests
+# Check each module for changes and run tests
 # Backend
 BACKEND_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^backend/.*\.py$" || true)
 if [ -n "$BACKEND_CHANGES" ]; then
-    run_module_tests "backend" "pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/backend"
+    run_module_tests "backend" "uv run pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/backend"
 fi
 
 # Frontend
@@ -122,21 +123,20 @@ fi
 # Executor
 EXECUTOR_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^executor/.*\.py$" || true)
 if [ -n "$EXECUTOR_CHANGES" ]; then
-    run_module_tests "executor" "pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/executor"
+    run_module_tests "executor" "uv run pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/executor"
 fi
 
 # Executor Manager
 EXECUTOR_MANAGER_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^executor_manager/.*\.py$" || true)
 if [ -n "$EXECUTOR_MANAGER_CHANGES" ]; then
-    run_module_tests "executor_manager" "pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/executor_manager"
+    run_module_tests "executor_manager" "uv run pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/executor_manager"
 fi
 
 # Shared
 SHARED_CHANGES=$(echo "$CHANGED_FILES" | grep -E "^shared/.*\.py$" || true)
 if [ -n "$SHARED_CHANGES" ]; then
-    run_module_tests "shared" "pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/shared"
+    run_module_tests "shared" "uv run pytest tests/ -x -q --tb=short 2>/dev/null || true" "$PROJECT_ROOT/shared"
 fi
-
 # Summary
 echo ""
 echo -e "${BLUE}══════════════════════════════════════════════════════════${NC}"

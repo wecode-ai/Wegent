@@ -401,16 +401,16 @@ find /path/to/workspace -type d -mtime +90 -exec rm -rf {} \;
 pip install --upgrade pip setuptools wheel
 
 # 2. Use mirror
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+uv pip install --index-url https://pypi.tuna.tsinghua.edu.cn/simple -r pyproject.toml
 
 # 3. Install dependencies separately
-pip install -r requirements.txt --no-deps
-pip install <specific-package>
+uv pip install --no-deps -r pyproject.toml
+uv pip install <specific-package>
 
 # 4. Use conda (if pip fails)
-conda create -n wegent python=3.9
+conda create -n wegent python=3.10
 conda activate wegent
-pip install -r requirements.txt
+uv sync
 ```
 
 ### Issue 12: Node.js Dependency Installation Fails

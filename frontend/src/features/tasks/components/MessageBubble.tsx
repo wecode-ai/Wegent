@@ -152,9 +152,9 @@ const MessageBubble = memo(
     theme,
     t,
   }: MessageBubbleProps) {
-    const bubbleBaseClasses = 'relative group w-full p-5 pb-10 text-text-primary';
+    const bubbleBaseClasses = 'relative w-full p-5 pb-10 text-text-primary';
     const bubbleTypeClasses =
-      msg.type === 'user' ? 'my-6 rounded-2xl border border-border bg-muted shadow-sm' : '';
+      msg.type === 'user' ? 'rounded-2xl border border-border bg-muted shadow-sm' : '';
     const isUserMessage = msg.type === 'user';
 
     const formatTimestamp = (timestamp: number | undefined) => {
@@ -375,9 +375,8 @@ const MessageBubble = memo(
         }
 
         return (
-          <div key={idx} className="group pb-4">
-            {idx === 0 && <BubbleTools contentToCopy={message.content} tools={[]} />}
-            <div className="text-sm break-all">{line}</div>
+          <div key={idx} className="text-sm break-all">
+            {line}
           </div>
         );
       });
@@ -682,10 +681,28 @@ const MessageBubble = memo(
                   ),
                 }}
               />
-              {/* Blinking cursor to indicate streaming is in progress */}
-              <div className="absolute bottom-2 left-2 z-10 h-8 flex items-center px-2">
-                <span className="animate-pulse text-primary">▊</span>
-              </div>
+              {/* Show copy and download buttons during streaming */}
+              <BubbleTools
+                contentToCopy={msg.recoveredContent}
+                tools={[
+                  {
+                    key: 'download',
+                    title: t('messages.download') || 'Download',
+                    icon: <Download className="h-4 w-4 text-text-muted" />,
+                    onClick: () => {
+                      const blob = new Blob([msg.recoveredContent || ''], {
+                        type: 'text/plain;charset=utf-8',
+                      });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = 'message.md';
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    },
+                  },
+                ]}
+              />
             </>
           ) : (
             <div className="flex items-center gap-2 text-text-muted">
@@ -725,6 +742,12 @@ const MessageBubble = memo(
               : renderMessageBody(msg, index)}
             {/* Show incomplete notice for completed but incomplete messages */}
             {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
+            {/* Show copy button for user messages - always visible */}
+            {isUserMessage && (
+              <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
+                <CopyButton content={msg.content} className="h-8 w-8 hover:bg-muted opacity-100" />
+              </div>
+            )}
           </div>
         </div>
       </div>
