@@ -61,6 +61,16 @@ RUN npm config set registry https://registry.npmmirror.com
 
 RUN npm update -g @anthropic-ai/claude-code
 
+# Install uv from PyPI using Aliyun mirror
+RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com && \
+    uv --version
+
+# Configure uv to use Aliyun PyPI mirror
+ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
+ENV UV_EXTRA_INDEX_URL=""
+
+ENV PATH="/usr/local/bin:${PATH}"
+
 # Set claude code environment variables
 ENV CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENV CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY="false"
