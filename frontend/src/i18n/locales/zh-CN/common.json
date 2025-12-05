@@ -604,7 +604,8 @@
   },
   "shared_task": {
     "continue_chat": "继续聊天",
-    "login_to_continue": "登录以继续",
+    "login_to_continue": "登录并聊天",
+    "login": "登录",
     "read_only_view": "只读视图",
     "login_prompt": "登录以将此任务复制到您的工作区并继续对话。",
     "continue_prompt": "点击上方按钮将此任务复制到您的工作区并继续对话。",
@@ -629,7 +630,9 @@
     "copy_link": "复制链接",
     "link_copied": "分享链接已复制！",
     "link_copied_desc": "您现在可以将此链接分享给他人",
-    "share_task": "分享任务",
+    "share_task": "分享",
+    "share_link": "链接分享",
+    "share_pdf": "导出PDF",
     "sharing": "分享中...",
     "no_task_selected": "未选择任务",
     "no_task_selected_desc": "请选择一个任务进行分享",
@@ -652,5 +655,29 @@
     "handler_create_team_hint": "您需要至少创建一个团队才能复制此任务。",
     "handler_copying": "复制中...",
     "handler_copy_to_tasks": "继续聊天"
+  },
+  "inAppBrowser": {
+    "title": "默认浏览器打开",
+    "detectedApp": "检测到您正在 {{app}} 中打开",
+    "detectedGeneric": "检测到您正在应用内浏览器中打开",
+    "whyTitle": "为什么需要使用默认浏览器？",
+    "whyDescription": "应用内置浏览器可能会限制登录功能的正常使用。为了获得最佳体验，建议在默认浏览器（Safari、Chrome等）中打开。",
+    "howToOpen": "如何在默认浏览器中打开？",
+    "instructions": {
+      "wechat": ["点击右上角「···」菜单", "选择「在浏览器中打开」"],
+      "dingtalk": ["点击右上角「···」菜单", "选择「在默认浏览器打开」"],
+      "alipay": ["点击右上角「···」菜单", "选择「在浏览器中打开」"],
+      "qq": ["点击右上角「···」菜单", "选择「在浏览器中打开」"],
+      "weibo": ["点击右上角「···」菜单", "选择「在浏览器中打开」"],
+      "facebook": ["点击右上角菜单按钮", "选择「Open in Browser」"],
+      "instagram": ["点击右上角「···」菜单", "选择「Open in Browser」"],
+      "twitter": ["点击右上角「Share」按钮", "选择「Open in Browser」"],
+      "default": ["点击右上角菜单按钮", "选择「在浏览器中打开」或「Open in Browser」"]
+    },
+    "copyUrl": "复制链接地址",
+    "urlCopied": "链接已复制！您可以在默认浏览器中粘贴打开。",
+    "copyFailed": "复制失败，请手动复制浏览器地址栏中的链接。",
+    "continueAnyway": "仍然继续（可能遇到登录问题）",
+    "footerNote": "在默认浏览器中打开可以确保所有功能正常工作"
   }
 }
