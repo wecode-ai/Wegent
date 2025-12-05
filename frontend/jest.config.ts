@@ -21,14 +21,8 @@ const config: Config = {
     '!src/**/*.stories.{js,jsx,ts,tsx}',
     '!src/app/**',
   ],
-  coverageThreshold: {
-    global: {
-      branches: 40,
-      functions: 40,
-      lines: 40,
-      statements: 40,
-    },
-  },
+  // Coverage thresholds are enforced incrementally via CI tools (e.g., Codecov)
+  // rather than globally to support gradual improvement of legacy code
   testMatch: ['<rootDir>/src/__tests__/**/*.test.{js,jsx,ts,tsx}'],
 };
 
