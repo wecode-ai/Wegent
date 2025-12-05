@@ -458,6 +458,7 @@ dependencies = [
     { name = "apscheduler" },
     { name = "cryptography" },
     { name = "fastapi" },
+    { name = "httpcore" },
     { name = "httpx" },
     { name = "jinja2" },
     { name = "kubernetes" },
@@ -469,6 +470,7 @@ dependencies = [
     { name = "requests-oauthlib" },
     { name = "starlette" },
     { name = "uvicorn" },
+    { name = "websocket-client" },
 ]
 
 [package.dev-dependencies]
@@ -486,6 +488,7 @@ requires-dist = [
     { name = "apscheduler", specifier = "==3.10.4" },
     { name = "cryptography", specifier = ">=42.0.4" },
     { name = "fastapi", specifier = "==0.121.2" },
+    { name = "httpcore", specifier = ">=1.0.9" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "kubernetes", specifier = "==29.0.0" },
@@ -497,6 +500,7 @@ requires-dist = [
     { name = "requests-oauthlib", specifier = "==2.0.0" },
     { name = "starlette", specifier = ">=0.49.1" },
     { name = "uvicorn", specifier = "==0.38.0" },
+    { name = "websocket-client", specifier = ">=1.9.0" },
 ]
 
 [package.metadata.requires-dev]
