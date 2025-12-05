@@ -95,23 +95,29 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     status_code=400,
                     detail="task already clear, please create a new task",
                 )
-
-            # Check if task is expired
             expire_hours = settings.APPEND_CHAT_TASK_EXPIRE_HOURS
+            # Check if task is expired
             task_type = (
                 task_crd.metadata.labels
                 and task_crd.metadata.labels.get("taskType")
                 or "chat"
             )
+            # Only check expiration for code tasks, chat tasks have no expiration
             if task_type == "code":
                 expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
-            if (
-                datetime.now() - existing_task.updated_at
-            ).total_seconds() > expire_hours * 3600:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{task_type} task has expired. You can only append tasks within {expire_hours} hours after last update.",
-                )
+            
+            task_shell_source = (
+                task_crd.chat_shell.labels
+                and task_crd.chat_shell.labels.get("source") 
+                or None)
+            if task_shell_source != "chat_shell":
+                if (
+                    datetime.now() - existing_task.updated_at
+                ).total_seconds() > expire_hours * 3600:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{task_type} task has expired. You can only append tasks within {expire_hours} hours after last update.",
+                    )
 
             # Get team reference information from task_crd and validate if team exists
             team_name = task_crd.spec.teamRef.name

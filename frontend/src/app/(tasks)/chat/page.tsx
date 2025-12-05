@@ -5,7 +5,7 @@
 'use client';
 
 import { Suspense, useState, useEffect } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
@@ -14,6 +14,7 @@ import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
 import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
+import TaskShareHandler from '@/features/tasks/components/TaskShareHandler';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
@@ -23,18 +24,36 @@ import { Team } from '@/types/api';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import { saveLastTab } from '@/utils/userPreferences';
 import { useUser } from '@/features/common/UserContext';
+import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 
 export default function ChatPage() {
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
+  // Task context for refreshing task list
+  const { refreshTasks } = useTaskContext();
+
   // User state for git token check
   const { user } = useUser();
+
+  // Router for navigation
+  const router = useRouter();
 
   // Check for share_id and taskId in URL
   const searchParams = useSearchParams();
   const hasShareId = !!searchParams.get('share_id');
   const taskId = searchParams.get('taskId');
+
+  // Check for pending task share from public page (after login)
+  useEffect(() => {
+    const pendingToken = localStorage.getItem('pendingTaskShare');
+    if (pendingToken) {
+      // Clear the pending token
+      localStorage.removeItem('pendingTaskShare');
+      // Redirect to chat page with taskShare parameter to trigger the copy modal
+      router.push(`/chat?taskShare=${pendingToken}`);
+    }
+  }, [router]);
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -44,6 +63,13 @@ export default function ChatPage() {
 
   // Selected team state for sharing
   const [selectedTeamForNewTask, setSelectedTeamForNewTask] = useState<Team | null>(null);
+
+  // Share button state
+  const [shareButton, setShareButton] = useState<React.ReactNode>(null);
+
+  const handleShareButtonRender = (button: React.ReactNode) => {
+    setShareButton(button);
+  };
 
   // Check if user has git token
   const hasGitToken = !!(user?.git_info && user.git_info.length > 0);
@@ -87,6 +113,9 @@ export default function ChatPage() {
           onRefreshTeams={handleRefreshTeams}
         />
       </Suspense>
+      <Suspense>
+        <TaskShareHandler onTaskCopied={refreshTasks} />
+      </Suspense>
       {/* Onboarding tour */}
       <OnboardingTour
         hasTeams={teams.length > 0}
@@ -114,6 +143,7 @@ export default function ChatPage() {
             variant="with-sidebar"
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
+            {shareButton}
             <GithubStarButton />
             <UserMenu />
           </TopNavigation>
@@ -124,6 +154,7 @@ export default function ChatPage() {
             selectedTeamForNewTask={selectedTeamForNewTask}
             showRepositorySelector={false}
             taskType="chat"
+            onShareButtonRender={handleShareButtonRender}
           />
         </div>
       </div>
