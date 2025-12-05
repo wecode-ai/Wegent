@@ -109,8 +109,7 @@
     "execution_type": "执行类型",
     "mcp_init_fail": "❌ MCP 初始化失败。"
   },
-  "send_shortcut_ctrl": "Ctrl+Enter 发送",
-  "send_shortcut_cmd": "Cmd+Enter 发送",
+  "send_shortcut": "回车发送，Shift+回车换行",
   "errors": {
     "payload_too_large": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小"
   },

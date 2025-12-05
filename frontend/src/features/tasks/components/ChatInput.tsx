@@ -31,18 +31,10 @@ export default function ChatInput({
   const [isComposing, setIsComposing] = useState(false);
   const isMobile = useIsMobile();
 
-  // Detect macOS platform
-  const isMac = useMemo(() => {
-    if (typeof navigator !== 'undefined') {
-      return navigator.platform.toLowerCase().includes('mac');
-    }
-    return false;
-  }, []);
-
-  // Get tooltip text based on platform
+  // Get tooltip text for send shortcut
   const tooltipText = useMemo(() => {
-    return isMac ? t('send_shortcut_cmd') : t('send_shortcut_ctrl');
-  }, [isMac, t]);
+    return t('send_shortcut');
+  }, [t]);
 
   const handleCompositionStart = () => {
     setIsComposing(true);
@@ -53,12 +45,12 @@ export default function ChatInput({
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    // Ctrl+Enter (Windows/Linux) or Cmd+Enter (macOS) sends message
-    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey) && !disabled && !isComposing) {
+    // Enter sends message, Shift+Enter creates new line
+    if (e.key === 'Enter' && !e.shiftKey && !disabled && !isComposing) {
       e.preventDefault();
       handleSendMessage();
     }
-    // Enter key alone creates new line (default behavior, no preventDefault)
+    // Shift+Enter creates new line (default behavior, no preventDefault)
   };
 
   return (
