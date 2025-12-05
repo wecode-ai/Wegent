@@ -3,45 +3,45 @@
 // SPDX-License-Identifier: Apache-2.0
 
 export const paths = {
-    home: {
-        getHref: () => '/',
+  home: {
+    getHref: () => '/',
+  },
+  docs: {
+    getHref: () => process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+  },
+  auth: {
+    password_login: {
+      getHref: () => '/login',
     },
-    docs: {
-        getHref: () => process.env.NEXT_PUBLIC_DOCS_URL || 'https://github.com/wecode-ai/Wegent',
+    login: {
+      getHref: () => {
+        console.log(typeof window === 'undefined');
+        // Always return local login page in SSR/Node environment
+        return paths.auth.password_login.getHref();
+      },
     },
-    auth: {
-        password_login: {
-            getHref: () => '/login',
-        },
-        login: {
-            getHref: () => {
-                console.log(typeof window === 'undefined')
-                // Always return local login page in SSR/Node environment
-                return paths.auth.password_login.getHref()
-            },
-        },
+  },
+  chat: {
+    getHref: () => '/chat',
+  },
+  code: {
+    getHref: () => '/code',
+  },
+  settings: {
+    root: {
+      getHref: () => '/settings',
     },
-    chat: {
-        getHref: () => '/chat',
+    integrations: {
+      getHref: () => '/settings?tab=integrations',
     },
-    code: {
-        getHref: () => '/code',
+    bot: {
+      getHref: () => '/settings?tab=bot',
     },
-    settings: {
-        root: {
-            getHref: () => '/settings',
-        },
-        integrations: {
-            getHref: () => '/settings',
-        },
-        bot: {
-            getHref: () => '/settings?tab=bot',
-        },
-        team: {
-            getHref: () => '/settings?tab=team',
-        },
-        models: {
-            getHref: () => '/settings?tab=models',
-        },
+    team: {
+      getHref: () => '/settings?tab=team',
     },
+    models: {
+      getHref: () => '/settings?tab=models',
+    },
+  },
 } as const;

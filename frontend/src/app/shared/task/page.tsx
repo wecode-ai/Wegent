@@ -17,6 +17,8 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import MessageBubble, { type Message } from '@/features/tasks/components/MessageBubble';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { User } from '@/types/api';
+import { InAppBrowserGuard } from '@/components/InAppBrowserGuard';
+import { detectInAppBrowser } from '@/utils/browserDetection';
 import '@/features/common/scrollbar.css';
 
 /**
@@ -33,6 +35,7 @@ function SharedTaskContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [showInAppBrowserGuard, setShowInAppBrowserGuard] = useState(false);
 
   // Check if user is logged in
   const isLoggedIn = !!getToken();
@@ -95,6 +98,19 @@ function SharedTaskContent() {
     const token = searchParams.get('token');
     if (!token) return;
 
+    // Check if we're in an in-app browser
+    const browserInfo = detectInAppBrowser();
+    if (browserInfo.isInAppBrowser) {
+      // Show the in-app browser guard
+      setShowInAppBrowserGuard(true);
+      return;
+    }
+
+    // Not in-app browser, proceed with normal flow
+    proceedToLoginOrChat(token);
+  };
+
+  const proceedToLoginOrChat = (token: string) => {
     // Check if user is already logged in
     const authToken = getToken();
 
@@ -251,90 +267,105 @@ function SharedTaskContent() {
   }
 
   return (
-    <div className="flex flex-col smart-h-screen bg-base text-text-primary box-border">
-      {/* Top navigation */}
-      <TopNavigation activePage="chat" variant="standalone" showLogo>
-        <GithubStarButton />
-        {isLoggedIn && currentUser ? (
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-text-primary">{currentUser.user_name}</span>
-          </div>
-        ) : (
-          <Button
-            onClick={handleLoginAndCopy}
-            size="sm"
-            variant="default"
-            className="flex items-center gap-2"
-          >
-            <LogIn className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('shared_task.login_to_continue')}</span>
-            <span className="sm:hidden">{t('shared_task.login')}</span>
-          </Button>
-        )}
-      </TopNavigation>
+    <>
+      {/* In-app browser guard modal */}
+      {showInAppBrowserGuard && (
+        <InAppBrowserGuard
+          onProceed={() => {
+            const token = searchParams.get('token');
+            if (token) {
+              proceedToLoginOrChat(token);
+            }
+          }}
+          onCancel={() => setShowInAppBrowserGuard(false)}
+        />
+      )}
 
-      {/* Main content area */}
-      <div className="flex-1 overflow-y-auto custom-scrollbar">
-        <div className="w-full max-w-3xl mx-auto flex flex-col px-4 py-6">
-          {/* Task title and sharer info */}
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold text-text-primary mb-2">{taskData.task_title}</h1>
-            <p className="text-sm text-text-muted">
-              {t('shared_task.shared_by')}{' '}
-              <span className="font-medium text-text-primary">{taskData.sharer_name}</span>
-            </p>
-          </div>
+      <div className="flex flex-col smart-h-screen bg-base text-text-primary box-border">
+        {/* Top navigation */}
+        <TopNavigation activePage="chat" variant="standalone" showLogo>
+          <GithubStarButton />
+          {isLoggedIn && currentUser ? (
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-text-primary">{currentUser.user_name}</span>
+            </div>
+          ) : (
+            <Button
+              onClick={handleLoginAndCopy}
+              size="sm"
+              variant="default"
+              className="flex items-center gap-2"
+            >
+              <LogIn className="w-4 h-4" />
+              <span className="hidden sm:inline">{t('shared_task.login_to_continue')}</span>
+              <span className="sm:hidden">{t('shared_task.login')}</span>
+            </Button>
+          )}
+        </TopNavigation>
 
-          {/* Read-only notice */}
-          <Alert
-            variant="default"
-            className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
-          >
-            <AlertDescription className="text-sm text-text-primary">
-              📖 {t('shared_task.read_only_notice')}
-            </AlertDescription>
-          </Alert>
+        {/* Main content area */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar">
+          <div className="w-full max-w-3xl mx-auto flex flex-col px-4 py-6">
+            {/* Task title and sharer info */}
+            <div className="mb-6">
+              <h1 className="text-2xl font-semibold text-text-primary mb-2">
+                {taskData.task_title}
+              </h1>
+              <p className="text-sm text-text-muted">
+                {t('shared_task.shared_by')}{' '}
+                <span className="font-medium text-text-primary">{taskData.sharer_name}</span>
+              </p>
+            </div>
 
-          {/* Messages area - using MessageBubble component for consistency */}
-          <div className="flex-1 space-y-6">
-            {taskData.subtasks.map((subtask, index) => {
-              const message = convertSubtaskToMessage(subtask);
-              return (
-                <MessageBubble
-                  key={subtask.id}
-                  msg={message}
-                  index={index}
-                  selectedTaskDetail={null}
-                  selectedTeam={null}
-                  selectedRepo={null}
-                  selectedBranch={null}
-                  theme={theme}
-                  t={t}
-                />
-              );
-            })}
-          </div>
+            {/* Read-only notice */}
+            <Alert
+              variant="default"
+              className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
+            >
+              <AlertDescription className="text-sm text-text-primary">
+                📖 {t('shared_task.read_only_notice')}
+              </AlertDescription>
+            </Alert>
 
-          {/* Bottom CTA */}
-          <div className="mt-8 p-4 rounded-lg bg-surface border border-border">
-            <div className="flex items-center justify-between gap-4">
-              <div>
-                <p className="text-sm font-medium text-text-primary mb-1">
-                  {isLoggedIn
-                    ? t('shared_task.want_to_continue')
-                    : t('shared_task.login_to_continue_desc')}
-                </p>
-                <p className="text-xs text-text-muted">{t('shared_task.copy_and_chat')}</p>
+            {/* Messages area - using MessageBubble component for consistency */}
+            <div className="flex-1 space-y-6">
+              {taskData.subtasks.map((subtask, index) => {
+                const message = convertSubtaskToMessage(subtask);
+                return (
+                  <MessageBubble
+                    key={subtask.id}
+                    msg={message}
+                    index={index}
+                    selectedTaskDetail={null}
+                    selectedTeam={null}
+                    selectedRepo={null}
+                    selectedBranch={null}
+                    theme={theme}
+                    t={t}
+                  />
+                );
+              })}
+            </div>
+
+            {/* Bottom CTA */}
+            <div className="mt-8 p-4 rounded-lg bg-surface border border-border">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-sm font-medium text-text-primary mb-1">
+                    {isLoggedIn ? t('shared_task.want_to_continue') : t('shared_task.login_prompt')}
+                  </p>
+                  <p className="text-xs text-text-muted">{t('shared_task.copy_and_chat')}</p>
+                </div>
+                <Button onClick={handleLoginAndCopy} size="sm" className="flex-shrink-0">
+                  <LogIn className="w-4 h-4 mr-2" />
+                  {isLoggedIn ? t('shared_task.continue_chat') : t('shared_task.login_to_continue')}
+                </Button>
               </div>
-              <Button onClick={handleLoginAndCopy} size="sm" className="flex-shrink-0">
-                <LogIn className="w-4 h-4 mr-2" />
-                {isLoggedIn ? t('shared_task.continue_chat') : t('shared_task.login_to_continue')}
-              </Button>
             </div>
           </div>
         </div>
       </div>
-    </div>
+    </>
   );
 }
 
