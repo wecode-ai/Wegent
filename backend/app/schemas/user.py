@@ -3,10 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr
 
+
+
+class UserPreferences(BaseModel):
+    """User preferences model"""
+
+    send_key: Literal["enter", "cmd_enter"] = "enter"
 
 class Token(BaseModel):
     """Token response model"""
@@ -46,6 +52,7 @@ class UserCreate(UserBase):
     """User creation model"""
 
     git_info: Optional[List[GitInfo]] = None
+    preferences: Optional[UserPreferences] = None
     password: Optional[str] = None
 
 
@@ -55,6 +62,7 @@ class UserUpdate(BaseModel):
     user_name: Optional[str] = None
     email: Optional[EmailStr] = None
     git_info: Optional[List[GitInfo]] = None
+    preferences: Optional[UserPreferences] = None
     password: Optional[str] = None
 
 
@@ -63,6 +71,7 @@ class UserInDB(UserBase):
 
     id: int
     git_info: Optional[List[GitInfo]] = None
+    preferences: Optional[UserPreferences] = None
     created_at: datetime
     updated_at: datetime
 

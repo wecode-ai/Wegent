@@ -252,6 +252,13 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
         if obj_in.password:
             user.password_hash = security.get_password_hash(obj_in.password)
 
+        if obj_in.preferences is not None:
+            # Merge with existing preferences or set new ones
+            existing_prefs = user.preferences or {}
+            new_prefs = obj_in.preferences.model_dump()
+            existing_prefs.update(new_prefs)
+            user.preferences = existing_prefs
+
         db.add(user)
         db.commit()
         db.refresh(user)

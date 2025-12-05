@@ -7,12 +7,12 @@
  * All types and logic are self-contained for cohesion.
  */
 
-import type { GitInfo, User } from '@/types/api';
+import type { GitInfo, User, UserPreferences } from '@/types/api';
 
 // Type definitions
 export interface LoginRequest {
   user_name: string;
-  password: string;
+  *: string;
 }
 
 export interface LoginResponse {
@@ -25,6 +25,7 @@ export interface UpdateUserRequest {
   email?: string;
   is_active?: boolean;
   git_info?: GitInfo[];
+  preferences?: UserPreferences;
 }
 
 const TOKEN_KEY = 'auth_token';
