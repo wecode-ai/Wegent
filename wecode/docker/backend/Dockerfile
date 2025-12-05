@@ -13,13 +13,13 @@ RUN sed -i 's|http://deb.debian.org|http://mirrors.cloud.aliyuncs.com|g' /etc/ap
     ln -sf /usr/share/zoneinfo/Asia/Shanghai /etc/localtime && \
     echo "Asia/Shanghai" > /etc/timezone && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
-
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    export PATH="/root/.local/bin:${PATH}" && \
+# Install uv from PyPI using Aliyun mirror
+RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com && \
     uv --version
 
-ENV PATH="/root/.local/bin:${PATH}"
+# Configure uv to use Aliyun PyPI mirror
+ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
+ENV UV_EXTRA_INDEX_URL=""
 
 # Copy pyproject.toml and install dependencies
 COPY backend/pyproject.toml .

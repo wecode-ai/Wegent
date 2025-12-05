@@ -5,13 +5,13 @@
 FROM registry.api.weibo.com/ci/wegent-runtime:0.0.2-update-executor-base-image
 
 WORKDIR /app/executor_manager
-
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    export PATH="/root/.local/bin:${PATH}" && \
+# Install uv from PyPI using Aliyun mirror
+RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com && \
     uv --version
 
-ENV PATH="/root/.local/bin:${PATH}"
+# Configure uv to use Aliyun PyPI mirror
+ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
+ENV UV_EXTRA_INDEX_URL=""
 
 # Copy pyproject.toml and install dependencies
 COPY executor_manager/pyproject.toml /app/executor_manager/pyproject.toml

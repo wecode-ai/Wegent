@@ -12,12 +12,13 @@ RUN npm config set registry https://registry.npmmirror.com
 
 RUN npm update -g @anthropic-ai/claude-code
 
-# Install uv
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
-    export PATH="/root/.local/bin:${PATH}" && \
+# Install uv from PyPI using Aliyun mirror
+RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simple/ --trusted-host mirrors.cloud.aliyuncs.com && \
     uv --version
 
-ENV PATH="/root/.local/bin:${PATH}"
+# Configure uv to use Aliyun PyPI mirror
+ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
+ENV UV_EXTRA_INDEX_URL=""
 
 # Copy pyproject.toml and install dependencies
 COPY executor/pyproject.toml /app/executor/pyproject.toml
