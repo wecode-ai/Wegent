@@ -153,7 +153,8 @@ const MessageBubble = memo(
     t,
   }: MessageBubbleProps) {
     const bubbleBaseClasses = 'relative group w-full p-5 pb-10 text-text-primary';
-    const bubbleTypeClasses = msg.type === 'user' ? 'my-6' : '';
+    const bubbleTypeClasses =
+      msg.type === 'user' ? 'my-6 rounded-2xl border border-border bg-muted shadow-sm' : '';
     const isUserMessage = msg.type === 'user';
 
     const formatTimestamp = (timestamp: number | undefined) => {
