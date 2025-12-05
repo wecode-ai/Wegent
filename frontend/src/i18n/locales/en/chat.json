@@ -109,8 +109,7 @@
     "execution_type": "Execution Type",
     "mcp_init_fail": "❌ MCP initialization failed. "
   },
-  "send_shortcut_ctrl": "Ctrl+Enter to send",
-  "send_shortcut_cmd": "Cmd+Enter to send",
+  "send_shortcut": "Enter to send, Shift+Enter for new line",
   "errors": {
     "payload_too_large": "Content too large: conversation history or attachment exceeds limit, please start a new conversation or reduce attachment size"
   },
