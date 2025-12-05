@@ -46,6 +46,13 @@ WORKDIR /app
 
 RUN npm update -g @anthropic-ai/claude-code
 
+# Install uv in runtime stage
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH="/root/.local/bin:${PATH}" && \
+    uv --version
+
+ENV PATH="/root/.local/bin:${PATH}"
+
 # Install sqlite
 RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
     tar -xvf sqlite-autoconf-3500400.tar.gz && \

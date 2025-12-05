@@ -6,7 +6,7 @@
 
 import React, { memo, useState } from 'react';
 import type { TaskDetail, Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
-import { Bot, Copy, Check, Download, AlertCircle } from 'lucide-react';
+import { Bot, Copy, Check, Download, AlertCircle, Loader2, Clock, CheckCircle2, XCircle, Ban } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import ThinkingComponent from './ThinkingComponent';
@@ -177,23 +177,103 @@ const MessageBubble = memo(
       const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus);
       const safeProgress = Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 100) : 0;
 
+      // Get status configuration (icon, label key, colors)
+      const getStatusConfig = (statusKey: string) => {
+        switch (statusKey) {
+          case 'RUNNING':
+            return {
+              icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />,
+              labelKey: 'messages.status_running',
+              bgClass: 'bg-primary/10',
+              textClass: 'text-primary',
+              dotClass: 'bg-primary',
+            };
+          case 'PENDING':
+            return {
+              icon: <Clock className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_pending',
+              bgClass: 'bg-amber-500/10',
+              textClass: 'text-amber-600 dark:text-amber-400',
+              dotClass: 'bg-amber-500',
+            };
+          case 'PROCESSING':
+            return {
+              icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />,
+              labelKey: 'messages.status_processing',
+              bgClass: 'bg-blue-500/10',
+              textClass: 'text-blue-600 dark:text-blue-400',
+              dotClass: 'bg-blue-500',
+            };
+          case 'COMPLETED':
+            return {
+              icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_completed',
+              bgClass: 'bg-green-500/10',
+              textClass: 'text-green-600 dark:text-green-400',
+              dotClass: 'bg-green-500',
+            };
+          case 'FAILED':
+            return {
+              icon: <XCircle className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_failed',
+              bgClass: 'bg-red-500/10',
+              textClass: 'text-red-600 dark:text-red-400',
+              dotClass: 'bg-red-500',
+            };
+          case 'CANCELLED':
+            return {
+              icon: <Ban className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_cancelled',
+              bgClass: 'bg-gray-500/10',
+              textClass: 'text-gray-600 dark:text-gray-400',
+              dotClass: 'bg-gray-500',
+            };
+          case 'CANCELLING':
+            return {
+              icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />,
+              labelKey: 'messages.status_cancelling',
+              bgClass: 'bg-orange-500/10',
+              textClass: 'text-orange-600 dark:text-orange-400',
+              dotClass: 'bg-orange-500',
+            };
+          default:
+            return {
+              icon: <Loader2 className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_running',
+              bgClass: 'bg-primary/10',
+              textClass: 'text-primary',
+              dotClass: 'bg-primary',
+            };
+        }
+      };
+
+      const config = getStatusConfig(normalizedStatus);
+
       return (
-        <div className="mt-2">
-          <div className="flex justify-between items-center mb-1">
-            <span className="text-sm">
-              {t('messages.task_status')} {status}
+        <div className="mt-3 space-y-2">
+          {/* Status Badge */}
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${config.bgClass} ${config.textClass}`}
+            >
+              {config.icon}
+              <span>{t(config.labelKey) || status}</span>
             </span>
           </div>
-          <div className="w-full bg-border/60 rounded-full h-2">
-            <div
-              className={`bg-primary h-2 rounded-full transition-all duration-300 ease-in-out ${isActiveStatus ? 'progress-bar-animated' : ''}`}
-              style={{ width: `${safeProgress}%` }}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={safeProgress}
-              role="progressbar"
-            ></div>
-          </div>
+
+          {/* Minimal Progress Bar - only show for active statuses */}
+          {isActiveStatus && (
+            <div className="w-full bg-border/40 rounded-full h-1 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out ${config.dotClass} ${isActiveStatus ? 'progress-bar-shimmer' : ''}`}
+                style={{ width: `${Math.max(safeProgress, 3)}%` }}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={safeProgress}
+                role="progressbar"
+              />
+            </div>
+          )}
         </div>
       );
     };
