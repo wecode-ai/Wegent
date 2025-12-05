@@ -204,9 +204,9 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     Raises:
         HTTPException: If user is not admin
     """
-    # Here we assume users with username 'admin' are administrators
-    # Actual projects may require more complex permission management
-    if current_user.user_name != "admin":
+    # Check user role field for admin permission
+    # Also allow username 'admin' for backward compatibility
+    if current_user.role != "admin" and current_user.user_name != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied. Admin access required.",

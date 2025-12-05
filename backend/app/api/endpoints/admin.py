@@ -19,8 +19,10 @@ from app.api.endpoints.kind.common import (
 from app.api.endpoints.kind.kinds import KIND_SCHEMA_MAP
 from app.core.security import create_access_token, get_admin_user
 from app.models.kind import Kind
+from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.kind import BatchResponse
+from app.schemas.quick_teams import QuickTeamsConfig, QuickTeamsListResponse, QuickTeamResponse
 from app.schemas.task import TaskCreate, TaskInDB
 from app.schemas.user import Token, UserInDB, UserInfo
 from app.services.adapters.task_kinds import task_kinds_service
@@ -29,6 +31,8 @@ from app.services.kind import kind_service
 from app.services.user import user_service
 
 router = APIRouter()
+
+QUICK_TEAMS_CONFIG_KEY = "quick_teams"
 
 
 @router.get("/users", response_model=List[UserInfo])
@@ -438,3 +442,84 @@ async def admin_delete_resources_for_user(
         message=f"Deleted {success_count}/{total_count} resources for user {user_id}",
         results=results,
     )
+
+
+# Quick Teams Configuration Endpoints
+
+
+@router.get("/quick-teams/config")
+async def get_quick_teams_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get full quick teams configuration (admin only)
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == QUICK_TEAMS_CONFIG_KEY)
+        .first()
+    )
+    if config and config.config_value:
+        return config.config_value
+    return {"chat": [], "code": []}
+
+
+@router.put("/quick-teams/config")
+async def update_quick_teams_config(
+    config: QuickTeamsConfig,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Update quick teams configuration (admin only)
+    """
+    existing_config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == QUICK_TEAMS_CONFIG_KEY)
+        .first()
+    )
+
+    config_value = {
+        "chat": [item.dict() for item in config.chat],
+        "code": [item.dict() for item in config.code],
+    }
+
+    if existing_config:
+        existing_config.config_value = config_value
+    else:
+        new_config = SystemConfig(
+            config_key=QUICK_TEAMS_CONFIG_KEY,
+            config_value=config_value,
+        )
+        db.add(new_config)
+
+    db.commit()
+    return {"message": "Quick teams configuration updated successfully"}
+
+
+@router.get("/quick-teams/available-teams")
+async def get_available_teams_for_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get all available teams that can be configured as quick teams (admin only)
+
+    Returns all teams from the system regardless of user
+    """
+    teams = db.query(Kind).filter(Kind.kind == "Team").all()
+
+    items = []
+    for team in teams:
+        spec = team.spec or {}
+        metadata = team.metadata_ or {}
+        items.append({
+            "team_id": team.id,
+            "team_name": metadata.get("name", ""),
+            "team_namespace": metadata.get("namespace", "default"),
+            "description": spec.get("description"),
+            "user_id": team.user_id,
+        })
+
+    return {"items": items}

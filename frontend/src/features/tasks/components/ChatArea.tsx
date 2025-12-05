@@ -9,6 +9,7 @@ import { Send, CircleStop, Upload } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
+import QuickTeamCards from './QuickTeamCards';
 import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
@@ -1023,6 +1024,17 @@ export default function ChatArea({
                     </>
                   )}
                 </div>
+
+                {/* Quick Team Cards - show below input when no messages */}
+                {!hasMessages && teams.length > 0 && (
+                  <QuickTeamCards
+                    scene={taskType}
+                    teams={teams}
+                    selectedTeam={selectedTeam}
+                    onTeamSelect={handleTeamChange}
+                    disabled={hasMessages}
+                  />
+                )}
               </div>
             </div>
           </div>

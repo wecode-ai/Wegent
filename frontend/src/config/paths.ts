@@ -44,4 +44,12 @@ export const paths = {
             getHref: () => '/settings?tab=models',
         },
     },
+    admin: {
+        root: {
+            getHref: () => '/admin',
+        },
+        quickTeams: {
+            getHref: () => '/admin?tab=quick-teams',
+        },
+    },
 } as const;

@@ -40,6 +40,7 @@ class UserBase(BaseModel):
     user_name: str
     email: Optional[EmailStr] = None
     is_active: Optional[bool] = True
+    role: Optional[str] = "user"
 
 
 class UserCreate(UserBase):
@@ -63,6 +64,7 @@ class UserInDB(UserBase):
 
     id: int
     git_info: Optional[List[GitInfo]] = None
+    role: str = "user"
     created_at: datetime
     updated_at: datetime
 
