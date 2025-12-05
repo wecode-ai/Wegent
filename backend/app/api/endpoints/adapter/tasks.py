@@ -436,3 +436,4 @@ def join_shared_task(
         model_id=request.model_id,
         force_override_bot_model=request.force_override_bot_model or False,
     )
+

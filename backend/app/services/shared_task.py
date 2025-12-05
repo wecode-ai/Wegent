@@ -167,7 +167,7 @@ class SharedTaskService:
     def generate_share_url(self, share_token: str) -> str:
         """Generate share URL with token"""
         # Use /shared/task path for public read-only viewing
-        base_url = settings.TEAM_SHARE_BASE_URL  # Reuse the base URL
+        base_url = settings.TASK_SHARE_BASE_URL  # Reuse the base URL
         return f"{base_url}/shared/task?token={share_token}"
 
     def validate_task_exists(self, db: Session, task_id: int, user_id: int) -> bool:
@@ -241,13 +241,8 @@ class SharedTaskService:
         return share_info
 
     def _copy_task_with_subtasks(
-        self,
-        db: Session,
-        original_task: Kind,
-        new_user_id: int,
-        new_team_id: int,
-        model_id: Optional[str] = None,
-        force_override_bot_model: bool = False,
+        self, db: Session, original_task: Kind, new_user_id: int, new_team_id: int,
+        model_id: Optional[str] = None, force_override_bot_model: bool = False
     ) -> Kind:
         """Copy task and all its subtasks to new user"""
         from app.schemas.kind import Task, Team
@@ -294,9 +289,7 @@ class SharedTaskService:
             name=unique_task_name,
             user_id=new_user_id,
             namespace=original_task.namespace,
-            json=task_crd.model_dump(
-                mode="json", exclude_none=True
-            ),  # Use updated JSON
+            json=task_crd.model_dump(mode="json", exclude_none=True),  # Use updated JSON
             is_active=True,
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
@@ -373,13 +366,8 @@ class SharedTaskService:
         return new_task
 
     def join_shared_task(
-        self,
-        db: Session,
-        share_token: str,
-        user_id: int,
-        team_id: int,
-        model_id: Optional[str] = None,
-        force_override_bot_model: bool = False,
+        self, db: Session, share_token: str, user_id: int, team_id: int,
+        model_id: Optional[str] = None, force_override_bot_model: bool = False
     ) -> JoinSharedTaskResponse:
         """Join a shared task by copying it to user's task list"""
         # Decode share token
@@ -478,7 +466,9 @@ class SharedTaskService:
             task_id=copied_task.id,
         )
 
-    def get_user_shared_tasks(self, db: Session, user_id: int) -> List[SharedTaskInDB]:
+    def get_user_shared_tasks(
+        self, db: Session, user_id: int
+    ) -> List[SharedTaskInDB]:
         """Get all shared tasks for a user"""
         shared_tasks = (
             db.query(SharedTask)
@@ -513,6 +503,7 @@ class SharedTaskService:
 
         return True
 
+
     def get_public_shared_task(
         self, db: Session, share_token: str
     ) -> PublicSharedTaskResponse:
@@ -523,7 +514,10 @@ class SharedTaskService:
             share_data_str = self._aes_decrypt(decoded_token)
 
             if not share_data_str or "#" not in share_data_str:
-                raise HTTPException(status_code=400, detail="Invalid share link format")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid share link format"
+                )
 
             # Parse user_id and task_id
             user_id_str, task_id_str = share_data_str.split("#", 1)
@@ -531,11 +525,17 @@ class SharedTaskService:
                 user_id = int(user_id_str)
                 task_id = int(task_id_str)
             except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid share link format")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid share link format"
+                )
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=400, detail="Invalid share link format")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid share link format"
+            )
 
         # Now check if task exists and is active
         task = (
@@ -552,11 +552,15 @@ class SharedTaskService:
         if not task:
             raise HTTPException(
                 status_code=404,
-                detail="This shared task is no longer available. It may have been deleted by the owner.",
+                detail="This shared task is no longer available. It may have been deleted by the owner."
             )
 
         # Get user info for sharer name
-        user = db.query(User).filter(User.id == user_id, User.is_active == True).first()
+        user = (
+            db.query(User)
+            .filter(User.id == user_id, User.is_active == True)
+            .first()
+        )
 
         share_info = TaskShareInfo(
             user_id=user_id,
@@ -596,11 +600,7 @@ class SharedTaskService:
                     "mime_type": att.mime_type,
                     "extracted_text": att.extracted_text or "",
                     "text_length": att.text_length,
-                    "status": (
-                        att.status.value
-                        if hasattr(att.status, "value")
-                        else str(att.status)
-                    ),
+                    "status": att.status.value if hasattr(att.status, 'value') else str(att.status),
                 }
                 for att in attachments
             ]

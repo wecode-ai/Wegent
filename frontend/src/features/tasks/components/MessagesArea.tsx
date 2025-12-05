@@ -14,7 +14,7 @@ import type {
   GitBranch,
   Attachment,
 } from '@/types/api';
-import { Share2, Copy } from 'lucide-react';
+import { Copy, Share2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useToast } from '@/hooks/use-toast';
