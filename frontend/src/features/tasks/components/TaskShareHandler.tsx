@@ -11,6 +11,7 @@ import { useToast } from '@/hooks/use-toast';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { taskApis, TaskShareInfo } from '@/apis/tasks';
 import { teamApis } from '@/apis/team';
+import { githubApis } from '@/apis/github';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useUser } from '@/features/common/UserContext';
 import Modal from '@/features/common/Modal';
@@ -19,6 +20,8 @@ import ModelSelector, {
   DEFAULT_MODEL_NAME,
   allBotsHavePredefinedModel,
 } from './ModelSelector';
+import RepositorySelector from './RepositorySelector';
+import BranchSelector from './BranchSelector';
 import { Check } from 'lucide-react';
 import { UsersIcon } from '@heroicons/react/24/outline';
 import { cn } from '@/lib/utils';
@@ -31,7 +34,7 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import type { Team } from '@/types/api';
+import type { Team, GitRepoInfo, GitBranch } from '@/types/api';
 
 interface TaskShareHandlerProps {
   onTaskCopied?: () => void;
@@ -58,8 +61,12 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
   const [forceOverride, setForceOverride] = useState(false);
   const [isTeamSelectorOpen, setIsTeamSelectorOpen] = useState(false);
   const [teamSearchValue, setTeamSearchValue] = useState('');
+  // Repository and branch selection for code tasks
+  const [selectedRepo, setSelectedRepo] = useState<GitRepoInfo | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState<GitBranch | null>(null);
 
   const isSelfShare = shareInfo && user && shareInfo.user_id === user.id;
+  const isCodeTask = shareInfo?.task_type === 'code';
 
   // Find the selected team with full details
   const selectedTeam = useMemo(() => {
@@ -76,6 +83,11 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
     // Model selection is required when no model is selected
     return !selectedModel;
   }, [selectedTeam, selectedModel]);
+
+  // Check if repository and branch are required for code tasks
+  const isRepoSelectionRequired = useMemo(() => {
+    return isCodeTask && (!selectedRepo || !selectedBranch);
+  }, [isCodeTask, selectedRepo, selectedBranch]);
 
   const cleanupUrlParams = React.useCallback(() => {
     const url = new URL(window.location.href);
@@ -124,6 +136,60 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
     fetchShareInfoAndTeams();
   }, [searchParams, toast, t, cleanupUrlParams]);
 
+  // Auto-fill repository and branch for code tasks
+  useEffect(() => {
+    if (!shareInfo || !isCodeTask) {
+      return;
+    }
+
+    // Need at least git_repo_id and git_type to identify a repository
+    if (!shareInfo.git_repo_id || !shareInfo.git_type) {
+      return;
+    }
+
+    const autoFillRepo = async () => {
+      try {
+        // Load all repositories
+        const repos = await githubApis.getRepositories();
+
+        // Find the repository by matching multiple fields for precision
+        // Priority: git_repo_id + git_domain + git_type > git_repo_id + git_type
+        const matchedRepo = repos.find(repo => {
+          // Must match git_repo_id and git_type
+          const idMatch = repo.git_repo_id === shareInfo.git_repo_id;
+          const typeMatch = repo.type === shareInfo.git_type;
+
+          if (!idMatch || !typeMatch) {
+            return false;
+          }
+
+          // Additionally match git_domain if available
+          if (shareInfo.git_domain) {
+            return repo.git_domain === shareInfo.git_domain;
+          }
+
+          // Additionally match git_repo (owner/repo) if available
+          if (shareInfo.git_repo) {
+            return repo.git_repo === shareInfo.git_repo;
+          }
+
+          return true;
+        });
+
+        if (matchedRepo) {
+          // Only set the repository, let BranchSelector handle branch loading and selection
+          // BranchSelector will use tempTaskDetail.branch_name to auto-select the branch
+          setSelectedRepo(matchedRepo);
+        }
+      } catch (error) {
+        console.error('Failed to auto-fill repository:', error);
+        // Silently fail - user can manually select
+      }
+    };
+
+    autoFillRepo();
+  }, [shareInfo, isCodeTask]);
+
   const handleConfirmCopy = async () => {
     if (!shareInfo) return;
 
@@ -149,6 +215,24 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
       return;
     }
 
+    // Validate repository and branch selection for code tasks
+    if (isCodeTask) {
+      if (!selectedRepo) {
+        toast({
+          variant: 'destructive',
+          title: t('shared_task.handler_repo_required'),
+        });
+        return;
+      }
+      if (!selectedBranch) {
+        toast({
+          variant: 'destructive',
+          title: t('shared_task.handler_branch_required'),
+        });
+        return;
+      }
+    }
+
     setIsCopying(true);
     setError(null);
     try {
@@ -168,6 +252,11 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         team_id: selectedTeamId,
         model_id: modelId,
         force_override_bot_model: forceOverride,
+        git_repo_id: selectedRepo?.git_repo_id,
+        git_url: selectedRepo?.git_url,
+        git_repo: selectedRepo?.git_repo,
+        git_domain: selectedRepo?.git_domain,
+        branch_name: selectedBranch?.name,
       });
 
       toast({
@@ -182,8 +271,9 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
 
       handleCloseModal();
 
-      // Navigate to the copied task in chat page
-      router.push(`/chat?taskId=${response.task_id}`);
+      // Navigate to the appropriate page based on task type
+      const targetPage = isCodeTask ? '/code' : '/chat';
+      router.push(`${targetPage}?taskId=${response.task_id}`);
     } catch (err) {
       console.error('Failed to copy shared task:', err);
       const errorMessage = (err as Error)?.message || 'Failed to copy task';
@@ -374,6 +464,65 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
                 disabled={isCopying}
               />
             )}
+
+            {/* Repository and Branch Selection (only for code tasks) */}
+            {isCodeTask && (
+              <div className="space-y-4 p-4 bg-surface/50 rounded-lg border border-border">
+                <div className="flex items-center gap-2 mb-2">
+                  <svg
+                    className="w-5 h-5 text-primary"
+                    fill="none"
+                    stroke="currentColor"
+                    viewBox="0 0 24 24"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                    />
+                  </svg>
+                  <h3 className="text-sm font-semibold text-text-primary">
+                    {t('shared_task.handler_code_settings')}
+                  </h3>
+                </div>
+
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-text-primary flex items-center gap-1">
+                      {t('repos.repository')}
+                      <span className="text-destructive">*</span>
+                    </label>
+                    <RepositorySelector
+                      selectedRepo={selectedRepo}
+                      handleRepoChange={setSelectedRepo}
+                      disabled={isCopying}
+                      selectedTaskDetail={null}
+                    />
+                    <Alert variant="default" className="py-2">
+                      <AlertDescription className="text-xs text-text-muted leading-relaxed">
+                        💡 {t('shared_task.handler_repo_hint')}
+                      </AlertDescription>
+                    </Alert>
+                  </div>
+
+                  {selectedRepo && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-text-primary flex items-center gap-1">
+                        {t('repos.branch')}
+                        <span className="text-destructive">*</span>
+                      </label>
+                      <BranchSelector
+                        selectedRepo={selectedRepo}
+                        selectedBranch={selectedBranch}
+                        handleBranchChange={setSelectedBranch}
+                        disabled={isCopying}
+                      />
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -392,7 +541,13 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
           onClick={handleConfirmCopy}
           variant="default"
           size="sm"
-          disabled={!!isSelfShare || isCopying || teams.length === 0 || isModelSelectionRequired}
+          disabled={
+            !!isSelfShare ||
+            isCopying ||
+            teams.length === 0 ||
+            isModelSelectionRequired ||
+            isRepoSelectionRequired
+          }
           style={{ flex: 1 }}
         >
           {isCopying ? t('shared_task.handler_copying') : t('shared_task.handler_copy_to_tasks')}
