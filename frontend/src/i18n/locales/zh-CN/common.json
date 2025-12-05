@@ -287,7 +287,8 @@
     "no_branch": "未找到分支",
     "no_match": "没有匹配的结果",
     "default": "(默认)",
-    "set_token": "设置token"
+    "set_token": "设置token",
+    "configure_integration": "配置仓库集成"
   },
   "tasks": {
     "search_placeholder": "搜索任务",
