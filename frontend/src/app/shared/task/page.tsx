@@ -9,15 +9,14 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { taskApis, PublicSharedTaskResponse } from '@/apis/tasks';
-import { getToken } from '@/apis/user';
+import { getToken, userApis } from '@/apis/user';
 import { LogIn } from 'lucide-react';
 import { useTheme } from '@/features/theme/ThemeProvider';
 import TopNavigation from '@/features/layout/TopNavigation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
-import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
-import PublicTaskSidebar from '@/features/tasks/components/PublicTaskSidebar';
 import MessageBubble, { type Message } from '@/features/tasks/components/MessageBubble';
 import { useTranslation } from '@/hooks/useTranslation';
+import type { User } from '@/types/api';
 import '@/features/common/scrollbar.css';
 
 /**
@@ -33,9 +32,25 @@ function SharedTaskContent() {
   const [taskData, setTaskData] = useState<PublicSharedTaskResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   // Check if user is logged in
   const isLoggedIn = !!getToken();
+
+  // Fetch current user if logged in
+  useEffect(() => {
+    const fetchUser = async () => {
+      if (isLoggedIn) {
+        try {
+          const user = await userApis.getCurrentUser();
+          setCurrentUser(user);
+        } catch (err) {
+          console.error('Failed to fetch user:', err);
+        }
+      }
+    };
+    fetchUser();
+  }, [isLoggedIn]);
 
   useEffect(() => {
     const token = searchParams.get('token');
@@ -164,23 +179,14 @@ function SharedTaskContent() {
 
   if (isLoading) {
     return (
-      <div className="flex smart-h-screen bg-base text-text-primary box-border">
-        {/* Sidebar placeholder during loading */}
-        <ResizableSidebar>
-          <div className="flex items-center justify-center h-full">
-            <div className="text-xs text-text-muted">Loading...</div>
-          </div>
-        </ResizableSidebar>
-
-        <div className="flex-1 flex flex-col min-w-0">
-          <TopNavigation activePage="chat" variant="standalone" showLogo>
-            <GithubStarButton />
-          </TopNavigation>
-          <div className="flex-1 flex items-center justify-center">
-            <div className="text-center">
-              <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-              <p className="text-text-muted">Loading shared conversation...</p>
-            </div>
+      <div className="flex flex-col smart-h-screen bg-base text-text-primary box-border">
+        <TopNavigation activePage="chat" variant="standalone" showLogo>
+          <GithubStarButton />
+        </TopNavigation>
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-text-muted">Loading shared conversation...</p>
           </div>
         </div>
       </div>
@@ -206,39 +212,37 @@ function SharedTaskContent() {
     }
 
     return (
-      <div className="flex smart-h-screen bg-base text-text-primary box-border">
-        <div className="flex-1 flex flex-col min-w-0">
-          <TopNavigation activePage="chat" variant="standalone" showLogo>
-            <GithubStarButton />
-          </TopNavigation>
-          <div className="flex-1 flex items-center justify-center p-6">
-            <div className="max-w-lg w-full">
-              {/* Error Icon */}
-              <div className="flex justify-center mb-6">
-                <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center">
-                  <span className="text-4xl">{errorIcon}</span>
-                </div>
+      <div className="flex flex-col smart-h-screen bg-base text-text-primary box-border">
+        <TopNavigation activePage="chat" variant="standalone" showLogo>
+          <GithubStarButton />
+        </TopNavigation>
+        <div className="flex-1 flex items-center justify-center p-6">
+          <div className="max-w-lg w-full">
+            {/* Error Icon */}
+            <div className="flex justify-center mb-6">
+              <div className="w-20 h-20 rounded-full bg-destructive/10 flex items-center justify-center">
+                <span className="text-4xl">{errorIcon}</span>
               </div>
+            </div>
 
-              {/* Error Title */}
-              <h1 className="text-2xl font-semibold text-center mb-3 text-text-primary">
-                {errorTitle}
-              </h1>
+            {/* Error Title */}
+            <h1 className="text-2xl font-semibold text-center mb-3 text-text-primary">
+              {errorTitle}
+            </h1>
 
-              {/* Error Description */}
-              <p className="text-center text-text-muted mb-8 leading-relaxed">{errorDesc}</p>
+            {/* Error Description */}
+            <p className="text-center text-text-muted mb-8 leading-relaxed">{errorDesc}</p>
 
-              {/* Action Button */}
-              <div className="flex justify-center">
-                <Button
-                  onClick={() => router.push('/chat')}
-                  variant="default"
-                  size="default"
-                  className="min-w-[160px]"
-                >
-                  {t('shared_task.go_home')}
-                </Button>
-              </div>
+            {/* Action Button */}
+            <div className="flex justify-center">
+              <Button
+                onClick={() => router.push('/chat')}
+                variant="default"
+                size="default"
+                className="min-w-[160px]"
+              >
+                {t('shared_task.go_home')}
+              </Button>
             </div>
           </div>
         </div>
@@ -247,21 +251,15 @@ function SharedTaskContent() {
   }
 
   return (
-    <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* Sidebar with current shared task */}
-      <ResizableSidebar>
-        <PublicTaskSidebar
-          taskTitle={taskData.task_title}
-          sharerName={taskData.sharer_name}
-          onLoginClick={handleLoginAndCopy}
-          isLoggedIn={isLoggedIn}
-        />
-      </ResizableSidebar>
-
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* Top navigation - same as chat page */}
-        <TopNavigation activePage="chat" variant="standalone" showLogo>
-          <GithubStarButton />
+    <div className="flex flex-col smart-h-screen bg-base text-text-primary box-border">
+      {/* Top navigation */}
+      <TopNavigation activePage="chat" variant="standalone" showLogo>
+        <GithubStarButton />
+        {isLoggedIn && currentUser ? (
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-text-primary">{currentUser.user_name}</span>
+          </div>
+        ) : (
           <Button
             onClick={handleLoginAndCopy}
             size="sm"
@@ -269,69 +267,69 @@ function SharedTaskContent() {
             className="flex items-center gap-2"
           >
             <LogIn className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('shared_task.continue_chat')}</span>
-            <span className="sm:hidden">{t('shared_task.continue_chat')}</span>
+            <span className="hidden sm:inline">{t('shared_task.login_to_continue')}</span>
+            <span className="sm:hidden">{t('shared_task.login')}</span>
           </Button>
-        </TopNavigation>
+        )}
+      </TopNavigation>
 
-        {/* Main content area - same structure as chat page */}
-        <div className="flex-1 overflow-y-auto custom-scrollbar">
-          <div className="w-full max-w-3xl mx-auto flex flex-col px-4 py-6">
-            {/* Task title and sharer info */}
-            <div className="mb-6">
-              <h1 className="text-2xl font-semibold text-text-primary mb-2">
-                {taskData.task_title}
-              </h1>
-              <p className="text-sm text-text-muted">
-                {t('shared_task.shared_by')}{' '}
-                <span className="font-medium text-text-primary">{taskData.sharer_name}</span>
-              </p>
-            </div>
+      {/* Main content area */}
+      <div className="flex-1 overflow-y-auto custom-scrollbar">
+        <div className="w-full max-w-3xl mx-auto flex flex-col px-4 py-6">
+          {/* Task title and sharer info */}
+          <div className="mb-6">
+            <h1 className="text-2xl font-semibold text-text-primary mb-2">{taskData.task_title}</h1>
+            <p className="text-sm text-text-muted">
+              {t('shared_task.shared_by')}{' '}
+              <span className="font-medium text-text-primary">{taskData.sharer_name}</span>
+            </p>
+          </div>
 
-            {/* Read-only notice */}
-            <Alert
-              variant="default"
-              className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
-            >
-              <AlertDescription className="text-sm text-text-primary">
-                📖 {t('shared_task.read_only_notice')}
-              </AlertDescription>
-            </Alert>
+          {/* Read-only notice */}
+          <Alert
+            variant="default"
+            className="mb-6 bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800"
+          >
+            <AlertDescription className="text-sm text-text-primary">
+              📖 {t('shared_task.read_only_notice')}
+            </AlertDescription>
+          </Alert>
 
-            {/* Messages area - using MessageBubble component for consistency */}
-            <div className="flex-1 space-y-6">
-              {taskData.subtasks.map((subtask, index) => {
-                const message = convertSubtaskToMessage(subtask);
-                return (
-                  <MessageBubble
-                    key={subtask.id}
-                    msg={message}
-                    index={index}
-                    selectedTaskDetail={null}
-                    selectedTeam={null}
-                    selectedRepo={null}
-                    selectedBranch={null}
-                    theme={theme}
-                    t={t}
-                  />
-                );
-              })}
-            </div>
+          {/* Messages area - using MessageBubble component for consistency */}
+          <div className="flex-1 space-y-6">
+            {taskData.subtasks.map((subtask, index) => {
+              const message = convertSubtaskToMessage(subtask);
+              return (
+                <MessageBubble
+                  key={subtask.id}
+                  msg={message}
+                  index={index}
+                  selectedTaskDetail={null}
+                  selectedTeam={null}
+                  selectedRepo={null}
+                  selectedBranch={null}
+                  theme={theme}
+                  t={t}
+                />
+              );
+            })}
+          </div>
 
-            {/* Bottom CTA */}
-            <div className="mt-8 p-4 rounded-lg bg-surface border border-border">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-text-primary mb-1">
-                    {t('shared_task.want_to_continue')}
-                  </p>
-                  <p className="text-xs text-text-muted">{t('shared_task.copy_and_chat')}</p>
-                </div>
-                <Button onClick={handleLoginAndCopy} size="sm" className="flex-shrink-0">
-                  <LogIn className="w-4 h-4 mr-2" />
-                  {t('shared_task.continue_chat')}
-                </Button>
+          {/* Bottom CTA */}
+          <div className="mt-8 p-4 rounded-lg bg-surface border border-border">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-text-primary mb-1">
+                  {isLoggedIn
+                    ? t('shared_task.want_to_continue')
+                    : t('shared_task.login_to_continue_desc')}
+                </p>
+                <p className="text-xs text-text-muted">{t('shared_task.copy_and_chat')}</p>
               </div>
+              <Button onClick={handleLoginAndCopy} size="sm" className="flex-shrink-0">
+                <LogIn className="w-4 h-4 mr-2" />
+                {isLoggedIn ? t('shared_task.continue_chat') : t('shared_task.login_to_continue')}
+              </Button>
             </div>
           </div>
         </div>
