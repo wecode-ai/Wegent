@@ -167,7 +167,7 @@ class SharedTaskService:
     def generate_share_url(self, share_token: str) -> str:
         """Generate share URL with token"""
         # Use /shared/task path for public read-only viewing
-        base_url = settings.TEAM_SHARE_BASE_URL  # Reuse the base URL
+        base_url = settings.TASK_SHARE_BASE_URL  # Reuse the base URL
         return f"{base_url}/shared/task?token={share_token}"
 
     def validate_task_exists(self, db: Session, task_id: int, user_id: int) -> bool:
