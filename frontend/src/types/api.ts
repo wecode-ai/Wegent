@@ -4,6 +4,11 @@
 
 // Authentication Types
 
+// User Preferences
+export interface UserPreferences {
+  send_key: 'enter' | 'cmd_enter';
+}
+
 // User Types
 export interface User {
   id: number;
@@ -13,6 +18,7 @@ export interface User {
   created_at: string;
   updated_at: string;
   git_info: GitInfo[];
+  preferences?: UserPreferences;
 }
 
 /** Git account information */
