@@ -7,11 +7,9 @@ FROM registry.api.weibo.com/wecode/node:22-slim AS builder
 
 WORKDIR /app
 
-COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend .
 RUN npm config set registry http://registry.npmmirror.com
 RUN npm ci
-
-COPY frontend .
 RUN npm run build
 
 # ---- Production runtime stage ----
