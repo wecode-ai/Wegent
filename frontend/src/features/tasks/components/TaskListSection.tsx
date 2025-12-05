@@ -291,7 +291,11 @@ export default function TaskListSection({
   const shouldShowStatusIcon = (task: Task): boolean => {
     const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
     if (terminalStates.includes(task.status)) {
-      return isTaskUnread(task);
+      const unread = isTaskUnread(task);
+      console.log(
+        `[TaskListSection] shouldShowStatusIcon for task ${task.id}: status=${task.status}, isUnread=${unread}, completed_at=${task.completed_at}, updated_at=${task.updated_at}`
+      );
+      return unread;
     }
     return true;
   };
