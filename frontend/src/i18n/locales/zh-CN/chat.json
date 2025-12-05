@@ -38,6 +38,14 @@
     "bot": "机器人",
     "application_parameters": "应用参数"
   },
+  "shared_task": {
+    "share_task": "分享",
+    "sharing": "分享中...",
+    "no_task_selected": "未选择任务",
+    "no_task_selected_desc": "请选择一个任务进行分享",
+    "share_failed": "分享任务失败",
+    "share_failed_desc": "请重试"
+  },
   "settings": {
     "model": "模型",
     "temperature": "温度",

@@ -29,6 +29,7 @@ export default function AuthGuard({ children }: AuthGuardProps) {
       '/login/oidc',
       paths.home.getHref(),
       paths.auth.password_login.getHref(),
+      '/shared/task', // Allow public shared task page without authentication
     ];
     if (!allowedPaths.includes(pathname)) {
       const token = getToken();
