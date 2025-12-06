@@ -8,7 +8,6 @@ This module scans a directory for YAML files and creates initial resources.
 """
 
 import logging
-import os
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -357,7 +356,16 @@ def scan_and_apply_yaml_directory(
         f"[scan_and_apply_yaml_directory] Total resources: {len(user_resources)} user, {len(public_shell_resources)} public shells"
     )
 
+    # Apply public shells FIRST (goes to public_shells table)
+    # This must be done before user resources because Bots may reference public shells
+    public_shell_results = []
+    if public_shell_resources:
+        logger.info(f"Applying {len(public_shell_resources)} public shell resources...")
+        public_shell_results = apply_public_shells(db, public_shell_resources)
+        logger.info(f"Public shells applied: {len(public_shell_results)} results")
+
     # Apply user resources (goes to kinds table)
+    # This is done after public shells so that Bots can reference them
     user_results = []
     if user_resources:
         logger.info(
@@ -365,13 +373,6 @@ def scan_and_apply_yaml_directory(
         )
         user_results = apply_yaml_resources(user_id, user_resources)
         logger.info(f"User resources applied: {len(user_results)} results")
-
-    # Apply public shells (goes to public_shells table)
-    public_shell_results = []
-    if public_shell_resources:
-        logger.info(f"Applying {len(public_shell_resources)} public shell resources...")
-        public_shell_results = apply_public_shells(db, public_shell_resources)
-        logger.info(f"Public shells applied: {len(public_shell_results)} results")
 
     # Combine results
     user_success = sum(1 for r in user_results if r.get("success"))
@@ -391,13 +392,17 @@ def scan_and_apply_yaml_directory(
     }
 
 
-def run_yaml_initialization(db: Session) -> Dict[str, Any]:
+def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, Any]:
     """
     Main entry point for YAML initialization.
     Scans the configured directory and applies all YAML resources.
 
+    Note: Distributed locking is now handled by the caller (main.py) using a unified
+    startup lock that covers both Alembic migrations and YAML initialization.
+
     Args:
         db: Database session
+        skip_lock: Deprecated parameter, kept for backward compatibility
 
     Returns:
         Summary of initialization

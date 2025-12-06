@@ -546,7 +546,8 @@ async def stream_chat(
     user_info = {
         "id": current_user.id,
         "name": current_user.user_name or "",
-        "user_name": current_user.user_name or "",  # Also include user_name for compatibility
+        "user_name": current_user.user_name
+        or "",  # Also include user_name for compatibility
     }
 
     # Build task_data similar to executor format
