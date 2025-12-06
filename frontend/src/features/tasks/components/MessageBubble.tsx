@@ -614,7 +614,7 @@ const MessageBubble = memo(
 
     // Helper function to parse Markdown final prompt
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
-    // Once identified as final prompt, ALL content is treated as the prompt to avoid truncation
+    // Extracts content after the header, filtering out preceding irrelevant text
     const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
       let actualContent = content;
 
@@ -631,15 +631,31 @@ const MessageBubble = memo(
       // Matches: ## ✅ 最终需求提示词, ## Final Requirement Prompt, ### 最终提示词, # final prompt, etc.
       const finalPromptHeaderRegex =
         /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im;
-      if (!finalPromptHeaderRegex.test(actualContent)) {
+      const headerMatch = actualContent.match(finalPromptHeaderRegex);
+      if (!headerMatch) {
         return null;
       }
 
-      // Once identified as final prompt, return ALL content as the prompt
-      // This ensures no content is accidentally truncated or filtered
+      // Find the position of the header and extract everything from the header line onwards
+      // This filters out any preceding irrelevant content while keeping ALL content after the header
+      const headerIndex = headerMatch.index!;
+      const contentFromHeader = actualContent.substring(headerIndex);
+
+      // Find the end of the header line and extract the rest as the prompt content
+      const headerLineEndIndex = contentFromHeader.indexOf('\n');
+      if (headerLineEndIndex === -1) {
+        // Header is the only line, no content after it
+        return null;
+      }
+
+      const promptContent = contentFromHeader.substring(headerLineEndIndex + 1).trim();
+      if (!promptContent) {
+        return null;
+      }
+
       return {
         type: 'final_prompt',
-        final_prompt: actualContent.trim(),
+        final_prompt: promptContent,
       };
     };
 
