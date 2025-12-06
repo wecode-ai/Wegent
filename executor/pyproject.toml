@@ -12,7 +12,7 @@ dependencies = [
     "ag-ui-protocol==0.1.8",
     "agno==2.1.5",
     "anthropic==0.67.0",
-    "claude-agent-sdk==0.1.6",
+    "claude-agent-sdk==0.1.13",
     "cryptography==46.0.3",
     "fastapi==0.109.1",
     "gitpython==3.1.43",

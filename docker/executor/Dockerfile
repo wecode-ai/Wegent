@@ -7,7 +7,8 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0 AS builder
 
 WORKDIR /app
 
-RUN npm update -g @anthropic-ai/claude-code
+# Install latest Claude Code CLI (requires version >= 2.0.0 for Agent SDK compatibility)
+RUN npm install -g @anthropic-ai/claude-code@latest
 
 # Install uv
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
@@ -44,7 +45,8 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
 
 WORKDIR /app
 
-RUN npm update -g @anthropic-ai/claude-code
+# Install latest Claude Code CLI (requires version >= 2.0.0 for Agent SDK compatibility)
+RUN npm install -g @anthropic-ai/claude-code@latest
 
 # Install uv in runtime stage
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \

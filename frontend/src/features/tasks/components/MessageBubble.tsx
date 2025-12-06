@@ -6,7 +6,18 @@
 
 import React, { memo, useState } from 'react';
 import type { TaskDetail, Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
-import { Bot, Copy, Check, Download, AlertCircle, Loader2, Clock, CheckCircle2, XCircle, Ban } from 'lucide-react';
+import {
+  Bot,
+  Copy,
+  Check,
+  Download,
+  AlertCircle,
+  Loader2,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  Ban,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import ThinkingComponent from './ThinkingComponent';
@@ -464,22 +475,34 @@ const MessageBubble = memo(
 
     // Helper function to parse Markdown clarification questions
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
+    // Extracts content between the header and the last ``` (or end of content if no valid closing ```)
     const parseMarkdownClarification = (content: string): ClarificationData | null => {
-      let actualContent = content;
-
-      // Try to extract content from code block (optional)
-      const codeBlockRegex = /```(?:markdown)?\s*\n([\s\S]+?)\n```/;
-      const codeBlockMatch = content.match(codeBlockRegex);
-      if (codeBlockMatch) {
-        actualContent = codeBlockMatch[1];
-      }
-
       // Flexible header detection for clarification questions
       // Matches: ## 🤔 需求澄清问题, ## Clarification Questions, ### 澄清问题, # 需求澄清, etc.
       const clarificationHeaderRegex =
-        /^#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
-      if (!clarificationHeaderRegex.test(actualContent)) {
+        /#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
+      const headerMatch = content.match(clarificationHeaderRegex);
+      if (!headerMatch) {
         return null;
+      }
+
+      // Find the position of the header and extract everything from the header onwards
+      const headerIndex = headerMatch.index!;
+      let actualContent = content.substring(headerIndex);
+
+      // Find the last ``` in the content
+      const lastCodeBlockMarkerIndex = actualContent.lastIndexOf('\n```');
+
+      if (lastCodeBlockMarkerIndex !== -1) {
+        // Check if the last ``` is within 2 lines of the actual end
+        const contentAfterMarker = actualContent.substring(lastCodeBlockMarkerIndex + 4); // +4 for '\n```'
+        const linesAfterMarker = contentAfterMarker.split('\n').filter(line => line.trim() !== '');
+
+        if (linesAfterMarker.length <= 2) {
+          // Valid closing ```, extract content before it
+          actualContent = actualContent.substring(0, lastCodeBlockMarkerIndex).trim();
+        }
+        // If the ``` is too far from the end, keep the full content
       }
 
       const questions: ClarificationData['questions'] = [];
@@ -612,35 +635,61 @@ const MessageBubble = memo(
 
     // Helper function to parse Markdown final prompt
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
+    // Extracts content between the header and the last ``` (or end of content if no valid closing ```)
     const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
-      let actualContent = content;
-
-      // Try to extract content from code block (optional)
-      const codeBlockRegex = /```(?:markdown)?\s*\n([\s\S]+?)\n```/;
-      const codeBlockMatch = content.match(codeBlockRegex);
-      if (codeBlockMatch) {
-        actualContent = codeBlockMatch[1];
-      }
-
       // Flexible header detection for final prompt
       // Matches: ## ✅ 最终需求提示词, ## Final Requirement Prompt, ### 最终提示词, # final prompt, etc.
       const finalPromptHeaderRegex =
-        /^#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im;
-      if (!finalPromptHeaderRegex.test(actualContent)) {
+        /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im;
+      const headerMatch = content.match(finalPromptHeaderRegex);
+      if (!headerMatch) {
         return null;
       }
 
-      // Extract content after the header
-      // Matches various header formats and captures everything after
-      const headingRegex =
-        /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)[^\n]*\n+([\s\S]+)/i;
-      const headingMatch = actualContent.match(headingRegex);
+      // Find the position of the header and extract everything from the header line onwards
+      const headerIndex = headerMatch.index!;
+      const contentFromHeader = content.substring(headerIndex);
 
-      if (!headingMatch) return null;
+      // Find the end of the header line
+      const headerLineEndIndex = contentFromHeader.indexOf('\n');
+      if (headerLineEndIndex === -1) {
+        // Header is the only line, no content after it
+        return null;
+      }
+
+      // Get content after the header line
+      const afterHeader = contentFromHeader.substring(headerLineEndIndex + 1);
+
+      // Find the last ``` in the content
+      const lastCodeBlockMarkerIndex = afterHeader.lastIndexOf('\n```');
+
+      let promptContent: string;
+
+      if (lastCodeBlockMarkerIndex !== -1) {
+        // Check if the last ``` is within 2 lines of the actual end
+        const contentAfterMarker = afterHeader.substring(lastCodeBlockMarkerIndex + 4); // +4 for '\n```'
+        const linesAfterMarker = contentAfterMarker.split('\n').filter(line => line.trim() !== '');
+
+        if (linesAfterMarker.length <= 2) {
+          // Valid closing ```, extract content before it
+          promptContent = afterHeader.substring(0, lastCodeBlockMarkerIndex).trim();
+        } else {
+          // The ``` is too far from the end, model probably didn't output proper closing
+          // Take everything to the end
+          promptContent = afterHeader.trim();
+        }
+      } else {
+        // No closing ``` found, take everything to the end
+        promptContent = afterHeader.trim();
+      }
+
+      if (!promptContent) {
+        return null;
+      }
 
       return {
         type: 'final_prompt',
-        final_prompt: headingMatch[1].trim(),
+        final_prompt: promptContent,
       };
     };
 
