@@ -328,6 +328,13 @@
     "enable_success": "Browser notifications enabled successfully",
     "disable_success": "Browser notifications disabled"
   },
+  "send_shortcut": {
+    "title": "Send Message Shortcut",
+    "description": "Choose the keyboard shortcut to send messages",
+    "enter_option": "Enter to send, Shift+Enter for new line",
+    "cmd_enter_option": "Cmd/Ctrl+Enter to send, Enter for new line",
+    "change_success": "Send shortcut updated"
+  },
   "guide": {
     "title": "Welcome",
     "description": "Before you can start using the app, please complete the setup below first!",

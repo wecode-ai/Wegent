@@ -13,9 +13,16 @@ import {
   requestNotificationPermission,
   setNotificationEnabled,
 } from '@/utils/notification';
+import {
+  getSendShortcutMode,
+  setSendShortcutMode,
+  type SendShortcutMode,
+} from '@/utils/sendShortcut';
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
 
 export default function NotificationSettings() {
   const { t } = useTranslation('common');
@@ -23,10 +30,12 @@ export default function NotificationSettings() {
   const router = useRouter();
   const [enabled, setEnabled] = useState(false);
   const [supported, setSupported] = useState(true);
+  const [sendShortcut, setSendShortcut] = useState<SendShortcutMode>('enter');
 
   useEffect(() => {
     setSupported(isNotificationSupported());
     setEnabled(isNotificationEnabled());
+    setSendShortcut(getSendShortcutMode());
   }, []);
 
   const handleToggle = async () => {
@@ -57,6 +66,21 @@ export default function NotificationSettings() {
         title: t('notifications.disable_success'),
       });
     }
+  };
+
+  const handleSendShortcutChange = (value: SendShortcutMode) => {
+    setSendShortcut(value);
+    setSendShortcutMode(value);
+    // Dispatch storage event for same-tab updates
+    window.dispatchEvent(
+      new StorageEvent('storage', {
+        key: 'wegent_send_shortcut_mode',
+        newValue: value,
+      })
+    );
+    toast({
+      title: t('send_shortcut.change_success'),
+    });
   };
 
   const handleRestartOnboarding = () => {
@@ -90,6 +114,32 @@ export default function NotificationSettings() {
           </p>
         </div>
       )}
+
+      {/* Send Shortcut Setting */}
+      <div className="p-4 bg-base border border-border rounded-lg">
+        <div className="mb-3">
+          <h3 className="text-sm font-medium text-text-primary">{t('send_shortcut.title')}</h3>
+          <p className="text-xs text-text-muted mt-1">{t('send_shortcut.description')}</p>
+        </div>
+        <RadioGroup
+          value={sendShortcut}
+          onValueChange={(value: SendShortcutMode) => handleSendShortcutChange(value)}
+          className="flex flex-col gap-3"
+        >
+          <div className="flex items-center space-x-3">
+            <RadioGroupItem value="enter" id="enter" />
+            <Label htmlFor="enter" className="text-sm text-text-primary cursor-pointer">
+              {t('send_shortcut.enter_option')}
+            </Label>
+          </div>
+          <div className="flex items-center space-x-3">
+            <RadioGroupItem value="cmd-enter" id="cmd-enter" />
+            <Label htmlFor="cmd-enter" className="text-sm text-text-primary cursor-pointer">
+              {t('send_shortcut.cmd_enter_option')}
+            </Label>
+          </div>
+        </RadioGroup>
+      </div>
 
       {/* Restart Onboarding Button */}
       <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">

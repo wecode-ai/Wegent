@@ -4,11 +4,17 @@
 
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+import {
+  getSendShortcutMode,
+  shouldSendMessage,
+  getShortcutDisplayText,
+  type SendShortcutMode,
+} from '@/utils/sendShortcut';
 
 interface ChatInputProps {
   message: string;
@@ -29,12 +35,31 @@ export default function ChatInput({
   const { t } = useTranslation('chat');
   const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
   const [isComposing, setIsComposing] = useState(false);
+  const [sendMode, setSendMode] = useState<SendShortcutMode>('enter');
   const isMobile = useIsMobile();
+
+  // Load send shortcut mode from localStorage
+  useEffect(() => {
+    setSendMode(getSendShortcutMode());
+
+    // Listen for storage changes to sync across tabs
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'wegent_send_shortcut_mode') {
+        setSendMode(getSendShortcutMode());
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
 
   // Get tooltip text for send shortcut
   const tooltipText = useMemo(() => {
-    return t('send_shortcut');
-  }, [t]);
+    const shortcuts = getShortcutDisplayText(sendMode);
+    return t('send_shortcut_dynamic', {
+      send: shortcuts.send,
+      newLine: shortcuts.newLine,
+    });
+  }, [t, sendMode]);
 
   const handleCompositionStart = () => {
     setIsComposing(true);
@@ -45,12 +70,13 @@ export default function ChatInput({
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    // Enter sends message, Shift+Enter creates new line
-    if (e.key === 'Enter' && !e.shiftKey && !disabled && !isComposing) {
+    if (disabled || isComposing) return;
+
+    if (shouldSendMessage(e, sendMode)) {
       e.preventDefault();
       handleSendMessage();
     }
-    // Shift+Enter creates new line (default behavior, no preventDefault)
+    // Other key combinations allow default behavior (new line)
   };
 
   return (
