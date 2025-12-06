@@ -142,7 +142,10 @@ class OIDCService:
         auth_url = f"{authorization_endpoint}?{urlencode(params)}"
         logger.info(f"Generated CLI authorization URL: {auth_url}")
         return auth_url
-    async def exchange_code_for_tokens_for_cli(self, code: str, state: str) -> Dict[str, Any]:
+
+    async def exchange_code_for_tokens_for_cli(
+        self, code: str, state: str
+    ) -> Dict[str, Any]:
         """Exchange Authorization Code for Tokens"""
         metadata = await self.get_metadata()
         token_endpoint = metadata.get("token_endpoint")
@@ -153,7 +156,7 @@ class OIDCService:
             )
 
         client = AsyncOAuth2Client(
-            client_id=self.client_id+"-cli", client_secret=self.client_secret
+            client_id=self.client_id + "-cli", client_secret=self.client_secret
         )
 
         try:
