@@ -614,6 +614,7 @@ const MessageBubble = memo(
 
     // Helper function to parse Markdown final prompt
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
+    // Once identified as final prompt, ALL content is treated as the prompt to avoid truncation
     const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
       let actualContent = content;
 
@@ -629,22 +630,16 @@ const MessageBubble = memo(
       // Flexible header detection for final prompt
       // Matches: ## ✅ 最终需求提示词, ## Final Requirement Prompt, ### 最终提示词, # final prompt, etc.
       const finalPromptHeaderRegex =
-        /^#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im;
+        /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im;
       if (!finalPromptHeaderRegex.test(actualContent)) {
         return null;
       }
 
-      // Extract content after the header
-      // Matches various header formats and captures everything after
-      const headingRegex =
-        /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)[^\n]*\n+([\s\S]+)/i;
-      const headingMatch = actualContent.match(headingRegex);
-
-      if (!headingMatch) return null;
-
+      // Once identified as final prompt, return ALL content as the prompt
+      // This ensures no content is accidentally truncated or filtered
       return {
         type: 'final_prompt',
-        final_prompt: headingMatch[1].trim(),
+        final_prompt: actualContent.trim(),
       };
     };
 
