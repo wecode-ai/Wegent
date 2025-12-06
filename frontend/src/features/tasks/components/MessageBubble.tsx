@@ -464,6 +464,7 @@ const MessageBubble = memo(
 
     // Helper function to parse Markdown clarification questions
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
+    // Extracts content after the header, filtering out preceding irrelevant text
     const parseMarkdownClarification = (content: string): ClarificationData | null => {
       let actualContent = content;
 
@@ -479,10 +480,16 @@ const MessageBubble = memo(
       // Flexible header detection for clarification questions
       // Matches: ## 🤔 需求澄清问题, ## Clarification Questions, ### 澄清问题, # 需求澄清, etc.
       const clarificationHeaderRegex =
-        /^#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
-      if (!clarificationHeaderRegex.test(actualContent)) {
+        /#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
+      const headerMatch = actualContent.match(clarificationHeaderRegex);
+      if (!headerMatch) {
         return null;
       }
+
+      // Find the position of the header and extract everything from the header onwards
+      // This filters out any preceding irrelevant content
+      const headerIndex = headerMatch.index!;
+      actualContent = actualContent.substring(headerIndex);
 
       const questions: ClarificationData['questions'] = [];
 
