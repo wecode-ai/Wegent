@@ -21,6 +21,58 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 
 ---
 
+## 📝 Documentation Update Requirements
+
+**⚠️ CRITICAL: Update documentation after every significant code change**
+
+AI agents MUST update relevant documentation immediately after completing code changes. This ensures the codebase remains self-documenting and other agents can work efficiently.
+
+### When to Update Documentation
+
+| Change Type | Required Documentation Updates |
+|-------------|-------------------------------|
+| New API endpoint | Update `Key API Endpoints` section, add to `docs/` if complex |
+| New CRD/Schema | Update `CRD Architecture` section |
+| New Agent type | Update `Executor` section and agent types table |
+| New UI component | Update `Component Library` section if reusable |
+| New module/directory | Update `Project Structure` section |
+| New environment variable | Update relevant `Module-Specific Guidance` section |
+| Breaking change | Add migration notes, update version |
+| New feature | Update relevant section, add to changelog if exists |
+
+### Documentation Files to Consider
+
+| File | When to Update |
+|------|----------------|
+| `AGENTS.md` / `CLAUDE.md` | Architecture, workflows, module guidance changes |
+| `docs/en/guides/developer/` | Developer-facing guides, setup, testing |
+| `README.md` | Project overview, quick start, major features |
+| `backend/app/schemas/` | API schema changes (self-documenting) |
+| `frontend/src/types/` | TypeScript types (self-documenting) |
+
+### Documentation Checklist (Post-Implementation)
+
+Before creating a PR, verify:
+- [ ] AGENTS.md updated if architecture/workflow changed
+- [ ] API docs accurate (check `/api/docs` endpoint)
+- [ ] New environment variables documented
+- [ ] Breaking changes noted
+- [ ] Version number updated in `docker-compose.yml` and AGENTS.md if releasing
+
+### Auto-Reminder System
+
+The pre-push git hook will remind you to update documentation when:
+- Files in `backend/app/api/` are modified
+- Files in `backend/app/schemas/` are modified
+- New directories are created
+
+If the reminder appears and documentation is already up-to-date, use:
+```bash
+AI_VERIFIED=1 git push
+```
+
+---
+
 ## 📋 Project Overview
 
 **Multi-module architecture:**
