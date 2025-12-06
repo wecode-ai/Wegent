@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useContext } from 'react';
 import { Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,7 +12,7 @@ import type { ClarificationData, ClarificationAnswer } from '@/types/api';
 import ClarificationQuestion from './ClarificationQuestion';
 import { useTranslation } from '@/hooks/useTranslation';
 import { sendMessage } from '../service/messageService';
-import { useTaskContext } from '../contexts/taskContext';
+import { TaskContext } from '../contexts/taskContext';
 import { useToast } from '@/hooks/use-toast';
 
 interface ClarificationFormProps {
@@ -28,7 +28,12 @@ export default function ClarificationForm({
 }: ClarificationFormProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
-  const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
+
+  // Use context directly - it will be undefined if not within TaskContextProvider (e.g., shared task page)
+  const taskContext = useContext(TaskContext);
+  const selectedTaskDetail = taskContext?.selectedTaskDetail ?? null;
+  const refreshSelectedTaskDetail = taskContext?.refreshSelectedTaskDetail ?? null;
+
   const [answers, setAnswers] = useState<
     Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>
   >(new Map());
@@ -55,10 +60,10 @@ export default function ClarificationForm({
     const subtasksAfter = selectedTaskDetail.subtasks.slice(currentMessageIndex + 1);
     console.log(
       '[ClarificationForm] Subtasks after current message:',
-      subtasksAfter.map(s => ({ id: s.id, role: s.role }))
+      subtasksAfter.map((s: { id: number; role: string }) => ({ id: s.id, role: s.role }))
     );
 
-    const hasUserMessageAfter = subtasksAfter.some(sub => sub.role === 'USER');
+    const hasUserMessageAfter = subtasksAfter.some((sub: { role: string }) => sub.role === 'USER');
     console.log('[ClarificationForm] Has USER message after:', hasUserMessageAfter);
 
     return hasUserMessageAfter;
@@ -281,9 +286,11 @@ export default function ClarificationForm({
           title: t('clarification.submitted') || 'Answers submitted successfully',
         });
         // Refresh task detail to get new messages
-        setTimeout(() => {
-          refreshSelectedTaskDetail();
-        }, 1000);
+        if (refreshSelectedTaskDetail) {
+          setTimeout(() => {
+            refreshSelectedTaskDetail();
+          }, 1000);
+        }
       }
     } catch (error) {
       toast({

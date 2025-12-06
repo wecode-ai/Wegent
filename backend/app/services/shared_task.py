@@ -275,7 +275,19 @@ class SharedTaskService:
         task_crd.spec.teamRef.name = new_team.name
         task_crd.spec.teamRef.namespace = new_team.namespace
 
-        # Update model configuration in metadata labels if provided
+        # Always remove the original task's modelId to allow user to choose their own model
+        # This ensures imported tasks don't inherit the original task's model selection
+        if task_crd.metadata.labels and "modelId" in task_crd.metadata.labels:
+            del task_crd.metadata.labels["modelId"]
+
+        # Remove forceOverrideBotModel from original task as well
+        if (
+            task_crd.metadata.labels
+            and "forceOverrideBotModel" in task_crd.metadata.labels
+        ):
+            del task_crd.metadata.labels["forceOverrideBotModel"]
+
+        # Update model configuration in metadata labels if provided by user during import
         if model_id or force_override_bot_model:
             if not task_crd.metadata.labels:
                 task_crd.metadata.labels = {}
