@@ -807,6 +807,10 @@ class ExecutorKindsService(
         db.add(subtask)
         db.flush()  # Ensure subtask update is complete
 
+        # Process coordinate mode output markers if subtask is completed
+        if subtask_update.status == SubtaskStatus.COMPLETED:
+            self._process_coordinate_mode_output(db, subtask)
+
         # Update associated task status
         self._update_task_status_based_on_subtasks(db, subtask.task_id)
 
@@ -819,6 +823,281 @@ class ExecutorKindsService(
             "progress": subtask.progress,
             "message": "Subtask updated successfully",
         }
+
+    def _process_coordinate_mode_output(self, db: Session, subtask: Subtask) -> None:
+        """
+        Process coordinate mode output markers from bot result.
+        Parses [DISPATCH], [INTERACTION_REQUIRED], [TASK_COMPLETED], [WORKFLOW_DONE] markers.
+        """
+        import json
+        import re
+
+        # Get team to check collaboration model
+        team = (
+            db.query(Kind)
+            .filter(Kind.id == subtask.team_id, Kind.is_active == True)
+            .first()
+        )
+        if not team:
+            return
+
+        team_crd = Team.model_validate(team.json)
+        if team_crd.spec.collaborationModel != "coordinate":
+            return
+
+        # Get result text from subtask
+        result_text = ""
+        if subtask.result:
+            if isinstance(subtask.result, dict) and "value" in subtask.result:
+                result_text = subtask.result.get("value", "")
+            elif isinstance(subtask.result, str):
+                result_text = subtask.result
+
+        if not result_text:
+            return
+
+        logger.info(f"Processing coordinate mode output for subtask {subtask.id}")
+
+        # Check for [WORKFLOW_DONE] marker - workflow complete
+        if "[WORKFLOW_DONE]" in result_text:
+            logger.info(f"Coordinate workflow completed for task {subtask.task_id}")
+            # Task completion will be handled by _update_task_status_based_on_subtasks
+            return
+
+        # Check for [INTERACTION_REQUIRED] marker - need user input
+        if "[INTERACTION_REQUIRED]" in result_text:
+            logger.info(f"Subtask {subtask.id} requires user interaction")
+            # Update subtask status to WAITING_INPUT
+            subtask.status = SubtaskStatus.WAITING_INPUT
+            clean_result = result_text.replace("[INTERACTION_REQUIRED]", "").strip()
+            subtask.result = {"value": clean_result} if isinstance(subtask.result, dict) else clean_result
+            db.add(subtask)
+            return
+
+        # Check for [DISPATCH] marker - leader dispatching to worker
+        dispatch_match = re.search(r'\[DISPATCH\](\{.*?\})', result_text, re.DOTALL)
+        if dispatch_match:
+            try:
+                dispatch_info = json.loads(dispatch_match.group(1))
+                logger.info(f"Leader dispatching to worker: {dispatch_info}")
+                self._create_worker_subtask(db, subtask, dispatch_info, team, team_crd)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse DISPATCH JSON: {e}")
+            return
+
+        # Check for [TASK_COMPLETED] marker - worker completed, need leader analysis
+        if "[TASK_COMPLETED]" in result_text:
+            # Only create leader subtask if current subtask is not from leader
+            is_leader = subtask.subtask_metadata and subtask.subtask_metadata.get("is_leader", False)
+            if not is_leader:
+                logger.info(f"Worker completed, creating leader subtask for analysis")
+                self._create_leader_analysis_subtask(db, subtask, team, team_crd)
+            return
+
+    def _create_worker_subtask(
+        self,
+        db: Session,
+        leader_subtask: Subtask,
+        dispatch_info: dict,
+        team: Kind,
+        team_crd: Team,
+    ) -> None:
+        """Create worker subtask based on leader dispatch instruction"""
+        target_bot_name = dispatch_info.get("target")
+        context = dispatch_info.get("context", "")
+
+        if not target_bot_name:
+            logger.error("DISPATCH missing target bot name")
+            return
+
+        # Find target bot from team members
+        target_member = None
+        for member in team_crd.spec.members:
+            if member.botRef.name == target_bot_name or member.role == target_bot_name:
+                target_member = member
+                break
+
+        # If not found by bot name, try to find by role name
+        if not target_member:
+            for member in team_crd.spec.members:
+                bot = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == team.user_id,
+                        Kind.kind == "Bot",
+                        Kind.name == member.botRef.name,
+                        Kind.namespace == member.botRef.namespace,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+                if bot and bot.name.replace("-bot", "") == target_bot_name:
+                    target_member = member
+                    break
+
+        if not target_member:
+            logger.error(f"Target bot/role '{target_bot_name}' not found in team")
+            return
+
+        # Get target bot
+        target_bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Bot",
+                Kind.name == target_member.botRef.name,
+                Kind.namespace == target_member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not target_bot:
+            logger.error(f"Target bot '{target_member.botRef.name}' not found")
+            return
+
+        # Get next message_id
+        max_message_id = (
+            db.query(func.max(Subtask.message_id))
+            .filter(Subtask.task_id == leader_subtask.task_id)
+            .scalar()
+            or 0
+        )
+
+        # Create worker subtask
+        worker_subtask = Subtask(
+            user_id=leader_subtask.user_id,
+            task_id=leader_subtask.task_id,
+            team_id=leader_subtask.team_id,
+            title=f"Worker: {target_bot_name}",
+            bot_ids=[target_bot.id],
+            role=SubtaskRole.ASSISTANT,
+            prompt=context,
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            message_id=max_message_id + 1,
+            parent_id=leader_subtask.message_id,
+            executor_name=leader_subtask.executor_name,
+            executor_namespace=leader_subtask.executor_namespace,
+            error_message="",
+            completed_at=None,
+            result=None,
+            subtask_metadata={
+                "is_leader": False,
+                "dispatched_by": leader_subtask.id,
+                "target_role": target_bot_name,
+            },
+        )
+        db.add(worker_subtask)
+        logger.info(f"Created worker subtask for {target_bot_name}")
+
+    def _create_leader_analysis_subtask(
+        self,
+        db: Session,
+        completed_subtask: Subtask,
+        team: Kind,
+        team_crd: Team,
+    ) -> None:
+        """Create leader subtask to analyze worker result"""
+        # Find leader member
+        leader_member = None
+        for member in team_crd.spec.members:
+            if member.role == "leader":
+                leader_member = member
+                break
+
+        if not leader_member:
+            logger.error("No leader found in coordinate team")
+            return
+
+        # Get leader bot
+        leader_bot = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == team.user_id,
+                Kind.kind == "Bot",
+                Kind.name == leader_member.botRef.name,
+                Kind.namespace == leader_member.botRef.namespace,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not leader_bot:
+            logger.error(f"Leader bot '{leader_member.botRef.name}' not found")
+            return
+
+        # Get iteration count from previous leader subtasks
+        iteration_count = 0
+        previous_leader_subtasks = (
+            db.query(Subtask)
+            .filter(
+                Subtask.task_id == completed_subtask.task_id,
+                Subtask.role == SubtaskRole.ASSISTANT,
+            )
+            .all()
+        )
+        for s in previous_leader_subtasks:
+            if s.subtask_metadata and s.subtask_metadata.get("is_leader"):
+                prev_count = s.subtask_metadata.get("iteration_count", 0)
+                if prev_count > iteration_count:
+                    iteration_count = prev_count
+        iteration_count += 1
+
+        # Check iteration limits
+        max_iterations = 10
+        context_prefix = ""
+        if iteration_count >= max_iterations:
+            context_prefix = f"[MAX_ITERATION_REACHED] Total iterations: {iteration_count}/{max_iterations}. Please summarize progress and end workflow.\n\n"
+
+        # Build context from worker result
+        worker_result = ""
+        if completed_subtask.result:
+            if isinstance(completed_subtask.result, dict):
+                worker_result = completed_subtask.result.get("value", str(completed_subtask.result))
+            else:
+                worker_result = str(completed_subtask.result)
+
+        # Clean up markers from result
+        worker_result = worker_result.replace("[TASK_COMPLETED]", "").strip()
+
+        context = f"{context_prefix}Worker execution completed. Result:\n\n{worker_result}"
+
+        # Get next message_id
+        max_message_id = (
+            db.query(func.max(Subtask.message_id))
+            .filter(Subtask.task_id == completed_subtask.task_id)
+            .scalar()
+            or 0
+        )
+
+        # Create leader analysis subtask
+        leader_subtask = Subtask(
+            user_id=completed_subtask.user_id,
+            task_id=completed_subtask.task_id,
+            team_id=completed_subtask.team_id,
+            title=f"Leader Analysis",
+            bot_ids=[leader_bot.id],
+            role=SubtaskRole.ASSISTANT,
+            prompt=context,
+            status=SubtaskStatus.PENDING,
+            progress=0,
+            message_id=max_message_id + 1,
+            parent_id=completed_subtask.message_id,
+            executor_name=completed_subtask.executor_name,
+            executor_namespace=completed_subtask.executor_namespace,
+            error_message="",
+            completed_at=None,
+            result=None,
+            subtask_metadata={
+                "is_leader": True,
+                "iteration_count": iteration_count,
+                "max_iterations": max_iterations,
+                "previous_subtask_id": completed_subtask.id,
+            },
+        )
+        db.add(leader_subtask)
+        logger.info(f"Created leader analysis subtask (iteration {iteration_count})")
 
     def _update_task_status_based_on_subtasks(self, db: Session, task_id: int) -> None:
         """Update task status based on subtask status using kinds table"""

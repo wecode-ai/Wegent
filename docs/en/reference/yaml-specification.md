@@ -323,8 +323,50 @@ spec:
 |-------|-------------|
 | `pipeline` | Pipeline mode, execute in sequence |
 | `route` | Route mode, route based on conditions |
-| `coordinate` | Coordinate mode, members coordinate |
+| `coordinate` | Coordinate mode, Leader-Worker distributed execution |
 | `collaborate` | Concurrent mode, members execute simultaneously |
+
+#### Coordinate Mode Details
+
+The `coordinate` collaboration model supports distributed Leader-Worker execution for ClaudeCode Shell:
+
+- **Leader Bot**: Analyzes tasks and dispatches to appropriate Worker Bots
+- **Worker Bots**: Execute specific tasks and report back to Leader
+- **User Interaction**: Workers can request user input via `[INTERACTION_REQUIRED]` marker
+
+**Output Markers for Coordinate Mode:**
+
+| Marker | Usage | Description |
+|--------|-------|-------------|
+| `[DISPATCH]{"target":"bot","context":"..."}` | Leader output | Dispatch task to Worker |
+| `[INTERACTION_REQUIRED]` | Worker output | Request user input |
+| `[TASK_COMPLETED]` | Worker output | Task completed |
+| `[WORKFLOW_DONE]` | Leader output | Workflow finished |
+
+**Example Coordinate Team:**
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: intelligent-coordinate-team
+  namespace: default
+spec:
+  collaborationModel: "coordinate"
+  members:
+    - role: "leader"
+      botRef:
+        name: coordinator-leader-bot
+        namespace: default
+    - role: "member"
+      botRef:
+        name: developer-bot
+        namespace: default
+    - role: "member"
+      botRef:
+        name: tester-bot
+        namespace: default
+```
 
 ---
 
@@ -453,10 +495,25 @@ spec:
 |--------|-------------|
 | `PENDING` | Waiting for execution |
 | `RUNNING` | Currently executing |
+| `WAITING_INPUT` | Waiting for user input (coordinate mode) |
 | `COMPLETED` | Execution completed |
 | `FAILED` | Execution failed |
 | `CANCELLED` | Execution cancelled |
 | `DELETE` | Task deleted |
+
+### Subtask Status
+
+Subtasks (individual execution units within a Task) can have these statuses:
+
+| Status | Description |
+|--------|-------------|
+| `PENDING` | Waiting for execution |
+| `RUNNING` | Currently executing |
+| `WAITING_INPUT` | Waiting for user input (used in coordinate mode when a Bot needs user interaction) |
+| `COMPLETED` | Execution completed |
+| `FAILED` | Execution failed |
+| `CANCELLED` | Execution cancelled |
+| `DELETE` | Subtask deleted |
 
 ---
 

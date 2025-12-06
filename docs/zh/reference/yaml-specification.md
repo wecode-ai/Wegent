@@ -323,8 +323,50 @@ spec:
 |------|------|
 | `pipeline` | 流水线模式，按顺序执行 |
 | `route` | 路由模式，根据条件路由 |
-| `coordinate` | 协调模式，成员间协调 |
+| `coordinate` | 协调模式，Leader-Worker 分布式执行 |
 | `collaborate` | 并发模式，成员间同时执行 |
+
+#### Coordinate 模式详解
+
+`coordinate` 协作模式支持 ClaudeCode Shell 的分布式 Leader-Worker 执行：
+
+- **Leader Bot**：分析任务并调度给合适的 Worker Bot
+- **Worker Bot**：执行具体任务并向 Leader 汇报
+- **用户交互**：Worker 可通过 `[INTERACTION_REQUIRED]` 标记请求用户输入
+
+**Coordinate 模式输出标记：**
+
+| 标记 | 用途 | 说明 |
+|------|------|------|
+| `[DISPATCH]{"target":"bot","context":"..."}` | Leader 输出 | 调度任务给 Worker |
+| `[INTERACTION_REQUIRED]` | Worker 输出 | 请求用户输入 |
+| `[TASK_COMPLETED]` | Worker 输出 | 任务完成 |
+| `[WORKFLOW_DONE]` | Leader 输出 | 工作流结束 |
+
+**Coordinate Team 示例：**
+
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: intelligent-coordinate-team
+  namespace: default
+spec:
+  collaborationModel: "coordinate"
+  members:
+    - role: "leader"
+      botRef:
+        name: coordinator-leader-bot
+        namespace: default
+    - role: "member"
+      botRef:
+        name: developer-bot
+        namespace: default
+    - role: "member"
+      botRef:
+        name: tester-bot
+        namespace: default
+```
 
 ---
 
@@ -453,6 +495,21 @@ spec:
 |------|------|
 | `PENDING` | 等待执行 |
 | `RUNNING` | 正在执行 |
+| `WAITING_INPUT` | 等待用户输入（协调模式） |
+| `COMPLETED` | 已完成 |
+| `FAILED` | 执行失败 |
+| `CANCELLED` | 已取消 |
+| `DELETE` | 已删除 |
+
+### Subtask 状态
+
+Subtask（任务内的独立执行单元）可以有以下状态：
+
+| 状态 | 说明 |
+|------|------|
+| `PENDING` | 等待执行 |
+| `RUNNING` | 正在执行 |
+| `WAITING_INPUT` | 等待用户输入（用于协调模式中 Bot 需要用户交互时） |
 | `COMPLETED` | 已完成 |
 | `FAILED` | 执行失败 |
 | `CANCELLED` | 已取消 |

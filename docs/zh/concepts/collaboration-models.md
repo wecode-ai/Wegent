@@ -415,6 +415,56 @@ spec:
 
 Coordinate 模式由 Leader Bot 将任务分解并分配给多个 Bot 并行处理，然后收集和汇总所有 Bot 的结果，形成最终的综合输出。
 
+**注意**：Coordinate 模式根据 Shell 运行时有两种实现方式：
+- **基于 Agno**：使用 Agno Team SDK，共享内存进行进程内协调
+- **基于 ClaudeCode（分布式）**：使用分布式架构，Leader 和 Worker 在独立的 Docker 容器中运行，通过 Subtask 链进行通信
+
+### 分布式协调（ClaudeCode）
+
+使用 ClaudeCode Shell 时，Coordinate 模式作为分布式系统运行：
+
+| 特性 | 描述 |
+|------|------|
+| **进程模型** | 多进程（每个角色在独立 Docker 容器中） |
+| **通信方式** | Subtask 链 + 上下文传递 |
+| **上下文** | 隔离，通过 Leader 汇总 |
+| **调度方** | 后端 Subtask 调度器 |
+
+#### ClaudeCode Coordinate 输出标记
+
+Bot 使用特殊标记与协调器通信：
+
+| 标记 | 格式 | 用途 |
+|------|------|------|
+| `[DISPATCH]` | `[DISPATCH]{"target":"bot_name","context":"..."}` | Leader 调度 Worker |
+| `[INTERACTION_REQUIRED]` | 添加在输出末尾 | Worker 需要用户输入 |
+| `[TASK_COMPLETED]` | 添加在输出末尾 | Worker 任务完成 |
+| `[WORKFLOW_DONE]` | Leader 输出末尾 | 整个工作流完成 |
+
+#### ClaudeCode Coordinate 执行流程
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                        Task（单个任务）                          │
+├────────────────────────────────────────────────────────────────┤
+│  Subtask 1: Leader (Docker 1)                                  │
+│      输入: 用户需求                                              │
+│      输出: [DISPATCH]{"target":"clarifier","context":"..."}    │
+│                            ↓                                    │
+│  Subtask 2: Clarifier (Docker 2)                               │
+│      输入: Leader 提供的 context                                 │
+│      输出: [INTERACTION_REQUIRED] 或 [TASK_COMPLETED]          │
+│                            ↓                                    │
+│  (如需交互) 用户回答 → Subtask 3                                 │
+│                            ↓                                    │
+│  Subtask 4: Leader (Docker 3)                                  │
+│      输入: Clarifier 的结果                                      │
+│      输出: [DISPATCH]{"target":"developer","context":"..."}    │
+│                            ↓                                    │
+│  ... 循环直到 Leader 输出 [WORKFLOW_DONE]                        │
+└────────────────────────────────────────────────────────────────┘
+```
+
 ### 工作流程图
 
 ```mermaid

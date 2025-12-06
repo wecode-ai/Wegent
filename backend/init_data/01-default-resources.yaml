@@ -369,3 +369,249 @@ spec:
   collaborationModel: pipeline
 status:
   state: Available
+---
+# Coordinate Mode - Intelligent Development Team
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: coordinator-leader-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are the Leader of an intelligent development team, responsible for analyzing task progress and dispatching appropriate experts for the next step.
+
+    ## Available Experts
+    - clarifier: Requirements clarification expert, interacts with users to clarify requirement details
+    - developer: Development expert, implements code features and fixes bugs
+    - tester: Testing expert, executes tests and reports results
+    - doc-writer: Documentation expert, writes and updates project documentation
+
+    ## Workflow
+    1. Analyze current task status and previous execution results
+    2. Decide which expert to dispatch next
+    3. Output dispatch instruction
+
+    ## Dispatch Instruction Format
+    When dispatching an expert, add at the end of output:
+    [DISPATCH]{"target":"expert_name","context":"task description and necessary context"}
+
+    Example:
+    Based on analysis, the requirements are clear. Now entering development phase.
+    [DISPATCH]{"target":"developer","context":"Please implement user login functionality with email and OAuth support..."}
+
+    ## Complete Workflow
+    When all tasks are completed, summarize results and output:
+    [WORKFLOW_DONE]
+
+    ## Decision Rules
+    - New task or unclear requirements → dispatch clarifier
+    - Requirements clear, need development → dispatch developer
+    - Development complete → dispatch tester
+    - Test failed → dispatch developer to fix
+    - Test passed, need documentation → dispatch doc-writer
+    - All work complete → output [WORKFLOW_DONE]
+
+    ## Iteration Limits
+    Test-fix cycle can proceed at most 3 rounds. After reaching limit, summarize current status and end.
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: clarifier-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are a Requirements Clarification Expert. Your task is to interact with users to clarify vague requirements into clear, actionable specifications.
+
+    ## Your Process
+    1. Analyze the requirement for ambiguities and missing details
+    2. Ask targeted clarification questions (3-5 questions per round)
+    3. Wait for user responses
+
+    ## Output Format
+    When you need user input, ask your questions and add at the end:
+    [INTERACTION_REQUIRED]
+
+    When requirements are sufficiently clear, output the refined requirement and add:
+    [TASK_COMPLETED]
+
+    ## Question Guidelines
+    - Focus on: target users, core features, technical constraints, success criteria
+    - Ask concise, specific questions
+    - Provide options when possible
+    - Avoid overly technical jargon
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: tester-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are a Testing Expert. Your task is to execute tests and report results.
+
+    ## Your Process
+    1. Understand the testing requirements from the context
+    2. Run appropriate tests (unit tests, integration tests, etc.)
+    3. Analyze test results
+    4. Report findings
+
+    ## Output Format
+    When testing is complete, provide a detailed test report including:
+    - Tests executed
+    - Pass/fail status
+    - Any errors or issues found
+    - Recommendations
+
+    At the end of your output, add:
+    [TASK_COMPLETED]
+
+    ## Test Guidelines
+    - Run existing test suites when available
+    - Create new tests if needed
+    - Report both passed and failed tests
+    - Include error messages and stack traces for failures
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: doc-writer-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are a Documentation Expert. Your task is to write and update project documentation.
+
+    ## Your Process
+    1. Understand what documentation is needed from the context
+    2. Review existing documentation
+    3. Write or update documentation
+    4. Ensure documentation is clear and comprehensive
+
+    ## Output Format
+    When documentation is complete, provide a summary of changes made.
+
+    At the end of your output, add:
+    [TASK_COMPLETED]
+
+    ## Documentation Guidelines
+    - Follow existing documentation style
+    - Include code examples where appropriate
+    - Keep documentation concise but complete
+    - Update README if significant changes were made
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: coordinator-leader-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: coordinator-leader-ghost
+    namespace: default
+  shellRef:
+    name: claude-shell
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: clarifier-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: clarifier-ghost
+    namespace: default
+  shellRef:
+    name: claude-shell
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: tester-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: tester-ghost
+    namespace: default
+  shellRef:
+    name: claude-shell
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: doc-writer-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: doc-writer-ghost
+    namespace: default
+  shellRef:
+    name: claude-shell
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: intelligent-coordinate-team
+  namespace: default
+  user_id: 1
+spec:
+  members:
+    - role: leader
+      botRef:
+        name: coordinator-leader-bot
+        namespace: default
+      prompt: ""
+    - role: member
+      botRef:
+        name: clarifier-bot
+        namespace: default
+      prompt: ""
+    - role: member
+      botRef:
+        name: developer-bot
+        namespace: default
+      prompt: ""
+    - role: member
+      botRef:
+        name: tester-bot
+        namespace: default
+      prompt: ""
+    - role: member
+      botRef:
+        name: doc-writer-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: coordinate
+status:
+  state: Available

@@ -1206,6 +1206,72 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .all()
         )
 
+        # Check for WAITING_INPUT subtask in coordinate mode - handle user response
+        waiting_subtask = None
+        for s in existing_subtasks:
+            if s.status == SubtaskStatus.WAITING_INPUT:
+                waiting_subtask = s
+                break
+
+        if waiting_subtask and team_crd.spec.collaborationModel == "coordinate":
+            # User is responding to a WAITING_INPUT subtask
+            # Mark the waiting subtask as completed
+            waiting_subtask.status = SubtaskStatus.COMPLETED
+            waiting_subtask.completed_at = datetime.now()
+            db.add(waiting_subtask)
+
+            # Get the next message_id for the new subtask
+            next_message_id = existing_subtasks[0].message_id + 1
+            parent_id = existing_subtasks[0].message_id
+
+            # Create USER role subtask for user's response
+            user_subtask = Subtask(
+                user_id=user_id,
+                task_id=task.id,
+                team_id=team.id,
+                title=f"{task_crd.spec.title} - User Response",
+                bot_ids=waiting_subtask.bot_ids,
+                role=SubtaskRole.USER,
+                executor_namespace="",
+                executor_name="",
+                prompt=user_prompt,
+                status=SubtaskStatus.COMPLETED,
+                progress=0,
+                message_id=next_message_id,
+                parent_id=parent_id,
+                error_message="",
+                completed_at=datetime.now(),
+                result=None,
+            )
+            db.add(user_subtask)
+
+            # Create continuation subtask with same bot to process user response
+            continue_subtask = Subtask(
+                user_id=user_id,
+                task_id=task.id,
+                team_id=team.id,
+                title=f"Continue: {waiting_subtask.title}",
+                bot_ids=waiting_subtask.bot_ids,
+                role=SubtaskRole.ASSISTANT,
+                prompt=user_prompt,
+                status=SubtaskStatus.PENDING,
+                progress=0,
+                message_id=next_message_id + 1,
+                parent_id=next_message_id,
+                executor_name=waiting_subtask.executor_name,
+                executor_namespace=waiting_subtask.executor_namespace,
+                error_message="",
+                completed_at=None,
+                result=None,
+                subtask_metadata={
+                    "continues_from": waiting_subtask.id,
+                    "is_leader": waiting_subtask.subtask_metadata.get("is_leader", False) if waiting_subtask.subtask_metadata else False,
+                },
+            )
+            db.add(continue_subtask)
+            logger.info(f"Created continuation subtask for WAITING_INPUT response")
+            return
+
         # Get the next message_id for the new subtask
         next_message_id = 1
         parent_id = 0
@@ -1242,7 +1308,87 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Create ASSISTANT role subtask based on team workflow
         collaboration_model = team_crd.spec.collaborationModel
 
-        if collaboration_model == "pipeline":
+        if collaboration_model == "coordinate":
+            # Coordinate mode: Create Leader subtask first
+            # Find leader member from team
+            leader_member = None
+            for member in team_crd.spec.members:
+                if member.role == "leader":
+                    leader_member = member
+                    break
+
+            if not leader_member:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No leader member found in coordinate team configuration",
+                )
+
+            # Find leader bot
+            leader_bot = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == team.user_id,
+                    Kind.kind == "Bot",
+                    Kind.name == leader_member.botRef.name,
+                    Kind.namespace == leader_member.botRef.namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if not leader_bot:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Leader bot '{leader_member.botRef.name}' not found",
+                )
+
+            # Get existing iteration count from previous leader subtasks
+            iteration_count = 0
+            if existing_subtasks:
+                for s in existing_subtasks:
+                    if s.subtask_metadata and s.subtask_metadata.get("is_leader"):
+                        prev_count = s.subtask_metadata.get("iteration_count", 0)
+                        if prev_count > iteration_count:
+                            iteration_count = prev_count
+                iteration_count += 1
+
+            # Reuse executor from existing subtasks if available
+            executor_name = ""
+            executor_namespace = ""
+            if existing_subtasks:
+                for s in existing_subtasks:
+                    if s.executor_name:
+                        executor_name = s.executor_name
+                        executor_namespace = s.executor_namespace
+                        break
+
+            leader_subtask = Subtask(
+                user_id=user_id,
+                task_id=task.id,
+                team_id=team.id,
+                title=f"{task_crd.spec.title} - Leader",
+                bot_ids=[leader_bot.id],
+                role=SubtaskRole.ASSISTANT,
+                prompt="",
+                status=SubtaskStatus.PENDING,
+                progress=0,
+                message_id=next_message_id,
+                parent_id=parent_id,
+                executor_name=executor_name,
+                executor_namespace=executor_namespace,
+                error_message="",
+                completed_at=None,
+                result=None,
+                subtask_metadata={
+                    "is_leader": True,
+                    "iteration_count": iteration_count,
+                    "max_iterations": 10,
+                    "max_test_fix_iterations": 3,
+                },
+            )
+            db.add(leader_subtask)
+
+        elif collaboration_model == "pipeline":
             # Create individual subtasks for each bot in pipeline mode
             executor_infos = self._get_pipeline_executor_info(existing_subtasks)
             for i, member in enumerate(team_crd.spec.members):

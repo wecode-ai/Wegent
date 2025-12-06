@@ -413,7 +413,57 @@ spec:
 
 ### Overview
 
-Coordinate model has a Leader Bot decompose tasks and assign them to multiple Bots for parallel processing, then collect and aggregate all Bot results to form the final comprehensive output.
+Coordinate mode has a Leader Bot decompose tasks and assign them to multiple Bots for parallel processing, then collect and aggregate all Bot results to form the final comprehensive output.
+
+**Note**: Coordinate mode has two implementations depending on the Shell runtime:
+- **Agno-based**: Uses Agno Team SDK with shared memory for in-process coordination
+- **ClaudeCode-based (Distributed)**: Uses distributed architecture where Leader and Workers run in independent Docker containers, communicating through Subtask chains
+
+### Distributed Coordinate (ClaudeCode)
+
+When using ClaudeCode Shell, Coordinate mode operates as a distributed system with:
+
+| Feature | Description |
+|---------|-------------|
+| **Process Model** | Multi-process (each role in independent Docker container) |
+| **Communication** | Subtask chain + context passing |
+| **Context** | Isolated, aggregated through Leader |
+| **Orchestration** | Backend subtask scheduler |
+
+#### Output Markers for ClaudeCode Coordinate
+
+Bots use special markers in their output to communicate with the orchestrator:
+
+| Marker | Format | Purpose |
+|--------|--------|---------|
+| `[DISPATCH]` | `[DISPATCH]{"target":"bot_name","context":"..."}` | Leader dispatches to Worker |
+| `[INTERACTION_REQUIRED]` | Added at output end | Worker needs user input |
+| `[TASK_COMPLETED]` | Added at output end | Worker task completed |
+| `[WORKFLOW_DONE]` | Leader output end | Entire workflow completed |
+
+#### ClaudeCode Coordinate Execution Flow
+
+```
+┌────────────────────────────────────────────────────────────────┐
+│                        Task (Single Task)                       │
+├────────────────────────────────────────────────────────────────┤
+│  Subtask 1: Leader (Docker 1)                                  │
+│      Input: User requirement                                    │
+│      Output: [DISPATCH]{"target":"clarifier","context":"..."}  │
+│                            ↓                                    │
+│  Subtask 2: Clarifier (Docker 2)                               │
+│      Input: Context from Leader                                 │
+│      Output: [INTERACTION_REQUIRED] or [TASK_COMPLETED]        │
+│                            ↓                                    │
+│  (If interaction needed) User responds → Subtask 3             │
+│                            ↓                                    │
+│  Subtask 4: Leader (Docker 3)                                  │
+│      Input: Clarifier result                                    │
+│      Output: [DISPATCH]{"target":"developer","context":"..."}  │
+│                            ↓                                    │
+│  ... continues until Leader outputs [WORKFLOW_DONE]            │
+└────────────────────────────────────────────────────────────────┘
+```
 
 ### Workflow Diagram
 

@@ -128,21 +128,31 @@ class TaskScheduler:
             self.task_processor.process_tasks(result["tasks"])
         return success
     def fetch_subtasks(self):
-        current_tasks = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_current_task_ids("aigc.weibo.com/team-mode=pipeline")
-        logger.info(f"Current task ids: {current_tasks}")
-        if current_tasks.get("task_ids") and len(current_tasks.get("task_ids")) > 0:
-            task_ids = current_tasks.get("task_ids")
-            batch_size = 10
-            
-            for i in range(0, len(task_ids), batch_size):
-                batch_task_ids = task_ids[i:i+batch_size]
-                logger.info(f"Fetching subtasks batch {i//batch_size + 1}, task_ids: {batch_task_ids}")
-                
-                success, result = self.api_client.fetch_subtasks(",".join(batch_task_ids))
-                if success:
-                    self.task_processor.process_tasks(result["tasks"])
-                else:
-                    logger.error(f"Failed to fetch subtasks batch {i//batch_size + 1}: {result}")
+        # Fetch subtasks for pipeline mode
+        pipeline_tasks = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_current_task_ids("aigc.weibo.com/team-mode=pipeline")
+        logger.info(f"Pipeline task ids: {pipeline_tasks}")
+        if pipeline_tasks.get("task_ids") and len(pipeline_tasks.get("task_ids")) > 0:
+            self._fetch_subtasks_batch(pipeline_tasks.get("task_ids"))
+
+        # Fetch subtasks for coordinate mode
+        coordinate_tasks = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_current_task_ids("aigc.weibo.com/team-mode=coordinate")
+        logger.info(f"Coordinate task ids: {coordinate_tasks}")
+        if coordinate_tasks.get("task_ids") and len(coordinate_tasks.get("task_ids")) > 0:
+            self._fetch_subtasks_batch(coordinate_tasks.get("task_ids"))
+
+    def _fetch_subtasks_batch(self, task_ids):
+        """Fetch subtasks in batches for given task IDs"""
+        batch_size = 10
+
+        for i in range(0, len(task_ids), batch_size):
+            batch_task_ids = task_ids[i:i+batch_size]
+            logger.info(f"Fetching subtasks batch {i//batch_size + 1}, task_ids: {batch_task_ids}")
+
+            success, result = self.api_client.fetch_subtasks(",".join(batch_task_ids))
+            if success:
+                self.task_processor.process_tasks(result["tasks"])
+            else:
+                logger.error(f"Failed to fetch subtasks batch {i//batch_size + 1}: {result}")
 
     def setup_schedule(self):
         """Setup schedule plan"""
