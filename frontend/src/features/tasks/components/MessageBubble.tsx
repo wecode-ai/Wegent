@@ -468,7 +468,9 @@ const MessageBubble = memo(
       let actualContent = content;
 
       // Try to extract content from code block (optional)
-      const codeBlockRegex = /```(?:markdown)?\s*\n([\s\S]+?)\n```/;
+      // Only match if the ENTIRE content is wrapped in a code block (from start to end)
+      // This prevents false matches when the content contains embedded code blocks
+      const codeBlockRegex = /^```(?:markdown)?\s*\n([\s\S]+)\n```\s*$/;
       const codeBlockMatch = content.match(codeBlockRegex);
       if (codeBlockMatch) {
         actualContent = codeBlockMatch[1];
@@ -616,7 +618,9 @@ const MessageBubble = memo(
       let actualContent = content;
 
       // Try to extract content from code block (optional)
-      const codeBlockRegex = /```(?:markdown)?\s*\n([\s\S]+?)\n```/;
+      // Only match if the ENTIRE content is wrapped in a code block (from start to end)
+      // This prevents false matches when the content contains embedded code blocks
+      const codeBlockRegex = /^```(?:markdown)?\s*\n([\s\S]+)\n```\s*$/;
       const codeBlockMatch = content.match(codeBlockRegex);
       if (codeBlockMatch) {
         actualContent = codeBlockMatch[1];
