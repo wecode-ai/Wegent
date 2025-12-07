@@ -126,11 +126,24 @@ alembic upgrade head
 ```
 backend/alembic/
 ├── versions/           # Migration scripts (never edit after applying)
-│   └── 0c086b93f8b9_initial_migration.py
+│   ├── 0c086b93f8b9_initial_migration.py
+│   └── b2c3d4e5f6a7_add_role_to_users.py  # User role migration
 ├── env.py             # Alembic runtime environment
 ├── script.py.mako     # Template for new migrations
 └── README             # Quick reference
 ```
+
+## Notable Migrations
+
+### User Role Migration (`b2c3d4e5f6a7`)
+
+This migration adds the `role` column to the `users` table for role-based access control:
+
+- **Column**: `role` (VARCHAR(20), NOT NULL, default: 'user')
+- **Values**: 'admin' or 'user'
+- **Auto-upgrade**: Users with `user_name='admin'` are automatically set to `role='admin'`
+
+The migration uses conditional SQL to safely handle cases where the column already exists.
 
 ## Workflow Example
 
