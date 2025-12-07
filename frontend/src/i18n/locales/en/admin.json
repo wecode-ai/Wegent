@@ -12,11 +12,21 @@
     "total_tasks": "Total Tasks",
     "total_public_models": "Public Models"
   },
+  "common": {
+    "cancel": "Cancel",
+    "create": "Create",
+    "save": "Save",
+    "delete": "Delete",
+    "reset": "Reset",
+    "loading": "Loading..."
+  },
   "users": {
     "title": "User Management",
     "description": "Create, edit, and manage user accounts",
     "loading": "Loading users...",
     "no_users": "No users found",
+    "no_email": "No email",
+    "show_inactive": "Show inactive",
     "create_user": "Create User",
     "edit_user": "Edit User",
     "delete_user": "Delete User",
@@ -103,6 +113,12 @@
     "create_model": "Create Model",
     "edit_model": "Edit Model",
     "delete_model": "Delete Model",
+    "model_id": "Model ID",
+    "namespace_label": "Namespace",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
     "columns": {
       "id": "ID",
       "name": "Name",

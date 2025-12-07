@@ -12,11 +12,21 @@
     "total_tasks": "总任务数",
     "total_public_models": "公共模型数"
   },
+  "common": {
+    "cancel": "取消",
+    "create": "创建",
+    "save": "保存",
+    "delete": "删除",
+    "reset": "重置",
+    "loading": "加载中..."
+  },
   "users": {
     "title": "用户管理",
     "description": "创建、编辑和管理用户账号",
     "loading": "加载用户中...",
     "no_users": "暂无用户",
+    "no_email": "无邮箱",
+    "show_inactive": "显示已禁用",
     "create_user": "创建用户",
     "edit_user": "编辑用户",
     "delete_user": "删除用户",
@@ -103,6 +113,12 @@
     "create_model": "创建模型",
     "edit_model": "编辑模型",
     "delete_model": "删除模型",
+    "model_id": "模型 ID",
+    "namespace_label": "命名空间",
+    "status": {
+      "active": "启用",
+      "inactive": "禁用"
+    },
     "columns": {
       "id": "ID",
       "name": "名称",

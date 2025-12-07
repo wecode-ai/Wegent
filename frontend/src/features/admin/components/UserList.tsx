@@ -46,13 +46,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import {
-  adminApis,
-  AdminUser,
-  AdminUserCreate,
-  AdminUserUpdate,
-  UserRole,
-} from '@/apis/admin';
+import { adminApis, AdminUser, AdminUserCreate, AdminUserUpdate, UserRole } from '@/apis/admin';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
 const UserList: React.FC = () => {
@@ -111,7 +105,10 @@ const UserList: React.FC = () => {
       return;
     }
 
-    if (formData.auth_source === 'password' && (!formData.password || formData.password.length < 6)) {
+    if (
+      formData.auth_source === 'password' &&
+      (!formData.password || formData.password.length < 6)
+    ) {
       toast({
         variant: 'destructive',
         title: t('users.errors.password_min_length'),
@@ -248,7 +245,8 @@ const UserList: React.FC = () => {
       user_name: user.user_name,
       email: user.email || '',
       role: user.role,
-      auth_source: user.auth_source === 'unknown' ? 'password' : user.auth_source as 'password' | 'oidc',
+      auth_source:
+        user.auth_source === 'unknown' ? 'password' : (user.auth_source as 'password' | 'oidc'),
     });
     setIsEditDialogOpen(true);
   };
@@ -280,10 +278,10 @@ const UserList: React.FC = () => {
             <input
               type="checkbox"
               checked={includeInactive}
-              onChange={(e) => setIncludeInactive(e.target.checked)}
+              onChange={e => setIncludeInactive(e.target.checked)}
               className="rounded border-border"
             />
-            Show inactive
+            {t('users.show_inactive')}
           </label>
         </div>
       </div>
@@ -308,7 +306,7 @@ const UserList: React.FC = () => {
         {/* User List */}
         {!loading && users.length > 0 && (
           <div className="flex-1 overflow-y-auto space-y-3 p-1">
-            {users.map((user) => (
+            {users.map(user => (
               <Card
                 key={user.id}
                 className={`p-4 bg-base hover:bg-hover transition-colors ${!user.is_active ? 'opacity-60' : ''}`}
@@ -325,7 +323,7 @@ const UserList: React.FC = () => {
                         {getStatusTag(user.is_active)}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-text-muted">
-                        <span>{user.email || 'No email'}</span>
+                        <span>{user.email || t('users.no_email')}</span>
                         <span>•</span>
                         <span>{t(`users.auth_sources.${user.auth_source}`)}</span>
                       </div>
@@ -412,7 +410,7 @@ const UserList: React.FC = () => {
               <Input
                 id="username"
                 value={formData.user_name}
-                onChange={(e) => setFormData({ ...formData, user_name: e.target.value })}
+                onChange={e => setFormData({ ...formData, user_name: e.target.value })}
                 placeholder={t('users.form.username_placeholder')}
               />
             </div>
@@ -420,7 +418,7 @@ const UserList: React.FC = () => {
               <Label htmlFor="auth_source">{t('users.form.auth_source')}</Label>
               <Select
                 value={formData.auth_source}
-                onValueChange={(value) =>
+                onValueChange={value =>
                   setFormData({ ...formData, auth_source: value as 'password' | 'oidc' })
                 }
               >
@@ -440,7 +438,7 @@ const UserList: React.FC = () => {
                   id="password"
                   type="password"
                   value={formData.password}
-                  onChange={(e) => setFormData({ ...formData, password: e.target.value })}
+                  onChange={e => setFormData({ ...formData, password: e.target.value })}
                   placeholder={t('users.form.password_placeholder')}
                 />
               </div>
@@ -451,7 +449,7 @@ const UserList: React.FC = () => {
                 id="email"
                 type="email"
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                onChange={e => setFormData({ ...formData, email: e.target.value })}
                 placeholder={t('users.form.email_placeholder')}
               />
             </div>
@@ -459,7 +457,7 @@ const UserList: React.FC = () => {
               <Label htmlFor="role">{t('users.form.role')}</Label>
               <Select
                 value={formData.role}
-                onValueChange={(value) => setFormData({ ...formData, role: value as UserRole })}
+                onValueChange={value => setFormData({ ...formData, role: value as UserRole })}
               >
                 <SelectTrigger>
                   <SelectValue placeholder={t('users.form.role_select')} />
@@ -473,11 +471,11 @@ const UserList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleCreateUser} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create
+              {t('common.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -495,7 +493,7 @@ const UserList: React.FC = () => {
               <Input
                 id="edit-username"
                 value={formData.user_name}
-                onChange={(e) => setFormData({ ...formData, user_name: e.target.value })}
+                onChange={e => setFormData({ ...formData, user_name: e.target.value })}
                 placeholder={t('users.form.username_placeholder')}
               />
             </div>
@@ -505,7 +503,7 @@ const UserList: React.FC = () => {
                 id="edit-email"
                 type="email"
                 value={formData.email}
-                onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                onChange={e => setFormData({ ...formData, email: e.target.value })}
                 placeholder={t('users.form.email_placeholder')}
               />
             </div>
@@ -513,7 +511,7 @@ const UserList: React.FC = () => {
               <Label htmlFor="edit-role">{t('users.form.role')}</Label>
               <Select
                 value={formData.role}
-                onValueChange={(value) => setFormData({ ...formData, role: value as UserRole })}
+                onValueChange={value => setFormData({ ...formData, role: value as UserRole })}
               >
                 <SelectTrigger>
                   <SelectValue placeholder={t('users.form.role_select')} />
@@ -527,11 +525,11 @@ const UserList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleUpdateUser} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save
+              {t('common.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -553,18 +551,18 @@ const UserList: React.FC = () => {
                 id="new-password"
                 type="password"
                 value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
+                onChange={e => setNewPassword(e.target.value)}
                 placeholder={t('users.form.new_password_placeholder')}
               />
             </div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsResetPasswordDialogOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleResetPassword} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Reset
+              {t('common.reset')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -580,12 +578,9 @@ const UserList: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteUser}
-              className="bg-error hover:bg-error/90"
-            >
-              Delete
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteUser} className="bg-error hover:bg-error/90">
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

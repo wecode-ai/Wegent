@@ -11,12 +11,7 @@ import { Tag } from '@/components/ui/tag';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import {
-  CpuChipIcon,
-  PencilIcon,
-  TrashIcon,
-  GlobeAltIcon,
-} from '@heroicons/react/24/outline';
+import { CpuChipIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -250,9 +245,7 @@ const PublicModelList: React.FC = () => {
     <div className="space-y-3">
       {/* Header */}
       <div>
-        <h2 className="text-xl font-semibold text-text-primary mb-1">
-          {t('public_models.title')}
-        </h2>
+        <h2 className="text-xl font-semibold text-text-primary mb-1">{t('public_models.title')}</h2>
         <p className="text-sm text-text-muted">{t('public_models.description')}</p>
       </div>
 
@@ -276,7 +269,7 @@ const PublicModelList: React.FC = () => {
         {/* Model List */}
         {!loading && models.length > 0 && (
           <div className="flex-1 overflow-y-auto space-y-3 p-1">
-            {models.map((model) => (
+            {models.map(model => (
               <Card
                 key={model.id}
                 className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
@@ -291,15 +284,19 @@ const PublicModelList: React.FC = () => {
                         </h3>
                         <Tag variant="info">{getModelProvider(model.json)}</Tag>
                         {model.is_active ? (
-                          <Tag variant="success">Active</Tag>
+                          <Tag variant="success">{t('public_models.status.active')}</Tag>
                         ) : (
-                          <Tag variant="error">Inactive</Tag>
+                          <Tag variant="error">{t('public_models.status.inactive')}</Tag>
                         )}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-text-muted">
-                        <span>Model ID: {getModelId(model.json)}</span>
+                        <span>
+                          {t('public_models.model_id')}: {getModelId(model.json)}
+                        </span>
                         <span>•</span>
-                        <span>Namespace: {model.namespace}</span>
+                        <span>
+                          {t('public_models.namespace_label')}: {model.namespace}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -357,7 +354,7 @@ const PublicModelList: React.FC = () => {
               <Input
                 id="name"
                 value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                onChange={e => setFormData({ ...formData, name: e.target.value })}
                 placeholder={t('public_models.form.name_placeholder')}
               />
             </div>
@@ -366,7 +363,7 @@ const PublicModelList: React.FC = () => {
               <Input
                 id="namespace"
                 value={formData.namespace}
-                onChange={(e) => setFormData({ ...formData, namespace: e.target.value })}
+                onChange={e => setFormData({ ...formData, namespace: e.target.value })}
                 placeholder={t('public_models.form.namespace_placeholder')}
               />
             </div>
@@ -375,7 +372,7 @@ const PublicModelList: React.FC = () => {
               <Textarea
                 id="config"
                 value={formData.config}
-                onChange={(e) => {
+                onChange={e => {
                   setFormData({ ...formData, config: e.target.value });
                   validateConfig(e.target.value);
                 }}
@@ -387,11 +384,11 @@ const PublicModelList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleCreateModel} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Create
+              {t('common.create')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -409,7 +406,7 @@ const PublicModelList: React.FC = () => {
               <Input
                 id="edit-name"
                 value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                onChange={e => setFormData({ ...formData, name: e.target.value })}
                 placeholder={t('public_models.form.name_placeholder')}
               />
             </div>
@@ -418,7 +415,7 @@ const PublicModelList: React.FC = () => {
               <Input
                 id="edit-namespace"
                 value={formData.namespace}
-                onChange={(e) => setFormData({ ...formData, namespace: e.target.value })}
+                onChange={e => setFormData({ ...formData, namespace: e.target.value })}
                 placeholder={t('public_models.form.namespace_placeholder')}
               />
             </div>
@@ -427,7 +424,7 @@ const PublicModelList: React.FC = () => {
               <Textarea
                 id="edit-config"
                 value={formData.config}
-                onChange={(e) => {
+                onChange={e => {
                   setFormData({ ...formData, config: e.target.value });
                   validateConfig(e.target.value);
                 }}
@@ -439,11 +436,11 @@ const PublicModelList: React.FC = () => {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
-              Cancel
+              {t('common.cancel')}
             </Button>
             <Button onClick={handleUpdateModel} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Save
+              {t('common.save')}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -459,12 +456,9 @@ const PublicModelList: React.FC = () => {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={handleDeleteModel}
-              className="bg-error hover:bg-error/90"
-            >
-              Delete
+            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteModel} className="bg-error hover:bg-error/90">
+              {t('common.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
