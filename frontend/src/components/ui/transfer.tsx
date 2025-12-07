@@ -237,7 +237,7 @@ export function Transfer({
         )}
 
         {/* 列表 */}
-        <ScrollArea className="h-[300px]">
+        <ScrollArea className="flex-1 min-h-0">
           <div className="p-2 space-y-1">
             {data.length === 0 ? (
               <div className="text-center text-sm text-muted-foreground py-8">No data</div>

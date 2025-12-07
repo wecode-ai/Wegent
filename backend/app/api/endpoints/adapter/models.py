@@ -348,6 +348,35 @@ def test_model_connection(
             )
             return {"success": True, "message": f"Successfully connected to {model_id}"}
 
+        elif provider_type == "gemini":
+            import httpx
+
+            # Gemini uses REST API with API key in header
+            gemini_base_url = base_url or "https://generativelanguage.googleapis.com"
+            gemini_base_url = gemini_base_url.rstrip("/")
+
+            # Build URL for generateContent endpoint
+            if "/v1beta" in gemini_base_url or "/v1" in gemini_base_url:
+                url = f"{gemini_base_url}/models/{model_id}:generateContent"
+            else:
+                url = f"{gemini_base_url}/v1beta/models/{model_id}:generateContent"
+
+            headers = {
+                "Content-Type": "application/json",
+                "x-goog-api-key": api_key,
+            }
+
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
+                "generationConfig": {"maxOutputTokens": 1},
+            }
+
+            with httpx.Client(timeout=30.0) as client:
+                response = client.post(url, json=payload, headers=headers)
+                response.raise_for_status()
+
+            return {"success": True, "message": f"Successfully connected to {model_id}"}
+
         else:
             return {"success": False, "message": "Unsupported provider type"}
 

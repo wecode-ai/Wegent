@@ -36,7 +36,22 @@
     "subtask_failed": "Subtask failed",
     "unknown_error": "Unknown error",
     "bot": "Bot",
-    "application_parameters": "Application Parameters"
+    "application_parameters": "Application Parameters",
+    "status_running": "Running",
+    "status_pending": "Pending",
+    "status_processing": "Processing",
+    "status_completed": "Completed",
+    "status_failed": "Failed",
+    "status_cancelled": "Cancelled",
+    "status_cancelling": "Cancelling"
+  },
+  "shared_task": {
+    "share_task": "Share",
+    "sharing": "Sharing...",
+    "no_task_selected": "No task selected",
+    "no_task_selected_desc": "Please select a task to share",
+    "share_failed": "Failed to share task",
+    "share_failed_desc": "Please try again"
   },
   "settings": {
     "model": "Model",
@@ -109,8 +124,10 @@
     "execution_type": "Execution Type",
     "mcp_init_fail": "❌ MCP initialization failed. "
   },
-  "send_shortcut_ctrl": "Ctrl+Enter to send",
-  "send_shortcut_cmd": "Cmd+Enter to send",
+  "send_shortcut": "Enter to send, Shift+Enter for new line",
+  "errors": {
+    "payload_too_large": "Content too large: conversation history or attachment exceeds limit, please start a new conversation or reduce attachment size"
+  },
   "clarification": {
     "title": "Spec Clarification",
     "recommended": "Recommended",
@@ -141,5 +158,20 @@
     "required_field": "This question is required",
     "additional_thoughts": "Additional Thoughts or Remarks",
     "additional_placeholder": "Enter additional thoughts, requirements, or special notes here..."
+  },
+  "export": {
+    "export_pdf": "Export PDF",
+    "no_messages": "No messages to export",
+    "select_at_least_one": "Please select at least one message",
+    "selected_count": "Selected: {{count}} message(s)",
+    "select_all": "Select All",
+    "deselect_all": "Deselect All",
+    "cancel": "Cancel",
+    "confirm": "Export PDF",
+    "exporting": "Exporting...",
+    "success": "PDF exported successfully",
+    "failed": "Failed to export PDF",
+    "select_from_here": "Select from here",
+    "select_below": "Select below"
   }
 }

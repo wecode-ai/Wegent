@@ -7,10 +7,18 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0 AS builder
 
 WORKDIR /app
 
-RUN npm update -g @anthropic-ai/claude-code
+# Install latest Claude Code CLI (requires version >= 2.0.0 for Agent SDK compatibility)
+RUN npm install -g @anthropic-ai/claude-code@latest
 
-# Copy requirements and install dependencies
-COPY executor/requirements.txt /app/executor/requirements.txt
+# Install uv
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH="/root/.local/bin:${PATH}" && \
+    uv --version
+
+ENV PATH="/root/.local/bin:${PATH}"
+
+# Copy pyproject.toml and install dependencies
+COPY executor/pyproject.toml /app/executor/pyproject.toml
 
 RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
     tar -xvf sqlite-autoconf-3500400.tar.gz && \
@@ -23,7 +31,7 @@ RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \
 
 ENV PATH="/usr/local/bin:${PATH}"
 RUN yes|cp -rf /usr/local/lib/libsqlite3.so.3.50.4 /usr/lib64/libsqlite3.so.0.8.6 && \
-    pip install -r /app/executor/requirements.txt -U
+    cd /app/executor && uv pip install --system --no-cache -r pyproject.toml
 
 # Copy source code
 COPY executor /app/executor
@@ -37,7 +45,15 @@ FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
 
 WORKDIR /app
 
-RUN npm update -g @anthropic-ai/claude-code
+# Install latest Claude Code CLI (requires version >= 2.0.0 for Agent SDK compatibility)
+RUN npm install -g @anthropic-ai/claude-code@latest
+
+# Install uv in runtime stage
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh && \
+    export PATH="/root/.local/bin:${PATH}" && \
+    uv --version
+
+ENV PATH="/root/.local/bin:${PATH}"
 
 # Install sqlite
 RUN wget https://www.sqlite.org/2025/sqlite-autoconf-3500400.tar.gz && \

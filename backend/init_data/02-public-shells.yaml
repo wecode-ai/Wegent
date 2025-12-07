@@ -44,3 +44,20 @@ spec:
   supportModel: []
 status:
   state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: Chat
+  namespace: default
+  displayName: Chat
+  labels:
+    type: direct_chat
+spec:
+  shellType: Chat
+  supportModel:
+    - claude
+    - openai
+    - gemini
+status:
+  state: Available

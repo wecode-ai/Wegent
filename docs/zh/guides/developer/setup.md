@@ -10,7 +10,7 @@
 
 ### 必需软件
 
-- **Python 3.9+**: 后端服务、Executor 和 Executor Manager
+- **Python 3.10+**: 后端服务、Executor 和 Executor Manager
 - **Node.js 18+**: 前端开发
 - **MySQL 8.0+**: 数据库服务
 - **Redis 7+**: 缓存服务
@@ -139,7 +139,7 @@ source venv/bin/activate
 # venv\Scripts\activate
 
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 ```
 
 #### 配置环境变量
@@ -180,7 +180,7 @@ backend/
 │   ├── schemas/         # Pydantic 模式
 │   └── services/        # 业务逻辑层
 ├── init_data/           # YAML 初始化数据
-└── requirements.txt     # Python 依赖
+└── pyproject.toml       # Python 依赖
 ```
 
 ---
@@ -253,7 +253,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 ```
 
 #### 运行开发服务器

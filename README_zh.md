@@ -3,11 +3,13 @@
 
 [English](README.md) | 简体中文
 
-[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.68+-green.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
 [![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
+[![Gemini](https://img.shields.io/badge/Gemini-支持-4285F4.svg)](https://ai.google.dev)
+[![Version](https://img.shields.io/badge/版本-1.0.20-brightgreen.svg)](https://github.com/wecode-ai/wegent/releases)
 
 <div align="center">
 
@@ -25,12 +27,14 @@
 <img src="./docs/assets/images/example.gif" width="75%" alt="演示视频"/>
 Wegent 让你通过智能体编排创建强大的 AI 应用：
 
-### 🖥️ **网页版编程助手**
-在浏览器中构建全功能开发环境，可与Github集成，支持本地或云端的独立开发空间，可运行多个Coding Agent同时编码
+### 💬 **即开即用的 AI 对话**
+内置默认聊天团队，无需配置即可立即开始。支持多种 LLM 提供商，包括 Claude、OpenAI 和 Gemini。
 
+### 🖥️ **网页版编程助手**
+在浏览器中构建全功能开发环境，可与 GitHub 集成，支持本地或云端的独立开发空间，可运行多个 Coding Agent 同时编码。
 
 ### 📰 **新闻智能平台**
-创建智能新闻聚合和分析系统
+创建智能新闻聚合和分析系统，支持多智能体协作模式。
 
 ### 🔧 **自定义智能体应用**
 可能性无限 - 为以下场景构建智能体：
@@ -48,10 +52,10 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 
 ### 🌟 核心能力
 
-1. **🎨 配置驱动的智能体团队**：通过 YAML 配置定义和运行个性化 Agent 团队，提供网页 UI，无需二次开发
-2. **⚙️ 多引擎架构**：底层支持 Agno 和 Claude Code 两个 Agent 执行引擎，上层支持对话和编码两种模式
+1. **🎨 配置驱动的智能体团队**：通过 YAML 配置定义和运行个性化 Agent 团队，提供网页 UI，无需二次开发。内置默认聊天团队，开箱即用
+2. **⚙️ 多引擎架构**：底层支持 Agno 和 Claude Code 两个 Agent 执行引擎，Chat Shell 支持直接调用 LLM API（Claude、OpenAI、Gemini）
 3. **🔒 独立沙箱环境**：每个 Agent 团队运行在独立沙箱环境中，支持多个 Agent 团队同时运行
-4. **🤝 高级协作模式**：对话模式可以实现并行、Leader 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
+4. **🤝 高级协作模式**：对话模式可以实现并行、Leader、Solo 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
 5. **💻 AI 编码集成**：编码模式可以与 GitHub/GitLab 等代码服务对接，实现代码开发、review 等 AI Coding 工作流
 
 ```mermaid
@@ -163,6 +167,7 @@ graph LR
    - **Claude Code Shell**: 使用 `ANTHROPIC_AUTH_TOKEN`
    - **Agno Shell**: 使用 `ANTHROPIC_API_KEY`
    - **Dify Shell**: 使用 `DIFY_API_KEY` 和 `DIFY_BASE_URL`
+   - **Chat Shell**: 使用 `OPENAI_API_KEY` (OpenAI)、`ANTHROPIC_API_KEY` (Claude) 或 `GOOGLE_API_KEY` (Gemini)
 
    请根据您的 Shell 配置设置正确的环境变量。具体要求请查看 Shell 文档或 `executor/agents/` 代码。
 
@@ -195,6 +200,7 @@ graph TB
         Claude["🧠 Claude Code"]
         Agno["💻 Agno"]
         Dify["✨ Dify"]
+        Chat["💬 Chat<br/>(Claude/OpenAI/Gemini)"]
     end
 
 
@@ -226,6 +232,7 @@ wegent/
 ├── executor/         # 任务执行引擎
 ├── executor_manager/ # 执行编排
 ├── shared/           # 通用工具和模型
+├── wegent-cli/       # kubectl 风格的 CLI 工具 (wectl)
 └── docker/           # 容器配置
 ```
 
@@ -234,8 +241,8 @@ wegent/
 1. **后端开发**
    ```bash
    cd backend
-   pip install -r requirements.txt
-   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ./start.sh
+   # 或手动执行: uv sync && source .venv/bin/activate && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
 2. **前端开发**

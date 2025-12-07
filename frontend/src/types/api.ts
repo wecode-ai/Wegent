@@ -22,12 +22,20 @@ export interface User {
 
 /** Git account information */
 export interface GitInfo {
+  /** Unique identifier for this git info entry (UUID) */
+  id?: string;
   git_domain: string;
   git_token: string;
   /** Type: "github" | "gitlab" | "gitee" | "gerrit" */
   type: 'github' | 'gitlab' | 'gitee' | 'gerrit';
   /** Username (required for Gerrit) */
   user_name?: string;
+  /** Git user ID (from provider) */
+  git_id?: string;
+  /** Git login name */
+  git_login?: string;
+  /** Git email */
+  git_email?: string;
 }
 
 // Bot Types
@@ -213,12 +221,13 @@ export interface TaskDetail {
   result: Record<string, unknown>;
   error_message: string;
   created_at: string;
-  // updated_at: string
-  // completed_at: string
+  updated_at: string;
+  completed_at?: string;
   user: User;
   team: Team;
   subtasks: TaskDetailSubtask[];
   workbench?: WorkbenchData | null;
+  model_id?: string | null; // Model name used for this task
 }
 
 /** Subtask result structure */
@@ -256,6 +265,7 @@ export interface TaskDetailSubtask {
   updated_at: string;
   completed_at: string;
   bots: Bot[];
+  attachments?: Attachment[];
 }
 
 export interface Task {
@@ -387,4 +397,28 @@ export interface DifyParameterField {
 
 export interface DifyParametersSchema {
   user_input_form: DifyParameterField[];
+}
+
+// Attachment Types
+export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed';
+
+export interface Attachment {
+  id: number;
+  filename: string;
+  file_size: number;
+  mime_type: string;
+  status: AttachmentStatus;
+  text_length?: number | null;
+  error_message?: string | null;
+  subtask_id?: number | null;
+  file_extension: string;
+  created_at: string;
+}
+
+export interface AttachmentUploadState {
+  file: File | null;
+  attachment: Attachment | null;
+  isUploading: boolean;
+  uploadProgress: number;
+  error: string | null;
 }

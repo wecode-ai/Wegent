@@ -8,7 +8,7 @@ on:
 env:
   # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
   NEXT_PUBLIC_API_URL: http://localhost:8000
-  # Use pymysql driver (installed via requirements.txt)
+  # Use pymysql driver (installed via pyproject.toml)
   DATABASE_URL: mysql+pymysql://root:123456@localhost:3306/task_manager
   REDIS_URL: redis://localhost:6379
   ENVIRONMENT: development
@@ -52,14 +52,27 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-          cache-dependency-path: backend/requirements.txt
+
+      # Cache uv installation and virtual environment
+      - name: Cache uv and venv
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/uv
+            ~/.cargo/bin/uvx
+            backend/.venv
+          key: ${{ runner.os }}-uv-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-uv-
 
       - name: Install backend dependencies
         working-directory: backend
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ ! -f "$HOME/.cargo/bin/uv" ]; then
+            curl -LsSf https://astral.sh/uv/install.sh | sh
+          fi
+          source $HOME/.cargo/env
+          uv sync
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -72,16 +85,45 @@ jobs:
         working-directory: frontend
         run: npm ci
 
+      # Cache Next.js build output for faster subsequent builds
+      - name: Cache Next.js build
+        uses: actions/cache@v4
+        with:
+          path: |
+            frontend/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/src/**/*', 'frontend/public/**/*') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-
+            ${{ runner.os }}-nextjs-
+
       - name: Build frontend
         working-directory: frontend
         env:
           # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
           NEXT_PUBLIC_API_URL: http://localhost:8000
+          # Enable Next.js build cache
+          NEXT_TELEMETRY_DISABLED: 1
         run: npm run build
 
+      # Cache Playwright browsers
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-playwright-
+
       - name: Install Playwright browsers
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: frontend
         run: npx playwright install chromium --with-deps
+
+      - name: Install Playwright system dependencies
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        working-directory: frontend
+        run: npx playwright install-deps chromium
 
       - name: Start backend server
         working-directory: backend
@@ -95,7 +137,8 @@ jobs:
           # Add project root to PYTHONPATH so 'shared' module can be imported
           PYTHONPATH: ${{ github.workspace }}
         run: |
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
+          source $HOME/.cargo/env
+          uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 &
           echo "Backend server starting (with auto migration and YAML init enabled)..."
 
       - name: Start frontend server

@@ -2,6 +2,106 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+[project]
+name = "wegent-backend"
+version = "1.0.0"
+description = "Wegent Backend API Service"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    # FastAPI framework and related dependencies
+    "fastapi>=0.109.1",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.5.3",
+    "pydantic-settings>=2.1.0",
+    "python-multipart>=0.0.6",
+    "email-validator>=2.0.0",
+    
+    # Database related
+    "sqlalchemy>=2.0.25",
+    "pymysql>=1.1.0",
+    "asyncmy>=0.2.9",
+    "cryptography>=42.0.4",
+    "alembic>=1.13.1",
+    "mysql-connector-python>=8.3.0",
+    
+    # Authentication related
+    "python-jose[cryptography]>=3.3.0",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.1.0,<5.0.0",
+    "authlib>=1.3.0",
+    "pyjwt>=2.8.0",
+    
+    # HTTP clients
+    "httpx>=0.26.0",
+    "requests>=2.31.0",
+    "aiohttp>=3.8.0",
+    
+    # AI/ML API clients
+    "anthropic>=0.18.0",
+    "openai>=1.0.0",
+    
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "tenacity>=8.2.3",
+    "pyyaml>=6.0.1",
+    
+    # Logging and monitoring
+    "structlog>=23.1.0",
+    
+    # Data processing and validation
+    "python-dateutil>=2.8.2",
+    
+    # XML parsing (for CAS authentication)
+    "lxml>=4.9.0",
+    
+    # Path handling
+    "pathlib2>=2.3.7",
+    
+    # Regular expressions
+    "regex>=2023.8.8",
+    
+    # JSON processing
+    "orjson>=3.9.0",
+    
+    # Caching
+    "redis>=5.0.1",
+    
+    # Security related
+    "pycryptodome>=3.20.0",
+    
+    # Document parsing for file attachments
+    "pypdf2>=3.0.0",
+    "python-docx>=1.1.0",
+    "python-pptx>=0.6.23",
+    "openpyxl>=3.1.2",
+    "chardet>=5.0.0",
+    "pillow>=10.0.0",
+]
+
+[dependency-groups]
+dev = [
+    # Testing related
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+    "pytest-httpx>=0.36.0",
+    
+    # Development tools
+    "black>=23.7.0",
+    "isort>=5.12.0",
+    "flake8>=6.0.0",
+    "mypy>=1.5.0",
+    
+    # Documentation generation
+    "mkdocs>=1.5.0",
+    "mkdocs-material>=9.2.0",
+    
+    # Environment management
+    "python-decouple>=3.8",
+]
+
 [tool.black]
 line-length = 88
 target-version = ['py310']
@@ -31,3 +131,10 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 skip = ["alembic", ".venv", "venv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

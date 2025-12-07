@@ -2,7 +2,9 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from typing import Optional
+
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -41,13 +43,24 @@ async def update_current_user_endpoint(
 @router.delete("/me/git-token/{git_domain:path}", response_model=UserInDB)
 async def delete_git_token(
     git_domain: str,
+    git_info_id: Optional[str] = Query(
+        None, description="Unique ID of the git_info entry to delete"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Delete a specific git token by domain"""
+    """Delete a specific git token
+
+    Args:
+        git_domain: Git domain (required for backward compatibility)
+        git_info_id: Unique ID of the git_info entry (preferred, for precise deletion)
+
+    If git_info_id is provided, it will be used for precise deletion.
+    Otherwise, falls back to deleting by domain (may delete multiple tokens).
+    """
     try:
         user = user_service.delete_git_token(
-            db=db, user=current_user, git_domain=git_domain
+            db=db, user=current_user, git_info_id=git_info_id, git_domain=git_domain
         )
         return user
     except Exception as e:

@@ -72,10 +72,10 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
   const isGitlabLike = type === 'gitlab' || type === 'gitee';
   const isGerrit = type === 'gerrit';
 
-  const isGitlabDomainInvalid = useMemo(() => {
-    if ((!isGitlabLike && !isGerrit) || !domain) return false;
+  const isDomainInvalid = useMemo(() => {
+    if (!domain) return false;
     return !isValidDomain(domain);
-  }, [isGitlabLike, isGerrit, domain]);
+  }, [domain]);
 
   const hasGithubPlatform = useMemo(
     () => platforms.some(info => sanitizeDomainInput(info.git_domain) === 'github.com'),
@@ -93,7 +93,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         setUsername(editInfo.user_name || '');
         setType(editInfo.type);
       } else {
-        setDomain('');
+        // For add mode, default to github.com when type is github
+        setDomain('github.com');
         setToken('');
         setUsername('');
         setType('github');
@@ -104,8 +105,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
   // Save logic
   const handleSave = async () => {
     if (!user) return;
-    const sanitizedDomain = type === 'github' ? 'github.com' : sanitizeDomainInput(domain);
-    const domainToSave = type === 'github' ? 'github.com' : sanitizedDomain;
+    const sanitizedDomain = sanitizeDomainInput(domain);
+    const domainToSave = sanitizedDomain || (type === 'github' ? 'github.com' : '');
     const tokenToSave = token.trim();
     const usernameToSave = username.trim();
 
@@ -126,7 +127,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       return;
     }
 
-    if ((isGitlabLike || isGerrit) && !isValidDomain(domainToSave)) {
+    if (!isValidDomain(domainToSave)) {
       toast({
         variant: 'destructive',
         title: t('github.error.invalid_domain'),
@@ -136,7 +137,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     }
     setTokenSaving(true);
     try {
-      await saveGitToken(user, domainToSave, tokenToSave, usernameToSave, type);
+      // Pass existing id when editing to update instead of create new record
+      const existingId = mode === 'edit' && editInfo?.id ? editInfo.id : undefined;
+      await saveGitToken(user, domainToSave, tokenToSave, usernameToSave, type, existingId);
       onClose();
       await refresh();
     } catch (error) {
@@ -148,7 +151,6 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       setTokenSaving(false);
     }
   };
-
   return (
     <Modal
       isOpen={isOpen}
@@ -172,7 +174,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                   setType('github');
                   setDomain('github.com');
                 }}
-                disabled={hasGithubPlatform && !(mode === 'edit' && editInfo?.type === 'github')}
+                disabled={mode === 'edit' && editInfo?.type !== 'github' && hasGithubPlatform}
               />
               {t('github.platform_github')}
             </label>
@@ -215,28 +217,19 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
           </label>
           <input
             type="text"
-            value={type === 'github' ? 'github.com' : domain}
-            onChange={e => {
-              if (isGitlabLike || isGerrit) {
-                setDomain(e.target.value);
-              }
-            }}
-            onBlur={e => {
-              if (isGitlabLike || isGerrit) {
-                setDomain(sanitizeDomainInput(e.target.value));
-              }
-            }}
+            value={domain}
+            onChange={e => setDomain(e.target.value)}
+            onBlur={e => setDomain(sanitizeDomainInput(e.target.value))}
             placeholder={
               type === 'github'
-                ? 'github.com'
+                ? 'e.g. github.com or github.enterprise.com'
                 : isGerrit
                   ? 'e.g. http://gerrit.company.com or gerrit.company.com'
                   : 'e.g. http://gitlab.example.com or gitlab.example.com'
             }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
-            disabled={type === 'github'}
           />
-          {isGitlabDomainInvalid && (
+          {isDomainInvalid && (
             <p className="mt-1 text-xs text-red-500">{t('github.error.invalid_domain')}</p>
           )}
         </div>
@@ -369,7 +362,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
         <Button
           onClick={handleSave}
           disabled={
-            ((isGitlabLike || isGerrit) && (!domain || isGitlabDomainInvalid)) ||
+            !domain ||
+            isDomainInvalid ||
             (isGerrit && !username.trim()) ||
             !token.trim() ||
             tokenSaving

@@ -21,7 +21,8 @@ export async function saveGitToken(
   git_domain: string,
   git_token: string,
   username?: string,
-  type?: GitInfo['type']
+  type?: GitInfo['type'],
+  existingId?: string
 ): Promise<void> {
   // Auto-detect type if not provided
   let detectedType: GitInfo['type'] = type || 'gitlab';
@@ -44,6 +45,11 @@ export async function saveGitToken(
     type: detectedType,
   };
 
+  // Add id if editing existing record (for update instead of create)
+  if (existingId) {
+    gitInfoToSave.id = existingId;
+  }
+
   // Add user_name if provided
   if (username !== undefined && username !== '') {
     gitInfoToSave.user_name = username;
@@ -56,11 +62,11 @@ export async function saveGitToken(
 /**
  * Delete git token
  * @param user Current user (from UserContext)
- * @param git_domain Git domain to delete
+ * @param gitInfo Git info to delete (uses id for precise deletion, falls back to domain)
  */
-export async function deleteGitToken(user: User, git_domain: string): Promise<boolean> {
+export async function deleteGitToken(user: User, gitInfo: GitInfo): Promise<boolean> {
   try {
-    await userApis.deleteGitToken(git_domain);
+    await userApis.deleteGitToken(gitInfo.git_domain, gitInfo.id);
     return true;
   } catch {
     return false;

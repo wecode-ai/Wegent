@@ -280,12 +280,13 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         fi
         
         # Python syntax check
+        # Python syntax check
         echo -e "   Running Python syntax check..."
         SYNTAX_ERROR=0
         > "$TEMP_DIR/syntax.log"  # Clear/create the file
         for pyfile in $(echo "$CHANGED_FILES" | grep "^backend/.*\.py$"); do
             if [ -f "../$pyfile" ]; then
-                python -m py_compile "../$pyfile" 2>> "$TEMP_DIR/syntax.log"
+                uv run python -m py_compile "../$pyfile" 2>> "$TEMP_DIR/syntax.log"
                 if [ $? -ne 0 ]; then
                     echo -e "   ${RED}   Syntax error in: $pyfile${NC}"
                     SYNTAX_ERROR=1
@@ -300,11 +301,10 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             FAILED_CHECKS+=("Backend Syntax")
             FAILED_LOGS+=("$TEMP_DIR/syntax.log")
         fi
-        cd ..
     else
         # Black format check (output to temp file)
         echo -e "   Running Black format check..."
-        black --check app/ > "$TEMP_DIR/black.log" 2>&1
+        uv run black --check app/ > "$TEMP_DIR/black.log" 2>&1
         BLACK_EXIT=$?
         if [ $BLACK_EXIT -eq 0 ]; then
             echo -e "   ${GREEN}✅ Black: PASSED${NC}"
@@ -323,7 +323,7 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
             echo -e "   ${YELLOW}   Run 'pip install isort' to install dependencies${NC}"
             WARNINGS+=("Backend: isort not found, import sort checks skipped")
         else
-            isort --check-only --diff app/ > "$TEMP_DIR/isort.log" 2>&1
+            uv run isort --check-only --diff app/ > "$TEMP_DIR/isort.log" 2>&1
             ISORT_EXIT=$?
             if [ $ISORT_EXIT -eq 0 ]; then
                 echo -e "   ${GREEN}✅ isort: PASSED${NC}"
@@ -344,7 +344,7 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         else
             echo -e "   Running pytest..."
             if [ -d "tests" ]; then
-                pytest tests/ --tb=short -q > "$TEMP_DIR/backend_pytest.log" 2>&1
+                uv run pytest tests/ --tb=short -q > "$TEMP_DIR/backend_pytest.log" 2>&1
                 PYTEST_EXIT=$?
                 if [ $PYTEST_EXIT -eq 0 ]; then
                     echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
@@ -365,7 +365,7 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
         > "$TEMP_DIR/syntax.log"  # Clear/create the file
         for pyfile in $(echo "$CHANGED_FILES" | grep "^backend/.*\.py$"); do
             if [ -f "../$pyfile" ]; then
-                python -m py_compile "../$pyfile" 2>> "$TEMP_DIR/syntax.log"
+                uv run python -m py_compile "../$pyfile" 2>> "$TEMP_DIR/syntax.log"
                 if [ $? -ne 0 ]; then
                     echo -e "   ${RED}   Syntax error in: $pyfile${NC}"
                     SYNTAX_ERROR=1
@@ -400,7 +400,7 @@ if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
     else
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
-            pytest tests/ --tb=short -q > "$TEMP_DIR/executor_pytest.log" 2>&1
+            uv run pytest tests/ --tb=short -q > "$TEMP_DIR/executor_pytest.log" 2>&1
             PYTEST_EXIT=$?
             if [ $PYTEST_EXIT -eq 0 ]; then
                 echo -e "   ${GREEN}✅ Pytest: PASSED${NC}"
@@ -434,7 +434,7 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
     else
         echo -e "   Running pytest..."
         if [ -d "tests" ]; then
-            pytest tests/ --tb=short -q > "$TEMP_DIR/exec_mgr_pytest.log" 2>&1
+            uv run pytest tests/ --tb=short -q > "$TEMP_DIR/exec_mgr_pytest.log" 2>&1
             PYTEST_EXIT=$?
             # Check if tests passed (look for "passed" in output and no "failed")
             if grep -q "passed" "$TEMP_DIR/exec_mgr_pytest.log" && ! grep -q "[0-9]* failed" "$TEMP_DIR/exec_mgr_pytest.log"; then

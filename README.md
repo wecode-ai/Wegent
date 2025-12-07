@@ -3,11 +3,13 @@
 
 English | [简体中文](README_zh.md)
 
-[![Python](https://img.shields.io/badge/python-3.9+-blue.svg)](https://python.org)
+[![Python](https://img.shields.io/badge/python-3.10+-blue.svg)](https://python.org)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.68+-green.svg)](https://fastapi.tiangolo.com)
 [![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
 [![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
+[![Gemini](https://img.shields.io/badge/Gemini-supported-4285F4.svg)](https://ai.google.dev)
+[![Version](https://img.shields.io/badge/version-1.0.20-brightgreen.svg)](https://github.com/wecode-ai/wegent/releases)
 
 <div align="center">
 
@@ -25,12 +27,14 @@ English | [简体中文](README_zh.md)
 <img src="./docs/assets/images/example.gif" width="75%" alt="Demo Video"/>
 Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
 
-### 🖥️ **Web-Based Coding Assistant**
-Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously
+### 💬 **Instant AI Chat**
+Get started immediately with the built-in default chat team - no configuration required. Supports multiple LLM providers including Claude, OpenAI, and Gemini.
 
+### 🖥️ **Web-Based Coding Assistant**
+Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously.
 
 ### 📰 **News Intelligence Platform**
-Create a smart news aggregation and analysis system 
+Create a smart news aggregation and analysis system with multi-agent collaboration patterns.
 
 ### 🔧 **Custom Agent Applications**
 The possibilities are endless - build agents for:
@@ -48,10 +52,10 @@ Wegent is an open-source AI native operating system that enables you to define, 
 
 ### 🌟 Core Capabilities
 
-1. **🎨 Configuration-Driven Agent Teams**: Define and run personalized agent teams through YAML configuration with web UI - no secondary development required
-2. **⚙️ Multi Execution Engines**: Built on Agno and Claude Code agent engines at the bottom layer, supporting both dialogue and coding modes at the upper layer
+1. **🎨 Configuration-Driven Agent Teams**: Define and run personalized agent teams through YAML configuration with web UI - no secondary development required. Includes built-in default chat team for instant start
+2. **⚙️ Multi Execution Engines**: Built on Agno and Claude Code agent engines, with Chat Shell supporting direct LLM API calls (Claude, OpenAI, Gemini)
 3. **🔒 Isolated Sandbox Environments**: Each agent team runs in an independent sandbox, enabling multiple teams to execute simultaneously
-4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, and other agent collaboration patterns for complex workflows like news insights and content retrieval
+4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, solo mode and other agent collaboration patterns for complex workflows like news insights and content retrieval
 5. **💻 AI Coding Integration**: Coding mode integrates with GitHub/GitLab and other code services to implement AI-driven development, code review, and other coding workflows
 
 ```mermaid
@@ -161,6 +165,7 @@ graph LR
    - **Claude Code Shell**: Uses `ANTHROPIC_AUTH_TOKEN`
    - **Agno Shell**: Uses `ANTHROPIC_API_KEY`
    - **Dify Shell**: Uses `DIFY_API_KEY` and `DIFY_BASE_URL`
+   - **Chat Shell**: Uses `OPENAI_API_KEY` (OpenAI), `ANTHROPIC_API_KEY` (Claude), or `GOOGLE_API_KEY` (Gemini)
 
    Please set the correct variable based on your Shell configuration. Check the Shell's documentation or the `executor/agents/` code for specific requirements.
 
@@ -193,6 +198,7 @@ graph TB
         Claude["🧠 Claude Code"]
         Agno["💻 Agno"]
         Dify["✨ Dify"]
+        Chat["💬 Chat<br/>(Claude/OpenAI/Gemini)"]
     end
 
 
@@ -224,6 +230,7 @@ wegent/
 ├── executor/         # Task execution engine
 ├── executor_manager/ # Execution orchestration
 ├── shared/           # Common utilities and models
+├── wegent-cli/       # kubectl-style CLI tool (wectl)
 └── docker/           # Container configurations
 ```
 
@@ -232,8 +239,8 @@ wegent/
 1. **Backend Development**
    ```bash
    cd backend
-   pip install -r requirements.txt
-   uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ./start.sh
+   # Or manually: uv sync && source .venv/bin/activate && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
    ```
 
 2. **Frontend Development**
