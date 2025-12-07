@@ -55,3 +55,10 @@ GITHUB_PRIVATE_KEY = os.getenv("GITHUB_PRIVATE_KEY")
 EXECUTOR_DISPATCHER_MODE = os.getenv("EXECUTOR_DISPATCHER_MODE", "docker")
 EXECUTOR_CONFIG = os.getenv("EXECUTOR_CONFIG", "{\"docker\":\"executor_manager.executors.docker.DockerExecutor\"}")
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
+
+# Redis Configuration
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+
+# Executor Restart Limit Configuration
+MAX_EXECUTOR_RESTART = int(os.getenv("MAX_EXECUTOR_RESTART", "3"))
+RESTART_COUNT_TTL = int(os.getenv("RESTART_COUNT_TTL", "86400"))  # 24 hours in seconds
