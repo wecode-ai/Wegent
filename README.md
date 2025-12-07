@@ -8,6 +8,8 @@ English | [简体中文](README_zh.md)
 [![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
 [![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
+[![Gemini](https://img.shields.io/badge/Gemini-supported-4285F4.svg)](https://ai.google.dev)
+[![Version](https://img.shields.io/badge/version-1.0.20-brightgreen.svg)](https://github.com/wecode-ai/wegent/releases)
 
 <div align="center">
 
@@ -48,11 +50,13 @@ Wegent is an open-source AI native operating system that enables you to define, 
 
 ### 🌟 Core Capabilities
 
-1. **🎨 Configuration-Driven Agent Teams**: Define and run personalized agent teams through YAML configuration with web UI - no secondary development required
-2. **⚙️ Multi Execution Engines**: Built on Agno and Claude Code agent engines at the bottom layer, supporting both dialogue and coding modes at the upper layer
+1. **🎨 Configuration-Driven Agent Teams**: Define and run personalized agent teams through YAML configuration with web UI - no secondary development required. Includes built-in default chat team for instant start
+2. **⚙️ Multi Execution Engines**: Built on Agno and Claude Code agent engines, with Chat Shell supporting direct LLM API calls (Claude, OpenAI, Gemini)
 3. **🔒 Isolated Sandbox Environments**: Each agent team runs in an independent sandbox, enabling multiple teams to execute simultaneously
-4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, and other agent collaboration patterns for complex workflows like news insights and content retrieval
+4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, solo mode and other agent collaboration patterns for complex workflows like news insights and content retrieval
 5. **💻 AI Coding Integration**: Coding mode integrates with GitHub/GitLab and other code services to implement AI-driven development, code review, and other coding workflows
+6. **📤 Export & Share**: Export chat history to PDF, share tasks and teams with collaborators for seamless teamwork
+7. **🔄 Stream Recovery**: Automatic reconnection and stream recovery ensures uninterrupted AI conversations
 
 ```mermaid
 graph LR
@@ -161,6 +165,7 @@ graph LR
    - **Claude Code Shell**: Uses `ANTHROPIC_AUTH_TOKEN`
    - **Agno Shell**: Uses `ANTHROPIC_API_KEY`
    - **Dify Shell**: Uses `DIFY_API_KEY` and `DIFY_BASE_URL`
+   - **Chat Shell**: Uses `OPENAI_API_KEY` (OpenAI), `ANTHROPIC_API_KEY` (Claude), or `GOOGLE_API_KEY` (Gemini)
 
    Please set the correct variable based on your Shell configuration. Check the Shell's documentation or the `executor/agents/` code for specific requirements.
 
@@ -193,6 +198,7 @@ graph TB
         Claude["🧠 Claude Code"]
         Agno["💻 Agno"]
         Dify["✨ Dify"]
+        Chat["💬 Chat<br/>(Claude/OpenAI/Gemini)"]
     end
 
 
@@ -224,6 +230,7 @@ wegent/
 ├── executor/         # Task execution engine
 ├── executor_manager/ # Execution orchestration
 ├── shared/           # Common utilities and models
+├── wegent-cli/       # kubectl-style CLI tool (wectl)
 └── docker/           # Container configurations
 ```
 
