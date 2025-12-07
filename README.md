@@ -28,7 +28,7 @@ English | [简体中文](README_zh.md)
 Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
 
 ### 🖥️ **Web-Based Coding Assistant**
-Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously. Export your development sessions to PDF for documentation.
+Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously.
 
 ### 💬 **Instant AI Chat**
 Get started immediately with the built-in default chat team - no configuration required. Supports multiple LLM providers including Claude, OpenAI, and Gemini.
@@ -57,7 +57,6 @@ Wegent is an open-source AI native operating system that enables you to define, 
 3. **🔒 Isolated Sandbox Environments**: Each agent team runs in an independent sandbox, enabling multiple teams to execute simultaneously
 4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, solo mode and other agent collaboration patterns for complex workflows like news insights and content retrieval
 5. **💻 AI Coding Integration**: Coding mode integrates with GitHub/GitLab and other code services to implement AI-driven development, code review, and other coding workflows
-6. **📤 PDF Export**: Export chat history to PDF for documentation and sharing
 
 ```mermaid
 graph LR
