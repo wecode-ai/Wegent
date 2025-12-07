@@ -27,11 +27,11 @@ English | [简体中文](README_zh.md)
 <img src="./docs/assets/images/example.gif" width="75%" alt="Demo Video"/>
 Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
 
-### 🖥️ **Web-Based Coding Assistant**
-Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously.
-
 ### 💬 **Instant AI Chat**
 Get started immediately with the built-in default chat team - no configuration required. Supports multiple LLM providers including Claude, OpenAI, and Gemini.
+
+### 🖥️ **Web-Based Coding Assistant**
+Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously.
 
 ### 📰 **News Intelligence Platform**
 Create a smart news aggregation and analysis system with multi-agent collaboration patterns.
