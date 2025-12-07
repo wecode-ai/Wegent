@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from datetime import datetime
-from typing import Optional, List, Literal
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, EmailStr, Field
 

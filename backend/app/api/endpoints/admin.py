@@ -5,8 +5,8 @@
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
-from sqlalchemy.orm import Session
 from sqlalchemy import func
+from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.api.endpoints.kind.common import (
@@ -20,24 +20,24 @@ from app.api.endpoints.kind.common import (
 from app.api.endpoints.kind.kinds import KIND_SCHEMA_MAP
 from app.core.security import create_access_token, get_admin_user, get_password_hash
 from app.models.kind import Kind
-from app.models.user import User
 from app.models.public_model import PublicModel
+from app.models.user import User
+from app.schemas.admin import (
+    AdminUserCreate,
+    AdminUserListResponse,
+    AdminUserResponse,
+    AdminUserUpdate,
+    PasswordReset,
+    PublicModelCreate,
+    PublicModelListResponse,
+    PublicModelResponse,
+    PublicModelUpdate,
+    RoleUpdate,
+    SystemStats,
+)
 from app.schemas.kind import BatchResponse
 from app.schemas.task import TaskCreate, TaskInDB
 from app.schemas.user import Token, UserInDB, UserInfo
-from app.schemas.admin import (
-    AdminUserCreate,
-    AdminUserUpdate,
-    AdminUserResponse,
-    AdminUserListResponse,
-    PasswordReset,
-    PublicModelCreate,
-    PublicModelUpdate,
-    PublicModelResponse,
-    PublicModelListResponse,
-    SystemStats,
-    RoleUpdate,
-)
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.k_batch import batch_service
 from app.services.kind import kind_service
@@ -47,6 +47,7 @@ router = APIRouter()
 
 
 # ==================== User Management Endpoints ====================
+
 
 @router.get("/users", response_model=AdminUserListResponse)
 async def list_all_users(
@@ -106,7 +107,9 @@ async def get_user_by_id_endpoint(
     )
 
 
-@router.post("/users", response_model=AdminUserResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/users", response_model=AdminUserResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_user(
     user_data: AdminUserCreate,
     db: Session = Depends(get_db),
@@ -131,7 +134,11 @@ async def create_user(
         )
 
     # Create user
-    password_hash = get_password_hash(user_data.password) if user_data.password else get_password_hash("oidc_placeholder")
+    password_hash = (
+        get_password_hash(user_data.password)
+        if user_data.password
+        else get_password_hash("oidc_placeholder")
+    )
     new_user = User(
         user_name=user_data.user_name,
         email=user_data.email,
@@ -178,7 +185,9 @@ async def update_user(
     # Prevent admin from demoting themselves
     if user.id == current_user.id and user_data.role == "user":
         # Check if there are other admins
-        admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()
+        admin_count = (
+            db.query(User).filter(User.role == "admin", User.is_active == True).count()
+        )
         if admin_count <= 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -187,7 +196,9 @@ async def update_user(
 
     # Check username uniqueness if being changed
     if user_data.user_name and user_data.user_name != user.user_name:
-        existing_user = db.query(User).filter(User.user_name == user_data.user_name).first()
+        existing_user = (
+            db.query(User).filter(User.user_name == user_data.user_name).first()
+        )
         if existing_user:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -329,7 +340,9 @@ async def update_user_role(
 
     # Prevent admin from demoting themselves if they're the only admin
     if user.id == current_user.id and role_data.role == "user":
-        admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()
+        admin_count = (
+            db.query(User).filter(User.role == "admin", User.is_active == True).count()
+        )
         if admin_count <= 1:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -353,6 +366,7 @@ async def update_user_role(
 
 
 # ==================== Public Model Management Endpoints ====================
+
 
 @router.get("/public-models", response_model=PublicModelListResponse)
 async def list_public_models(
@@ -385,7 +399,11 @@ async def list_public_models(
     )
 
 
-@router.post("/public-models", response_model=PublicModelResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/public-models",
+    response_model=PublicModelResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def create_public_model(
     model_data: PublicModelCreate,
     db: Session = Depends(get_db),
@@ -397,7 +415,10 @@ async def create_public_model(
     # Check if model with same name and namespace already exists
     existing_model = (
         db.query(PublicModel)
-        .filter(PublicModel.name == model_data.name, PublicModel.namespace == model_data.namespace)
+        .filter(
+            PublicModel.name == model_data.name,
+            PublicModel.namespace == model_data.namespace,
+        )
         .first()
     )
     if existing_model:
@@ -449,7 +470,9 @@ async def update_public_model(
         namespace = model_data.namespace or model.namespace
         existing_model = (
             db.query(PublicModel)
-            .filter(PublicModel.name == model_data.name, PublicModel.namespace == namespace)
+            .filter(
+                PublicModel.name == model_data.name, PublicModel.namespace == namespace
+            )
             .first()
         )
         if existing_model:
@@ -506,6 +529,7 @@ async def delete_public_model(
 
 # ==================== System Stats Endpoint ====================
 
+
 @router.get("/stats", response_model=SystemStats)
 async def get_system_stats(
     db: Session = Depends(get_db),
@@ -518,7 +542,9 @@ async def get_system_stats(
 
     total_users = db.query(User).count()
     active_users = db.query(User).filter(User.is_active == True).count()
-    admin_count = db.query(User).filter(User.role == "admin", User.is_active == True).count()
+    admin_count = (
+        db.query(User).filter(User.role == "admin", User.is_active == True).count()
+    )
     total_tasks = db.query(Task).count()
     total_public_models = db.query(PublicModel).count()
 
@@ -532,6 +558,7 @@ async def get_system_stats(
 
 
 # ==================== Task Management Endpoints ====================
+
 
 @router.post(
     "/users/{user_id}/tasks",
