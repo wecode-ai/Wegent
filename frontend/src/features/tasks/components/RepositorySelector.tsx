@@ -52,6 +52,7 @@ export default function RepositorySelector({
   selectedTaskDetail,
 }: RepositorySelectorProps) {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const { user } = useUser();
   const router = useRouter();
   const [repos, setRepos] = useState<GitRepoInfo[]>([]);
@@ -383,7 +384,6 @@ export default function RepositorySelector({
   const handleIntegrationClick = () => {
     router.push(paths.settings.integrations.getHref());
   };
-  const { t } = useTranslation();
   const isMobile = useIsMobile();
 
   // Convert repos to SearchableSelectItem format
@@ -438,44 +438,47 @@ export default function RepositorySelector({
               {item?.label ? truncateMiddle(item.label, isMobile ? 20 : 25) : ''}
             </span>
           )}
-          listFooter={
-            <div
-              className="flex items-center justify-center gap-2 px-3 py-2.5 text-xs text-text-secondary hover:bg-muted cursor-pointer border-t border-border transition-colors"
-              onClick={e => {
-                e.stopPropagation();
-                handleRefreshCache();
-              }}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
+          footer={
+            <div className="border-t border-border bg-base flex items-center justify-between px-2.5 py-2 text-xs text-text-secondary">
+              <div
+                className="cursor-pointer group flex items-center space-x-2 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
+                onClick={handleIntegrationClick}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleIntegrationClick();
+                  }
+                }}
+              >
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('branches.configure_integration')}
+                </span>
+              </div>
+              <div
+                className="cursor-pointer flex items-center gap-1.5 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1.5 py-0.5"
+                onClick={e => {
                   e.stopPropagation();
                   handleRefreshCache();
-                }
-              }}
-            >
-              <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
-              <span>{isRefreshing ? t('branches.refreshing') : t('branches.load_more')}</span>
-            </div>
-          }
-          footer={
-            <div
-              className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
-              onClick={handleIntegrationClick}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleIntegrationClick();
-                }
-              }}
-            >
-              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-              <span className="font-medium group-hover:text-text-primary">
-                {t('branches.configure_integration')}
-              </span>
+                }}
+                role="button"
+                tabIndex={0}
+                title={t('branches.load_more')}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleRefreshCache();
+                  }
+                }}
+              >
+                <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+                <span className="text-xs">
+                  {isRefreshing ? t('branches.refreshing') : t('actions.refresh')}
+                </span>
+              </div>
             </div>
           }
         />
