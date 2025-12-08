@@ -284,10 +284,10 @@ wegent/
 │   └── init_data/        # YAML initialization data
 ├── frontend/             # Next.js frontend
 │   └── src/
-│       ├── app/          # Pages: /, /login, /settings, /chat, /code, /tasks, /shared/task
-│       ├── apis/         # API clients (client.ts + module-specific)
+│       ├── app/          # Pages: /, /login, /settings, /chat, /code, /tasks, /shared/task, /admin
+│       ├── apis/         # API clients (client.ts + module-specific, admin.ts)
 │       ├── components/   # UI components (ui/ for shadcn, common/)
-│       ├── features/     # Feature modules (common, layout, login, settings, tasks, theme, onboarding)
+│       ├── features/     # Feature modules (common, layout, login, settings, tasks, theme, onboarding, admin)
 │       ├── hooks/        # Custom hooks (useChatStream, useTranslation, useAttachment, useStreamingRecovery)
 │       ├── i18n/         # Internationalization (en, zh-CN)
 │       └── types/        # TypeScript types
@@ -372,6 +372,17 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 - `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ALGORITHM`
 - `OIDC_*` - OpenID Connect configuration
 - `WEBHOOK_*` - Webhook notification settings
+- `ATTACHMENT_STORAGE_BACKEND` - Storage backend for file attachments (default: "mysql")
+  - Supported values: "mysql", "s3", "minio"
+  - When set to "mysql", binary data is stored in the database
+  - When set to "s3" or "minio", files are stored in external object storage
+- `ATTACHMENT_S3_*` - S3/MinIO configuration (required when using S3/MinIO backend)
+  - `ATTACHMENT_S3_ENDPOINT` - S3 endpoint URL (e.g., "https://s3.amazonaws.com" or "http://minio:9000")
+  - `ATTACHMENT_S3_ACCESS_KEY` - S3 access key
+  - `ATTACHMENT_S3_SECRET_KEY` - S3 secret key
+  - `ATTACHMENT_S3_BUCKET` - S3 bucket name (default: "attachments")
+  - `ATTACHMENT_S3_REGION` - S3 region (default: "us-east-1")
+  - `ATTACHMENT_S3_USE_SSL` - Use SSL for S3 connections (default: true)
 
 #### Database Migrations (Alembic)
 
@@ -510,7 +521,26 @@ spec:
 | `/api/dify` | Dify app info, parameters |
 | `/api/v1/namespaces/{ns}/{kinds}` | Kubernetes-style Kind API |
 | `/api/v1/kinds/skills` | Skill upload/management |
-| `/api/admin` | Admin operations |
+| `/api/admin` | Admin operations (user management, public models, system stats) |
+
+### Admin API Endpoints (`/api/admin`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/users` | GET | List all users with pagination |
+| `/users` | POST | Create new user |
+| `/users/{user_id}` | GET | Get user details |
+| `/users/{user_id}` | PUT | Update user info |
+| `/users/{user_id}` | DELETE | Soft delete user (deactivate) |
+| `/users/{user_id}/reset-password` | POST | Reset user password |
+| `/users/{user_id}/toggle-status` | POST | Toggle user active status |
+| `/users/{user_id}/role` | PUT | Update user role |
+| `/public-models` | GET | List public models |
+| `/public-models` | POST | Create public model |
+| `/public-models/{model_id}` | GET | Get public model details |
+| `/public-models/{model_id}` | PUT | Update public model |
+| `/public-models/{model_id}` | DELETE | Delete public model |
+| `/stats` | GET | Get system statistics |
 
 ### Executor Manager Routes
 
@@ -523,6 +553,42 @@ spec:
 
 ---
 
+## 👥 User Role System
+
+### Role Types
+
+| Role | Description | Permissions |
+|------|-------------|-------------|
+| `admin` | System administrator | Full access to admin panel, user management, public model management |
+| `user` | Regular user | Standard access to tasks, teams, bots, models, shells |
+
+### Role-Based Access Control
+
+- **Admin Panel** (`/admin`): Only accessible to users with `role='admin'`
+- **User Menu**: Admin users see additional "Admin" menu item
+- **API Protection**: Admin endpoints require `get_admin_user` dependency
+
+### User Model Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | int | Primary key |
+| `user_name` | string | Unique username |
+| `email` | string | Optional email |
+| `role` | enum | 'admin' or 'user' (default: 'user') |
+| `auth_source` | enum | 'password', 'oidc', or 'unknown' |
+| `is_active` | bool | Account status |
+| `created_at` | datetime | Creation timestamp |
+| `updated_at` | datetime | Last update timestamp |
+
+### Database Migration
+
+The `role` column was added via migration `b2c3d4e5f6a7_add_role_to_users.py`:
+- Default value: 'user'
+- Users with `user_name='admin'` are automatically set to `role='admin'`
+
+---
+
 ## 🔒 Security
 
 - Never commit credentials - use `.env` files
@@ -530,6 +596,7 @@ spec:
 - Backend encrypts Git tokens and API keys (AES-256-CBC)
 - Change default passwords in production
 - OIDC support for enterprise SSO
+- Role-based access control for admin operations
 
 ---
 
@@ -590,5 +657,5 @@ cd backend && alembic revision --autogenerate -m "msg" && alembic upgrade head
 ---
 
 **Last Updated**: 2025-12
-**Wegent Version**: 1.0.19
+**Wegent Version**: 1.0.20
 **Maintained by**: WeCode-AI Team

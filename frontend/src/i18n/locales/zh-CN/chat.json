@@ -125,6 +125,8 @@
     "mcp_init_fail": "❌ MCP 初始化失败。"
   },
   "send_shortcut": "回车发送，Shift+回车换行",
+  "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
+  "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",
   "errors": {
     "payload_too_large": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小"
   },

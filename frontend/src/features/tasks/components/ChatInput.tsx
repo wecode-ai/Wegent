@@ -9,6 +9,7 @@ import TextareaAutosize from 'react-textarea-autosize';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+import { useUser } from '@/features/common/UserContext';
 
 interface ChatInputProps {
   message: string;
@@ -30,11 +31,26 @@ export default function ChatInput({
   const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
   const [isComposing, setIsComposing] = useState(false);
   const isMobile = useIsMobile();
+  const { user } = useUser();
 
-  // Get tooltip text for send shortcut
+  // Get user's send key preference (default to 'enter')
+  const sendKey = user?.preferences?.send_key || 'enter';
+
+  // Check if running on Mac
+  const isMac = useMemo(() => {
+    if (typeof window !== 'undefined') {
+      return navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    }
+    return false;
+  }, []);
+
+  // Get tooltip text for send shortcut based on user preference
   const tooltipText = useMemo(() => {
+    if (sendKey === 'cmd_enter') {
+      return isMac ? t('send_shortcut_cmd_enter_mac') : t('send_shortcut_cmd_enter_win');
+    }
     return t('send_shortcut');
-  }, [t]);
+  }, [t, sendKey, isMac]);
 
   const handleCompositionStart = () => {
     setIsComposing(true);
@@ -45,12 +61,27 @@ export default function ChatInput({
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    // Enter sends message, Shift+Enter creates new line
-    if (e.key === 'Enter' && !e.shiftKey && !disabled && !isComposing) {
-      e.preventDefault();
-      handleSendMessage();
+    if (disabled || isComposing) return;
+
+    // On mobile, Enter always creates new line (no easy Shift+Enter on mobile keyboards)
+    // Users can tap the send button to send messages
+
+    if (sendKey === 'cmd_enter') {
+      // Cmd/Ctrl+Enter sends message, Enter creates new line
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault();
+        handleSendMessage();
+      }
+      // Enter without modifier creates new line (default behavior)
+    } else {
+      if (isMobile) {
+        return;
+      } else if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        handleSendMessage();
+      }
+      // Shift+Enter creates new line (default behavior, no preventDefault)
     }
-    // Shift+Enter creates new line (default behavior, no preventDefault)
   };
 
   return (
