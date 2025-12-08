@@ -63,7 +63,10 @@ class PublicModelCreate(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=100)
     namespace: str = Field(default="default", max_length=100)
-    json: dict
+    model_json: dict = Field(..., alias="json")
+
+    class Config:
+        populate_by_name = True
 
 
 class PublicModelUpdate(BaseModel):
@@ -71,8 +74,11 @@ class PublicModelUpdate(BaseModel):
 
     name: Optional[str] = Field(None, min_length=1, max_length=100)
     namespace: Optional[str] = Field(None, max_length=100)
-    json: Optional[dict] = None
+    model_json: Optional[dict] = Field(None, alias="json")
     is_active: Optional[bool] = None
+
+    class Config:
+        populate_by_name = True
 
 
 class PublicModelResponse(BaseModel):
@@ -81,13 +87,14 @@ class PublicModelResponse(BaseModel):
     id: int
     name: str
     namespace: str
-    json: dict
+    model_json: dict = Field(..., alias="json", serialization_alias="json")
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+        populate_by_name = True
 
 
 class PublicModelListResponse(BaseModel):

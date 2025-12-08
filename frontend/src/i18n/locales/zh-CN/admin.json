@@ -27,6 +27,7 @@
     "no_users": "暂无用户",
     "no_email": "无邮箱",
     "show_inactive": "显示已禁用",
+    "search_placeholder": "搜索用户名或邮箱...",
     "create_user": "创建用户",
     "edit_user": "编辑用户",
     "delete_user": "删除用户",

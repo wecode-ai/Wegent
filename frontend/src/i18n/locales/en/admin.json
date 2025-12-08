@@ -27,6 +27,7 @@
     "no_users": "No users found",
     "no_email": "No email",
     "show_inactive": "Show inactive",
+    "search_placeholder": "Search username or email...",
     "create_user": "Create User",
     "edit_user": "Edit User",
     "delete_user": "Delete User",

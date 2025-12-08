@@ -54,15 +54,23 @@ async def list_all_users(
     page: int = Query(1, ge=1),
     limit: int = Query(20, ge=1, le=100),
     include_inactive: bool = Query(False),
+    search: Optional[str] = Query(None, description="Search by username or email"),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Get list of all users with pagination
+    Get list of all users with pagination and search
     """
     query = db.query(User)
     if not include_inactive:
         query = query.filter(User.is_active == True)
+
+    # Apply search filter
+    if search:
+        search_pattern = f"%{search}%"
+        query = query.filter(
+            (User.user_name.ilike(search_pattern)) | (User.email.ilike(search_pattern))
+        )
 
     total = query.count()
     users = query.offset((page - 1) * limit).limit(limit).all()
@@ -389,7 +397,7 @@ async def list_public_models(
                 id=model.id,
                 name=model.name,
                 namespace=model.namespace,
-                json=model.json,
+                model_json=model.json,
                 is_active=model.is_active,
                 created_at=model.created_at,
                 updated_at=model.updated_at,
@@ -430,7 +438,7 @@ async def create_public_model(
     new_model = PublicModel(
         name=model_data.name,
         namespace=model_data.namespace,
-        json=model_data.json,
+        json=model_data.model_json,
         is_active=True,
     )
     db.add(new_model)
@@ -441,7 +449,7 @@ async def create_public_model(
         id=new_model.id,
         name=new_model.name,
         namespace=new_model.namespace,
-        json=new_model.json,
+        model_json=new_model.json,
         is_active=new_model.is_active,
         created_at=new_model.created_at,
         updated_at=new_model.updated_at,
@@ -486,8 +494,8 @@ async def update_public_model(
         model.name = model_data.name
     if model_data.namespace is not None:
         model.namespace = model_data.namespace
-    if model_data.json is not None:
-        model.json = model_data.json
+    if model_data.model_json is not None:
+        model.json = model_data.model_json
     if model_data.is_active is not None:
         model.is_active = model_data.is_active
 
@@ -498,7 +506,7 @@ async def update_public_model(
         id=model.id,
         name=model.name,
         namespace=model.namespace,
-        json=model.json,
+        model_json=model.json,
         is_active=model.is_active,
         created_at=model.created_at,
         updated_at=model.updated_at,
