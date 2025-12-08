@@ -284,52 +284,8 @@ wegent/
 
 感谢以下开发者对本项目的贡献，为了让项目变得更好 💪
 
-<table>
-  <tr>
-    <td align="center">
-      <a href="https://github.com/qdaxb">
-        <img src="https://avatars.githubusercontent.com/qdaxb" width="80px;" alt="qdaxb"/>
-        <br />
-        <sub><b>qdaxb</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/cc-yafei">
-        <img src="https://avatars.githubusercontent.com/cc-yafei" width="80px;" alt="cc-yafei"/>
-        <br />
-        <sub><b>cc-yafei</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/fengkuizhi">
-        <img src="https://avatars.githubusercontent.com/fengkuizhi" width="80px;" alt="fengkuizhi"/>
-        <br />
-        <sub><b>fengkuizhi</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/feifei325">
-        <img src="https://avatars.githubusercontent.com/feifei325" width="80px;" alt="feifei325"/>
-        <br />
-        <sub><b>feifei325</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/Micro66">
-        <img src="https://avatars.githubusercontent.com/Micro66" width="80px;" alt="Micro66"/>
-        <br />
-        <sub><b>Micro66</b></sub>
-      </a>
-    </td>
-    <td align="center">
-      <a href="https://github.com/moqimoqidea">
-        <img src="https://avatars.githubusercontent.com/moqimoqidea" width="80px;" alt="moqimoqidea"/>
-        <br />
-        <sub><b>moqimoqidea</b></sub>
-      </a>
-    </td>
-  </tr>
-</table>
+<!-- readme: contributors -start -->
+<!-- readme: contributors -end -->
 
 ---
 
