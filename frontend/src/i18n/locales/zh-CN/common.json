@@ -329,6 +329,14 @@
     "enable_success": "浏览器通知已成功启用",
     "disable_success": "浏览器通知已禁用"
   },
+  "send_key": {
+    "title": "消息发送快捷键",
+    "description": "选择在聊天中发送消息的键盘快捷键",
+    "option_enter": "Enter 发送（Shift+Enter 换行）",
+    "option_cmd_enter": "Cmd/Ctrl+Enter 发送（Enter 换行）",
+    "save_success": "发送快捷键已保存",
+    "save_failed": "保存发送快捷键失败"
+  },
   "guide": {
     "title": "欢迎",
     "description": "在开始使用此应用之前，请先完成下面的设置！",

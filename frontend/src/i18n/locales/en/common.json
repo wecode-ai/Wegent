@@ -328,6 +328,14 @@
     "enable_success": "Browser notifications enabled successfully",
     "disable_success": "Browser notifications disabled"
   },
+  "send_key": {
+    "title": "Message Send Shortcut",
+    "description": "Choose which keyboard shortcut sends messages in the chat",
+    "option_enter": "Enter to send (Shift+Enter for new line)",
+    "option_cmd_enter": "Cmd/Ctrl+Enter to send (Enter for new line)",
+    "save_success": "Send key preference saved",
+    "save_failed": "Failed to save send key preference"
+  },
   "guide": {
     "title": "Welcome",
     "description": "Before you can start using the app, please complete the setup below first!",

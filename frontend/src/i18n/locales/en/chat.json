@@ -125,6 +125,8 @@
     "mcp_init_fail": "❌ MCP initialization failed. "
   },
   "send_shortcut": "Enter to send, Shift+Enter for new line",
+  "send_shortcut_cmd_enter_mac": "⌘+Enter to send, Enter for new line",
+  "send_shortcut_cmd_enter_win": "Ctrl+Enter to send, Enter for new line",
   "errors": {
     "payload_too_large": "Content too large: conversation history or attachment exceeds limit, please start a new conversation or reduce attachment size"
   },
