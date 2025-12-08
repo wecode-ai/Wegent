@@ -36,7 +36,14 @@
     "subtask_failed": "Subtask failed",
     "unknown_error": "Unknown error",
     "bot": "Bot",
-    "application_parameters": "Application Parameters"
+    "application_parameters": "Application Parameters",
+    "status_running": "Running",
+    "status_pending": "Pending",
+    "status_processing": "Processing",
+    "status_completed": "Completed",
+    "status_failed": "Failed",
+    "status_cancelled": "Cancelled",
+    "status_cancelling": "Cancelling"
   },
   "shared_task": {
     "share_task": "Share",

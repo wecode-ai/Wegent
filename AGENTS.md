@@ -21,17 +21,70 @@ Wegent is an open-source AI-native operating system for defining, organizing, an
 
 ---
 
+## 📝 Documentation Update Requirements
+
+**⚠️ CRITICAL: Update documentation after every significant code change**
+
+AI agents MUST update relevant documentation immediately after completing code changes. This ensures the codebase remains self-documenting and other agents can work efficiently.
+
+### When to Update Documentation
+
+| Change Type | Required Documentation Updates |
+|-------------|-------------------------------|
+| New API endpoint | Update `Key API Endpoints` section, add to `docs/` if complex |
+| New CRD/Schema | Update `CRD Architecture` section |
+| New Agent type | Update `Executor` section and agent types table |
+| New UI component | Update `Component Library` section if reusable |
+| New module/directory | Update `Project Structure` section |
+| New environment variable | Update relevant `Module-Specific Guidance` section |
+| Breaking change | Add migration notes, update version |
+| New feature | Update relevant section, add to changelog if exists |
+
+### Documentation Files to Consider
+
+| File | When to Update |
+|------|----------------|
+| `AGENTS.md` / `CLAUDE.md` | Architecture, workflows, module guidance changes |
+| `docs/en/guides/developer/` | Developer-facing guides, setup, testing |
+| `README.md` | Project overview, quick start, major features |
+| `backend/app/schemas/` | API schema changes (self-documenting) |
+| `frontend/src/types/` | TypeScript types (self-documenting) |
+
+### Documentation Checklist (Post-Implementation)
+
+Before creating a PR, verify:
+- [ ] AGENTS.md updated if architecture/workflow changed
+- [ ] API docs accurate (check `/api/docs` endpoint)
+- [ ] New environment variables documented
+- [ ] Breaking changes noted
+- [ ] Version number updated in `docker-compose.yml` and AGENTS.md if releasing
+
+### Auto-Reminder System
+
+The pre-push git hook will remind you to update documentation when:
+- Files in `backend/app/api/` are modified
+- Files in `backend/app/schemas/` are modified
+- New directories are created
+
+If the reminder appears and documentation is already up-to-date, use:
+```bash
+AI_VERIFIED=1 git push
+```
+
+---
+
 ## 📋 Project Overview
 
 **Multi-module architecture:**
 - **Backend** (FastAPI + SQLAlchemy + MySQL): RESTful API and business logic
 - **Frontend** (Next.js 15 + TypeScript + React 19): Web UI with shadcn/ui components
-- **Executor**: Task execution engine (Claude Code, Agno, Dify)
+- **Executor**: Task execution engine (Claude Code, Agno, Dify, ImageValidator)
 - **Executor Manager**: Task orchestration via Docker
-- **Shared**: Common utilities and models
+- **Shared**: Common utilities, models, and cryptography
+- **Wegent CLI** (`wegent-cli/`): kubectl-style CLI for resource management
 
 **Core principles:**
-- Kubernetes-inspired CRD design (Ghost, Model, Shell, Bot, Team, Task)
+- Kubernetes-inspired CRD design (Ghost, Model, Shell, Bot, Team, Task, Skill, Workspace)
 - High cohesion, low coupling - extract common logic, avoid duplication
 - Choose simplest working solution - prioritize code simplicity and extensibility
 
@@ -58,27 +111,22 @@ docker-compose up -d
 cd backend
 ./start.sh
 # Or manually with uv:
-# uv sync
-# source .venv/bin/activate
+# uv sync && source .venv/bin/activate
 # uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 **Frontend:**
 ```bash
 cd frontend
-npm install
-npm run dev
+npm install && npm run dev
 ```
 
 **Executor / Executor Manager:**
 ```bash
 cd executor  # or executor_manager
 ./start.sh
-# Or manually with uv:
-# uv sync
-# source .venv/bin/activate
-# python main.py  # for executor
-# uvicorn main:app --host 0.0.0.0 --port 8001  # for executor_manager
+# Or manually: uv sync && source .venv/bin/activate
+# python main.py (executor) | uvicorn main:app --port 8001 (manager)
 ```
 
 ---
@@ -93,6 +141,9 @@ cd backend && pytest --cov=app
 
 # Frontend
 cd frontend && npm test
+
+# E2E tests (Playwright)
+cd frontend && npm run test:e2e
 
 # Executor / Executor Manager / Shared
 cd <module> && pytest tests/ --cov
@@ -109,51 +160,32 @@ cd <module> && pytest tests/ --cov
 
 ## 💻 Code Style
 
-**⚠️ All code comments MUST be written in English.** This includes:
-- Inline comments
-- Block comments
-- Docstrings
-- TODO/FIXME annotations
-- Type hints descriptions
+**⚠️ All code comments MUST be written in English.** This includes inline comments, block comments, docstrings, TODO/FIXME annotations, and type hints descriptions.
 
 ### Python (Backend, Executor, Executor Manager, Shared)
 
-**Standards:**
-- PEP 8 compliant
-- Black formatter (line length: 88)
-- isort for imports
-- Type hints required
+**Standards:** PEP 8, Black formatter (line length: 88), isort, type hints required
 
 ```bash
-# Format and lint
 black . && isort .
 pylint app/ && flake8 app/
 ```
 
 **Guidelines:**
-- Descriptive names for functions/variables
-- Docstrings for public functions/classes
+- Descriptive names, docstrings for public functions/classes
 - Extract magic numbers to constants
 - Max 50 lines per function (preferred)
 
 ### TypeScript/React (Frontend)
 
-**Standards:**
-- TypeScript strict mode
-- Functional components with hooks
-- Prettier formatter
-- ESLint (Next.js config)
-- Single quotes, no semicolons
+**Standards:** TypeScript strict mode, functional components, Prettier, ESLint, single quotes, no semicolons
 
 ```bash
-# Format and lint
-npm run format
-npm run lint
+npm run format && npm run lint
 ```
 
 **Guidelines:**
 - Use `const` over `let`, never `var`
-- Functional patterns preferred
 - Component names: PascalCase, files: kebab-case
 - Types in `src/types/`
 
@@ -163,161 +195,40 @@ npm run lint
 
 ### Color System - Calm UI Philosophy
 
-**Design principles:**
-- Low saturation + low contrast = reduced eye strain
-- Minimal shadows, generous whitespace
-- Subtle component differentiation (<10% background variance)
-- Mint blue (`#14B8A6`) as primary accent - use sparingly
+**Design principles:** Low saturation + low contrast, minimal shadows, generous whitespace, mint blue (`#14B8A6`) as primary accent.
 
-**Core colors (CSS variables):**
-
+**Core CSS variables:**
 ```css
-/* Backgrounds */
---color-bg-base          /* Main: white (light) / #0E0F0F (dark) */
---color-bg-surface       /* Cards: #F7F7F8 (light) / #1A1C1C (dark) */
---color-bg-muted         /* Subtle: #F2F2F2 (light) / #212424 (dark) */
---color-bg-hover         /* Hover: #E0E0E0 (light) / #2A2D2D (dark) */
-
-/* Text */
---color-text-primary     /* Main text: #1A1A1A (light) / #ECECEC (dark) */
---color-text-secondary   /* Secondary: #666 (light) / #D4D4D4 (dark) */
---color-text-muted       /* Hints: #A0A0A0 (both themes) */
-
-/* Borders */
---color-border           /* Default: #E0E0E0 (light) / #2A2D2D (dark) */
---color-border-strong    /* Emphasis: #C0C0C0 (light) / #343535 (dark) */
-
-/* Theme colors */
---color-primary          /* Mint blue: #14B8A6 */
---color-success          /* Same as primary: #14B8A6 */
---color-error            /* Red: #EF4444 (light) / #F85149 (dark) */
---color-link             /* Blue: #55B9F7 */
---color-code-bg          /* #F6F8FA (light) / #0D1117 (dark) */
+/* Backgrounds: --color-bg-base, --color-bg-surface, --color-bg-muted, --color-bg-hover */
+/* Text: --color-text-primary, --color-text-secondary, --color-text-muted */
+/* Borders: --color-border, --color-border-strong */
+/* Theme: --color-primary (#14B8A6), --color-error, --color-link */
 ```
 
 **Tailwind usage:**
 ```jsx
 className="bg-base text-text-primary"        // Page background
 className="bg-surface border-border"         // Card
-className="text-text-muted"                  // Subtle text
 className="bg-primary text-white"            // Primary button
-className="text-link hover:underline"        // Link
 ```
 
-### Spacing & Sizing
+### Spacing & Typography
 
-**Standard spacing (1 unit = 4px):**
-- `p-2` (8px): Small element padding
-- `p-4` (16px): Default card padding
-- `p-6` (24px): Large card padding
-- `gap-3` (12px): Default element gap
-- `space-y-3` (12px): Vertical stacking
-
-**Border radius:**
-- `rounded-2xl` (16px): Large containers (ChatArea input, modals)
-- `rounded-lg` (12px): Cards, dropdowns
-- `rounded-md` (6px): Buttons, inputs, tags
-- `rounded-full`: Badges, avatars
-
-**Typography:**
-- H1: `text-xl font-semibold` (20px/600) - Page titles
-- H2: `text-lg font-semibold` (18px/600) - Section titles
-- H3: `text-base font-medium` (16px/500) - Card titles
-- Body: `text-sm` (14px/400) - Content, buttons
-- Caption: `text-xs text-text-muted` (12px/400) - Hints
+- Spacing: `p-2` (8px), `p-4` (16px), `p-6` (24px), `gap-3` (12px)
+- Border radius: `rounded-2xl` (16px), `rounded-lg` (12px), `rounded-md` (6px)
+- Typography: H1 `text-xl font-semibold`, H2 `text-lg font-semibold`, Body `text-sm`
 
 ### Component Library (shadcn/ui)
 
 **Location:** `frontend/src/components/ui/`
 
-**Core components:**
-- **Button**: variants = `default | secondary | ghost | outline | link`
-- **Card**: Use for list items, settings panels
-- **Input**: Standard text inputs
-- **Dialog**: Modals and confirmations
-- **Drawer**: Slide-out panels
-- **Select**: Dropdowns
-- **Switch**: Toggle controls
-- **Checkbox / RadioGroup**: Form selections
-- **Badge / Tag**: Status indicators
-- **Alert**: Page-level notifications
-- **Toast**: Temporary notifications (use `useToast()` hook)
-- **Dropdown Menu**: Context menus
-- **Form**: Built on react-hook-form + zod validation
+**Core components:** Button (variants: default/secondary/ghost/outline/link), Card, Input, Dialog, Drawer, Select, SearchableSelect, Switch, Checkbox, RadioGroup, Badge, Tag, Alert, Toast, Tooltip, Form (react-hook-form + zod), Transfer, Progress, Spinner
 
-**Button example:**
+**Example:**
 ```jsx
 import { Button } from '@/components/ui/button'
-
 <Button variant="default">Save</Button>
 <Button variant="ghost" size="icon"><PencilIcon className="w-4 h-4" /></Button>
-<Button className="bg-error hover:bg-error/90">Delete</Button>
-```
-
-**Card list layout:**
-```jsx
-<div className="space-y-3 p-1">
-  {items.map(item => (
-    <Card key={item.id} className="p-4 hover:shadow-md transition-shadow">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3 min-w-0 flex-1">
-          <Icon className="w-5 h-5 text-primary" />
-          <div className="min-w-0 flex-1">
-            <h3 className="text-base font-medium truncate">{item.name}</h3>
-            <div className="flex gap-1.5 mt-2">
-              <Tag variant="default">{item.type}</Tag>
-            </div>
-          </div>
-        </div>
-        <div className="flex gap-1">
-          <Button variant="ghost" size="icon" className="h-8 w-8">
-            <PencilIcon className="w-4 h-4" />
-          </Button>
-        </div>
-      </div>
-    </Card>
-  ))}
-</div>
-```
-
-**Form with validation:**
-```jsx
-import { useForm } from 'react-hook-form'
-import { zodResolver } from '@hookform/resolvers/zod'
-import * as z from 'zod'
-import { Form, FormField, FormItem, FormLabel, FormControl } from '@/components/ui/form'
-import { Input } from '@/components/ui/input'
-
-const schema = z.object({
-  name: z.string().min(2).max(50),
-})
-
-const form = useForm({ resolver: zodResolver(schema) })
-
-<Form {...form}>
-  <form onSubmit={form.handleSubmit(onSubmit)}>
-    <FormField
-      control={form.control}
-      name="name"
-      render={({ field }) => (
-        <FormItem>
-          <FormLabel>Name</FormLabel>
-          <FormControl>
-            <Input {...field} />
-          </FormControl>
-        </FormItem>
-      )}
-    />
-  </form>
-</Form>
-```
-
-**Responsive design:**
-```jsx
-// Mobile-first approach
-<div className="px-4 sm:px-6">              // Responsive padding
-<div className="grid grid-cols-1 md:grid-cols-2">  // Responsive grid
-<p className="hidden sm:block">             // Hide on small screens
 ```
 
 ---
@@ -326,137 +237,34 @@ const form = useForm({ resolver: zodResolver(schema) })
 
 ### AI Code Quality Check (Pre-push)
 
-Wegent uses git hooks to ensure code quality for AI coding agents (Claude Code, Cursor, etc.). All quality checks run **before push**, allowing multiple commits locally without interruption.
-
 **⚠️ CRITICAL: AI Agents MUST Comply with Git Hook Output**
 
-When pushing code, pre-push hooks will run quality checks and may output warnings or errors. **AI coding agents MUST strictly follow the git hook output**:
+1. **If quality checks fail**: FIX all reported issues, DO NOT use `--no-verify`
+2. **If documentation reminders appear**: Update docs first, or use `AI_VERIFIED=1 git push` after thorough verification
 
-1. **If quality checks fail** (lint, type check, tests, build):
-   - DO NOT use `--no-verify` to bypass
-   - FIX all reported issues before pushing again
-   - Read the error details in "FAILED CHECKS DETAIL" section
-
-2. **If documentation reminders appear**:
-   - STOP and review whether documentation updates are needed
-   - If docs need updating: Update relevant documentation files first, then push
-   - If docs are already up-to-date: Use `AI_VERIFIED=1 git push` ONLY after thorough verification
-   - DO NOT blindly use `AI_VERIFIED=1` to skip - this defeats the purpose of the check
-
-3. **Response to hook output**:
-   - Treat hook warnings as mandatory action items
-   - Include any required documentation updates in the same commit/push
-   - Report hook check results to the user when relevant
-
-**Auto-enabled in Executor:**
-When the executor clones a repository, git hooks are automatically configured via `core.hooksPath=.githooks`. No manual installation required.
-
-**Local Development (via npm install):**
-```bash
-cd frontend && npm install  # Husky automatically configures pre-push hook
-```
-
-**Manual Installation (alternative):**
-```bash
-# Configure git to use .githooks directory
-git config core.hooksPath .githooks
-```
-
-**Usage:**
+**Auto-enabled in Executor via `core.hooksPath=.githooks`**
 
 ```bash
-# Normal workflow - checks run automatically before push
-git add .
-git commit -m "feat: your feature"
-git push  # <- Quality checks run here
+# Normal workflow
+git add . && git commit -m "feat: your feature" && git push
 
-# If documentation reminders shown, verify and push
+# If doc reminders shown after verification
 AI_VERIFIED=1 git push
 
-# Skip all checks (not recommended)
-git push --no-verify
-```
-
-**Quality Checks:**
-
-| Check | Tools | Scope |
-|-------|-------|-------|
-| Doc Reminders | Custom script | API, Schema changes |
-
-**Manual Commands:**
-```bash
-# Run checks manually
+# Manual check
 bash scripts/hooks/ai-push-gate.sh
-
-# Skip all checks (not recommended)
-git push --no-verify
 ```
 
-**Check Output Example:**
-```
-══════════════════════════════════════════════════════════
-📋 AI Code Quality Check Report (Pre-push)
-══════════════════════════════════════════════════════════
+### Branch Naming & Commits
 
-📁 Files to be pushed:
-   Total: 6 file(s)
-   Modules affected:
-   - Backend: 3 file(s)
-   - Frontend: 2 file(s)
+**Branch pattern:** `<type>/<description>` (feature/, fix/, refactor/, docs/, test/, chore/)
 
-✅ Lint & Format: PASSED
-✅ Type Check: PASSED
-✅ Unit Tests: PASSED (backend: 42 passed)
-✅ Build Check: PASSED
-
-⚠️ Documentation Reminders:
-   - backend/app/api/ changed → Check docs/ for updates
-
-══════════════════════════════════════════════════════════
-```
-
-### Branch Naming
-
-**Pattern:** `<type>/<description>`
-
-- `feature/`: New features
-- `fix/`: Bug fixes
-- `refactor/`: Code refactoring
-- `docs/`: Documentation
-- `test/`: Tests
-- `chore/`: Build/tools
-
-**Example:** `feature/add-ghost-yaml-import`
-
-### Commit Messages
-
-**Format:** [Conventional Commits](https://www.conventionalcommits.org/)
-
+**Commit format:** [Conventional Commits](https://www.conventionalcommits.org/)
 ```
 <type>[scope]: <description>
-
-[optional body]
+# Types: feat | fix | docs | style | refactor | test | chore
+# Example: feat(backend): add Ghost YAML import API
 ```
-
-**Types:** `feat | fix | docs | style | refactor | test | chore`
-
-**Examples:**
-```
-feat(backend): add Ghost YAML import API
-fix(frontend): resolve task status display issue
-docs: update AGENTS.md with design system
-refactor(executor): simplify agent initialization
-```
-
-### Pull Requests
-
-**Title format:** `<type>[scope]: <Title>`
-
-**Before submitting PR:**
-- [ ] All tests pass
-- [ ] Code formatted and linted
-- [ ] No merge conflicts
-- [ ] Documentation updated if needed
 
 ---
 
@@ -464,30 +272,83 @@ refactor(executor): simplify agent initialization
 
 ```
 wegent/
-├── backend/          # FastAPI backend
+├── backend/              # FastAPI backend
 │   ├── app/
-│   │   ├── api/      # Route handlers
-│   │   ├── models/   # SQLAlchemy models
-│   │   ├── schemas/  # Pydantic schemas
-│   │   └── services/ # Business logic
-│   └── init_data/    # YAML initialization data
-├── frontend/         # Next.js frontend
+│   │   ├── api/          # Route handlers (auth, bots, models, shells, teams, tasks, chat, git, executors, dify, quota, admin)
+│   │   ├── core/         # Config, security, cache, YAML init
+│   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, PublicModel, PublicShell, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
+│   │   ├── schemas/      # Pydantic schemas & CRD definitions
+│   │   ├── services/     # Business logic (chat/, adapters/, kind.py, repository.py)
+│   │   └── repository/   # Git providers (GitHub, GitLab, Gitee, Gerrit)
+│   ├── alembic/          # Database migrations
+│   └── init_data/        # YAML initialization data
+├── frontend/             # Next.js frontend
 │   └── src/
-│       ├── app/      # Pages (App Router)
-│       ├── apis/     # API clients
-│       ├── components/ui/  # shadcn/ui components
-│       ├── features/ # Feature modules
-│       └── types/    # TypeScript types
-├── executor/         # Task executor
-│   ├── agents/       # Agent implementations
-│   └── tasks/        # Task handlers
-├── executor_manager/ # Orchestration
-│   ├── executors/    # Executor lifecycle
-│   └── scheduler/    # Task scheduling
-└── shared/           # Common utilities
-    ├── models/       # Shared models
-    └── utils/        # Utility functions
+│       ├── app/          # Pages: /, /login, /settings, /chat, /code, /tasks, /shared/task
+│       ├── apis/         # API clients (client.ts + module-specific)
+│       ├── components/   # UI components (ui/ for shadcn, common/)
+│       ├── features/     # Feature modules (common, layout, login, settings, tasks, theme, onboarding)
+│       ├── hooks/        # Custom hooks (useChatStream, useTranslation, useAttachment, useStreamingRecovery)
+│       ├── i18n/         # Internationalization (en, zh-CN)
+│       └── types/        # TypeScript types
+├── executor/             # Task executor (runs in Docker)
+│   ├── agents/           # ClaudeCode, Agno, Dify, ImageValidator
+│   ├── callback/         # Progress callback handlers
+│   ├── services/         # AgentService
+│   └── tasks/            # TaskProcessor, TaskStateManager, ResourceManager
+├── executor_manager/     # Task orchestration
+│   ├── executors/        # DockerExecutor, dispatcher
+│   ├── scheduler/        # APScheduler-based task scheduling
+│   ├── clients/          # TaskAPIClient
+│   └── routers/          # API routes
+├── shared/               # Common utilities
+│   ├── models/           # Task data models
+│   ├── utils/            # crypto, git_util, http_util, yaml_util
+│   └── status.py         # TaskStatus enum
+├── wegent-cli/           # CLI tool (wectl)
+├── docker/               # Dockerfiles for all modules
+├── docs/                 # Documentation (en/, zh/)
+├── scripts/hooks/        # Git hook scripts
+└── .githooks/            # Pre-push hooks
 ```
+
+---
+
+## 🔧 CRD Architecture (Kubernetes-inspired)
+
+### Resource Hierarchy
+
+```
+Ghost (system prompt + MCP servers + skills)
+   ↓
+Bot (Ghost + Shell + optional Model)
+   ↓
+Team (multiple Bots with roles)
+   ↓
+Task (Team + Workspace) → Subtasks (messages/steps)
+```
+
+### CRD Definitions (apiVersion: agent.wecode.io/v1)
+
+| Kind | Purpose | Key Spec Fields |
+|------|---------|-----------------|
+| **Ghost** | System prompt & tools | `systemPrompt`, `mcpServers`, `skills` |
+| **Model** | LLM configuration | `modelConfig`, `isCustomConfig`, `protocol` |
+| **Shell** | Execution environment | `shellType`, `supportModel`, `baseImage`, `baseShellRef` |
+| **Bot** | Agent unit | `ghostRef`, `shellRef`, `modelRef`, `agent_config` |
+| **Team** | Agent group | `members[{botRef, prompt, role}]`, `collaborationModel` |
+| **Task** | Execution unit | `title`, `prompt`, `teamRef`, `workspaceRef` |
+| **Workspace** | Git repository | `repository{gitUrl, gitRepo, branchName, gitDomain}` |
+| **Skill** | Claude Code skill | `description`, `version`, `author`, `tags` |
+
+### Shell Types
+
+| Type | Label | Description |
+|------|-------|-------------|
+| `ClaudeCode` | `local_engine` | Claude Code SDK in Docker |
+| `Agno` | `local_engine` | Agno framework in Docker |
+| `Dify` | `external_api` | External Dify API proxy |
+| `Chat` | `direct_chat` | Direct LLM API (no Docker) |
 
 ---
 
@@ -497,99 +358,91 @@ wegent/
 
 **Tech:** FastAPI, SQLAlchemy, Pydantic, MySQL, Redis, Alembic
 
+**Key directories:**
+- `app/api/` - Route handlers
+- `app/services/adapters/` - CRD service implementations
+- `app/services/chat/` - Streaming chat with model resolver
+- `app/repository/` - Git providers (GitHub, GitLab, Gitee, Gerrit)
+
 **Common tasks:**
 - Add endpoint: Create in `app/api/`, schema in `app/schemas/`, logic in `app/services/`
-- Add model: Create in `app/models/`, generate migration with Alembic
+- Add model: Create in `app/models/`, run `alembic revision --autogenerate -m "description"`
 
-**Environment variables:** `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`
+**Key environment variables:**
+- `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ALGORITHM`
+- `OIDC_*` - OpenID Connect configuration
+- `WEBHOOK_*` - Webhook notification settings
 
 #### Database Migrations (Alembic)
 
-**Migration workflow:**
 ```bash
 cd backend
-
-# Create migration after model changes
-alembic revision --autogenerate -m "description of changes"
-
-# Review generated migration in alembic/versions/
-# Always verify auto-generated migrations before applying
-
-# Apply migrations
-alembic upgrade head
-
-# Check current status
-alembic current
+alembic revision --autogenerate -m "description"  # Create migration
+alembic upgrade head                               # Apply migrations
+alembic current                                    # Check status
+alembic downgrade -1                               # Rollback one
 ```
 
-**Development vs Production:**
-- **Development**: Migrations auto-run on startup when `ENVIRONMENT=development` and `DB_AUTO_MIGRATE=True`
-- **Production**: Run migrations manually before deployment
-
-**Common commands:**
-```bash
-# View migration history
-alembic history --verbose
-
-# Rollback one version
-alembic downgrade -1
-
-# Rollback to specific revision
-alembic downgrade <revision_id>
-
-# Preview SQL without applying
-alembic upgrade head --sql
-```
-
-**Best practices:**
-- Always review auto-generated migrations before applying
-- Test migrations on copy of production data
-- Backup database before production migrations
-- Never edit applied migrations - create new one instead
-- Keep migrations small and focused
-
-**For detailed migration guide, see:** [`docs/en/guides/developer/database-migrations.md`](docs/en/guides/developer/database-migrations.md)
+**Development:** Auto-migrate when `ENVIRONMENT=development` and `DB_AUTO_MIGRATE=True`
 
 ### Frontend
 
-**Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui
+**Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, i18next
 
-**Common tasks:**
-- Add page: Create in `src/app/`
-- Add API call: Add function in `src/apis/`
-- Add component: Use/extend `src/components/ui/`
-- Add type: Define in `src/types/`
+**Key directories:**
+- `src/app/` - App Router pages
+- `src/features/settings/` - Models, Teams, Bots, Shells, Skills management
+- `src/features/tasks/` - Chat interface, Workbench, streaming
+- `src/apis/` - API client modules
 
-**Key feature modules:**
-- `src/features/settings/` - Settings page components including Models, Teams, Bots
-- `src/features/tasks/` - Task management and chat interface
-- `src/apis/models.ts` - Model API client (unified models, test connection)
+**Route Groups:** `(tasks)` wraps `/chat` and `/code` with shared contexts (UserProvider, TaskContextProvider, ChatStreamProvider)
 
-**Environment:** `NEXT_PUBLIC_API_URL` for client-side API calls
+**State Management:** Context-based (UserContext, TaskContext, ChatStreamContext, ThemeContext)
+
+**API Routes:** `/api/chat/stream` proxies SSE to backend (required for streaming)
+
+**Key features:**
+- Streaming chat with recovery (`useStreamingRecovery`)
+- PDF export (`ExportPdfButton`, `pdf-generator.ts`)
+- Task/Team sharing (`TaskShareModal`, `TeamShareModal`)
+- Dify integration (`DifyAppSelector`, `DifyParamsForm`)
 
 ### Executor
 
-**Tech:** Python, Claude Code SDK, Agno, Dify API, Docker
+**Tech:** Python, Claude Code SDK, Agno, Dify API, MCP
 
-**Supported Agent Types:**
-- **ClaudeCode**: For code development tasks with Claude Code SDK
-- **Agno**: For dialogue and chat tasks
-- **Dify**: For external API integration with Dify platform (chat, workflow, chatflow, agent-chat modes)
+**Agent types:**
+| Agent | Type | Key Features |
+|-------|------|--------------|
+| `ClaudeCode` | `local_engine` | Claude Code SDK, Git clone, Skills support, MCP servers, custom instructions (.cursorrules, .windsurfrules) |
+| `Agno` | `local_engine` | Team modes (coordinate/collaborate/route), SQLite sessions, MCP support |
+| `Dify` | `external_api` | Proxy to Dify (chat/chatflow/workflow/agent-chat modes), no local code execution |
+| `ImageValidator` | `validator` | Custom base image validation |
 
-**Common tasks:**
-- Add agent type: Implement in `agents/`
-- Modify execution: Update `tasks/`
+**Key files:**
+- `agents/factory.py` - Agent factory
+- `agents/base.py` - Base Agent class
+- `tasks/task_state_manager.py` - Task state tracking
+- `callback/callback_client.py` - Progress callbacks
 
-**Environment Variables:**
-- Claude Code: `ANTHROPIC_AUTH_TOKEN`
-- Agno: `ANTHROPIC_API_KEY`
-- Dify: `DIFY_API_KEY`, `DIFY_BASE_URL`
+**Environment variables:**
+- `ANTHROPIC_AUTH_TOKEN` (Claude Code), `ANTHROPIC_API_KEY` (Agno)
+- `DIFY_API_KEY`, `DIFY_BASE_URL`
+- `CALLBACK_URL`, `WORKSPACE_ROOT`
 
 ### Executor Manager
 
-**Tech:** Python, Docker SDK, FastAPI
+**Tech:** Python, Docker SDK, FastAPI, APScheduler
 
-**Environment:** `TASK_API_DOMAIN`, `EXECUTOR_IMAGE`, `MAX_CONCURRENT_TASKS`, `NETWORK`
+**Key components:**
+- `scheduler/scheduler.py` - Periodic task fetching (online/offline)
+- `executors/docker/executor.py` - Docker container lifecycle
+- `clients/task_api_client.py` - Backend API communication
+
+**Environment variables:**
+- `TASK_API_DOMAIN`, `EXECUTOR_IMAGE`, `NETWORK`
+- `MAX_CONCURRENT_TASKS` (default: 30)
+- `PORT_RANGE_MIN/MAX` (10000-10100)
 
 ---
 
@@ -597,67 +450,94 @@ alembic upgrade head --sql
 
 ### Model Types
 
-Wegent supports two types of AI models:
-
 | Type | Description | Storage |
 |------|-------------|---------|
-| **Public** | System-provided models, shared across all users | `public_models` table |
+| **Public** | System-provided, shared across users | `public_models` table |
 | **User** | User-defined private models | `kinds` table (kind='Model') |
 
 ### Model Resolution Order
 
-When a Bot executes a task, models are resolved in this order:
-1. Task-level model override (if `force_override_bot_model` is true)
+1. Task-level model override (`force_override_bot_model`)
 2. Bot's `bind_model` from `agent_config`
 3. Bot's `modelRef` (legacy)
 4. Default model
 
 ### Key APIs
 
-- `GET /api/models/unified` - List all available models (public + user)
-- `GET /api/models/unified/{name}` - Get specific model by name
-- `POST /api/models/test-connection` - Test model API connection
-- `GET /api/models/compatible?agent_name=X` - Get models compatible with agent type
+```
+GET  /api/models/unified              # List all models (public + user)
+GET  /api/models/unified/{name}       # Get model by name
+POST /api/models/test-connection      # Test API connection
+GET  /api/models/compatible?agent_name=X  # Get compatible models
+```
 
 ### Bot Model Binding
 
-Two ways to bind models to Bots:
-
 ```yaml
-# Method 1: Using modelRef (legacy)
+# Recommended: bind_model in agent_config
+spec:
+  agent_config:
+    bind_model: "my-model"
+    bind_model_type: "user"  # 'public' or 'user'
+
+# Legacy: modelRef
 spec:
   modelRef:
     name: model-name
     namespace: default
-
-# Method 2: Using bind_model (recommended)
-spec:
-  agent_config:
-    bind_model: "my-model"
-    bind_model_type: "user"  # Optional: 'public' or 'user'
 ```
+
+---
+
+## 📡 Key API Endpoints
+
+### Backend Routes
+
+| Prefix | Purpose |
+|--------|---------|
+| `/api/auth` | Authentication (login, OIDC) |
+| `/api/users` | User management |
+| `/api/bots` | Bot CRUD |
+| `/api/models` | Model management (unified, test-connection, compatible) |
+| `/api/shells` | Shell management (unified, validate-image) |
+| `/api/teams` | Team CRUD, sharing |
+| `/api/tasks` | Task CRUD, cancel, sharing |
+| `/api/chat` | Streaming chat, cancel, resume-stream |
+| `/api/subtasks` | Subtask management |
+| `/api/attachments` | File upload/download |
+| `/api/git` | Repository, branches, diff |
+| `/api/executors` | Task dispatch, status updates |
+| `/api/dify` | Dify app info, parameters |
+| `/api/v1/namespaces/{ns}/{kinds}` | Kubernetes-style Kind API |
+| `/api/v1/kinds/skills` | Skill upload/management |
+| `/api/admin` | Admin operations |
+
+### Executor Manager Routes
+
+| Endpoint | Purpose |
+|----------|---------|
+| `/executor-manager/callback` | Task progress callbacks |
+| `/executor-manager/tasks/receive` | Batch task submission |
+| `/executor-manager/tasks/cancel` | Cancel running task |
+| `/executor-manager/images/validate` | Validate base image |
 
 ---
 
 ## 🔒 Security
 
-- Never commit credentials - use `.env` files (excluded from git)
+- Never commit credentials - use `.env` files
 - Frontend: Only use `NEXT_PUBLIC_*` for client-safe values
-- Backend encrypts Git tokens before database storage
-- Change default passwords in production (`docker-compose.yml`)
+- Backend encrypts Git tokens and API keys (AES-256-CBC)
+- Change default passwords in production
+- OIDC support for enterprise SSO
 
 ---
 
 ## 🐛 Debugging
 
 ```bash
-# Backend logs
+# Service logs
 docker logs -f wegent-backend
-
-# Frontend verbose mode
-npm run dev -- --debug
-
-# Executor logs
 docker logs -f <executor-container-id>
 
 # Database access
@@ -668,29 +548,26 @@ docker exec -it wegent-redis redis-cli
 ```
 
 **Common issues:**
-- Database connection failed: Check MySQL is running, verify credentials
-- Port in use: Change ports in `docker-compose.yml`
-- Import errors: Activate venv, reinstall dependencies
+- Database connection failed: Check MySQL running, verify credentials
+- Streaming not working: Ensure `/api/chat/stream` proxy route exists in frontend
+- Task stuck in PENDING: Check executor_manager logs, verify `TASK_API_DOMAIN`
 
 ---
 
 ## 📖 Resources
 
-- **Main README**: Project overview and quick start
-- **CONTRIBUTING.md**: Detailed contribution guidelines
-- **API Docs**: http://localhost:8000/api/docs (when backend running)
+- **API Docs**: http://localhost:8000/api/docs
 - **Testing Guide**: `docs/en/guides/developer/testing.md`
 - **Setup Guide**: `docs/en/guides/developer/setup.md`
+- **Migration Guide**: `docs/en/guides/developer/database-migrations.md`
 
 ---
 
 ## 🎯 Quick Reference
 
 ```bash
-# Start all services
+# Start/stop services
 docker-compose up -d
-
-# Stop all services
 docker-compose down
 
 # View logs
@@ -704,15 +581,14 @@ cd frontend && npm test
 cd backend && black . && isort .
 cd frontend && npm run format
 
-# Rebuild service
-docker-compose up -d --build [service]
+# Database migration
+cd backend && alembic revision --autogenerate -m "msg" && alembic upgrade head
 ```
 
-**Ports:** 3000 (frontend), 8000 (backend), 8001 (executor manager), 3306 (MySQL), 6379 (Redis)
+**Ports:** 3000 (frontend), 8000 (backend), 8001 (executor manager), 3306 (MySQL), 6379 (Redis), 10000-10100 (executors)
 
 ---
 
-**Last Updated**: 2025-07
-**Wegent Version**: 1.0.13
+**Last Updated**: 2025-12
+**Wegent Version**: 1.0.19
 **Maintained by**: WeCode-AI Team
-
