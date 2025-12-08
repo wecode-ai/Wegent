@@ -84,6 +84,19 @@ REDIS_PASSWORD=your_redis_password  # Optional
 PASSWORD_KEY=your-password-key-here
 DATABASE_URL=mysql+pymysql://task_user:your_password@mysql:3306/task_manager
 
+# Attachment Storage Configuration (Optional)
+# Default: mysql (stores files in database)
+# Options: mysql, s3, minio
+ATTACHMENT_STORAGE_BACKEND=mysql
+
+# S3/MinIO Configuration (only required when using s3 or minio backend)
+# ATTACHMENT_S3_ENDPOINT=https://s3.amazonaws.com  # or http://minio:9000
+# ATTACHMENT_S3_ACCESS_KEY=your_access_key
+# ATTACHMENT_S3_SECRET_KEY=your_secret_key
+# ATTACHMENT_S3_BUCKET=attachments
+# ATTACHMENT_S3_REGION=us-east-1
+# ATTACHMENT_S3_USE_SSL=true
+
 # Frontend Configuration
 NEXT_PUBLIC_API_URL=http://localhost:8000
 
