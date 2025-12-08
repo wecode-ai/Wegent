@@ -24,12 +24,8 @@ function AccessDenied() {
   return (
     <div className="flex flex-col items-center justify-center min-h-[60vh] text-center px-4">
       <ShieldExclamationIcon className="w-16 h-16 text-text-muted mb-4" />
-      <h1 className="text-2xl font-semibold text-text-primary mb-2">
-        {t('access_denied.title')}
-      </h1>
-      <p className="text-text-muted mb-6 max-w-md">
-        {t('access_denied.message')}
-      </p>
+      <h1 className="text-2xl font-semibold text-text-primary mb-2">{t('access_denied.title')}</h1>
+      <p className="text-text-muted mb-6 max-w-md">{t('access_denied.message')}</p>
       <Link href="/">
         <Button>{t('access_denied.go_home')}</Button>
       </Link>

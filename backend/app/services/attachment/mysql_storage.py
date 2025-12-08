@@ -120,7 +120,7 @@ class MySQLStorageBackend(StorageBackend):
         """
         Delete file data from MySQL.
 
-        For MySQL backend, this clears the binary_data column but doesn't
+        For MySQL backend, this sets binary_data to empty bytes (b'') but doesn't
         delete the attachment record (that's handled by AttachmentService).
 
         Args:
@@ -140,7 +140,8 @@ class MySQLStorageBackend(StorageBackend):
             if attachment is None:
                 return False
 
-            attachment.binary_data = None
+            # Set to empty bytes instead of None (NOT NULL constraint)
+            attachment.binary_data = b""
             self._db.flush()
 
             logger.debug(
@@ -173,7 +174,10 @@ class MySQLStorageBackend(StorageBackend):
             if attachment is None:
                 return False
 
-            return attachment.binary_data is not None
+            # Check if binary_data exists and is not empty
+            return (
+                attachment.binary_data is not None and len(attachment.binary_data) > 0
+            )
 
         except Exception as e:
             logger.error(f"Failed to check existence in MySQL storage: {e}")

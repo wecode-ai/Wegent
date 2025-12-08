@@ -160,7 +160,10 @@ export const adminApis = {
   /**
    * Get list of all public models with pagination
    */
-  async getPublicModels(page: number = 1, limit: number = 20): Promise<AdminPublicModelListResponse> {
+  async getPublicModels(
+    page: number = 1,
+    limit: number = 20
+  ): Promise<AdminPublicModelListResponse> {
     return apiClient.get(`/admin/public-models?page=${page}&limit=${limit}`);
   },
 
