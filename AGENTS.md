@@ -235,14 +235,32 @@ import { Button } from '@/components/ui/button'
 
 ## 🔄 Git Workflow
 
+### Git Hooks (Husky)
+
+**Location:** `frontend/.husky/`
+
+Git hooks are managed by [Husky](https://typicode.github.io/husky/) and configured in the frontend module. The hooks are automatically installed when running `npm install` in the frontend directory (via the `prepare` script).
+
+**Available hooks:**
+
+| Hook | Purpose |
+|------|---------|
+| `pre-commit` | Python formatting (black + isort) for staged `.py` files, lint-staged for frontend files |
+| `commit-msg` | Validates commit message format (Conventional Commits) |
+| `pre-push` | Runs AI push gate quality checks (`scripts/hooks/ai-push-gate.sh`) |
+
+**Setup:**
+```bash
+cd frontend
+npm install  # Automatically runs 'husky frontend/.husky' via prepare script
+```
+
 ### AI Code Quality Check (Pre-push)
 
 **⚠️ CRITICAL: AI Agents MUST Comply with Git Hook Output**
 
 1. **If quality checks fail**: FIX all reported issues, DO NOT use `--no-verify`
 2. **If documentation reminders appear**: Update docs first, or use `AI_VERIFIED=1 git push` after thorough verification
-
-**Auto-enabled in Executor via `core.hooksPath=.githooks`**
 
 ```bash
 # Normal workflow
@@ -254,6 +272,12 @@ AI_VERIFIED=1 git push
 # Manual check
 bash scripts/hooks/ai-push-gate.sh
 ```
+
+### Pre-commit Hook Details
+
+The pre-commit hook performs:
+1. **Python formatting**: Automatically formats staged `.py` files with `black` and `isort`, then re-stages them
+2. **Frontend linting**: Runs `lint-staged` for frontend files (prettier + eslint)
 
 ### Branch Naming & Commits
 
@@ -308,9 +332,10 @@ wegent/
 ├── wegent-cli/           # CLI tool (wectl)
 ├── docker/               # Dockerfiles for all modules
 ├── docs/                 # Documentation (en/, zh/)
-├── scripts/hooks/        # Git hook scripts
-└── .githooks/            # Pre-push hooks
+└── scripts/hooks/        # Git hook scripts (called by Husky)
 ```
+
+**Note:** Git hooks are managed by Husky in `frontend/.husky/`, not in a root `.githooks/` directory.
 
 ---
 
