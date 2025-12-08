@@ -163,6 +163,10 @@
   },
   "export": {
     "export_pdf": "导出 PDF",
+    "export_docx": "导出 DOCX",
+    "exporting_docx": "正在导出 DOCX...",
+    "docx_success": "DOCX 导出成功",
+    "docx_failed": "DOCX 导出失败",
     "no_messages": "暂无可导出的消息",
     "select_at_least_one": "请至少选择一条消息",
     "selected_count": "已选择: {{count}} 条消息",

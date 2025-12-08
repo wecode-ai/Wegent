@@ -163,6 +163,10 @@
   },
   "export": {
     "export_pdf": "Export PDF",
+    "export_docx": "Export DOCX",
+    "exporting_docx": "Exporting DOCX...",
+    "docx_success": "DOCX exported successfully",
+    "docx_failed": "Failed to export DOCX",
     "no_messages": "No messages to export",
     "select_at_least_one": "Please select at least one message",
     "selected_count": "Selected: {{count}} message(s)",
