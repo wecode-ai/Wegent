@@ -25,6 +25,7 @@ import {
   NoSymbolIcon,
   CheckCircleIcon,
 } from '@heroicons/react/24/outline';
+import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -51,12 +52,25 @@ import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
 const UserList: React.FC = () => {
   const { t } = useTranslation('admin');
+  const { t: tCommon } = useTranslation('common');
   const { toast } = useToast();
   const [users, setUsers] = useState<AdminUser[]>([]);
-  const [_total, setTotal] = useState(0);
-  const [page, _setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const pageSize = 20;
+
+  // Debounce search input
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setPage(1); // Reset to first page when search changes
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   // Dialog states
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -79,7 +93,12 @@ const UserList: React.FC = () => {
   const fetchUsers = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await adminApis.getUsers(page, 20, includeInactive);
+      const response = await adminApis.getUsers(
+        page,
+        pageSize,
+        includeInactive,
+        debouncedSearch || undefined
+      );
       setUsers(response.items);
       setTotal(response.total);
     } catch (_error) {
@@ -90,7 +109,7 @@ const UserList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [page, includeInactive, toast, t]);
+  }, [page, pageSize, includeInactive, debouncedSearch, toast, t]);
 
   useEffect(() => {
     fetchUsers();
@@ -273,7 +292,25 @@ const UserList: React.FC = () => {
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('users.title')}</h2>
           <p className="text-sm text-text-muted">{t('users.description')}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-4">
+          {/* Search Input */}
+          <div className="relative">
+            <Input
+              type="text"
+              placeholder={t('users.search_placeholder')}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-64 h-9 pl-3 pr-8"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+              >
+                ×
+              </button>
+            )}
+          </div>
           <label className="flex items-center gap-2 text-sm text-text-muted">
             <input
               type="checkbox"
@@ -385,9 +422,41 @@ const UserList: React.FC = () => {
           </div>
         )}
 
-        {/* Add Button */}
+        {/* Pagination and Add Button */}
         {!loading && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
+            {/* Pagination */}
+            {total > pageSize && (
+              <div className="flex items-center justify-center gap-4 mb-3">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="h-8 px-3"
+                >
+                  <ChevronLeftIcon className="w-4 h-4 mr-1" />
+                  {tCommon('common.previous')}
+                </Button>
+                <span className="text-sm text-text-muted">
+                  {tCommon('common.page_info', {
+                    current: page,
+                    total: Math.ceil(total / pageSize),
+                  })}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setPage(p => Math.min(Math.ceil(total / pageSize), p + 1))}
+                  disabled={page >= Math.ceil(total / pageSize)}
+                  className="h-8 px-3"
+                >
+                  {tCommon('common.next')}
+                  <ChevronRightIcon className="w-4 h-4 ml-1" />
+                </Button>
+              </div>
+            )}
+            {/* Add Button */}
             <div className="flex justify-center">
               <UnifiedAddButton onClick={() => setIsCreateDialogOpen(true)}>
                 {t('users.create_user')}
