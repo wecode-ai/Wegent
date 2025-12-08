@@ -7,7 +7,7 @@ FROM almalinux:latest
 RUN dnf upgrade -y \
  && dnf install -y epel-release curl-minimal gcc make git wget gnupg python3.12 python3.12-devel python3.12-pip which \
  && curl -fsSL https://rpm.nodesource.com/setup_20.x | bash - \
- && dnf install -y nodejs \
+ && dnf install -y nodejs gh tar gzip\
  && ln -sf /usr/bin/python3.12 /usr/bin/python \
  && ln -sf /usr/bin/python3.12 /usr/bin/python3 \
  && ln -sf /usr/bin/pip3.12 /usr/bin/pip3 \
@@ -33,3 +33,20 @@ RUN set -eux; \
     mv docker/* /usr/bin/; \
     chmod +x /usr/bin/docker; \
     rm -rf docker
+
+RUN ARCH=$(uname -m) \
+ && if [ "$ARCH" = "x86_64" ]; then \
+      URL="https://gitlab.com/gitlab-org/cli/-/releases/v1.79.0/downloads/glab_1.79.0_linux_amd64.tar.gz"; \
+      EXT="tar.gz"; \
+    else \
+      URL="https://gitlab.com/gitlab-org/cli/-/releases/v1.79.0/downloads/glab_1.79.0_linux_arm64.rpm"; \
+      EXT="rpm"; \
+    fi \
+ && echo "Downloading glab from $URL" \
+ && curl -fL "$URL" -o glab_package.$EXT \
+ && if [ "$EXT" = "tar.gz" ]; then \
+      tar -xzf glab_package.tar.gz -C /usr/local/bin --strip-components=1 glab; \
+    else \
+      dnf install -y ./glab_package.rpm; \
+    fi \
+ && rm -f glab_package.$EXT
