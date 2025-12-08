@@ -130,7 +130,8 @@ class Settings(BaseSettings):
 
     # Web search configuration
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
-    WEB_SEARCH_PROVIDER: str = "duckduckgo"  # Search provider: duckduckgo, google, bing
+    WEB_SEARCH_BASE_URL: str = ""  # Search API endpoint URL
+    WEB_SEARCH_CONFIG: str = "{}"  # JSON configuration for search API adapter
     WEB_SEARCH_MAX_RESULTS: int = 5  # Default maximum search results
 
     class Config:
