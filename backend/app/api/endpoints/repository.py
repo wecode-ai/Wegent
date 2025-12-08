@@ -20,6 +20,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.post("/repositories/refresh")
+async def refresh_repositories(
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Force refresh user's repository cache.
+    Clears the Redis cache for all git domains configured by the user,
+    forcing fresh data to be fetched from Git providers on next request.
+    """
+    cleared_domains = await repository_service.clear_user_cache(current_user)
+    logger.info(
+        f"User {current_user.user_name} cleared repository cache for domains: {cleared_domains}"
+    )
+    return {
+        "success": True,
+        "message": "Repository cache cleared successfully",
+        "cleared_domains": cleared_domains,
+    }
+
+
 @router.get("/repositories", response_model=List[RepositoryResult])
 async def get_repositories(
     page: int = Query(1, ge=1, description="Page number"),
