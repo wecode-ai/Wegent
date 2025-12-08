@@ -126,11 +126,24 @@ alembic upgrade head
 ```
 backend/alembic/
 ├── versions/           # 迁移脚本（应用后不要编辑）
-│   └── 0c086b93f8b9_initial_migration.py
+│   ├── 0c086b93f8b9_initial_migration.py
+│   └── b2c3d4e5f6a7_add_role_to_users.py  # 用户角色迁移
 ├── env.py             # Alembic 运行时环境
 ├── script.py.mako     # 新迁移的模板
 └── README             # 快速参考
 ```
+
+## 重要迁移说明
+
+### 用户角色迁移 (`b2c3d4e5f6a7`)
+
+此迁移为 `users` 表添加 `role` 列，用于基于角色的访问控制：
+
+- **列名**: `role` (VARCHAR(20), NOT NULL, 默认值: 'user')
+- **可选值**: 'admin' 或 'user'
+- **自动升级**: `user_name='admin'` 的用户会自动设置为 `role='admin'`
+
+该迁移使用条件 SQL 来安全处理列已存在的情况。
 
 ## 工作流示例
 

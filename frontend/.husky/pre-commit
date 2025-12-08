@@ -1,15 +1,59 @@
 #!/usr/bin/env sh
 
-# Ensure we're in the correct directory
-# If not in frontend, try to navigate to it from project root
-if [ ! -f "package.json" ] || ! grep -q '"name": "wecode-ai-assistant"' package.json 2>/dev/null; then
-  if [ -d "frontend" ]; then
-    cd frontend || exit 1
+# Get the project root directory
+PROJECT_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+
+# =============================================================================
+# Python Code Formatting Auto-fix (black + isort)
+# =============================================================================
+
+# Get staged Python files
+PYTHON_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '\.py$' || true)
+
+if [ -n "$PYTHON_FILES" ]; then
+  echo "🐍 Formatting Python files with black and isort..."
+  
+  # Check if black is available
+  if python -m black --version >/dev/null 2>&1; then
+    # Run black to auto-fix staged Python files
+    echo "$PYTHON_FILES" | xargs python -m black 2>/dev/null
+    echo "✅ Black formatting applied"
   else
-    echo "Error: Cannot locate frontend directory"
-    exit 1
+    echo "⚠️ Black not installed. Skipping black formatting."
   fi
+  
+  # Check if isort is available
+  if python -m isort --version >/dev/null 2>&1; then
+    # Run isort to auto-fix staged Python files
+    echo "$PYTHON_FILES" | xargs python -m isort 2>/dev/null
+    echo "✅ isort formatting applied"
+  else
+    echo "⚠️ isort not installed. Skipping isort formatting."
+  fi
+  
+  # Re-add the formatted files to staging
+  echo "$PYTHON_FILES" | xargs git add
 fi
 
-# Run lint-staged
-npx lint-staged
+# =============================================================================
+# Frontend Code Formatting Check (lint-staged)
+# =============================================================================
+
+# Check if there are staged frontend files
+FRONTEND_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '^frontend/' || true)
+
+if [ -n "$FRONTEND_FILES" ]; then
+  # Ensure we're in the correct directory for frontend
+  cd "$PROJECT_ROOT"
+  if [ ! -f "package.json" ] || ! grep -q '"name": "wecode-ai-assistant"' package.json 2>/dev/null; then
+    if [ -d "frontend" ]; then
+      cd frontend || exit 1
+    else
+      echo "Error: Cannot locate frontend directory"
+      exit 1
+    fi
+  fi
+
+  # Run lint-staged
+  npx lint-staged
+fi

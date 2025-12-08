@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 import uuid
 from typing import Any, Dict, List, Optional
 
@@ -143,6 +144,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             password_hash=security.get_password_hash(password),
             git_info=git_info,
             is_active=True,
+            preferences=json.dumps({}),
         )
         db.add(db_obj)
         db.commit()
@@ -251,6 +253,14 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
 
         if obj_in.password:
             user.password_hash = security.get_password_hash(obj_in.password)
+
+        if obj_in.preferences is not None:
+            # Merge with existing preferences or set new ones
+            existing_prefs = json.loads(user.preferences) if user.preferences else {}
+            new_prefs = obj_in.preferences.model_dump()
+            # Create a new dict and serialize to JSON string
+            merged_prefs = {**existing_prefs, **new_prefs}
+            user.preferences = json.dumps(merged_prefs)
 
         db.add(user)
         db.commit()
