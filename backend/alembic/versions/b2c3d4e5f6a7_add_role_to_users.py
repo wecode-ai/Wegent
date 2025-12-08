@@ -11,13 +11,13 @@ Create Date: 2025-07-22 10:00:00.000000+08:00
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = 'b2c3d4e5f6a7'
-down_revision: Union[str, Sequence[str], None] = '2b3c4d5e6f7g'
+revision: str = "b2c3d4e5f6a7"
+down_revision: Union[str, Sequence[str], None] = "add_user_preferences"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -30,7 +30,8 @@ def upgrade() -> None:
     Users with user_name='admin' will be set to role='admin'.
     """
     # Check if column already exists before adding
-    op.execute("""
+    op.execute(
+        """
     SET @column_exists = (
         SELECT COUNT(*)
         FROM INFORMATION_SCHEMA.COLUMNS
@@ -38,25 +39,30 @@ def upgrade() -> None:
         AND TABLE_NAME = 'users'
         AND COLUMN_NAME = 'role'
     );
-    """)
+    """
+    )
 
-    op.execute("""
+    op.execute(
+        """
     SET @query = IF(@column_exists = 0,
         'ALTER TABLE users ADD COLUMN role VARCHAR(20) NOT NULL DEFAULT ''user'' AFTER is_active',
         'SELECT 1'
     );
-    """)
+    """
+    )
 
     op.execute("PREPARE stmt FROM @query;")
     op.execute("EXECUTE stmt;")
     op.execute("DEALLOCATE PREPARE stmt;")
 
     # Set admin role for users with user_name='admin'
-    op.execute("""
+    op.execute(
+        """
     UPDATE users SET role = 'admin' WHERE user_name = 'admin';
-    """)
+    """
+    )
 
 
 def downgrade() -> None:
     """Remove role column from users table."""
-    op.drop_column('users', 'role')
+    op.drop_column("users", "role")
