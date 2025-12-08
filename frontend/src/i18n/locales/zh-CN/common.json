@@ -289,7 +289,11 @@
     "no_match": "没有匹配的结果",
     "default": "(默认)",
     "set_token": "设置token",
-    "configure_integration": "配置仓库集成"
+    "configure_integration": "配置仓库集成",
+    "load_more": "刷新仓库列表",
+    "refreshing": "刷新中...",
+    "refresh_success": "仓库列表已刷新",
+    "refresh_failed": "刷新失败，请重试"
   },
   "tasks": {
     "search_placeholder": "搜索任务",

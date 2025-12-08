@@ -42,6 +42,7 @@ interface SearchableSelectProps {
   triggerClassName?: string;
   renderTriggerValue?: (item: SearchableSelectItem | undefined) => React.ReactNode;
   footer?: React.ReactNode;
+  listFooter?: React.ReactNode; // Content rendered at the end of the list (after items, before footer)
   showChevron?: boolean; // Whether to show chevron icon
 }
 
@@ -62,6 +63,7 @@ export function SearchableSelect({
   triggerClassName,
   renderTriggerValue,
   footer,
+  listFooter,
   showChevron = false,
 }: SearchableSelectProps) {
   const [isOpen, setIsOpen] = React.useState(false);
@@ -194,6 +196,7 @@ export function SearchableSelect({
                 </>
               )}
             </CommandList>
+            {listFooter}
           </Command>
           {footer}
         </PopoverContent>

@@ -91,7 +91,7 @@ class AttachmentService:
 
         # Create attachment record with UPLOADING status
         # For MySQL backend, store binary_data directly
-        # For external backends, binary_data will be set to None after storage
+        # For external backends, binary_data will be set to empty bytes (b'') after storage
         attachment = SubtaskAttachment(
             subtask_id=effective_subtask_id,
             user_id=user_id,
@@ -99,14 +99,14 @@ class AttachmentService:
             file_extension=extension,
             file_size=file_size,
             mime_type=mime_type,
-            binary_data=binary_data,  # Temporarily store here for MySQL backend
+            binary_data=binary_data,  # Temporarily store here, will be cleared for external storage
             image_base64="",  # Empty string as placeholder, will be updated after parsing
             extracted_text="",  # Empty string as placeholder, will be updated after parsing
             text_length=0,  # Will be updated after parsing
             status=AttachmentStatus.UPLOADING,
             error_message="",  # Empty string as placeholder
             storage_backend=storage_backend.backend_type,
-            storage_key=None,  # Will be set after getting ID
+            storage_key="",  # Will be set after getting ID
         )
         db.add(attachment)
         db.flush()  # Get the ID
@@ -207,14 +207,15 @@ class AttachmentService:
         Returns:
             Binary data or None if not found
         """
-        # If binary_data is already in the attachment record, return it
-        if attachment.binary_data is not None:
-            return attachment.binary_data
+        # Check if data is stored in MySQL (storage_backend == 'mysql')
+        if attachment.storage_backend == "mysql":
+            # For MySQL storage, binary_data contains the actual data
+            return attachment.binary_data if attachment.binary_data else None
 
-        # Otherwise, retrieve from storage backend using storage_key
-        if attachment.storage_key is None:
+        # For external storage, retrieve from storage backend using storage_key
+        if not attachment.storage_key or attachment.storage_key == "":
             logger.warning(
-                f"Attachment {attachment.id} has no storage_key and no binary_data"
+                f"Attachment {attachment.id} has no storage_key for external storage"
             )
             return None
 
@@ -241,7 +242,12 @@ class AttachmentService:
         Returns:
             URL string if supported, None otherwise
         """
-        if attachment.storage_key is None:
+        # Only external storage backends support URL access
+        if (
+            not attachment.storage_key
+            or attachment.storage_key == ""
+            or attachment.storage_backend == "mysql"
+        ):
             return None
 
         storage_backend = get_storage_backend(db)

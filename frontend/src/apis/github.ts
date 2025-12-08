@@ -54,4 +54,16 @@ export const githubApis = {
       `/git/repositories/branches?git_repo=${encodeURIComponent(repo.git_repo)}&type=${repo.type}&git_domain=${encodeURIComponent(repo.git_domain)}`
     );
   },
+
+  /**
+   * Force refresh user's repository cache.
+   * Clears backend Redis cache to fetch fresh data from Git providers.
+   */
+  async refreshRepositories(): Promise<{
+    success: boolean;
+    message: string;
+    cleared_domains: string[];
+  }> {
+    return await apiClient.post('/git/repositories/refresh');
+  },
 };
