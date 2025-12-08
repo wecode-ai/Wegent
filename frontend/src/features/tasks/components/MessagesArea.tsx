@@ -137,6 +137,7 @@ export default function MessagesArea({
   const [shareUrl, setShareUrl] = useState('');
   const [isSharing, setIsSharing] = useState(false);
   const [isExportingPdf, setIsExportingPdf] = useState(false);
+  const [isExportingDocx, setIsExportingDocx] = useState(false);
 
   // Use Typewriter effect for streaming content
   const displayContent = useTypewriter(streamingContent || '');
@@ -305,6 +306,47 @@ export default function MessagesArea({
       setIsExportingPdf(false);
     }
   }, [selectedTaskDetail, toast, t, tCommon, loadImageAsBase64]);
+
+  // Handle DOCX export
+  const handleExportDocx = useCallback(async () => {
+    if (!selectedTaskDetail?.id) {
+      toast({
+        variant: 'destructive',
+        title: tCommon('shared_task.no_task_selected'),
+        description: tCommon('shared_task.no_task_selected_desc'),
+      });
+      return;
+    }
+
+    setIsExportingDocx(true);
+    try {
+      // Call backend API
+      const blob = await taskApis.exportTaskDocx(selectedTaskDetail.id);
+
+      // Trigger download
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${selectedTaskDetail.title || selectedTaskDetail.prompt?.slice(0, 50) || 'Chat_Export'}_${new Date().toISOString().split('T')[0]}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(url);
+
+      toast({
+        title: t('export.docx_success') || 'DOCX exported successfully',
+      });
+    } catch (error) {
+      console.error('Failed to export DOCX:', error);
+      toast({
+        variant: 'destructive',
+        title: t('export.docx_failed') || 'Failed to export DOCX',
+        description: error instanceof Error ? error.message : 'Unknown error',
+      });
+    } finally {
+      setIsExportingDocx(false);
+    }
+  }, [selectedTaskDetail, toast, t, tCommon]);
 
   // Check if team uses Chat Shell (streaming mode, no polling needed)
   // Case-insensitive comparison since backend may return 'chat' or 'Chat'
@@ -609,7 +651,7 @@ export default function MessagesArea({
       return null;
     }
 
-    const isDisabled = isSharing || isExportingPdf;
+    const isDisabled = isSharing || isExportingPdf || isExportingDocx;
 
     return (
       <DropdownMenu>
@@ -648,6 +690,18 @@ export default function MessagesArea({
                 : tCommon('shared_task.share_pdf')}
             </span>
           </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={handleExportDocx}
+            disabled={isExportingDocx}
+            className="flex items-center gap-2 cursor-pointer"
+          >
+            <FileText className="h-4 w-4" />
+            <span>
+              {isExportingDocx
+                ? t('export.exporting_docx') || 'Exporting DOCX...'
+                : t('export.export_docx') || 'Export DOCX'}
+            </span>
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
     );
@@ -656,8 +710,10 @@ export default function MessagesArea({
     displayMessages.length,
     isSharing,
     isExportingPdf,
+    isExportingDocx,
     handleShareTask,
     handleExportPdf,
+    handleExportDocx,
     t,
     tCommon,
   ]);
