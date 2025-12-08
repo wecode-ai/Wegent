@@ -128,6 +128,11 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
 
+    # Web search configuration
+    WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
+    WEB_SEARCH_PROVIDER: str = "duckduckgo"  # Search provider: duckduckgo, google, bing
+    WEB_SEARCH_MAX_RESULTS: int = 5  # Default maximum search results
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

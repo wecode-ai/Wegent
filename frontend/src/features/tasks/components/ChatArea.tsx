@@ -5,7 +5,7 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, CircleStop, Upload } from 'lucide-react';
+import { Send, CircleStop, Upload, Globe } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -74,6 +74,9 @@ export default function ChatArea({
   const [isLoading, setIsLoading] = useState(false);
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
+
+  // Web search toggle state
+  const [enableWebSearch, setEnableWebSearch] = useState(false);
 
   // External API parameters state
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
@@ -472,6 +475,7 @@ export default function ChatArea({
             model_id: modelId,
             force_override_bot_model: forceOverride,
             attachment_id: attachmentState.attachment?.id,
+            enable_web_search: enableWebSearch,
           },
           {
             pendingUserMessage: message,
@@ -925,6 +929,22 @@ export default function ChatArea({
                             onRemove={handleAttachmentRemove}
                           />
                         )}
+                      {/* Web Search Toggle Button - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => setEnableWebSearch(!enableWebSearch)}
+                          className={`h-8 w-8 rounded-lg flex-shrink-0 transition-colors ${
+                            enableWebSearch
+                              ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                              : 'text-text-muted hover:bg-surface hover:text-text-primary'
+                          }`}
+                          title={enableWebSearch ? 'Disable web search' : 'Enable web search'}
+                        >
+                          <Globe className="h-4 w-4" />
+                        </Button>
+                      )}
                       {teams.length > 0 && (
                         <TeamSelector
                           selectedTeam={selectedTeam}
