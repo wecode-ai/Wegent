@@ -3,6 +3,10 @@
     "name": "Wegent AI 助手",
     "description": "浏览器中的完整 AI 团队。"
   },
+  "repos": {
+    "repository": "选择仓库",
+    "branch": "选择分支"
+  },
   "actions": {
     "save": "保存",
     "saving": "保存中...",
@@ -668,7 +672,11 @@
     "handler_no_teams": "没有可用的智能体",
     "handler_create_team_hint": "您需要至少创建一个智能体才能复制此任务。",
     "handler_copying": "复制中...",
-    "handler_copy_to_tasks": "继续聊天"
+    "handler_copy_to_tasks": "继续聊天",
+    "handler_code_settings": "代码仓库设置",
+    "handler_repo_hint": "系统会尝试自动选择原任务的仓库。如果您没有权限访问，请手动选择其他仓库",
+    "handler_repo_required": "请选择仓库",
+    "handler_branch_required": "请选择分支"
   },
   "inAppBrowser": {
     "title": "默认浏览器打开",

@@ -93,6 +93,12 @@ export interface TaskShareInfo {
   user_name: string;
   task_id: number;
   task_title: string;
+  task_type?: string; // 'chat' or 'code'
+  git_repo_id?: number; // Original task's repository ID (for code tasks)
+  git_repo?: string; // Original task's repository full name (e.g., "owner/repo")
+  git_domain?: string; // Original task's git domain (e.g., "github.com")
+  git_type?: string; // Original task's git type: "github", "gitlab", "gitee"
+  branch_name?: string; // Original task's branch name (for code tasks)
 }
 
 export interface JoinSharedTaskRequest {
@@ -100,6 +106,12 @@ export interface JoinSharedTaskRequest {
   team_id?: number; // Optional: if not provided, backend will use user's first team
   model_id?: string; // Model name (not database ID)
   force_override_bot_model?: boolean; // Force override bot's predefined model
+  // Complete repository information (for code tasks)
+  git_repo_id?: number; // Git repository ID
+  git_url?: string; // Git repository URL
+  git_repo?: string; // Repository full name (e.g., "owner/repo")
+  git_domain?: string; // Git domain (e.g., "github.com")
+  branch_name?: string; // Git branch name
 }
 
 export interface JoinSharedTaskResponse {
