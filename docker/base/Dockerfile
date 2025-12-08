@@ -34,8 +34,7 @@ RUN set -eux; \
     chmod +x /usr/bin/docker; \
     rm -rf docker
 
-RUN ARCH=$(uname -m) \
- && if [ "$ARCH" = "x86_64" ]; then \
+RUN if [ "$TARGETARCH" = "x86_64" ]; then \
       URL="https://gitlab.com/gitlab-org/cli/-/releases/v1.79.0/downloads/glab_1.79.0_linux_amd64.tar.gz"; \
       EXT="tar.gz"; \
     else \
