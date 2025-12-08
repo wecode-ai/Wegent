@@ -458,6 +458,38 @@ if [ "$EXECUTOR_MGR_COUNT" -gt 0 ] 2>/dev/null; then
 fi
 
 # -----------------------------------------------------------------------------
+# Alembic Multi-Head Checks (if backend files changed)
+# -----------------------------------------------------------------------------
+if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
+    echo -e "${BLUE}🔍 Alembic Multi-Head Check:${NC}"
+
+    # Get script directory and run alembic check
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    ALEMBIC_CHECK_SCRIPT="$SCRIPT_DIR/check-alembic-heads.sh"
+
+    if [ -x "$ALEMBIC_CHECK_SCRIPT" ]; then
+        "$ALEMBIC_CHECK_SCRIPT" > "$TEMP_DIR/alembic.log" 2>&1
+        ALEMBIC_EXIT=$?
+
+        if [ $ALEMBIC_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ Alembic Multi-Head Check: PASSED${NC}"
+        elif [ $ALEMBIC_EXIT -eq 1 ]; then
+            echo -e "   ${RED}❌ Alembic Multi-Head Check: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Alembic Multi-Head")
+            FAILED_LOGS+=("$TEMP_DIR/alembic.log")
+        else
+            echo -e "   ${YELLOW}⚠️ Alembic check could not determine status${NC}"
+            WARNINGS+=("Alembic: check returned unexpected exit code $ALEMBIC_EXIT")
+        fi
+    else
+        echo -e "   ${YELLOW}⚠️ SKIP: Alembic check script not found${NC}"
+        WARNINGS+=("Alembic: check script not found at $ALEMBIC_CHECK_SCRIPT")
+    fi
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
 # Check Results Summary
 # -----------------------------------------------------------------------------
 echo -e "${CYAN}══════════════════════════════════════════════════════════${NC}"
