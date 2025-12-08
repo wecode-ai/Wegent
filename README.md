@@ -317,14 +317,14 @@ Thanks to the following developers for their contributions and efforts to make t
         <a href="https://github.com/moqimoqidea">
             <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
             <br />
-            <sub><b>moqimoqidea</b></sub>
+            <sub><b>Moqimoqidea</b></sub>
         </a>
     </td>
     <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
-            <sub><b>fengkuizhi</b></sub>
+            <sub><b>Fengkuizhi</b></sub>
         </a>
     </td>
     <td align="center">
