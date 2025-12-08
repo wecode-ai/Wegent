@@ -119,7 +119,9 @@ class Settings(BaseSettings):
     # If not configured or set to "mysql", binary data is stored in MySQL database
     ATTACHMENT_STORAGE_BACKEND: str = "mysql"
     # S3/MinIO configuration (only used when ATTACHMENT_STORAGE_BACKEND is "s3" or "minio")
-    ATTACHMENT_S3_ENDPOINT: str = ""  # e.g., "https://s3.amazonaws.com" or "http://minio:9000"
+    ATTACHMENT_S3_ENDPOINT: str = (
+        ""  # e.g., "https://s3.amazonaws.com" or "http://minio:9000"
+    )
     ATTACHMENT_S3_ACCESS_KEY: str = ""
     ATTACHMENT_S3_SECRET_KEY: str = ""
     ATTACHMENT_S3_BUCKET: str = "attachments"

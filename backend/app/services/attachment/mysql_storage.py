@@ -66,9 +66,11 @@ class MySQLStorageBackend(StorageBackend):
         """
         try:
             attachment_id = self._extract_attachment_id(key)
-            attachment = self._db.query(SubtaskAttachment).filter(
-                SubtaskAttachment.id == attachment_id
-            ).first()
+            attachment = (
+                self._db.query(SubtaskAttachment)
+                .filter(SubtaskAttachment.id == attachment_id)
+                .first()
+            )
 
             if attachment is None:
                 raise StorageError(f"Attachment not found: {attachment_id}", key)
@@ -99,9 +101,11 @@ class MySQLStorageBackend(StorageBackend):
         """
         try:
             attachment_id = self._extract_attachment_id(key)
-            attachment = self._db.query(SubtaskAttachment).filter(
-                SubtaskAttachment.id == attachment_id
-            ).first()
+            attachment = (
+                self._db.query(SubtaskAttachment)
+                .filter(SubtaskAttachment.id == attachment_id)
+                .first()
+            )
 
             if attachment is None:
                 return None
@@ -127,9 +131,11 @@ class MySQLStorageBackend(StorageBackend):
         """
         try:
             attachment_id = self._extract_attachment_id(key)
-            attachment = self._db.query(SubtaskAttachment).filter(
-                SubtaskAttachment.id == attachment_id
-            ).first()
+            attachment = (
+                self._db.query(SubtaskAttachment)
+                .filter(SubtaskAttachment.id == attachment_id)
+                .first()
+            )
 
             if attachment is None:
                 return False
@@ -137,7 +143,9 @@ class MySQLStorageBackend(StorageBackend):
             attachment.binary_data = None
             self._db.flush()
 
-            logger.debug(f"Deleted binary data from MySQL for attachment {attachment_id}")
+            logger.debug(
+                f"Deleted binary data from MySQL for attachment {attachment_id}"
+            )
             return True
 
         except Exception as e:
@@ -156,9 +164,11 @@ class MySQLStorageBackend(StorageBackend):
         """
         try:
             attachment_id = self._extract_attachment_id(key)
-            attachment = self._db.query(SubtaskAttachment).filter(
-                SubtaskAttachment.id == attachment_id
-            ).first()
+            attachment = (
+                self._db.query(SubtaskAttachment)
+                .filter(SubtaskAttachment.id == attachment_id)
+                .first()
+            )
 
             if attachment is None:
                 return False
