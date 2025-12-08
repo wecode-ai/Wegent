@@ -147,11 +147,69 @@ class SharedTaskService:
                     logger.info("User or task not found in the database.")
                     return None
 
+                # Extract task_type from task JSON (stored in metadata.labels)
+                task_type = "chat"  # default
+                git_repo_id = None
+                git_repo = None
+                git_domain = None
+                git_type = None
+                branch_name = None
+
+                try:
+                    from app.schemas.kind import Task, Workspace
+
+                    task_json = task.json if isinstance(task.json, dict) else {}
+                    metadata = task_json.get("metadata", {})
+                    labels = metadata.get("labels", {})
+                    task_type = labels.get("taskType", "chat")
+
+                    # For code tasks, extract workspace repository information
+                    if task_type == "code":
+                        task_crd = Task.model_validate(task.json)
+                        workspace_ref = task_crd.spec.workspaceRef
+
+                        # Find the workspace by name and namespace
+                        workspace = (
+                            db.query(Kind)
+                            .filter(
+                                Kind.name == workspace_ref.name,
+                                Kind.namespace == workspace_ref.namespace,
+                                Kind.user_id == user_id,
+                                Kind.kind == "Workspace",
+                                Kind.is_active == True,
+                            )
+                            .first()
+                        )
+
+                        if workspace:
+                            workspace_crd = Workspace.model_validate(workspace.json)
+                            repo = workspace_crd.spec.repository
+                            git_repo_id = repo.gitRepoId
+                            git_repo = repo.gitRepo
+                            git_domain = repo.gitDomain
+                            branch_name = repo.branchName
+                            # Infer git_type from git_domain
+                            if "github" in repo.gitDomain.lower():
+                                git_type = "github"
+                            elif "gitlab" in repo.gitDomain.lower():
+                                git_type = "gitlab"
+                            elif "gitee" in repo.gitDomain.lower():
+                                git_type = "gitee"
+                except Exception as e:
+                    logger.warning(f"Failed to extract workspace info: {e}")
+                    pass  # Use defaults if extraction fails
+
                 return TaskShareInfo(
                     user_id=user_id,
                     user_name=user.user_name,
                     task_id=task_id,
                     task_title=task.name or "Untitled Task",
+                    task_type=task_type,
+                    git_repo_id=git_repo_id,
+                    git_repo=git_repo,
+                    git_domain=git_domain,
+                    git_type=git_type,
+                    branch_name=branch_name,
                 )
             else:
                 # Without database session, return basic info with placeholder names
@@ -248,9 +306,14 @@ class SharedTaskService:
         new_team_id: int,
         model_id: Optional[str] = None,
         force_override_bot_model: bool = False,
+        git_repo_id: Optional[int] = None,
+        git_url: Optional[str] = None,
+        git_repo: Optional[str] = None,
+        git_domain: Optional[str] = None,
+        branch_name: Optional[str] = None,
     ) -> Kind:
         """Copy task and all its subtasks to new user"""
-        from app.schemas.kind import Task, Team
+        from app.schemas.kind import Task, Team, Workspace
 
         # Get the new team to get its name and namespace
         new_team = (
@@ -270,12 +333,169 @@ class SharedTaskService:
                 detail=f"Team with id {new_team_id} not found",
             )
 
+        # Query the workspace if git_repo_id is provided
+        new_workspace = None
+        if git_repo_id is not None:
+            logger.info(
+                f"Looking for workspace with git_repo_id={git_repo_id}, "
+                f"branch_name={branch_name}, git_repo={git_repo}, "
+                f"git_url={git_url}, git_domain={git_domain}"
+            )
+            # Find workspace by gitRepoId in workspace JSON
+            all_workspaces = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == new_user_id,
+                    Kind.kind == "Workspace",
+                    Kind.is_active == True,
+                )
+                .all()
+            )
+            logger.info(
+                f"Found {len(all_workspaces)} workspaces for user {new_user_id}"
+            )
+
+            # Find workspace with matching gitRepoId and branchName
+            for ws in all_workspaces:
+                try:
+                    ws_crd = Workspace.model_validate(ws.json)
+                    if ws_crd.spec.repository.gitRepoId == git_repo_id and (
+                        branch_name is None
+                        or ws_crd.spec.repository.branchName == branch_name
+                    ):
+                        new_workspace = ws
+                        logger.info(f"Found matching workspace: {ws.name}")
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed to parse workspace {ws.id}: {e}")
+                    continue
+
+            # If workspace not found, create a new one automatically
+            if (
+                not new_workspace
+                and branch_name
+                and git_url
+                and git_repo
+                and git_domain
+            ):
+                logger.info(
+                    f"No matching workspace found, attempting to create new workspace"
+                )
+                try:
+                    from app.schemas.kind import (
+                        ObjectMeta,
+                        Repository,
+                        WorkspaceSpec,
+                    )
+
+                    # Create workspace name with timestamp to ensure uniqueness
+                    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+                    workspace_name = (
+                        f"ws-{git_repo.replace('/', '-')}-{branch_name}-{timestamp}"
+                    )
+
+                    # Create workspace CRD using complete repository info from frontend
+                    workspace_crd = Workspace(
+                        apiVersion="agent.wecode.io/v1",
+                        kind="Workspace",
+                        metadata=ObjectMeta(
+                            name=workspace_name,
+                            namespace="default",
+                        ),
+                        spec=WorkspaceSpec(
+                            repository=Repository(
+                                gitUrl=git_url,
+                                gitRepo=git_repo,
+                                gitRepoId=git_repo_id,
+                                branchName=branch_name,
+                                gitDomain=git_domain,
+                            )
+                        ),
+                    )
+
+                    # Save workspace to database
+                    new_workspace = Kind(
+                        kind="Workspace",
+                        name=workspace_name,
+                        user_id=new_user_id,
+                        namespace="default",
+                        json=workspace_crd.model_dump(mode="json", exclude_none=True),
+                        is_active=True,
+                        created_at=datetime.utcnow(),
+                        updated_at=datetime.utcnow(),
+                    )
+                    db.add(new_workspace)
+                    db.flush()  # Get new workspace ID
+
+                    logger.info(
+                        f"Auto-created workspace {workspace_name} for user {new_user_id} "
+                        f"with repo {git_repo} (id={git_repo_id}) and branch {branch_name}"
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to auto-create workspace: {e}")
+                    # If auto-creation fails, raise the original error
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Workspace with git_repo_id {git_repo_id} and branch {branch_name} not found, "
+                        f"and failed to create automatically: {str(e)}",
+                    )
+
+            # Final check: if still no workspace found, raise error
+            if not new_workspace:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Workspace with git_repo_id {git_repo_id} not found. "
+                    "Please select a repository and branch, or create a workspace first.",
+                )
+
         # Parse the original task JSON and update the team reference
         task_crd = Task.model_validate(original_task.json)
         task_crd.spec.teamRef.name = new_team.name
         task_crd.spec.teamRef.namespace = new_team.namespace
 
-        # Update model configuration in metadata labels if provided
+        # Check if this is a code task
+        task_type = "chat"  # default
+        try:
+            task_json = (
+                original_task.json if isinstance(original_task.json, dict) else {}
+            )
+            metadata = task_json.get("metadata", {})
+            labels = metadata.get("labels", {})
+            task_type = labels.get("taskType", "chat")
+        except Exception:
+            pass
+
+        # For code tasks, workspace is REQUIRED and must belong to the new user
+        if task_type == "code":
+            if not new_workspace:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Repository and branch must be selected for code tasks. "
+                    "Please ensure you have access to a repository.",
+                )
+            # Update workspace reference to the new user's workspace
+            task_crd.spec.workspaceRef.name = new_workspace.name
+            task_crd.spec.workspaceRef.namespace = new_workspace.namespace
+        else:
+            # For chat tasks, workspace is optional
+            # Update workspace reference if user explicitly selected one during import
+            if new_workspace:
+                task_crd.spec.workspaceRef.name = new_workspace.name
+                task_crd.spec.workspaceRef.namespace = new_workspace.namespace
+
+        # Always remove the original task's modelId to allow user to choose their own model
+        # This ensures imported tasks don't inherit the original task's model selection
+        if task_crd.metadata.labels and "modelId" in task_crd.metadata.labels:
+            del task_crd.metadata.labels["modelId"]
+
+        # Remove forceOverrideBotModel from original task as well
+        if (
+            task_crd.metadata.labels
+            and "forceOverrideBotModel" in task_crd.metadata.labels
+        ):
+            del task_crd.metadata.labels["forceOverrideBotModel"]
+
+        # Update model configuration in metadata labels if provided by user during import
         if model_id or force_override_bot_model:
             if not task_crd.metadata.labels:
                 task_crd.metadata.labels = {}
@@ -326,8 +546,8 @@ class SharedTaskService:
                 bot_ids=original_subtask.bot_ids,
                 role=original_subtask.role,
                 executor_namespace=original_subtask.executor_namespace,
-                executor_name=original_subtask.executor_name,
-                executor_deleted_at=original_subtask.executor_deleted_at,
+                executor_name="",  # Clear executor_name - each task should have its own executor
+                executor_deleted_at=False,  # Reset executor_deleted_at
                 prompt=original_subtask.prompt,
                 message_id=original_subtask.message_id,
                 parent_id=original_subtask.parent_id,
@@ -380,6 +600,11 @@ class SharedTaskService:
         team_id: int,
         model_id: Optional[str] = None,
         force_override_bot_model: bool = False,
+        git_repo_id: Optional[int] = None,
+        git_url: Optional[str] = None,
+        git_repo: Optional[str] = None,
+        git_domain: Optional[str] = None,
+        branch_name: Optional[str] = None,
     ) -> JoinSharedTaskResponse:
         """Join a shared task by copying it to user's task list"""
         # Decode share token
@@ -450,6 +675,11 @@ class SharedTaskService:
             new_team_id=team_id,
             model_id=model_id,
             force_override_bot_model=force_override_bot_model,
+            git_repo_id=git_repo_id,
+            git_url=git_url,
+            git_repo=git_repo,
+            git_domain=git_domain,
+            branch_name=branch_name,
         )
 
         # Update existing share record or create new one

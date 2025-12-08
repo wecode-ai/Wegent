@@ -17,7 +17,11 @@ import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { Team } from '@/types/api';
-export default function TasksPage() {
+import { UserProvider } from '@/features/common/UserContext';
+import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
+import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
+
+function TasksPageContent() {
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
@@ -73,5 +77,17 @@ export default function TasksPage() {
         </div>
       </div>
     </>
+  );
+}
+
+export default function TasksPage() {
+  return (
+    <UserProvider>
+      <TaskContextProvider>
+        <ChatStreamProvider>
+          <TasksPageContent />
+        </ChatStreamProvider>
+      </TaskContextProvider>
+    </UserProvider>
   );
 }
