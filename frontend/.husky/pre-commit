@@ -57,3 +57,26 @@ if [ -n "$FRONTEND_FILES" ]; then
   # Run lint-staged
   npx lint-staged
 fi
+
+# =============================================================================
+# Alembic Multi-Head Detection
+# =============================================================================
+
+# Check if there are staged alembic migration files
+ALEMBIC_FILES=$(git diff --cached --name-only --diff-filter=ACM | grep '^backend/alembic/versions/' || true)
+
+if [ -n "$ALEMBIC_FILES" ]; then
+  echo "🔍 Checking Alembic migrations for multiple heads..."
+
+  # Run the alembic head detection script
+  ALEMBIC_CHECK_SCRIPT="$PROJECT_ROOT/scripts/hooks/check-alembic-heads.sh"
+
+  if [ -x "$ALEMBIC_CHECK_SCRIPT" ]; then
+    if ! "$ALEMBIC_CHECK_SCRIPT"; then
+      echo "❌ Alembic multi-head check failed. Please resolve before committing."
+      exit 1
+    fi
+  else
+    echo "⚠️ Alembic check script not found or not executable: $ALEMBIC_CHECK_SCRIPT"
+  fi
+fi
