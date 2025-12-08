@@ -163,6 +163,7 @@ def create_app():
 
             # Only run startup initialization if we acquired the lock or Redis is not available
             if acquired_lock or not redis_client:
+                startup_success = False
                 try:
                     # Step 1: Run database migrations
                     if (
@@ -254,15 +255,28 @@ def create_app():
                     finally:
                         db.close()
 
-                    # Mark startup as done
-                    if redis_client:
-                        redis_client.set(STARTUP_DONE_KEY, "done", ex=86400)
+                    # Mark startup as successful
+                    startup_success = True
+                except Exception as e:
+                    # Startup failed - do NOT mark as done so next restart will retry
+                    logger.error(f"✗ Startup initialization failed: {e}")
+                    startup_success = False
                 finally:
+                    # Only mark startup as done if it was successful
+                    if redis_client and startup_success:
+                        redis_client.set(STARTUP_DONE_KEY, "done", ex=86400)
+                        logger.info("Marked startup initialization as done")
+                    elif redis_client and not startup_success:
+                        # Ensure STARTUP_DONE_KEY is deleted if startup failed
+                        # This allows the next restart to retry
+                        redis_client.delete(STARTUP_DONE_KEY)
+                        logger.warning(
+                            "Startup failed - cleared done flag to allow retry on next restart"
+                        )
                     # Release lock
                     if redis_client and acquired_lock:
                         redis_client.delete(STARTUP_LOCK_KEY)
                         logger.info("Released startup initialization lock")
-
         # Start background jobs
         logger.info("Starting background jobs...")
         start_background_jobs(app)

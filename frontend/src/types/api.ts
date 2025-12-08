@@ -10,11 +10,16 @@ export interface UserPreferences {
 }
 
 // User Types
+export type UserRole = 'admin' | 'user';
+export type AuthSource = 'password' | 'oidc' | 'unknown';
+
 export interface User {
   id: number;
   user_name: string;
   email: string;
   is_active: boolean;
+  role?: UserRole;
+  auth_source?: AuthSource;
   created_at: string;
   updated_at: string;
   git_info: GitInfo[];

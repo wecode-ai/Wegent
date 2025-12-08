@@ -42,7 +42,8 @@
     "chat": "Chat",
     "code": "Code",
     "settings": "Settings",
-    "docs": "Docs"
+    "docs": "Docs",
+    "admin": "Admin"
   },
   "sidebar": {
     "recent_visits": "Recent Visits",

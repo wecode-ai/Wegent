@@ -73,6 +73,8 @@ class UserInDB(UserBase):
     id: int
     git_info: Optional[List[GitInfo]] = None
     preferences: Optional[UserPreferences] = None
+    role: str = "user"
+    auth_source: str = "unknown"
     created_at: datetime
     updated_at: datetime
 
@@ -115,6 +117,7 @@ class UserInfo(BaseModel):
 
     id: int
     user_name: str
+    role: str = "user"
 
 
 class UserAuthTypeResponse(BaseModel):

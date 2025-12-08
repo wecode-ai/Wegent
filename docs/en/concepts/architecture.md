@@ -142,6 +142,7 @@ frontend/
 - 📝 Complete CRUD operation support
 - 🔄 Real-time status synchronization
 - 🛡️ Data encryption (AES)
+- 👥 Role-based access control (admin/user)
 
 **API Design**:
 ```
@@ -152,7 +153,8 @@ frontend/
 ├── /bots            # Bot resource management
 ├── /teams           # Team resource management
 ├── /workspaces      # Workspace resource management
-└── /tasks           # Task resource management
+├── /tasks           # Task resource management
+└── /admin           # Admin operations (user management, public models)
 ```
 
 **Key Dependencies**:
@@ -247,7 +249,8 @@ wegent_db/
 ├── teams            # Team definitions
 ├── workspaces       # Workspace configurations
 ├── tasks            # Task records
-└── users            # User information
+├── users            # User information (with role field)
+└── public_models    # System-wide public models
 ```
 
 **Data Model Features**:
@@ -441,6 +444,7 @@ status:
 - 🛡️ AES encryption for sensitive data
 - 🔐 Sandbox environment isolation
 - 🚫 Principle of least privilege
+- 👥 Role-based access control (admin/user roles)
 
 ### 5. Observability
 

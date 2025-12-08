@@ -20,6 +20,8 @@ class User(Base):
     email = Column(String(100))
     git_info = Column(JSON)
     is_active = Column(Boolean, default=True)
+    # User role: admin or user (default)
+    role = Column(String(20), nullable=False, default="user")
     # Authentication source: password, oidc, or unknown (for existing users)
     auth_source = Column(String(20), nullable=False, default="unknown")
     # User preferences (e.g., send_key: "enter" or "cmd_enter")
