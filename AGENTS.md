@@ -387,6 +387,7 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 - `app/api/` - Route handlers
 - `app/services/adapters/` - CRD service implementations
 - `app/services/chat/` - Streaming chat with model resolver
+- `app/services/attachment/` - File attachment storage with pluggable backends
 - `app/repository/` - Git providers (GitHub, GitLab, Gitee, Gerrit)
 
 **Common tasks:**

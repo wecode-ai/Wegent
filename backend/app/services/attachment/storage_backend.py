@@ -9,7 +9,9 @@ This module defines the abstract base class for storage backends,
 allowing pluggable storage solutions (MySQL, S3, MinIO, etc.).
 """
 
+import uuid
 from abc import ABC, abstractmethod
+from datetime import datetime
 from typing import Dict, Optional
 
 
@@ -110,14 +112,24 @@ class StorageError(Exception):
         super().__init__(self.message)
 
 
-def generate_storage_key(attachment_id: int) -> str:
+def generate_storage_key(attachment_id: int, user_id: int) -> str:
     """
-    Generate a storage key for an attachment.
+    Generate a unique storage key for an attachment.
+
+    The key format is: attachments/{uuid}_{timestamp}_{user_id}_{attachment_id}
+    This provides:
+    - UUID: Ensures global uniqueness and prevents key collision
+    - Timestamp: Enables time-based organization and debugging
+    - User ID: Allows user-based partitioning and access control
+    - Attachment ID: Maintains reference to database record
 
     Args:
-        attachment_id: The attachment ID
+        attachment_id: The attachment ID from database
+        user_id: The user ID who owns the attachment
 
     Returns:
-        Storage key in format: attachments/{attachment_id}
+        Storage key in format: attachments/{uuid}_{timestamp}_{user_id}_{attachment_id}
     """
-    return f"attachments/{attachment_id}"
+    unique_id = uuid.uuid4().hex[:12]  # Use first 12 chars of UUID for brevity
+    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+    return f"attachments/{unique_id}_{timestamp}_{user_id}_{attachment_id}"

@@ -203,7 +203,7 @@ class MySQLStorageBackend(StorageBackend):
         Extract attachment ID from storage key.
 
         Args:
-            key: Storage key (format: attachments/{attachment_id})
+            key: Storage key (format: attachments/{uuid}_{timestamp}_{user_id}_{attachment_id})
 
         Returns:
             Attachment ID
@@ -212,10 +212,20 @@ class MySQLStorageBackend(StorageBackend):
             StorageError: If key format is invalid
         """
         try:
-            # Key format: attachments/{attachment_id}
+            # Key format: attachments/{uuid}_{timestamp}_{user_id}_{attachment_id}
             parts = key.split("/")
             if len(parts) != 2 or parts[0] != "attachments":
                 raise ValueError("Invalid key format")
-            return int(parts[1])
+
+            # Extract attachment_id from the last part of the key
+            # Format: {uuid}_{timestamp}_{user_id}_{attachment_id}
+            key_parts = parts[1].split("_")
+            if len(key_parts) < 4:
+                raise ValueError(
+                    "Invalid key format: expected uuid_timestamp_userid_attachmentid"
+                )
+
+            # The attachment_id is the last part
+            return int(key_parts[-1])
         except (ValueError, IndexError) as e:
             raise StorageError(f"Invalid storage key format: {key}", key)
