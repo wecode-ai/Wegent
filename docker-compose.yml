@@ -45,7 +45,7 @@ services:
   backend:
     # build:
       # dockerfile: docker/backend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-backend:1.0.20
+    image: ghcr.io/wecode-ai/wegent-backend:1.0.21
     container_name: wegent-backend
     restart: always
     ports:
@@ -82,7 +82,7 @@ services:
   frontend:
     # build:
     #   dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-web:1.0.20
+    image: ghcr.io/wecode-ai/wegent-web:1.0.21
     container_name: wegent-frontend
     restart: always
     ports:
@@ -99,7 +99,7 @@ services:
   executor_manager:
     #build:
       #dockerfile: docker/frontend/Dockerfile
-    image: ghcr.io/wecode-ai/wegent-executor-manager:1.0.19
+    image: ghcr.io/wecode-ai/wegent-executor-manager:1.0.21
     extra_hosts:
       - "host.docker.internal:host-gateway"
     container_name: wegent-executor-manager
@@ -113,7 +113,7 @@ services:
       - PORT=8001
       - CALLBACK_HOST=http://executor_manager:8001
       - NETWORK=wegent-network
-      - EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:1.0.20
+      - EXECUTOR_IMAGE=ghcr.io/wecode-ai/wegent-executor:1.0.21
       - EXECUTOR_PORT_RANGE_MIN=10001
       - EXECUTOR_PORT_RANGE_MAX=10100
       - EXECUTOR_WORKSPCE=${HOME}/wecode-bot

@@ -112,7 +112,7 @@ class AttachmentService:
         db.flush()  # Get the ID
 
         # Generate storage key and save to storage backend
-        storage_key = generate_storage_key(attachment.id)
+        storage_key = generate_storage_key(attachment.id, user_id)
         attachment.storage_key = storage_key
 
         try:
