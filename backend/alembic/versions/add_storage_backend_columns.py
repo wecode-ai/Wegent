@@ -19,55 +19,46 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'add_storage_backend_columns'
-down_revision: Union[str, None] = 'add_subtask_attachments'
+revision: str = "add_storage_backend_columns"
+down_revision: Union[str, None] = "add_subtask_attachments"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
     """Add storage backend columns to subtask_attachments table."""
-    # Add storage_key column for external storage reference
+    # Add storage_key column (NOT NULL with empty string default)
+    # Empty string means data is stored in MySQL binary_data column
     op.add_column(
-        'subtask_attachments',
-        sa.Column('storage_key', sa.String(500), nullable=True)
+        "subtask_attachments",
+        sa.Column("storage_key", sa.String(500), nullable=False, server_default=""),
     )
 
-    # Add storage_backend column to track which backend stores the data
+    # Add storage_backend column (NOT NULL with 'mysql' default)
+    # Indicates which storage backend is used: 'mysql', 's3', 'minio', etc.
     op.add_column(
-        'subtask_attachments',
-        sa.Column('storage_backend', sa.String(50), nullable=True)
+        "subtask_attachments",
+        sa.Column(
+            "storage_backend", sa.String(50), nullable=False, server_default="mysql"
+        ),
     )
 
-    # Make binary_data nullable to support external storage backends
-    # When using external storage, binary_data can be NULL
-    op.alter_column(
-        'subtask_attachments',
-        'binary_data',
-        existing_type=sa.LargeBinary(),
-        nullable=True
-    )
-
-    # Update existing records to have 'mysql' as storage_backend
-    # This ensures backward compatibility
+    # Update existing records to ensure they have correct default values
+    # This ensures backward compatibility with existing data
     op.execute(
-        "UPDATE subtask_attachments SET storage_backend = 'mysql' WHERE storage_backend IS NULL"
+        "UPDATE subtask_attachments SET storage_backend = 'mysql', storage_key = '' WHERE storage_backend = 'mysql'"
     )
+
+    # Note: binary_data remains NOT NULL
+    # When using external storage (storage_backend != 'mysql'),
+    # binary_data will store empty bytes (b'') as a marker
 
 
 def downgrade() -> None:
     """Remove storage backend columns from subtask_attachments table."""
-    # First, ensure all records have binary_data before making it non-nullable
+    # Before downgrade, ensure all data is migrated back to MySQL if needed
     # This migration assumes that downgrade only happens when all data is in MySQL
 
-    # Make binary_data non-nullable again
-    op.alter_column(
-        'subtask_attachments',
-        'binary_data',
-        existing_type=sa.LargeBinary(),
-        nullable=False
-    )
-
     # Drop the storage columns
-    op.drop_column('subtask_attachments', 'storage_backend')
-    op.drop_column('subtask_attachments', 'storage_key')
+    op.drop_column("subtask_attachments", "storage_backend")
+    op.drop_column("subtask_attachments", "storage_key")
