@@ -103,6 +103,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     container_name: wegent-executor-manager
+    restart: always
     ports:
       - "8001:8001"
     environment:
