@@ -1,9 +1,6 @@
 name: Update Contributors
 
 on:
-  push:
-    branches:
-      - main
   schedule:
     # Run weekly on Sunday at 00:00 UTC
     - cron: '0 0 * * 0'
