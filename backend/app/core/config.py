@@ -114,6 +114,12 @@ class Settings(BaseSettings):
     MAX_UPLOAD_FILE_SIZE_MB: int = 50  # Maximum file size in MB
     MAX_EXTRACTED_TEXT_LENGTH: int = 1000000  # Maximum extracted text length
 
+    # Attachment storage backend configuration
+    # Empty string or "mysql" uses MySQL database for binary storage (default)
+    # Can be set to a custom backend identifier or fully qualified class path
+    # Example: "s3", "minio", "my_package.storage.S3StorageBackend"
+    ATTACHMENT_STORAGE_BACKEND: str = ""
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

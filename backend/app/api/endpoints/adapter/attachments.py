@@ -4,6 +4,12 @@
 
 """
 Attachment API endpoints for file upload and management.
+
+This module provides REST API endpoints for:
+- File upload with automatic parsing
+- Attachment metadata retrieval
+- File download (direct URL or binary data)
+- Attachment deletion
 """
 
 import logging
@@ -11,7 +17,7 @@ from typing import Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -43,11 +49,12 @@ class AttachmentResponse(BaseModel):
 
 
 class AttachmentDetailResponse(AttachmentResponse):
-    """Detailed response model including subtask_id."""
+    """Detailed response model including subtask_id and storage info."""
 
     subtask_id: Optional[int] = None
     file_extension: str
     created_at: str
+    storage_backend: Optional[str] = None
 
 
 @router.post("/upload", response_model=AttachmentResponse)
@@ -134,7 +141,7 @@ async def get_attachment(
     Get attachment details by ID.
 
     Returns:
-        Attachment details including status and metadata
+        Attachment details including status, metadata, and storage backend info
     """
     attachment = attachment_service.get_attachment(
         db=db,
@@ -156,6 +163,7 @@ async def get_attachment(
         subtask_id=attachment.subtask_id,
         file_extension=attachment.file_extension,
         created_at=attachment.created_at.isoformat() if attachment.created_at else "",
+        storage_backend=attachment.storage_backend,
     )
 
 
@@ -168,8 +176,11 @@ async def download_attachment(
     """
     Download the original file.
 
+    If the storage backend supports direct URLs (e.g., S3), returns a redirect
+    to the presigned URL. Otherwise, returns the file binary data directly.
+
     Returns:
-        File binary data with appropriate content type
+        RedirectResponse to direct URL or Response with file binary data
     """
     attachment = attachment_service.get_attachment(
         db=db,
@@ -179,12 +190,23 @@ async def download_attachment(
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
+    # Try to get a direct download URL from the storage backend
+    direct_url = attachment_service.get_download_url(db, attachment)
+    if direct_url:
+        logger.debug(f"Redirecting to direct download URL for attachment {attachment_id}")
+        return RedirectResponse(url=direct_url)
+
+    # Fall back to returning binary data through the API
+    binary_data = attachment_service.get_attachment_binary_data(db, attachment)
+    if binary_data is None:
+        raise HTTPException(status_code=404, detail="Attachment data not found")
+
     # Encode filename for Content-Disposition header to support non-ASCII characters
     # Use RFC 5987 encoding: filename*=UTF-8''encoded_filename
     encoded_filename = quote(attachment.original_filename)
 
     return Response(
-        content=attachment.binary_data,
+        content=binary_data,
         media_type=attachment.mime_type,
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
@@ -202,6 +224,7 @@ async def delete_attachment(
     Delete an attachment.
 
     Only attachments that are not linked to a subtask can be deleted.
+    Also deletes data from external storage if applicable.
 
     Returns:
         Success message
@@ -269,4 +292,5 @@ async def get_attachment_by_subtask(
         subtask_id=attachment.subtask_id,
         file_extension=attachment.file_extension,
         created_at=attachment.created_at.isoformat() if attachment.created_at else "",
+        storage_backend=attachment.storage_backend,
     )

@@ -4,6 +4,12 @@
 
 """
 Attachment service for managing file uploads and document parsing.
+
+This service handles the attachment lifecycle including:
+- File upload and validation
+- Document parsing and text extraction
+- Storage backend abstraction for pluggable storage
+- Attachment retrieval and deletion
 """
 
 import logging
@@ -14,6 +20,10 @@ from sqlalchemy.orm import Session
 
 from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
 from app.services.attachment.parser import DocumentParseError, DocumentParser
+from app.services.attachment.storage_factory import (
+    get_storage_backend,
+    get_storage_backend_name,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +32,8 @@ class AttachmentService:
     """
     Service for managing file attachments.
 
-    Handles file upload, document parsing, and attachment lifecycle.
+    Handles file upload, document parsing, storage backend integration,
+    and attachment lifecycle management.
     """
 
     def __init__(self):
@@ -31,6 +42,18 @@ class AttachmentService:
     # Placeholder subtask_id for attachments not yet linked to a subtask
     # Using 0 as a sentinel value since database requires non-null
     UNLINKED_SUBTASK_ID = 0
+
+    def _generate_storage_key(self, attachment_id: int) -> str:
+        """
+        Generate a storage key for an attachment.
+
+        Args:
+            attachment_id: The attachment ID
+
+        Returns:
+            Storage key in format 'attachments/{id}'
+        """
+        return f"attachments/{attachment_id}"
 
     def upload_attachment(
         self,
@@ -82,8 +105,12 @@ class AttachmentService:
             subtask_id if subtask_id > 0 else self.UNLINKED_SUBTASK_ID
         )
 
+        # Get storage backend name
+        backend_name = get_storage_backend_name()
+
         # Create attachment record with UPLOADING status
-        # All fields must have non-null values as required by database
+        # For MySQL backend, binary_data is stored directly
+        # For external backends, binary_data will be NULL and data stored externally
         attachment = SubtaskAttachment(
             subtask_id=effective_subtask_id,
             user_id=user_id,
@@ -91,15 +118,41 @@ class AttachmentService:
             file_extension=extension,
             file_size=file_size,
             mime_type=mime_type,
-            binary_data=binary_data,
+            binary_data=binary_data if backend_name == "mysql" else None,
             image_base64="",  # Empty string as placeholder, will be updated after parsing
             extracted_text="",  # Empty string as placeholder, will be updated after parsing
             text_length=0,  # Will be updated after parsing
             status=AttachmentStatus.UPLOADING,
             error_message="",  # Empty string as placeholder
+            storage_backend=backend_name,
+            storage_key=None,  # Will be set after flush to get the ID
         )
         db.add(attachment)
         db.flush()  # Get the ID
+
+        # Generate and set storage key
+        storage_key = self._generate_storage_key(attachment.id)
+        attachment.storage_key = storage_key
+
+        # For non-MySQL backends, save to external storage
+        if backend_name != "mysql":
+            try:
+                storage_backend = get_storage_backend()
+                metadata = {
+                    "db": db,
+                    "filename": filename,
+                    "mime_type": mime_type,
+                    "file_size": file_size,
+                    "user_id": user_id,
+                }
+                storage_backend.save(storage_key, binary_data, metadata)
+                logger.debug(
+                    f"Binary data saved to {backend_name} storage for attachment {attachment.id}"
+                )
+            except Exception as e:
+                logger.error(f"Failed to save to external storage: {e}")
+                db.rollback()
+                raise ValueError(f"Failed to save file to storage: {e}")
 
         # Update status to PARSING
         attachment.status = AttachmentStatus.PARSING
@@ -129,7 +182,8 @@ class AttachmentService:
 
         logger.info(
             f"Attachment uploaded successfully: id={attachment.id}, "
-            f"filename={filename}, text_length={attachment.text_length}"
+            f"filename={filename}, text_length={attachment.text_length}, "
+            f"storage_backend={backend_name}"
         )
 
         return attachment
@@ -159,6 +213,47 @@ class AttachmentService:
             query = query.filter(SubtaskAttachment.user_id == user_id)
 
         return query.first()
+
+    def get_attachment_binary_data(
+        self,
+        db: Session,
+        attachment: SubtaskAttachment,
+    ) -> Optional[bytes]:
+        """
+        Get binary data for an attachment.
+
+        This method handles retrieving binary data from either MySQL storage
+        or external storage backends based on the attachment's storage_backend field.
+
+        Args:
+            db: Database session
+            attachment: SubtaskAttachment record
+
+        Returns:
+            Binary data or None if not found
+        """
+        # Check storage backend type
+        backend_name = attachment.storage_backend or "mysql"
+
+        if backend_name == "mysql":
+            # Data is stored in the database
+            return attachment.binary_data
+        else:
+            # Data is stored externally
+            if not attachment.storage_key:
+                logger.error(
+                    f"Attachment {attachment.id} has external storage but no storage_key"
+                )
+                return None
+
+            try:
+                storage_backend = get_storage_backend()
+                return storage_backend.get(attachment.storage_key, db=db)
+            except Exception as e:
+                logger.error(
+                    f"Failed to get data from external storage for attachment {attachment.id}: {e}"
+                )
+                return None
 
     def get_attachment_by_subtask(
         self,
@@ -223,6 +318,7 @@ class AttachmentService:
         Delete an attachment.
 
         Only allows deletion of attachments that are not linked to a subtask.
+        Also deletes data from external storage if applicable.
 
         Args:
             db: Database session
@@ -244,12 +340,69 @@ class AttachmentService:
             )
             return False
 
+        # Delete from external storage if applicable
+        backend_name = attachment.storage_backend or "mysql"
+        if backend_name != "mysql" and attachment.storage_key:
+            try:
+                storage_backend = get_storage_backend()
+                storage_backend.delete(attachment.storage_key, db=db)
+                logger.debug(
+                    f"Deleted attachment {attachment_id} from {backend_name} storage"
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Failed to delete from external storage for attachment {attachment_id}: {e}"
+                )
+                # Continue with database deletion even if external deletion fails
+
         db.delete(attachment)
         db.commit()
 
         logger.info(f"Attachment {attachment_id} deleted")
 
         return True
+
+    def get_download_url(
+        self,
+        db: Session,
+        attachment: SubtaskAttachment,
+        expires: int = 3600,
+    ) -> Optional[str]:
+        """
+        Get a direct download URL for an attachment.
+
+        This method returns a direct download URL if the storage backend supports it
+        (e.g., S3 presigned URLs). For backends that don't support direct URLs
+        (like MySQL), this returns None.
+
+        Args:
+            db: Database session
+            attachment: SubtaskAttachment record
+            expires: URL expiration time in seconds (default: 1 hour)
+
+        Returns:
+            Direct download URL if supported, None otherwise
+        """
+        backend_name = attachment.storage_backend or "mysql"
+
+        # MySQL backend doesn't support direct URLs
+        if backend_name == "mysql":
+            return None
+
+        if not attachment.storage_key:
+            logger.warning(
+                f"Attachment {attachment.id} has no storage_key for URL generation"
+            )
+            return None
+
+        try:
+            storage_backend = get_storage_backend()
+            return storage_backend.get_url(attachment.storage_key, expires)
+        except Exception as e:
+            logger.error(
+                f"Failed to get download URL for attachment {attachment.id}: {e}"
+            )
+            return None
 
     def build_message_with_attachment(
         self,
@@ -293,9 +446,9 @@ class AttachmentService:
         elif attachment.extracted_text:
             # For documents, combine text as before
             combined = (
-                f"【文件内容 - {attachment.original_filename}】:\n"
+                f"[File Content - {attachment.original_filename}]:\n"
                 f"{attachment.extracted_text}\n\n"
-                f"【用户问题】:\n"
+                f"[User Question]:\n"
                 f"{message}"
             )
             return combined
