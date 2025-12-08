@@ -39,6 +39,9 @@ type TaskContextType = {
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
+// Export the context so it can be used with useContext directly
+export { TaskContext };
+
 export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [taskLoading, setTaskLoading] = useState<boolean>(false);

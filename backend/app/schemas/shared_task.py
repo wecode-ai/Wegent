@@ -15,6 +15,13 @@ class TaskShareInfo(BaseModel):
     user_name: str
     task_id: int
     task_title: str
+    task_type: Optional[str] = "chat"  # 'chat' or 'code'
+    # Original task's repository information (for code tasks)
+    git_repo_id: Optional[int] = None  # Repository ID
+    git_repo: Optional[str] = None  # Repository full name (e.g., "owner/repo")
+    git_domain: Optional[str] = None  # Git domain (e.g., "github.com")
+    git_type: Optional[str] = None  # Git type: "github", "gitlab", "gitee"
+    branch_name: Optional[str] = None  # Branch name
 
 
 class TaskShareResponse(BaseModel):
@@ -31,6 +38,12 @@ class JoinSharedTaskRequest(BaseModel):
     team_id: Optional[int] = None  # Optional: if not provided, use user's first team
     model_id: Optional[str] = None  # Model name (not database ID)
     force_override_bot_model: Optional[bool] = False
+    # Complete git repository fields (for code tasks)
+    git_repo_id: Optional[int] = None  # Git repository ID
+    git_url: Optional[str] = None  # Git repository URL
+    git_repo: Optional[str] = None  # Repository full name (e.g., "owner/repo")
+    git_domain: Optional[str] = None  # Git domain (e.g., "github.com")
+    branch_name: Optional[str] = None  # Git branch name
 
 
 class JoinSharedTaskResponse(BaseModel):
