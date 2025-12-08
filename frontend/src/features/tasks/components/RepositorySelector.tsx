@@ -25,7 +25,7 @@ function truncateMiddle(text: string, maxLength: number, startChars = 8, endChar
 }
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGithub } from 'react-icons/fi';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { GitRepoInfo, TaskDetail } from '@/types/api';
 import { useUser } from '@/features/common/UserContext';
@@ -36,6 +36,7 @@ import { getLastRepo } from '@/utils/userPreferences';
 import { githubApis } from '@/apis/github';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null;
@@ -51,12 +52,15 @@ export default function RepositorySelector({
   selectedTaskDetail,
 }: RepositorySelectorProps) {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const { user } = useUser();
   const router = useRouter();
   const [repos, setRepos] = useState<GitRepoInfo[]>([]);
   const [cachedRepos, setCachedRepos] = useState<GitRepoInfo[]>([]); // Cache initially loaded repositories
   const [loading, setLoading] = useState<boolean>(false);
   const [isSearching, setIsSearching] = useState<boolean>(false); // User is searching (includes waiting period)
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false); // Refreshing repository cache
+  const [currentSearchQuery, setCurrentSearchQuery] = useState<string>(''); // Current search query for refresh
   const [error, setError] = useState<string | null>(null);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Check if user has git_info configured
@@ -151,6 +155,9 @@ export default function RepositorySelector({
    */
   const handleSearchChange = useCallback(
     (query: string) => {
+      // Track current search query for refresh functionality
+      setCurrentSearchQuery(query);
+
       // Clear previous timer
       if (searchTimeoutRef.current) {
         clearTimeout(searchTimeoutRef.current);
@@ -177,6 +184,41 @@ export default function RepositorySelector({
     },
     [searchLocalRepos, searchRemoteRepos, cachedRepos]
   );
+
+  /**
+   * Handle refresh cache button click
+   * Clears backend Redis cache and reloads repository list
+   */
+  const handleRefreshCache = useCallback(async () => {
+    if (isRefreshing) return; // Prevent duplicate clicks
+
+    setIsRefreshing(true);
+    try {
+      // 1. Call backend API to clear cache
+      await githubApis.refreshRepositories();
+
+      // 2. Reload data based on current search state
+      if (currentSearchQuery.trim()) {
+        // Has search query: re-execute search
+        const results = await githubApis.searchRepositories(currentSearchQuery, {
+          fullmatch: false,
+          timeout: 30,
+        });
+        setRepos(results);
+      } else {
+        // No search query: reload all repositories
+        const data = await githubApis.getRepositories();
+        setRepos(data);
+        setCachedRepos(data);
+      }
+
+      toast({ title: t('branches.refresh_success') });
+    } catch {
+      toast({ variant: 'destructive', title: t('branches.refresh_failed') });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, currentSearchQuery, toast, t]);
 
   // Cleanup timer
   useEffect(() => {
@@ -342,7 +384,6 @@ export default function RepositorySelector({
   const handleIntegrationClick = () => {
     router.push(paths.settings.integrations.getHref());
   };
-  const { t } = useTranslation();
   const isMobile = useIsMobile();
 
   // Convert repos to SearchableSelectItem format
@@ -398,22 +439,46 @@ export default function RepositorySelector({
             </span>
           )}
           footer={
-            <div
-              className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
-              onClick={handleIntegrationClick}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  handleIntegrationClick();
-                }
-              }}
-            >
-              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-              <span className="font-medium group-hover:text-text-primary">
-                {t('branches.configure_integration')}
-              </span>
+            <div className="border-t border-border bg-base flex items-center justify-between px-2.5 py-2 text-xs text-text-secondary">
+              <div
+                className="cursor-pointer group flex items-center space-x-2 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
+                onClick={handleIntegrationClick}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleIntegrationClick();
+                  }
+                }}
+              >
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('branches.configure_integration')}
+                </span>
+              </div>
+              <div
+                className="cursor-pointer flex items-center gap-1.5 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1.5 py-0.5"
+                onClick={e => {
+                  e.stopPropagation();
+                  handleRefreshCache();
+                }}
+                role="button"
+                tabIndex={0}
+                title={t('branches.load_more')}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleRefreshCache();
+                  }
+                }}
+              >
+                <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+                <span className="text-xs">
+                  {isRefreshing ? t('branches.refreshing') : t('actions.refresh')}
+                </span>
+              </div>
             </div>
           }
         />

@@ -288,7 +288,11 @@
     "no_match": "No matching results",
     "default": "(default)",
     "set_token": "Set Token",
-    "configure_integration": "Configure Repository Integration"
+    "configure_integration": "Configure Repository Integration",
+    "load_more": "Refresh repository list",
+    "refreshing": "Refreshing...",
+    "refresh_success": "Repository list refreshed",
+    "refresh_failed": "Failed to refresh, please try again"
   },
   "tasks": {
     "search_placeholder": "Search task",

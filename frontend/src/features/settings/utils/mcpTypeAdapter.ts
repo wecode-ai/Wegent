@@ -52,7 +52,7 @@ const AGNO_TO_CLAUDE_TYPE_MAP: Record<AgnoMcpType, ClaudeCodeMcpType> = {
  * - HTTP, http, Http → http
  */
 function normalizeMcpType(type: string): string {
-  if (!type) return 'sse';
+  if (!type) return 'stdio';
 
   // Handle camelCase variants first: streamableHttp → streamable-http
   // Insert hyphen before capital letters that follow lowercase letters
@@ -95,7 +95,7 @@ export function adaptMcpConfigForAgent(
     }
 
     const config = { ...serverConfig } as Record<string, unknown>;
-    const currentType = normalizeMcpType((config.type as string) || 'sse');
+    const currentType = normalizeMcpType((config.type as string) || 'stdio');
 
     // Convert type based on target agent
     if (targetAgentType === 'Agno') {
