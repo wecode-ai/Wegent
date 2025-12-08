@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-FROM almalinux:latest
+FROM almalinux:9.4
 
 RUN dnf upgrade -y \
  && dnf install -y epel-release curl-minimal gcc make git wget gnupg python3.12 python3.12-devel python3.12-pip which \
@@ -34,18 +34,15 @@ RUN set -eux; \
     chmod +x /usr/bin/docker; \
     rm -rf docker
 
-RUN if [ "$TARGETARCH" = "x86_64" ]; then \
+RUN if [ "$TARGETARCH" = "amd64" ]; then \
       URL="https://gitlab.com/gitlab-org/cli/-/releases/v1.79.0/downloads/glab_1.79.0_linux_amd64.tar.gz"; \
-      EXT="tar.gz"; \
     else \
-      URL="https://gitlab.com/gitlab-org/cli/-/releases/v1.79.0/downloads/glab_1.79.0_linux_arm64.rpm"; \
-      EXT="rpm"; \
+      URL="https://gitlab.com/gitlab-org/cli/-/releases/v1.79.0/downloads/glab_1.79.0_linux_arm64.tar.gz"; \
     fi \
  && echo "Downloading glab from $URL" \
- && curl -fL "$URL" -o glab_package.$EXT \
- && if [ "$EXT" = "tar.gz" ]; then \
-      tar -xzf glab_package.tar.gz -C /usr/local/bin --strip-components=1 glab; \
-    else \
-      dnf install -y ./glab_package.rpm; \
-    fi \
- && rm -f glab_package.$EXT
+ && curl -fL "$URL" -o glab_package.tar.gz \
+ && mkdir -p /tmp/glab \
+ && tar -xzf glab_package.tar.gz -C /tmp/glab \
+ && find /tmp/glab -name glab -type f -executable -exec mv {} /usr/local/bin/glab \; \
+ && chmod +x /usr/local/bin/glab \
+ && rm -rf /tmp/glab glab_package.tar.gz
