@@ -42,7 +42,7 @@ function normalizeMcpServers(
       delete server.transport;
     }
     if (!server.type) {
-      server.type = 'sse';
+      server.type = 'stdio';
     }
   });
 

@@ -14,9 +14,9 @@ compatibility with MySQL-based storage.
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_storage_backend_columns"
@@ -43,13 +43,8 @@ def upgrade() -> None:
         ),
     )
 
-    # Update existing records to ensure they have correct default values
-    # This ensures backward compatibility with existing data
-    op.execute(
-        "UPDATE subtask_attachments SET storage_backend = 'mysql', storage_key = '' WHERE storage_backend = 'mysql'"
-    )
-
-    # Note: binary_data remains NOT NULL
+    # Note: server_default will automatically set default values for existing records
+    # binary_data remains NOT NULL
     # When using external storage (storage_backend != 'mysql'),
     # binary_data will store empty bytes (b'') as a marker
 

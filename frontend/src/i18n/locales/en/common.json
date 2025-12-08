@@ -42,7 +42,8 @@
     "chat": "Chat",
     "code": "Code",
     "settings": "Settings",
-    "docs": "Docs"
+    "docs": "Docs",
+    "admin": "Admin"
   },
   "sidebar": {
     "recent_visits": "Recent Visits",
@@ -287,7 +288,11 @@
     "no_match": "No matching results",
     "default": "(default)",
     "set_token": "Set Token",
-    "configure_integration": "Configure Repository Integration"
+    "configure_integration": "Configure Repository Integration",
+    "load_more": "Refresh repository list",
+    "refreshing": "Refreshing...",
+    "refresh_success": "Repository list refreshed",
+    "refresh_failed": "Failed to refresh, please try again"
   },
   "tasks": {
     "search_placeholder": "Search task",
@@ -327,6 +332,14 @@
     "not_supported": "Browser notifications are not supported in this browser.",
     "enable_success": "Browser notifications enabled successfully",
     "disable_success": "Browser notifications disabled"
+  },
+  "send_key": {
+    "title": "Message Send Shortcut",
+    "description": "Choose which keyboard shortcut sends messages in the chat",
+    "option_enter": "Enter to send (Shift+Enter for new line)",
+    "option_cmd_enter": "Cmd/Ctrl+Enter to send (Enter for new line)",
+    "save_success": "Send key preference saved",
+    "save_failed": "Failed to save send key preference"
   },
   "guide": {
     "title": "Welcome",

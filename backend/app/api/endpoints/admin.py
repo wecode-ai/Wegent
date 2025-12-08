@@ -5,6 +5,7 @@
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -17,9 +18,23 @@ from app.api.endpoints.kind.common import (
     validate_user_exists,
 )
 from app.api.endpoints.kind.kinds import KIND_SCHEMA_MAP
-from app.core.security import create_access_token, get_admin_user
+from app.core.security import create_access_token, get_admin_user, get_password_hash
 from app.models.kind import Kind
+from app.models.public_model import PublicModel
 from app.models.user import User
+from app.schemas.admin import (
+    AdminUserCreate,
+    AdminUserListResponse,
+    AdminUserResponse,
+    AdminUserUpdate,
+    PasswordReset,
+    PublicModelCreate,
+    PublicModelListResponse,
+    PublicModelResponse,
+    PublicModelUpdate,
+    RoleUpdate,
+    SystemStats,
+)
 from app.schemas.kind import BatchResponse
 from app.schemas.task import TaskCreate, TaskInDB
 from app.schemas.user import Token, UserInDB, UserInfo
@@ -31,18 +46,46 @@ from app.services.user import user_service
 router = APIRouter()
 
 
-@router.get("/users", response_model=List[UserInfo])
+# ==================== User Management Endpoints ====================
+
+
+@router.get("/users", response_model=AdminUserListResponse)
 async def list_all_users(
-    db: Session = Depends(get_db), current_user: User = Depends(get_admin_user)
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    include_inactive: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
 ):
     """
-    Get list of all user names
+    Get list of all users with pagination
     """
-    users = db.query(User).filter(User.is_active == True).all()
-    return [UserInfo(id=user.id, user_name=user.user_name) for user in users]
+    query = db.query(User)
+    if not include_inactive:
+        query = query.filter(User.is_active == True)
+
+    total = query.count()
+    users = query.offset((page - 1) * limit).limit(limit).all()
+
+    return AdminUserListResponse(
+        total=total,
+        items=[
+            AdminUserResponse(
+                id=user.id,
+                user_name=user.user_name,
+                email=user.email,
+                role=user.role,
+                auth_source=user.auth_source,
+                is_active=user.is_active,
+                created_at=user.created_at,
+                updated_at=user.updated_at,
+            )
+            for user in users
+        ],
+    )
 
 
-@router.get("/users/{user_id}", response_model=UserInDB)
+@router.get("/users/{user_id}", response_model=AdminUserResponse)
 async def get_user_by_id_endpoint(
     user_id: int = Path(..., description="User ID"),
     db: Session = Depends(get_db),
@@ -52,7 +95,469 @@ async def get_user_by_id_endpoint(
     Get detailed information for specified user ID
     """
     user = user_service.get_user_by_id(db, user_id)
-    return user
+    return AdminUserResponse(
+        id=user.id,
+        user_name=user.user_name,
+        email=user.email,
+        role=user.role,
+        auth_source=user.auth_source,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
+@router.post(
+    "/users", response_model=AdminUserResponse, status_code=status.HTTP_201_CREATED
+)
+async def create_user(
+    user_data: AdminUserCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Create a new user (admin only)
+    """
+    # Check if username already exists
+    existing_user = db.query(User).filter(User.user_name == user_data.user_name).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"User with username '{user_data.user_name}' already exists",
+        )
+
+    # Validate password for password auth source
+    if user_data.auth_source == "password" and not user_data.password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password is required for password authentication",
+        )
+
+    # Create user
+    password_hash = (
+        get_password_hash(user_data.password)
+        if user_data.password
+        else get_password_hash("oidc_placeholder")
+    )
+    new_user = User(
+        user_name=user_data.user_name,
+        email=user_data.email,
+        password_hash=password_hash,
+        role=user_data.role,
+        auth_source=user_data.auth_source,
+        is_active=True,
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    return AdminUserResponse(
+        id=new_user.id,
+        user_name=new_user.user_name,
+        email=new_user.email,
+        role=new_user.role,
+        auth_source=new_user.auth_source,
+        is_active=new_user.is_active,
+        created_at=new_user.created_at,
+        updated_at=new_user.updated_at,
+    )
+
+
+@router.put("/users/{user_id}", response_model=AdminUserResponse)
+async def update_user(
+    user_data: AdminUserUpdate,
+    user_id: int = Path(..., description="User ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Update user information (admin only)
+    """
+    user = user_service.get_user_by_id(db, user_id)
+
+    # Prevent admin from deactivating themselves
+    if user.id == current_user.id and user_data.is_active is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot deactivate your own account",
+        )
+
+    # Prevent admin from demoting themselves
+    if user.id == current_user.id and user_data.role == "user":
+        # Check if there are other admins
+        admin_count = (
+            db.query(User).filter(User.role == "admin", User.is_active == True).count()
+        )
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot demote yourself when you are the only admin",
+            )
+
+    # Check username uniqueness if being changed
+    if user_data.user_name and user_data.user_name != user.user_name:
+        existing_user = (
+            db.query(User).filter(User.user_name == user_data.user_name).first()
+        )
+        if existing_user:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"User with username '{user_data.user_name}' already exists",
+            )
+
+    # Update fields
+    if user_data.user_name is not None:
+        user.user_name = user_data.user_name
+    if user_data.email is not None:
+        user.email = user_data.email
+    if user_data.role is not None:
+        user.role = user_data.role
+    if user_data.is_active is not None:
+        user.is_active = user_data.is_active
+
+    db.commit()
+    db.refresh(user)
+
+    return AdminUserResponse(
+        id=user.id,
+        user_name=user.user_name,
+        email=user.email,
+        role=user.role,
+        auth_source=user.auth_source,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
+@router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_user(
+    user_id: int = Path(..., description="User ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Delete a user (soft delete by setting is_active=False)
+    """
+    user = user_service.get_user_by_id(db, user_id)
+
+    # Prevent admin from deleting themselves
+    if user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account",
+        )
+
+    # Soft delete
+    user.is_active = False
+    db.commit()
+
+    return None
+
+
+@router.post("/users/{user_id}/reset-password", response_model=AdminUserResponse)
+async def reset_user_password(
+    password_data: PasswordReset,
+    user_id: int = Path(..., description="User ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Reset user password (admin only)
+    """
+    user = user_service.get_user_by_id(db, user_id)
+
+    # Only allow password reset for password-authenticated users
+    if user.auth_source not in ["password", "unknown"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot reset password for OIDC-authenticated users",
+        )
+
+    user.password_hash = get_password_hash(password_data.new_password)
+    if user.auth_source == "unknown":
+        user.auth_source = "password"
+    db.commit()
+    db.refresh(user)
+
+    return AdminUserResponse(
+        id=user.id,
+        user_name=user.user_name,
+        email=user.email,
+        role=user.role,
+        auth_source=user.auth_source,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
+@router.post("/users/{user_id}/toggle-status", response_model=AdminUserResponse)
+async def toggle_user_status(
+    user_id: int = Path(..., description="User ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Toggle user active status (enable/disable)
+    """
+    user = user_service.get_user_by_id(db, user_id)
+
+    # Prevent admin from disabling themselves
+    if user.id == current_user.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot toggle your own account status",
+        )
+
+    user.is_active = not user.is_active
+    db.commit()
+    db.refresh(user)
+
+    return AdminUserResponse(
+        id=user.id,
+        user_name=user.user_name,
+        email=user.email,
+        role=user.role,
+        auth_source=user.auth_source,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
+@router.put("/users/{user_id}/role", response_model=AdminUserResponse)
+async def update_user_role(
+    role_data: RoleUpdate,
+    user_id: int = Path(..., description="User ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Update user role (admin only)
+    """
+    user = user_service.get_user_by_id(db, user_id)
+
+    # Prevent admin from demoting themselves if they're the only admin
+    if user.id == current_user.id and role_data.role == "user":
+        admin_count = (
+            db.query(User).filter(User.role == "admin", User.is_active == True).count()
+        )
+        if admin_count <= 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot demote yourself when you are the only admin",
+            )
+
+    user.role = role_data.role
+    db.commit()
+    db.refresh(user)
+
+    return AdminUserResponse(
+        id=user.id,
+        user_name=user.user_name,
+        email=user.email,
+        role=user.role,
+        auth_source=user.auth_source,
+        is_active=user.is_active,
+        created_at=user.created_at,
+        updated_at=user.updated_at,
+    )
+
+
+# ==================== Public Model Management Endpoints ====================
+
+
+@router.get("/public-models", response_model=PublicModelListResponse)
+async def list_public_models(
+    page: int = Query(1, ge=1),
+    limit: int = Query(20, ge=1, le=100),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get list of all public models with pagination
+    """
+    query = db.query(PublicModel)
+    total = query.count()
+    models = query.offset((page - 1) * limit).limit(limit).all()
+
+    return PublicModelListResponse(
+        total=total,
+        items=[
+            PublicModelResponse(
+                id=model.id,
+                name=model.name,
+                namespace=model.namespace,
+                json=model.json,
+                is_active=model.is_active,
+                created_at=model.created_at,
+                updated_at=model.updated_at,
+            )
+            for model in models
+        ],
+    )
+
+
+@router.post(
+    "/public-models",
+    response_model=PublicModelResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_public_model(
+    model_data: PublicModelCreate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Create a new public model (admin only)
+    """
+    # Check if model with same name and namespace already exists
+    existing_model = (
+        db.query(PublicModel)
+        .filter(
+            PublicModel.name == model_data.name,
+            PublicModel.namespace == model_data.namespace,
+        )
+        .first()
+    )
+    if existing_model:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Public model '{model_data.name}' already exists in namespace '{model_data.namespace}'",
+        )
+
+    new_model = PublicModel(
+        name=model_data.name,
+        namespace=model_data.namespace,
+        json=model_data.json,
+        is_active=True,
+    )
+    db.add(new_model)
+    db.commit()
+    db.refresh(new_model)
+
+    return PublicModelResponse(
+        id=new_model.id,
+        name=new_model.name,
+        namespace=new_model.namespace,
+        json=new_model.json,
+        is_active=new_model.is_active,
+        created_at=new_model.created_at,
+        updated_at=new_model.updated_at,
+    )
+
+
+@router.put("/public-models/{model_id}", response_model=PublicModelResponse)
+async def update_public_model(
+    model_data: PublicModelUpdate,
+    model_id: int = Path(..., description="Model ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Update a public model (admin only)
+    """
+    model = db.query(PublicModel).filter(PublicModel.id == model_id).first()
+    if not model:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Public model with id {model_id} not found",
+        )
+
+    # Check name uniqueness if being changed
+    if model_data.name and model_data.name != model.name:
+        namespace = model_data.namespace or model.namespace
+        existing_model = (
+            db.query(PublicModel)
+            .filter(
+                PublicModel.name == model_data.name, PublicModel.namespace == namespace
+            )
+            .first()
+        )
+        if existing_model:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Public model '{model_data.name}' already exists in namespace '{namespace}'",
+            )
+
+    # Update fields
+    if model_data.name is not None:
+        model.name = model_data.name
+    if model_data.namespace is not None:
+        model.namespace = model_data.namespace
+    if model_data.json is not None:
+        model.json = model_data.json
+    if model_data.is_active is not None:
+        model.is_active = model_data.is_active
+
+    db.commit()
+    db.refresh(model)
+
+    return PublicModelResponse(
+        id=model.id,
+        name=model.name,
+        namespace=model.namespace,
+        json=model.json,
+        is_active=model.is_active,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
+    )
+
+
+@router.delete("/public-models/{model_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_public_model(
+    model_id: int = Path(..., description="Model ID"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Delete a public model (admin only)
+    """
+    model = db.query(PublicModel).filter(PublicModel.id == model_id).first()
+    if not model:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Public model with id {model_id} not found",
+        )
+
+    db.delete(model)
+    db.commit()
+
+    return None
+
+
+# ==================== System Stats Endpoint ====================
+
+
+@router.get("/stats", response_model=SystemStats)
+async def get_system_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get system statistics
+    """
+    from app.models.task import Task
+
+    total_users = db.query(User).count()
+    active_users = db.query(User).filter(User.is_active == True).count()
+    admin_count = (
+        db.query(User).filter(User.role == "admin", User.is_active == True).count()
+    )
+    total_tasks = db.query(Task).count()
+    total_public_models = db.query(PublicModel).count()
+
+    return SystemStats(
+        total_users=total_users,
+        active_users=active_users,
+        admin_count=admin_count,
+        total_tasks=total_tasks,
+        total_public_models=total_public_models,
+    )
+
+
+# ==================== Task Management Endpoints ====================
 
 
 @router.post(

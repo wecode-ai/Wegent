@@ -42,7 +42,8 @@
     "chat": "聊天",
     "code": "编码",
     "settings": "设置",
-    "docs": "文档"
+    "docs": "文档",
+    "admin": "系统管理"
   },
   "sidebar": {
     "recent_visits": "最近访问",
@@ -288,7 +289,11 @@
     "no_match": "没有匹配的结果",
     "default": "(默认)",
     "set_token": "设置token",
-    "configure_integration": "配置仓库集成"
+    "configure_integration": "配置仓库集成",
+    "load_more": "刷新仓库列表",
+    "refreshing": "刷新中...",
+    "refresh_success": "仓库列表已刷新",
+    "refresh_failed": "刷新失败，请重试"
   },
   "tasks": {
     "search_placeholder": "搜索任务",
@@ -328,6 +333,14 @@
     "not_supported": "此浏览器不支持浏览器通知。",
     "enable_success": "浏览器通知已成功启用",
     "disable_success": "浏览器通知已禁用"
+  },
+  "send_key": {
+    "title": "消息发送快捷键",
+    "description": "选择在聊天中发送消息的键盘快捷键",
+    "option_enter": "Enter 发送（Shift+Enter 换行）",
+    "option_cmd_enter": "Cmd/Ctrl+Enter 发送（Enter 换行）",
+    "save_success": "发送快捷键已保存",
+    "save_failed": "保存发送快捷键失败"
   },
   "guide": {
     "title": "欢迎",

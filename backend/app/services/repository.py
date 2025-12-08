@@ -255,6 +255,36 @@ class RepositoryService:
 
         return all_results
 
+    async def clear_user_cache(self, user: User) -> List[str]:
+        """
+        Clear all repository caches for a user across all git domains.
+
+        Args:
+            user: The user whose cache should be cleared
+
+        Returns:
+            List of git domains whose caches were cleared
+        """
+        from app.core.cache import cache_manager
+
+        cleared_domains = []
+
+        if not user.git_info:
+            return cleared_domains
+
+        for git_info in user.git_info:
+            git_domain = git_info.get("git_domain", "")
+            if git_domain:
+                cache_key = cache_manager.generate_full_cache_key(user.id, git_domain)
+                deleted = await cache_manager.delete(cache_key)
+                if deleted:
+                    cleared_domains.append(git_domain)
+                    self.logger.info(
+                        f"Cleared cache for user {user.id}, domain: {git_domain}"
+                    )
+
+        return cleared_domains
+
 
 # Global service instance
 repository_service = RepositoryService()
