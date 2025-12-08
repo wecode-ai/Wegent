@@ -24,6 +24,8 @@ class User(Base):
     role = Column(String(20), nullable=False, default="user")
     # Authentication source: password, oidc, or unknown (for existing users)
     auth_source = Column(String(20), nullable=False, default="unknown")
+    # User preferences (e.g., send_key: "enter" or "cmd_enter")
+    preferences = Column(String(4096), nullable=False, default="{}")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 

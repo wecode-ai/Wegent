@@ -16,18 +16,35 @@ import {
 import { useToast } from '@/hooks/use-toast';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Label } from '@/components/ui/label';
+import { useUser } from '@/features/common/UserContext';
+import { userApis } from '@/apis/user';
+import type { UserPreferences } from '@/types/api';
 
 export default function NotificationSettings() {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const router = useRouter();
+  const { user, refresh } = useUser();
   const [enabled, setEnabled] = useState(false);
   const [supported, setSupported] = useState(true);
+  const [sendKey, setSendKey] = useState<'enter' | 'cmd_enter'>('enter');
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     setSupported(isNotificationSupported());
     setEnabled(isNotificationEnabled());
   }, []);
+
+  useEffect(() => {
+    // Only update sendKey when user data is loaded and has preferences
+    // Use 'enter' as default if send_key is not set
+    if (user) {
+      const userSendKey = user.preferences?.send_key || 'enter';
+      setSendKey(userSendKey);
+    }
+  }, [user]);
 
   const handleToggle = async () => {
     if (!supported) {
@@ -56,6 +73,29 @@ export default function NotificationSettings() {
       toast({
         title: t('notifications.disable_success'),
       });
+    }
+  };
+
+  const handleSendKeyChange = async (value: 'enter' | 'cmd_enter') => {
+    setSendKey(value);
+    setIsSaving(true);
+    try {
+      const preferences: UserPreferences = { send_key: value };
+      await userApis.updateUser({ preferences });
+      await refresh();
+      toast({
+        title: t('send_key.save_success'),
+      });
+    } catch (error) {
+      console.error('Failed to save send key preference:', error);
+      toast({
+        variant: 'destructive',
+        title: t('send_key.save_failed'),
+      });
+      // Revert to previous value
+      setSendKey(user?.preferences?.send_key || 'enter');
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -90,6 +130,33 @@ export default function NotificationSettings() {
           </p>
         </div>
       )}
+
+      {/* Send Key Shortcut Setting */}
+      <div className="p-4 bg-base border border-border rounded-lg">
+        <div className="mb-3">
+          <h3 className="text-sm font-medium text-text-primary">{t('send_key.title')}</h3>
+          <p className="text-xs text-text-muted mt-1">{t('send_key.description')}</p>
+        </div>
+        <RadioGroup
+          value={sendKey}
+          onValueChange={value => handleSendKeyChange(value as 'enter' | 'cmd_enter')}
+          disabled={isSaving}
+          className="space-y-2"
+        >
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="enter" id="send-key-enter" />
+            <Label htmlFor="send-key-enter" className="text-sm cursor-pointer">
+              {t('send_key.option_enter')}
+            </Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <RadioGroupItem value="cmd_enter" id="send-key-cmd-enter" />
+            <Label htmlFor="send-key-cmd-enter" className="text-sm cursor-pointer">
+              {t('send_key.option_cmd_enter')}
+            </Label>
+          </div>
+        </RadioGroup>
+      </div>
 
       {/* Restart Onboarding Button */}
       <div className="flex items-center justify-between p-4 bg-base border border-border rounded-lg">

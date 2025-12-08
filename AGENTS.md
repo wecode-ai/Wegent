@@ -372,6 +372,17 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 - `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ALGORITHM`
 - `OIDC_*` - OpenID Connect configuration
 - `WEBHOOK_*` - Webhook notification settings
+- `ATTACHMENT_STORAGE_BACKEND` - Storage backend for file attachments (default: "mysql")
+  - Supported values: "mysql", "s3", "minio"
+  - When set to "mysql", binary data is stored in the database
+  - When set to "s3" or "minio", files are stored in external object storage
+- `ATTACHMENT_S3_*` - S3/MinIO configuration (required when using S3/MinIO backend)
+  - `ATTACHMENT_S3_ENDPOINT` - S3 endpoint URL (e.g., "https://s3.amazonaws.com" or "http://minio:9000")
+  - `ATTACHMENT_S3_ACCESS_KEY` - S3 access key
+  - `ATTACHMENT_S3_SECRET_KEY` - S3 secret key
+  - `ATTACHMENT_S3_BUCKET` - S3 bucket name (default: "attachments")
+  - `ATTACHMENT_S3_REGION` - S3 region (default: "us-east-1")
+  - `ATTACHMENT_S3_USE_SSL` - Use SSL for S3 connections (default: true)
 
 #### Database Migrations (Alembic)
 

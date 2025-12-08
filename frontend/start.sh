@@ -183,9 +183,9 @@ echo ""
 # Step 3: Configure environment variables
 echo -e "${BLUE}[3/4] Configuring environment variables...${NC}"
 
-# Create or update .env.local
+# Check if .env.local exists, create template if not
 if [ ! -f ".env.local" ]; then
-    echo -e "${YELLOW}Creating .env.local file...${NC}"
+    echo -e "${YELLOW}Creating .env.local template file...${NC}"
     cat > .env.local << EOF
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
@@ -194,7 +194,7 @@ if [ ! -f ".env.local" ]; then
 # Frontend Environment Variables
 
 # API Configuration
-NEXT_PUBLIC_API_URL=$API_URL
+NEXT_PUBLIC_API_URL=http://localhost:8000
 NEXT_PUBLIC_USE_MOCK_API=false
 
 # Authentication Configuration
@@ -206,18 +206,13 @@ I18N_LNG=en
 # Deploy Mode Configuration
 NEXT_PUBLIC_FRONTEND_ENABLE_DISPLAY_QUOTAS=enable
 EOF
-    echo -e "${GREEN}✓ Created .env.local${NC}"
-else
-    # Update API URL in existing .env.local
-    if [[ "$OSTYPE" == "darwin"* ]]; then
-        # macOS
-        sed -i '' "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=$API_URL|g" .env.local
-    else
-        # Linux
-        sed -i "s|^NEXT_PUBLIC_API_URL=.*|NEXT_PUBLIC_API_URL=$API_URL|g" .env.local
-    fi
-    echo -e "${GREEN}✓ Updated .env.local with API URL: $API_URL${NC}"
+    echo -e "${GREEN}✓ Created .env.local template${NC}"
 fi
+
+# Export environment variables (will override .env.local values)
+export NEXT_PUBLIC_API_URL=$API_URL
+echo -e "${GREEN}✓ Using API URL: $API_URL (via environment variable)${NC}"
+echo -e "${YELLOW}Note: .env.local file is not modified, using runtime environment variables${NC}"
 echo ""
 
 # Step 4: Start the development server

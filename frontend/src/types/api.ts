@@ -4,6 +4,11 @@
 
 // Authentication Types
 
+// User Preferences
+export interface UserPreferences {
+  send_key: 'enter' | 'cmd_enter';
+}
+
 // User Types
 export type UserRole = 'admin' | 'user';
 export type AuthSource = 'password' | 'oidc' | 'unknown';
@@ -18,6 +23,7 @@ export interface User {
   created_at: string;
   updated_at: string;
   git_info: GitInfo[];
+  preferences?: UserPreferences;
 }
 
 /** Git account information */
