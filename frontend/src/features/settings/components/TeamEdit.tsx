@@ -68,6 +68,7 @@ export default function TeamEdit(props: TeamEditProps) {
   // Left column: Team Name, Mode, Description
   const [name, setName] = useState('');
   const [mode, setMode] = useState<TeamMode>('solo');
+  const [recommendedMode, setRecommendedMode] = useState<'chat' | 'code' | 'both'>('both');
 
   // Right column: LeaderBot (single select), Bots Transfer (multi-select)
   // Use string key for antd Transfer, stringify bot.id here
@@ -219,6 +220,9 @@ export default function TeamEdit(props: TeamEditProps) {
       setName(formTeam.name);
       const m = (formTeam.workflow?.mode as TeamMode) || 'pipeline';
       setMode(m);
+      // Restore recommended_mode from team data
+      const recMode = formTeam.recommended_mode || (formTeam.workflow?.recommended_mode as 'chat' | 'code' | 'both') || 'both';
+      setRecommendedMode(recMode);
       const ids = formTeam.bots.map(b => String(b.bot_id));
       setSelectedBotKeys(ids);
       const leaderBot = formTeam.bots.find(b => b.role === 'leader');
@@ -226,6 +230,7 @@ export default function TeamEdit(props: TeamEditProps) {
     } else {
       setName('');
       setMode('solo');
+      setRecommendedMode('both');
       setSelectedBotKeys([]);
       setLeaderBotId(null);
     }
@@ -392,7 +397,7 @@ export default function TeamEdit(props: TeamEditProps) {
             },
           ];
 
-          const workflow = { mode, leader_bot_id: savedBotId };
+          const workflow = { mode, leader_bot_id: savedBotId, recommended_mode: recommendedMode };
 
           if (editingTeam && editingTeamId && editingTeamId > 0) {
             const updated = await updateTeam(editingTeamId, {
@@ -475,7 +480,7 @@ export default function TeamEdit(props: TeamEditProps) {
       };
     });
 
-    const workflow = { mode, leader_bot_id: leaderBotId };
+    const workflow = { mode, leader_bot_id: leaderBotId, recommended_mode: recommendedMode };
 
     setSaving(true);
     try {
@@ -571,6 +576,32 @@ export default function TeamEdit(props: TeamEditProps) {
               placeholder={t('team.name_placeholder')}
               className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base h-9"
             />
+          </div>
+
+          {/* Recommended Mode */}
+          <div className="flex flex-col">
+            <div className="flex items-center mb-1">
+              <label className="block text-sm font-medium text-text-primary">
+                {t('team.recommended_mode')}
+              </label>
+            </div>
+            <div className="flex gap-2">
+              {(['both', 'chat', 'code'] as const).map(opt => (
+                <button
+                  key={opt}
+                  type="button"
+                  onClick={() => setRecommendedMode(opt)}
+                  className={`
+                    px-3 py-1.5 text-sm font-medium rounded-md border transition-colors
+                    ${recommendedMode === opt
+                      ? 'bg-primary text-primary-foreground border-primary'
+                      : 'border-border hover:bg-accent hover:text-accent-foreground'}
+                  `}
+                >
+                  {t(`team.recommended_mode_${opt}`)}
+                </button>
+              ))}
+            </div>
           </div>
 
           {/* Mode component */}
