@@ -2,10 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, field_validator
+
+
+class UserPreferences(BaseModel):
+    """User preferences model"""
+
+    send_key: Literal["enter", "cmd_enter"] = "enter"
 
 
 class Token(BaseModel):
@@ -46,6 +53,7 @@ class UserCreate(UserBase):
     """User creation model"""
 
     git_info: Optional[List[GitInfo]] = None
+    preferences: Optional[UserPreferences] = None
     password: Optional[str] = None
 
 
@@ -55,6 +63,7 @@ class UserUpdate(BaseModel):
     user_name: Optional[str] = None
     email: Optional[EmailStr] = None
     git_info: Optional[List[GitInfo]] = None
+    preferences: Optional[UserPreferences] = None
     password: Optional[str] = None
 
 
@@ -63,8 +72,31 @@ class UserInDB(UserBase):
 
     id: int
     git_info: Optional[List[GitInfo]] = None
+    preferences: Optional[UserPreferences] = None
+    role: str = "user"
+    auth_source: str = "unknown"
     created_at: datetime
     updated_at: datetime
+
+    @field_validator("preferences", mode="before")
+    @classmethod
+    def parse_preferences(cls, v):
+        """Parse preferences from JSON string or dict to UserPreferences object"""
+        if v is None or v == "" or v == "null":
+            return None
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if not parsed:  # Empty dict or None after parsing
+                    return None
+                return UserPreferences(**parsed)
+            except (json.JSONDecodeError, TypeError):
+                return None
+        if isinstance(v, dict):
+            if not v:  # Empty dict
+                return None
+            return UserPreferences(**v)
+        return v
 
     class Config:
         from_attributes = True
@@ -85,6 +117,7 @@ class UserInfo(BaseModel):
 
     id: int
     user_name: str
+    role: str = "user"
 
 
 class UserAuthTypeResponse(BaseModel):

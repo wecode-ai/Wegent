@@ -13,7 +13,7 @@ async function loadTranslations() {
   const resources: Record<string, Record<string, unknown>> = {};
 
   // Namespace list
-  const namespaces = ['common', 'chat', 'settings', 'history', 'prompts', 'tasks'];
+  const namespaces = ['common', 'chat', 'settings', 'history', 'prompts', 'tasks', 'admin'];
 
   for (const lng of supportedLanguages) {
     resources[lng] = {};
@@ -49,7 +49,7 @@ export async function initI18n() {
     debug: process.env.NODE_ENV === 'development',
     // Namespace configuration
     defaultNS: 'common',
-    ns: ['common', 'chat', 'settings', 'history', 'prompts', 'tasks'],
+    ns: ['common', 'chat', 'settings', 'history', 'prompts', 'tasks', 'admin'],
   });
 
   return i18next;

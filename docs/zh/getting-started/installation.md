@@ -84,6 +84,19 @@ REDIS_PASSWORD=your_redis_password  # 可选
 PASSWORD_KEY=your-password-key-here
 DATABASE_URL=mysql+pymysql://task_user:your_password@mysql:3306/task_manager
 
+# 附件存储配置（可选）
+# 默认: mysql（将文件存储在数据库中）
+# 选项: mysql, s3, minio
+ATTACHMENT_STORAGE_BACKEND=mysql
+
+# S3/MinIO 配置（仅在使用 s3 或 minio 后端时需要）
+# ATTACHMENT_S3_ENDPOINT=https://s3.amazonaws.com  # 或 http://minio:9000
+# ATTACHMENT_S3_ACCESS_KEY=your_access_key
+# ATTACHMENT_S3_SECRET_KEY=your_secret_key
+# ATTACHMENT_S3_BUCKET=attachments
+# ATTACHMENT_S3_REGION=us-east-1
+# ATTACHMENT_S3_USE_SSL=true
+
 # 前端配置
 NEXT_PUBLIC_API_URL=http://localhost:8000
 

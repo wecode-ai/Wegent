@@ -1,0 +1,162 @@
+{
+  "title": "System Administration",
+  "description": "Manage users, roles, and public models",
+  "tabs": {
+    "users": "Users",
+    "public_models": "Public Models"
+  },
+  "stats": {
+    "total_users": "Total Users",
+    "active_users": "Active Users",
+    "admin_count": "Administrators",
+    "total_tasks": "Total Tasks",
+    "total_public_models": "Public Models"
+  },
+  "common": {
+    "cancel": "Cancel",
+    "create": "Create",
+    "save": "Save",
+    "delete": "Delete",
+    "reset": "Reset",
+    "loading": "Loading..."
+  },
+  "users": {
+    "title": "User Management",
+    "description": "Create, edit, and manage user accounts",
+    "loading": "Loading users...",
+    "no_users": "No users found",
+    "no_email": "No email",
+    "show_inactive": "Show inactive",
+    "create_user": "Create User",
+    "edit_user": "Edit User",
+    "delete_user": "Delete User",
+    "reset_password": "Reset Password",
+    "toggle_status": "Toggle Status",
+    "change_role": "Change Role",
+    "columns": {
+      "id": "ID",
+      "username": "Username",
+      "email": "Email",
+      "role": "Role",
+      "auth_source": "Auth Source",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "roles": {
+      "admin": "Admin",
+      "user": "User"
+    },
+    "auth_sources": {
+      "password": "Password",
+      "oidc": "OIDC",
+      "unknown": "Unknown"
+    },
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "form": {
+      "username": "Username",
+      "username_placeholder": "Enter username",
+      "password": "Password",
+      "password_placeholder": "Enter password (min 6 characters)",
+      "new_password": "New Password",
+      "new_password_placeholder": "Enter new password (min 6 characters)",
+      "email": "Email",
+      "email_placeholder": "Enter email (optional)",
+      "role": "Role",
+      "role_select": "Select role",
+      "auth_source": "Authentication Method",
+      "auth_source_select": "Select authentication method"
+    },
+    "confirm": {
+      "delete_title": "Delete User",
+      "delete_message": "Are you sure you want to delete user \"{{name}}\"? This action will deactivate the account.",
+      "reset_password_title": "Reset Password",
+      "reset_password_message": "Enter new password for user \"{{name}}\"",
+      "toggle_status_title": "Toggle Status",
+      "toggle_enable_message": "Are you sure you want to enable user \"{{name}}\"?",
+      "toggle_disable_message": "Are you sure you want to disable user \"{{name}}\"?",
+      "change_role_title": "Change Role",
+      "change_role_message": "Change role for user \"{{name}}\" to {{role}}?"
+    },
+    "success": {
+      "created": "User created successfully",
+      "updated": "User updated successfully",
+      "deleted": "User deleted successfully",
+      "password_reset": "Password reset successfully",
+      "status_toggled": "User status updated",
+      "role_changed": "User role updated"
+    },
+    "errors": {
+      "load_failed": "Failed to load users",
+      "create_failed": "Failed to create user",
+      "update_failed": "Failed to update user",
+      "delete_failed": "Failed to delete user",
+      "reset_password_failed": "Failed to reset password",
+      "toggle_status_failed": "Failed to toggle user status",
+      "change_role_failed": "Failed to change user role",
+      "username_required": "Username is required",
+      "password_required": "Password is required for password authentication",
+      "password_min_length": "Password must be at least 6 characters",
+      "cannot_delete_self": "Cannot delete your own account",
+      "cannot_disable_self": "Cannot disable your own account",
+      "cannot_demote_self": "Cannot demote yourself when you are the only admin"
+    }
+  },
+  "public_models": {
+    "title": "Public Model Management",
+    "description": "Manage public AI models available to all users",
+    "loading": "Loading models...",
+    "no_models": "No public models found",
+    "create_model": "Create Model",
+    "edit_model": "Edit Model",
+    "delete_model": "Delete Model",
+    "model_id": "Model ID",
+    "namespace_label": "Namespace",
+    "status": {
+      "active": "Active",
+      "inactive": "Inactive"
+    },
+    "columns": {
+      "id": "ID",
+      "name": "Name",
+      "namespace": "Namespace",
+      "status": "Status",
+      "created_at": "Created At",
+      "actions": "Actions"
+    },
+    "form": {
+      "name": "Model Name",
+      "name_placeholder": "Enter model name",
+      "namespace": "Namespace",
+      "namespace_placeholder": "default",
+      "config": "Model Configuration",
+      "config_placeholder": "Enter model configuration as JSON"
+    },
+    "confirm": {
+      "delete_title": "Delete Model",
+      "delete_message": "Are you sure you want to delete public model \"{{name}}\"? This action cannot be undone."
+    },
+    "success": {
+      "created": "Public model created successfully",
+      "updated": "Public model updated successfully",
+      "deleted": "Public model deleted successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load public models",
+      "create_failed": "Failed to create public model",
+      "update_failed": "Failed to update public model",
+      "delete_failed": "Failed to delete public model",
+      "name_required": "Model name is required",
+      "config_required": "Model configuration is required",
+      "config_invalid_json": "Model configuration must be valid JSON"
+    }
+  },
+  "access_denied": {
+    "title": "Access Denied",
+    "message": "You do not have permission to access this page. Only administrators can view this content.",
+    "go_home": "Go to Home"
+  }
+}
