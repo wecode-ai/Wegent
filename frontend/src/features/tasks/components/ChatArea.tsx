@@ -208,12 +208,28 @@ export default function ChatArea({
     }
   }, [selectedTaskDetail?.id, streamingTaskId]);
 
-  // Clear streamingTaskId when the stream completes
+  // Clear streamingTaskId and local pending state when:
+  // 1. Stream completes or is externally cleared (streamingTaskId exists but stream is not active)
+  // 2. User navigates to a new task (no selectedTaskDetail and no streamingTaskId)
+  //    This handles the case when user clicks "New Task" during a follow-up stream
   useEffect(() => {
     if (streamingTaskId && !isStreamingTaskActive) {
+      // Stream was cleared (either completed or externally cleared via clearAllStreams)
       setStreamingTaskId(null);
+      setLocalPendingMessage(null);
+      setLocalPendingAttachment(null);
     }
   }, [streamingTaskId, isStreamingTaskActive]);
+
+  // Clear lingering local pending state when navigating to a fresh new task state
+  // This is separate from the above effect to avoid unnecessary re-renders
+  useEffect(() => {
+    if (!selectedTaskDetail?.id && !streamingTaskId) {
+      // No task selected and no active streaming task - clear any leftover pending state
+      setLocalPendingMessage(null);
+      setLocalPendingAttachment(null);
+    }
+  }, [selectedTaskDetail?.id, streamingTaskId]);
 
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
@@ -964,6 +980,7 @@ export default function ChatArea({
                       handleSendMessage={handleSendMessage}
                       isLoading={isLoading}
                       taskType={taskType}
+                      autoFocus={!hasMessages}
                     />
                   )}
                   {/* Team Selector and Send Button - always show */}
