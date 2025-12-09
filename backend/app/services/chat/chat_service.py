@@ -128,15 +128,28 @@ class ChatService(ChatServiceBase):
 
                     full_response += chunk
 
-                    try:
-                        yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
-                    except (GeneratorExit, Exception) as e:
-                        # Client disconnected - but continue streaming in background
-                        logger.info(
-                            f"Client disconnected for subtask {subtask_id}: {type(e).__name__}, continuing in background"
-                        )
-                        client_disconnected = True
-                        # Don't break - continue accumulating content
+                    # Only try to yield if client is still connected
+                    # Once client_disconnected is True, skip yield to avoid repeated exceptions
+                    if not client_disconnected:
+                        try:
+                            yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
+                        except (GeneratorExit, Exception) as e:
+                            # Client disconnected - continue streaming in background
+                            logger.info(
+                                f"Client disconnected for subtask {subtask_id}: {type(e).__name__}, continuing in background"
+                            )
+                            client_disconnected = True
+                            # Immediately save current content to Redis for recovery
+                            await session_manager.save_streaming_content(
+                                subtask_id, full_response
+                            )
+                            # Also save to database immediately
+                            await self._save_partial_response(
+                                subtask_id, full_response, is_streaming=True
+                            )
+                            last_redis_save = time.time()
+                            last_db_save = time.time()
+                            # Don't break - continue accumulating content
 
                     # Publish chunk to Redis Pub/Sub for real-time updates
                     await session_manager.publish_streaming_chunk(subtask_id, chunk)

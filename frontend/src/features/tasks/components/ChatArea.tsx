@@ -88,6 +88,14 @@ export default function ChatArea({
   const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null);
   const [localPendingAttachment, setLocalPendingAttachment] = useState<Attachment | null>(null);
 
+  // Unified function to reset streaming-related state
+  // This is called in multiple scenarios: task switch, stream complete, stream error, etc.
+  const resetStreamingState = useCallback(() => {
+    setLocalPendingMessage(null);
+    setLocalPendingAttachment(null);
+    setStreamingTaskId(null);
+  }, []);
+
   // Web search toggle state
   const [enableWebSearch, setEnableWebSearch] = useState(false);
 
@@ -208,28 +216,25 @@ export default function ChatArea({
     }
   }, [selectedTaskDetail?.id, streamingTaskId]);
 
-  // Clear streamingTaskId and local pending state when:
+  // Unified effect to reset streaming state in all necessary scenarios:
   // 1. Stream completes or is externally cleared (streamingTaskId exists but stream is not active)
-  // 2. User navigates to a new task (no selectedTaskDetail and no streamingTaskId)
-  //    This handles the case when user clicks "New Task" during a follow-up stream
+  // 2. User navigates to a fresh new task state (no selectedTaskDetail and no streamingTaskId)
   useEffect(() => {
+    // Scenario 1: Stream was cleared (either completed or externally cleared via clearAllStreams)
     if (streamingTaskId && !isStreamingTaskActive) {
-      // Stream was cleared (either completed or externally cleared via clearAllStreams)
-      setStreamingTaskId(null);
-      setLocalPendingMessage(null);
-      setLocalPendingAttachment(null);
+      resetStreamingState();
     }
-  }, [streamingTaskId, isStreamingTaskActive]);
+    // Scenario 2: No task selected and no active streaming task
+    else if (!selectedTaskDetail?.id && !streamingTaskId) {
+      resetStreamingState();
+    }
+  }, [streamingTaskId, isStreamingTaskActive, selectedTaskDetail?.id, resetStreamingState]);
 
-  // Clear lingering local pending state when navigating to a fresh new task state
-  // This is separate from the above effect to avoid unnecessary re-renders
+  // Reset streaming state when task ID changes (user switches tasks)
+  // This ensures pending message from task A doesn't show up in task B
   useEffect(() => {
-    if (!selectedTaskDetail?.id && !streamingTaskId) {
-      // No task selected and no active streaming task - clear any leftover pending state
-      setLocalPendingMessage(null);
-      setLocalPendingAttachment(null);
-    }
-  }, [selectedTaskDetail?.id, streamingTaskId]);
+    resetStreamingState();
+  }, [selectedTaskDetail?.id, resetStreamingState]);
 
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
@@ -557,9 +562,8 @@ export default function ChatArea({
               // URL will be updated when stream completes.
             },
             onComplete: async (completedTaskId, _subtaskId) => {
-              // Clear local pending state when stream completes
-              setLocalPendingMessage(null);
-              setLocalPendingAttachment(null);
+              // Note: Don't call resetStreamingState here as we handle streamingTaskId separately below
+              // and we need to wait for task detail refresh before clearing
 
               // Refresh task list after stream ends
               refreshTasks();
@@ -601,9 +605,8 @@ export default function ChatArea({
               }
             },
             onError: error => {
-              // Clear local pending state on error
-              setLocalPendingMessage(null);
-              setLocalPendingAttachment(null);
+              // Reset all streaming state on error
+              resetStreamingState();
 
               toast({
                 variant: 'destructive',

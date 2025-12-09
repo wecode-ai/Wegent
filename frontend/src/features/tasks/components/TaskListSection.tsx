@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { taskApis } from '@/apis/tasks';
 import { isTaskUnread } from '@/utils/taskViewStatus';
@@ -43,6 +44,7 @@ export default function TaskListSection({
 }: TaskListSectionProps) {
   const router = useRouter();
   const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
+  const { clearAllStreams } = useChatStreamContext();
   const { t } = useTranslation('common');
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null);
   const [_loading, setLoading] = useState(false);
@@ -67,6 +69,10 @@ export default function TaskListSection({
 
   // Select task
   const handleTaskClick = (task: Task) => {
+    // Clear all stream states when switching tasks to prevent auto-switching back
+    // when the previous streaming task completes
+    clearAllStreams();
+
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams();
       params.set('taskId', String(task.id));
