@@ -179,7 +179,9 @@
                     "role": ""
                 }
             ],
-            "collaborationModel": "coordinate"
+            "collaborationModel": "coordinate",
+            "bind_mode": "chat",
+            "description": "新闻洞察团队，协作完成新闻信息的搜集、分析和编辑工作"
         }
     },
     {
@@ -234,7 +236,9 @@
                     "role": "leader"
                 }
             ],
-            "collaborationModel": "solo"
+            "collaborationModel": "solo",
+            "bind_mode": "code",
+            "description": "使用Claude模型的开发团队，专注于代码生成、分支管理和MR流程"
         }
     },
     {
@@ -289,7 +293,9 @@
                     "role": "leader"
                 }
             ],
-            "collaborationModel": "solo"
+            "collaborationModel": "solo",
+            "bind_mode": "code",
+            "description": "开发团队示例，用于演示代码生成、分支管理和MR流程"
         }
     },
     {
@@ -340,7 +346,9 @@
                     "role": "leader"
                 }
             ],
-            "collaborationModel": "solo"
+            "collaborationModel": "solo",
+            "bind_mode": "code",
+            "description": "需求澄清团队，通过结构化问答帮助用户将模糊需求细化为清晰可执行的开发任务"
         }
     },
     {
@@ -510,54 +518,56 @@
             }
         }
     },
-    {
-        "apiVersion": "agent.wecode.io/v1",
-        "kind": "Team",
-        "metadata": {
-            "name": "深度研究",
-            "namespace": "default",
-            "labels": {
-                "share_status": "1"
+        {
+            "apiVersion": "agent.wecode.io/v1",
+            "kind": "Team",
+            "metadata": {
+                "name": "深度研究",
+                "namespace": "default",
+                "labels": {
+                    "share_status": "1"
+                }
+            },
+            "spec": {
+                "members": [
+                    {
+                        "botRef": {
+                            "name": "coordinator",
+                            "namespace": "default"
+                        },
+                        "prompt": "",
+                        "role": "leader"
+                    },
+                    {
+                        "botRef": {
+                            "name": "planner",
+                            "namespace": "default"
+                        },
+                        "prompt": "",
+                        "role": ""
+                    },
+                    {
+                        "botRef": {
+                            "name": "reporter",
+                            "namespace": "default"
+                        },
+                        "prompt": "",
+                        "role": ""
+                    },
+                    {
+                        "botRef": {
+                            "name": "researcher",
+                            "namespace": "default"
+                        },
+                        "prompt": "",
+                        "role": ""
+                    }
+                ],
+                "collaborationModel": "coordinate",
+                "bind_mode": "chat",
+                "description": "深度研究团队，包含协调员、规划员、研究员和报告员，协作完成深度信息研究和报告生成"
             }
         },
-        "spec": {
-            "members": [
-                {
-                    "botRef": {
-                        "name": "coordinator",
-                        "namespace": "default"
-                    },
-                    "prompt": "",
-                    "role": "leader"
-                },
-                {
-                    "botRef": {
-                        "name": "planner",
-                        "namespace": "default"
-                    },
-                    "prompt": "",
-                    "role": ""
-                },
-                {
-                    "botRef": {
-                        "name": "reporter",
-                        "namespace": "default"
-                    },
-                    "prompt": "",
-                    "role": ""
-                },
-                {
-                    "botRef": {
-                        "name": "researcher",
-                        "namespace": "default"
-                    },
-                    "prompt": "",
-                    "role": ""
-                }
-            ],
-            "collaborationModel": "coordinate"
-        }
-    },
     {
         "kind": "Ghost",
         "spec": {
@@ -611,7 +621,9 @@
                     "prompt": ""
                 }
             ],
-            "collaborationModel": "solo"
+            "collaborationModel": "solo",
+            "bind_mode": "chat",
+            "description": "AI智能办公助手，提供文档写作、商务沟通、数据分析、办公流程优化等全方位支持"
         },
         "status": {
             "state": "Available"
