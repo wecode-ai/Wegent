@@ -80,6 +80,9 @@ export default function ChatArea({
   // Web search toggle state
   const [enableWebSearch, setEnableWebSearch] = useState(false);
 
+  // Check if web search is enabled via environment variable
+  const isWebSearchEnabled = process.env.NEXT_PUBLIC_WEB_SEARCH_ENABLED === 'true';
+
   // External API parameters state
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
   const [appMode, setAppMode] = useState<string | undefined>(undefined);
@@ -931,8 +934,8 @@ export default function ChatArea({
                             onRemove={handleAttachmentRemove}
                           />
                         )}
-                      {/* Web Search Toggle Button - only show for chat shell */}
-                      {isChatShell(selectedTeam) && (
+                      {/* Web Search Toggle Button - only show for chat shell and when enabled */}
+                      {isWebSearchEnabled && isChatShell(selectedTeam) && (
                         <Button
                           variant="ghost"
                           size="icon"
@@ -1160,8 +1163,8 @@ export default function ChatArea({
                           onRemove={handleAttachmentRemove}
                         />
                       )}
-                    {/* Web Search Toggle Button - only show for chat shell */}
-                    {isChatShell(selectedTeam) && (
+                    {/* Web Search Toggle Button - only show for chat shell and when enabled */}
+                    {isWebSearchEnabled && isChatShell(selectedTeam) && (
                       <Button
                         variant="ghost"
                         size="icon"
