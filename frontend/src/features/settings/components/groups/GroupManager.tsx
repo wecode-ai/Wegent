@@ -2,33 +2,34 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * GroupManager component
- * Basic group management interface - placeholder for full implementation
- *
- * TODO: Full implementation would include:
- * - Create/Edit group dialogs
- * - Member management modal
- * - Role assignment interface
- * - Transfer ownership flow
- * - Group settings panel
- */
-
 'use client'
 
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
-import { listGroups, deleteGroup } from '@/apis/groups'
+import { listGroups } from '@/apis/groups'
 import type { Group } from '@/types/group'
 import { PlusIcon, PencilIcon, TrashIcon, UsersIcon } from 'lucide-react'
 import { toast } from 'sonner'
+import { CreateGroupDialog } from './CreateGroupDialog'
+import { EditGroupDialog } from './EditGroupDialog'
+import { DeleteGroupConfirmDialog } from './DeleteGroupConfirmDialog'
+import { GroupMembersDialog } from './GroupMembersDialog'
+import { useUser } from '@/features/common/UserContext'
 
 export function GroupManager() {
   const { t } = useTranslation()
+  const { user } = useUser()
   const [groups, setGroups] = useState<Group[]>([])
   const [loading, setLoading] = useState(true)
+
+  // Dialog states
+  const [showCreateDialog, setShowCreateDialog] = useState(false)
+  const [showEditDialog, setShowEditDialog] = useState(false)
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false)
+  const [showMembersDialog, setShowMembersDialog] = useState(false)
+  const [selectedGroup, setSelectedGroup] = useState<Group | null>(null)
 
   useEffect(() => {
     loadGroups()
@@ -47,19 +48,27 @@ export function GroupManager() {
     }
   }
 
-  const handleDelete = async (groupName: string) => {
-    if (!confirm(t('groups.actions.delete') + '?')) {
-      return
-    }
+  const handleCreateClick = () => {
+    setShowCreateDialog(true)
+  }
 
-    try {
-      await deleteGroup(groupName)
-      toast.success(t('groups.messages.deleteSuccess'))
-      loadGroups()
-    } catch (error) {
-      console.error('Failed to delete group:', error)
-      toast.error('Failed to delete group')
-    }
+  const handleEditClick = (group: Group) => {
+    setSelectedGroup(group)
+    setShowEditDialog(true)
+  }
+
+  const handleDeleteClick = (group: Group) => {
+    setSelectedGroup(group)
+    setShowDeleteDialog(true)
+  }
+
+  const handleMembersClick = (group: Group) => {
+    setSelectedGroup(group)
+    setShowMembersDialog(true)
+  }
+
+  const handleSuccess = () => {
+    loadGroups()
   }
 
   const getVisibilityBadge = (visibility: string) => {
@@ -92,7 +101,7 @@ export function GroupManager() {
             Manage your groups and memberships
           </p>
         </div>
-        <Button onClick={() => toast.info('Create group dialog - TODO')}>
+        <Button onClick={handleCreateClick}>
           <PlusIcon className="w-4 h-4 mr-2" />
           {t('groups.create')}
         </Button>
@@ -102,11 +111,7 @@ export function GroupManager() {
         <div className="text-center py-12 bg-surface rounded-lg border border-border">
           <UsersIcon className="w-12 h-12 mx-auto text-text-muted mb-4" />
           <p className="text-text-secondary">No groups yet</p>
-          <Button
-            variant="outline"
-            className="mt-4"
-            onClick={() => toast.info('Create group dialog - TODO')}
-          >
+          <Button variant="outline" className="mt-4" onClick={handleCreateClick}>
             <PlusIcon className="w-4 h-4 mr-2" />
             {t('groups.create')}
           </Button>
@@ -168,14 +173,16 @@ export function GroupManager() {
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => toast.info('Edit group dialog - TODO')}
+                          onClick={() => handleEditClick(group)}
+                          title="Edit group"
                         >
                           <PencilIcon className="w-4 h-4" />
                         </Button>
                         <Button
                           variant="ghost"
                           size="icon"
-                          onClick={() => toast.info('Member management - TODO')}
+                          onClick={() => handleMembersClick(group)}
+                          title="Manage members"
                         >
                           <UsersIcon className="w-4 h-4" />
                         </Button>
@@ -183,9 +190,10 @@ export function GroupManager() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            onClick={() => handleDelete(group.name)}
+                            onClick={() => handleDeleteClick(group)}
+                            title="Delete group"
                           >
-                            <TrashIcon className="w-4 h-4 text-red-500" />
+                            <TrashIcon className="w-4 h-4 text-error" />
                           </Button>
                         )}
                       </div>
@@ -198,14 +206,43 @@ export function GroupManager() {
         </div>
       )}
 
-      <div className="text-sm text-text-muted bg-surface p-4 rounded-lg border border-border">
-        <p className="font-medium mb-2">Note:</p>
-        <ul className="list-disc list-inside space-y-1">
-          <li>This is a basic placeholder implementation</li>
-          <li>Full features would include: create/edit dialogs, member management, settings</li>
-          <li>Click buttons to see TODOs for future enhancements</li>
-        </ul>
-      </div>
+      {/* Dialogs */}
+      <CreateGroupDialog
+        isOpen={showCreateDialog}
+        onClose={() => setShowCreateDialog(false)}
+        onSuccess={handleSuccess}
+      />
+
+      <EditGroupDialog
+        isOpen={showEditDialog}
+        onClose={() => {
+          setShowEditDialog(false)
+          setSelectedGroup(null)
+        }}
+        onSuccess={handleSuccess}
+        group={selectedGroup}
+      />
+
+      <DeleteGroupConfirmDialog
+        isOpen={showDeleteDialog}
+        onClose={() => {
+          setShowDeleteDialog(false)
+          setSelectedGroup(null)
+        }}
+        onSuccess={handleSuccess}
+        group={selectedGroup}
+      />
+
+      <GroupMembersDialog
+        isOpen={showMembersDialog}
+        onClose={() => {
+          setShowMembersDialog(false)
+          setSelectedGroup(null)
+        }}
+        onSuccess={handleSuccess}
+        group={selectedGroup}
+        currentUserId={user?.id}
+      />
     </div>
   )
 }

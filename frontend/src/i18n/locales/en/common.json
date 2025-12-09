@@ -12,7 +12,9 @@
     "saving": "Saving...",
     "cancel": "Cancel",
     "delete": "Delete",
+    "deleting": "Deleting...",
     "edit": "Edit",
+    "edit_group": "Edit Group",
     "start": "Get Start!",
     "create": "Create",
     "creating": "Creating...",
@@ -29,7 +31,8 @@
     "upload": "Upload"
   },
   "validation": {
-    "required": "This field is required"
+    "required": "This field is required",
+    "max_length": "Maximum length is {{max}} characters"
   },
   "login": {
     "username": "Username",
@@ -800,7 +803,8 @@
       "inviteAll": "Invite All Users",
       "leave": "Leave Group",
       "transferOwnership": "Transfer Ownership",
-      "delete": "Delete Group"
+      "delete": "Delete Group",
+      "manageMembers": "Manage Members"
     },
     "messages": {
       "createSuccess": "Group created successfully",

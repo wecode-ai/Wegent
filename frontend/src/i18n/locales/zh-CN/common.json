@@ -12,7 +12,9 @@
     "saving": "保存中...",
     "cancel": "取消",
     "delete": "删除",
+    "deleting": "删除中...",
     "edit": "编辑",
+    "edit_group": "编辑组",
     "create": "创建",
     "creating": "创建中...",
     "start": "开始!",
@@ -29,7 +31,8 @@
     "upload": "上传"
   },
   "validation": {
-    "required": "此字段为必填项"
+    "required": "此字段为必填项",
+    "max_length": "最大长度为 {{max}} 个字符"
   },
   "login": {
     "username": "用户名",
@@ -795,7 +798,8 @@
       "inviteAll": "邀请所有用户",
       "leave": "离开群组",
       "transferOwnership": "转移所有权",
-      "delete": "删除群组"
+      "delete": "删除群组",
+      "manageMembers": "管理成员"
     },
     "messages": {
       "createSuccess": "群组创建成功",

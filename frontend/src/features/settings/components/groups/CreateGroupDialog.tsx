@@ -1,0 +1,244 @@
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+'use client'
+
+import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import Modal from '@/features/common/Modal'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Textarea } from '@/components/ui/textarea'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { createGroup } from '@/apis/groups'
+import { toast } from 'sonner'
+import type { GroupCreate, GroupVisibility } from '@/types/group'
+
+interface CreateGroupDialogProps {
+  isOpen: boolean
+  onClose: () => void
+  onSuccess: () => void
+}
+
+export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDialogProps) {
+  const { t } = useTranslation()
+  const [formData, setFormData] = useState<GroupCreate>({
+    name: '',
+    display_name: '',
+    visibility: 'private',
+    description: '',
+  })
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  const validateName = (name: string): string | null => {
+    if (!name) {
+      return t('validation.required')
+    }
+    if (name.length > 100) {
+      return t('validation.max_length', { max: 100 })
+    }
+    // Name must be alphanumeric with dashes/underscores, no spaces
+    if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
+      return 'Name must contain only letters, numbers, dashes, and underscores'
+    }
+    return null
+  }
+
+  const validateForm = (): boolean => {
+    const newErrors: Record<string, string> = {}
+
+    const nameError = validateName(formData.name)
+    if (nameError) {
+      newErrors.name = nameError
+    }
+
+    if (formData.display_name && formData.display_name.length > 100) {
+      newErrors.display_name = t('validation.max_length', { max: 100 })
+    }
+
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    if (!validateForm()) {
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      const payload: GroupCreate = {
+        name: formData.name.trim(),
+        display_name: formData.display_name?.trim() || undefined,
+        visibility: formData.visibility,
+        description: formData.description?.trim() || undefined,
+      }
+
+      await createGroup(payload)
+      toast.success(t('groups.messages.createSuccess'))
+
+      // Reset form
+      setFormData({
+        name: '',
+        display_name: '',
+        visibility: 'private',
+        description: '',
+      })
+      setErrors({})
+      onSuccess()
+      onClose()
+    } catch (error: any) {
+      console.error('Failed to create group:', error)
+      const errorMessage =
+        error?.response?.data?.detail || error?.message || 'Failed to create group'
+      toast.error(errorMessage)
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleClose = () => {
+    if (!isSubmitting) {
+      setFormData({
+        name: '',
+        display_name: '',
+        visibility: 'private',
+        description: '',
+      })
+      setErrors({})
+      onClose()
+    }
+  }
+
+  return (
+    <Modal isOpen={isOpen} onClose={handleClose} title={t('groups.create')} maxWidth="md">
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {/* Name */}
+        <div>
+          <Label htmlFor="name">
+            {t('groups.name')} <span className="text-error">*</span>
+          </Label>
+          <Input
+            id="name"
+            value={formData.name}
+            onChange={(e) => {
+              setFormData({ ...formData, name: e.target.value })
+              if (errors.name) {
+                setErrors({ ...errors, name: '' })
+              }
+            }}
+            placeholder="my-group"
+            disabled={isSubmitting}
+            className={errors.name ? 'border-error' : ''}
+          />
+          {errors.name && <p className="text-sm text-error mt-1">{errors.name}</p>}
+          <p className="text-xs text-text-muted mt-1">
+            Immutable after creation. Use letters, numbers, dashes, and underscores only.
+          </p>
+        </div>
+
+        {/* Display Name */}
+        <div>
+          <Label htmlFor="display_name">{t('groups.displayName')}</Label>
+          <Input
+            id="display_name"
+            value={formData.display_name}
+            onChange={(e) => {
+              setFormData({ ...formData, display_name: e.target.value })
+              if (errors.display_name) {
+                setErrors({ ...errors, display_name: '' })
+              }
+            }}
+            placeholder="My Group"
+            disabled={isSubmitting}
+            className={errors.display_name ? 'border-error' : ''}
+          />
+          {errors.display_name && (
+            <p className="text-sm text-error mt-1">{errors.display_name}</p>
+          )}
+        </div>
+
+        {/* Visibility */}
+        <div>
+          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
+          <Select
+            value={formData.visibility}
+            onValueChange={(value: GroupVisibility) =>
+              setFormData({ ...formData, visibility: value })
+            }
+            disabled={isSubmitting}
+          >
+            <SelectTrigger id="visibility">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="private">{t('groups.private')}</SelectItem>
+              <SelectItem value="internal">{t('groups.internal')}</SelectItem>
+              <SelectItem value="public">{t('groups.public')}</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Description */}
+        <div>
+          <Label htmlFor="description">{t('groups.description')}</Label>
+          <Textarea
+            id="description"
+            value={formData.description}
+            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+            placeholder="Enter group description..."
+            rows={3}
+            disabled={isSubmitting}
+          />
+        </div>
+
+        {/* Actions */}
+        <div className="flex justify-end gap-3 pt-4">
+          <Button type="button" variant="outline" onClick={handleClose} disabled={isSubmitting}>
+            {t('actions.cancel')}
+          </Button>
+          <Button type="submit" disabled={isSubmitting}>
+            {isSubmitting ? (
+              <div className="flex items-center">
+                <svg
+                  className="animate-spin -ml-1 mr-2 h-4 w-4"
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                >
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  />
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  />
+                </svg>
+                {t('actions.creating')}
+              </div>
+            ) : (
+              t('groups.create')
+            )}
+          </Button>
+        </div>
+      </form>
+    </Modal>
+  )
+}
