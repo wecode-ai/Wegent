@@ -163,6 +163,7 @@
   },
   "export": {
     "export_pdf": "导出 PDF",
+    "export_docx": "导出 DOCX",
     "no_messages": "暂无可导出的消息",
     "select_at_least_one": "请至少选择一条消息",
     "selected_count": "已选择: {{count}} 条消息",
@@ -171,8 +172,11 @@
     "cancel": "取消",
     "confirm": "确认导出",
     "exporting": "导出中...",
+    "exporting_docx": "正在导出 DOCX...",
     "success": "PDF 导出成功",
+    "docx_success": "DOCX 导出成功",
     "failed": "PDF 导出失败",
+    "docx_failed": "DOCX 导出失败",
     "select_from_here": "从此处开始选择",
     "select_below": "选择以下所有"
   }

@@ -2,11 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import io
 import logging
+import re
+from datetime import datetime
 from typing import Optional
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -30,6 +34,7 @@ from app.schemas.task import (
     TaskUpdate,
 )
 from app.services.adapters.task_kinds import task_kinds_service
+from app.services.export.docx_generator import generate_task_docx
 from app.services.shared_task import shared_task_service
 
 router = APIRouter()
@@ -441,3 +446,73 @@ def join_shared_task(
         git_domain=request.git_domain,
         branch_name=request.branch_name,
     )
+
+
+def sanitize_filename(name: str) -> str:
+    """Remove invalid filename characters"""
+    # Remove invalid characters
+    safe_name = re.sub(r'[<>:"/\\|?*]', "_", name)
+    # Replace whitespace with underscore
+    safe_name = re.sub(r"\s+", "_", safe_name)
+    # Remove consecutive underscores
+    safe_name = re.sub(r"_+", "_", safe_name)
+    return safe_name.strip("_")[:100]  # Limit length
+
+
+@router.get("/{task_id}/export/docx", summary="Export task as DOCX")
+async def export_task_docx(
+    task_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Export task conversation history to DOCX format.
+
+    Returns a downloadable DOCX file containing:
+    - Task title and metadata
+    - All subtask messages (user prompts and AI responses)
+    - Formatted markdown content
+    - Embedded images and attachment info
+    """
+    from app.models.kind import Kind
+
+    # Query task with permission check
+    task = (
+        db.query(Kind)
+        .filter(
+            Kind.id == task_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Task",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    try:
+        # Generate DOCX document
+        docx_buffer = generate_task_docx(task, db)
+
+        # Get task title for filename
+        task_data = task.json.get("spec", {})
+        task_title = (
+            task.json.get("metadata", {}).get("name", "")
+            or task_data.get("title", "")
+            or task_data.get("prompt", "Chat_Export")[:50]
+        )
+
+        # Sanitize filename
+        safe_filename = sanitize_filename(task_title)
+        filename = f"{safe_filename}_{datetime.now().strftime('%Y-%m-%d')}.docx"
+
+        # Return as downloadable file
+        return StreamingResponse(
+            io.BytesIO(docx_buffer.getvalue()),
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+    except Exception as e:
+        logger.error(f"Failed to export task {task_id} to DOCX: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to generate DOCX document")
