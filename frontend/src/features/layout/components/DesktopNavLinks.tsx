@@ -45,11 +45,6 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
             },
           ]
         : []),
-      {
-        key: 'dashboard' as const,
-        label: t('navigation.settings'),
-        onClick: () => router.push(paths.settings.root.getHref()),
-      },
     ],
     [t, router]
   );
