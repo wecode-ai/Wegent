@@ -21,6 +21,7 @@ from app.api.endpoints.kind.kinds import KIND_SCHEMA_MAP
 from app.core.security import create_access_token, get_admin_user, get_password_hash
 from app.models.kind import Kind
 from app.models.public_model import PublicModel
+from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
     AdminUserCreate,
@@ -32,7 +33,11 @@ from app.schemas.admin import (
     PublicModelListResponse,
     PublicModelResponse,
     PublicModelUpdate,
+    QuickAccessResponse,
+    QuickAccessTeam,
     RoleUpdate,
+    SystemConfigResponse,
+    SystemConfigUpdate,
     SystemStats,
 )
 from app.schemas.kind import BatchResponse
@@ -950,4 +955,72 @@ async def admin_delete_resources_for_user(
         success=success_count == total_count,
         message=f"Deleted {success_count}/{total_count} resources for user {user_id}",
         results=results,
+    )
+
+
+# ==================== System Config Endpoints ====================
+
+QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
+
+
+@router.get("/system-config/quick-access", response_model=SystemConfigResponse)
+async def get_quick_access_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get system recommended quick access configuration
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == QUICK_ACCESS_CONFIG_KEY)
+        .first()
+    )
+    if not config:
+        return SystemConfigResponse(version=0, teams=[])
+
+    config_value = config.config_value or {}
+    return SystemConfigResponse(
+        version=config.version,
+        teams=config_value.get("teams", []),
+    )
+
+
+@router.put("/system-config/quick-access", response_model=SystemConfigResponse)
+async def update_quick_access_config(
+    config_data: SystemConfigUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Update system recommended quick access configuration (admin only).
+    Version number is automatically incremented.
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == QUICK_ACCESS_CONFIG_KEY)
+        .first()
+    )
+
+    if not config:
+        # Create new config
+        config = SystemConfig(
+            config_key=QUICK_ACCESS_CONFIG_KEY,
+            config_value={"teams": config_data.teams},
+            version=1,
+            updated_by=current_user.id,
+        )
+        db.add(config)
+    else:
+        # Update existing config and increment version
+        config.config_value = {"teams": config_data.teams}
+        config.version = config.version + 1
+        config.updated_by = current_user.id
+
+    db.commit()
+    db.refresh(config)
+
+    return SystemConfigResponse(
+        version=config.version,
+        teams=config.config_value.get("teams", []),
     )

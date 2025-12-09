@@ -32,6 +32,9 @@ COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
+# 创建 cache 目录并设置权限
+RUN mkdir -p .next/cache && chown -R nextjs:nodejs .next
+
 # 设置用户权限
 USER nextjs
 

@@ -96,6 +96,28 @@ class KindService:
             )
             return resource
 
+    def get_team_by_id(self, team_id: int) -> Optional[Dict[str, Any]]:
+        """Get a team by its ID and return formatted data"""
+        from app.db.session import SessionLocal
+
+        with SessionLocal() as db:
+            resource = (
+                db.query(Kind)
+                .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
+                .first()
+            )
+            if not resource:
+                return None
+
+            service = KindServiceFactory.get_service("Team")
+            formatted = service._format_resource(resource)
+            # Add the database ID
+            formatted["id"] = resource.id
+            # Add agent_type from the resource's json
+            if resource.json:
+                formatted["agent_type"] = resource.json.get("agent_type")
+            return formatted
+
 
 # Create service instance
 kind_service = KindService()

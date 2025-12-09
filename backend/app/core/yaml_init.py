@@ -69,6 +69,7 @@ def ensure_default_user(db: Session) -> int:
             email="admin@example.com",
             git_info=[],
             is_active=True,
+            role="admin",
         )
         db.add(admin_user)
         db.commit()
