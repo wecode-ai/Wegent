@@ -127,11 +127,20 @@ def create_app():
             logger.warning(f"Failed to connect to Redis for startup lock: {e}")
 
         # Check if startup initialization already done by another worker
-        if redis_client and redis_client.exists(STARTUP_DONE_KEY):
+        # If INIT_DATA_FORCE is True, skip this check and force re-initialization
+        force_init = settings.INIT_DATA_FORCE
+        if redis_client and redis_client.exists(STARTUP_DONE_KEY) and not force_init:
             logger.info(
                 "Startup initialization already completed by another worker, skipping migrations and YAML init"
             )
         else:
+            if force_init:
+                logger.info(
+                    "INIT_DATA_FORCE is enabled, forcing re-initialization of YAML data"
+                )
+                # Clear the done flag to allow re-initialization
+                if redis_client:
+                    redis_client.delete(STARTUP_DONE_KEY)
             # Try to acquire lock for startup initialization (migrations + YAML)
             acquired_lock = False
             if redis_client:

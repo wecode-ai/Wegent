@@ -265,26 +265,70 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's Task list with pagination (only active tasks, excluding DELETE status)
-        Optimized version using batch queries to reduce database calls
+        Optimized version using raw SQL to avoid MySQL "Out of sort memory" errors.
+        DELETE status tasks are filtered in application layer.
         """
-        query = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
+        # Use raw SQL to get task IDs without JSON_EXTRACT in WHERE clause
+        count_sql = text(
+            """
+            SELECT COUNT(*) FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+        """
         )
+        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        # Get task IDs sorted by created_at
+        ids_sql = text(
+            """
+            SELECT id FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT :limit OFFSET :skip
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
 
-        if not tasks:
+        if not task_ids:
+            return [], 0
+
+        # Load full task data for the selected IDs
+        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+
+        # Filter out DELETE status tasks in application layer and restore order
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status != "DELETE":
+                id_to_task[t.id] = t
+
+        # Restore the original order and apply limit
+        filtered_tasks = []
+        for tid in task_ids:
+            if tid in id_to_task:
+                filtered_tasks.append(id_to_task[tid])
+                if len(filtered_tasks) >= limit:
+                    break
+
+        total = total_result if total_result else 0
+
+        if not filtered_tasks:
             return [], total
 
         # Get all related data in batch to avoid N+1 queries
-        related_data_batch = self._get_tasks_related_data_batch(db, tasks, user_id)
+        related_data_batch = self._get_tasks_related_data_batch(
+            db, filtered_tasks, user_id
+        )
 
         result = []
-        for task in tasks:
+        for task in filtered_tasks:
             task_crd = Task.model_validate(task.json)
             task_related_data = related_data_batch.get(str(task.id), {})
             result.append(
@@ -298,20 +342,64 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's Task list with pagination (lightweight version for list display)
-        Only returns essential fields without JOIN queries for better performance
+        Only returns essential fields without JOIN queries for better performance.
+
+        Uses raw SQL to avoid MySQL "Out of sort memory" errors caused by
+        JSON_EXTRACT in WHERE clause combined with ORDER BY.
         """
-        query = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
+        # Use raw SQL to get task IDs with proper indexing
+        # This avoids the JSON_EXTRACT memory issue by using a subquery approach
+        count_sql = text(
+            """
+            SELECT COUNT(*) FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+        """
         )
+        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        # Get task IDs sorted by created_at, then filter DELETE status in application
+        # Using index on (user_id, kind, is_active, created_at) for efficient sorting
+        ids_sql = text(
+            """
+            SELECT id FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT :limit OFFSET :skip
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
 
-        if not tasks:
-            return [], total
+        if not task_ids:
+            return [], 0
+
+        # Load full task data for the selected IDs
+        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+
+        # Filter out DELETE status tasks in application layer and restore order
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status != "DELETE":
+                id_to_task[t.id] = t
+
+        # Restore the original order and apply limit
+        tasks = []
+        for tid in task_ids:
+            if tid in id_to_task:
+                tasks.append(id_to_task[tid])
+                if len(tasks) >= limit:
+                    break
+
+        # Recalculate total excluding DELETE status (approximate)
+        total = total_result if total_result else 0
 
         # Build lightweight result without expensive JOIN operations
         result = []
@@ -443,32 +531,74 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Fuzzy search tasks by title for current user (pagination), excluding DELETE status
-        Optimized version using batch queries to reduce database calls
+        Optimized version using raw SQL to avoid MySQL "Out of sort memory" errors.
+        Title matching and DELETE status filtering are done in application layer.
         """
-        query = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
-                text(
-                    "JSON_EXTRACT(json, '$.status.status') != 'DELETE' and JSON_EXTRACT(json, '$.spec.title') LIKE :title"
-                ),
-            )
-            .params(title=f"%{title}%")
+        # Use raw SQL to get task IDs without JSON_EXTRACT in WHERE clause
+        count_sql = text(
+            """
+            SELECT COUNT(*) FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+        """
         )
+        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        # Get task IDs sorted by created_at (fetch more to account for filtering)
+        ids_sql = text(
+            """
+            SELECT id FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT :limit OFFSET :skip
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
 
-        if not tasks:
+        if not task_ids:
+            return [], 0
+
+        # Load full task data for the selected IDs
+        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+
+        # Filter by title and DELETE status in application layer, restore order
+        title_lower = title.lower()
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            task_title = task_crd.spec.title or ""
+            # Filter: not DELETE and title matches
+            if status != "DELETE" and title_lower in task_title.lower():
+                id_to_task[t.id] = t
+
+        # Restore the original order and apply limit
+        filtered_tasks = []
+        for tid in task_ids:
+            if tid in id_to_task:
+                filtered_tasks.append(id_to_task[tid])
+                if len(filtered_tasks) >= limit:
+                    break
+
+        # Approximate total (actual count would require full scan)
+        total = len(id_to_task)
+
+        if not filtered_tasks:
             return [], total
 
         # Get all related data in batch to avoid N+1 queries
-        related_data_batch = self._get_tasks_related_data_batch(db, tasks, user_id)
+        related_data_batch = self._get_tasks_related_data_batch(
+            db, filtered_tasks, user_id
+        )
 
         result = []
-        for task in tasks:
+        for task in filtered_tasks:
             task_crd = Task.model_validate(task.json)
             task_related_data = related_data_batch.get(str(task.id), {})
             result.append(

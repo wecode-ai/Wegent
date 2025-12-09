@@ -106,6 +106,9 @@ class Settings(BaseSettings):
     # YAML initialization configuration
     INIT_DATA_DIR: str = "/app/init_data"
     INIT_DATA_ENABLED: bool = True
+    INIT_DATA_FORCE: bool = (
+        False  # Force re-initialize YAML resources (delete and recreate)
+    )
 
     # default header
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
@@ -127,6 +130,12 @@ class Settings(BaseSettings):
     ATTACHMENT_S3_BUCKET: str = "attachments"
     ATTACHMENT_S3_REGION: str = "us-east-1"
     ATTACHMENT_S3_USE_SSL: bool = True
+
+    # Web search configuration
+    WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
+    WEB_SEARCH_BASE_URL: str = ""  # Search API endpoint URL
+    WEB_SEARCH_CONFIG: str = "{}"  # JSON configuration for search API adapter
+    WEB_SEARCH_MAX_RESULTS: int = 5  # Default maximum search results
 
     class Config:
         env_file = ".env"

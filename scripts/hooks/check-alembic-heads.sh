@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # =============================================================================
 # Alembic Multi-Head Detection Script
 # =============================================================================
@@ -108,10 +108,27 @@ if [ -z "$MIGRATION_FILES" ]; then
 fi
 
 # Build arrays to track revisions
-declare -A REVISIONS          # revision_id -> file
-declare -A DOWN_REVISIONS     # revision_id -> down_revision(s)
-declare -A IS_REFERENCED      # revision_id -> 1 if referenced by another revision
-declare -a NON_STANDARD_IDS   # Non-standard revision IDs
+# Note: Using simple arrays for Bash 3.x compatibility (macOS default)
+# Format: "key:value" pairs stored in arrays, searched with grep
+REVISIONS=""          # revision_id:filename pairs (newline separated)
+DOWN_REVISIONS=""     # revision_id:down_revision pairs (newline separated)
+IS_REFERENCED=""      # referenced revision IDs (newline separated)
+NON_STANDARD_IDS=""   # Non-standard revision IDs (newline separated)
+ALL_REVISIONS=""      # List of all revision IDs (newline separated)
+
+# Helper function to get value from key:value pairs
+get_value() {
+    local data="$1"
+    local key="$2"
+    echo "$data" | grep "^${key}:" | head -1 | cut -d':' -f2-
+}
+
+# Helper function to check if key exists in list
+key_exists() {
+    local data="$1"
+    local key="$2"
+    echo "$data" | grep -q "^${key}$"
+}
 
 # Parse all migration files
 echo -e "${BLUE}📁 Parsing migration files...${NC}"
@@ -132,19 +149,23 @@ for file in $MIGRATION_FILES; do
         continue
     fi
 
-    REVISIONS["$revision"]="$filename"
-    DOWN_REVISIONS["$revision"]="$down_revision"
-    ((FILE_COUNT++))
+    # Store revision data
+    REVISIONS="${REVISIONS}${revision}:${filename}"$'\n'
+    DOWN_REVISIONS="${DOWN_REVISIONS}${revision}:${down_revision}"$'\n'
+    ALL_REVISIONS="${ALL_REVISIONS}${revision}"$'\n'
+    FILE_COUNT=$((FILE_COUNT + 1))
 
     # Check revision ID format
     if ! is_standard_revision_format "$revision"; then
-        NON_STANDARD_IDS+=("$revision ($filename)")
+        NON_STANDARD_IDS="${NON_STANDARD_IDS}${revision} (${filename})"$'\n'
     fi
 
     # Mark down_revisions as referenced
     for down_rev in $down_revision; do
         if [ "$down_rev" != "None" ] && [ -n "$down_rev" ]; then
-            IS_REFERENCED["$down_rev"]=1
+            if ! key_exists "$IS_REFERENCED" "$down_rev"; then
+                IS_REFERENCED="${IS_REFERENCED}${down_rev}"$'\n'
+            fi
         fi
     done
 done
@@ -153,25 +174,29 @@ echo -e "   Found ${FILE_COUNT} migration file(s)"
 echo ""
 
 # Find all heads (revisions not referenced by any down_revision)
-declare -a HEADS
-for rev in "${!REVISIONS[@]}"; do
-    if [ "${IS_REFERENCED[$rev]}" != "1" ]; then
-        HEADS+=("$rev")
+HEADS=""
+while IFS= read -r rev; do
+    [ -z "$rev" ] && continue
+    if ! key_exists "$IS_REFERENCED" "$rev"; then
+        HEADS="${HEADS}${rev}"$'\n'
     fi
-done
+done <<< "$ALL_REVISIONS"
 
-HEAD_COUNT=${#HEADS[@]}
+# Count heads (remove empty lines)
+HEAD_COUNT=$(echo "$HEADS" | grep -c .)
 
 # =============================================================================
 # Report Results
 # =============================================================================
 
 # Check revision ID format warnings
-if [ ${#NON_STANDARD_IDS[@]} -gt 0 ]; then
+NON_STANDARD_COUNT=$(echo "$NON_STANDARD_IDS" | grep -c . || true)
+if [ "$NON_STANDARD_COUNT" -gt 0 ]; then
     echo -e "${YELLOW}⚠️  Non-standard revision ID format detected:${NC}"
-    for id in "${NON_STANDARD_IDS[@]}"; do
+    while IFS= read -r id; do
+        [ -z "$id" ] && continue
         echo -e "   ${YELLOW}• $id${NC}"
-    done
+    done <<< "$NON_STANDARD_IDS"
     echo ""
     echo -e "${YELLOW}   Recommendation: Use 'alembic revision --autogenerate' to generate${NC}"
     echo -e "${YELLOW}   standard 12-character hexadecimal revision IDs.${NC}"
@@ -183,18 +208,22 @@ if [ "$HEAD_COUNT" -eq 0 ]; then
     echo -e "${RED}❌ No head revisions found. Check migration file structure.${NC}"
     exit 2
 elif [ "$HEAD_COUNT" -eq 1 ]; then
+    SINGLE_HEAD=$(echo "$HEADS" | grep . | head -1)
+    SINGLE_HEAD_FILE=$(get_value "$REVISIONS" "$SINGLE_HEAD")
     echo -e "${GREEN}✅ Alembic Multi-Head Check: PASSED${NC}"
-    echo -e "   Single head detected: ${BOLD}${HEADS[0]}${NC}"
-    echo -e "   File: ${REVISIONS[${HEADS[0]}]}"
+    echo -e "   Single head detected: ${BOLD}${SINGLE_HEAD}${NC}"
+    echo -e "   File: ${SINGLE_HEAD_FILE}"
     echo ""
     exit 0
 else
     echo -e "${RED}❌ Alembic Multi-Head Check: FAILED${NC}"
     echo ""
     echo -e "${RED}${BOLD}   Multiple heads detected (${HEAD_COUNT}):${NC}"
-    for head in "${HEADS[@]}"; do
-        echo -e "   ${RED}• ${head}${NC} (${REVISIONS[$head]})"
-    done
+    while IFS= read -r head; do
+        [ -z "$head" ] && continue
+        head_file=$(get_value "$REVISIONS" "$head")
+        echo -e "   ${RED}• ${head}${NC} (${head_file})"
+    done <<< "$HEADS"
     echo ""
 
     # Provide fix instructions
@@ -208,8 +237,8 @@ else
     echo -e "${BOLD}Step 2: Merge the heads${NC}"
 
     # Generate merge command with all heads
-    MERGE_HEADS=$(printf " %s" "${HEADS[@]}")
-    echo -e "   ${GREEN}alembic merge -m \"merge heads\"${MERGE_HEADS}${NC}"
+    MERGE_HEADS=$(echo "$HEADS" | grep . | tr '\n' ' ')
+    echo -e "   ${GREEN}alembic merge -m \"merge heads\" ${MERGE_HEADS}${NC}"
     echo ""
     echo -e "${BOLD}Step 3: Apply the merge migration${NC}"
     echo -e "   ${GREEN}alembic upgrade head${NC}"

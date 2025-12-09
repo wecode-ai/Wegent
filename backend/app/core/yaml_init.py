@@ -5,9 +5,12 @@
 """
 YAML initialization module for loading initial data from YAML files.
 This module scans a directory for YAML files and creates initial resources.
+It also supports initializing Skills from ZIP packages in the skills subdirectory.
 """
 
+import io
 import logging
+import zipfile
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -78,7 +81,7 @@ def ensure_default_user(db: Session) -> int:
 
 
 def apply_yaml_resources(
-    user_id: int, resources: List[Dict[str, Any]]
+    user_id: int, resources: List[Dict[str, Any]], force: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Apply YAML resources - only create new resources, skip existing ones.
@@ -87,6 +90,7 @@ def apply_yaml_resources(
     Args:
         user_id: User ID to apply resources for
         resources: List of resource documents
+        force: If True, delete existing resources and recreate them
 
     Returns:
         List of operation results
@@ -102,6 +106,7 @@ def apply_yaml_resources(
         results = []
         created_count = 0
         skipped_count = 0
+        updated_count = 0
 
         for resource in resources:
             try:
@@ -119,21 +124,41 @@ def apply_yaml_resources(
                 existing = kind_service.get_resource(user_id, kind, namespace, name)
 
                 if existing:
-                    # Skip existing resources to preserve user modifications
-                    logger.info(
-                        f"Skipping existing {kind}/{name} in namespace {namespace}"
-                    )
-                    results.append(
-                        {
-                            "kind": kind,
-                            "name": name,
-                            "namespace": namespace,
-                            "operation": "skipped",
-                            "success": True,
-                            "reason": "already_exists",
-                        }
-                    )
-                    skipped_count += 1
+                    if force:
+                        # Force mode: delete and recreate
+                        kind_service.delete_resource(user_id, kind, namespace, name)
+                        resource_id = kind_service.create_resource(
+                            user_id, kind, resource
+                        )
+                        logger.info(
+                            f"Force updated {kind}/{name} in namespace {namespace} (id={resource_id})"
+                        )
+                        results.append(
+                            {
+                                "kind": kind,
+                                "name": name,
+                                "namespace": namespace,
+                                "operation": "updated",
+                                "success": True,
+                            }
+                        )
+                        updated_count += 1
+                    else:
+                        # Skip existing resources to preserve user modifications
+                        logger.info(
+                            f"Skipping existing {kind}/{name} in namespace {namespace}"
+                        )
+                        results.append(
+                            {
+                                "kind": kind,
+                                "name": name,
+                                "namespace": namespace,
+                                "operation": "skipped",
+                                "success": True,
+                                "reason": "already_exists",
+                            }
+                        )
+                        skipped_count += 1
                 else:
                     # Create new resource
                     resource_id = kind_service.create_resource(user_id, kind, resource)
@@ -168,7 +193,7 @@ def apply_yaml_resources(
 
         logger.info(
             f"YAML initialization complete: {created_count} created, "
-            f"{skipped_count} skipped, {len(resources)} total"
+            f"{updated_count} updated, {skipped_count} skipped, {len(resources)} total"
         )
         return results
 
@@ -178,7 +203,7 @@ def apply_yaml_resources(
 
 
 def apply_public_shells(
-    db: Session, resources: List[Dict[str, Any]]
+    db: Session, resources: List[Dict[str, Any]], force: bool = False
 ) -> List[Dict[str, Any]]:
     """
     Apply public shell resources to the public_shells table.
@@ -187,6 +212,7 @@ def apply_public_shells(
     Args:
         db: Database session
         resources: List of Shell resource documents
+        force: If True, delete existing shells and recreate them
 
     Returns:
         List of operation results
@@ -198,6 +224,7 @@ def apply_public_shells(
     results = []
     created_count = 0
     skipped_count = 0
+    updated_count = 0
 
     for resource in resources:
         try:
@@ -227,21 +254,45 @@ def apply_public_shells(
             )
 
             if existing:
-                # Skip existing public shells to preserve modifications
-                logger.info(
-                    f"Skipping existing public shell {name} in namespace {namespace}"
-                )
-                results.append(
-                    {
-                        "kind": "Shell",
-                        "name": name,
-                        "namespace": namespace,
-                        "operation": "skipped",
-                        "success": True,
-                        "reason": "already_exists",
-                    }
-                )
-                skipped_count += 1
+                if force:
+                    # Force mode: delete and recreate
+                    db.delete(existing)
+                    db.commit()
+                    new_shell = PublicShell(
+                        name=name, namespace=namespace, json=resource, is_active=True
+                    )
+                    db.add(new_shell)
+                    db.commit()
+                    db.refresh(new_shell)
+                    logger.info(
+                        f"Force updated public shell {name} in namespace {namespace} (id={new_shell.id})"
+                    )
+                    results.append(
+                        {
+                            "kind": "Shell",
+                            "name": name,
+                            "namespace": namespace,
+                            "operation": "updated",
+                            "success": True,
+                        }
+                    )
+                    updated_count += 1
+                else:
+                    # Skip existing public shells to preserve modifications
+                    logger.info(
+                        f"Skipping existing public shell {name} in namespace {namespace}"
+                    )
+                    results.append(
+                        {
+                            "kind": "Shell",
+                            "name": name,
+                            "namespace": namespace,
+                            "operation": "skipped",
+                            "success": True,
+                            "reason": "already_exists",
+                        }
+                    )
+                    skipped_count += 1
             else:
                 # Create new public shell
                 new_shell = PublicShell(
@@ -281,13 +332,143 @@ def apply_public_shells(
 
     logger.info(
         f"Public shells initialization complete: {created_count} created, "
-        f"{skipped_count} skipped, {len(resources)} total"
+        f"{updated_count} updated, {skipped_count} skipped, {len(resources)} total"
+    )
+    return results
+
+
+def apply_skills_from_directory(
+    db: Session, user_id: int, skills_dir: Path, force: bool = False
+) -> List[Dict[str, Any]]:
+    """
+    Apply skills from a directory containing skill folders.
+    Each skill folder should contain a SKILL.md file and related scripts.
+
+    Args:
+        db: Database session
+        user_id: User ID to create skills for
+        skills_dir: Directory containing skill folders
+        force: If True, delete existing skills and recreate them
+
+    Returns:
+        List of operation results
+    """
+    from app.services.adapters.skill_kinds import skill_kinds_service
+
+    if not skills_dir.exists() or not skills_dir.is_dir():
+        logger.info(f"Skills directory does not exist: {skills_dir}")
+        return []
+
+    results = []
+    created_count = 0
+    skipped_count = 0
+    updated_count = 0
+
+    # Find all skill folders (directories containing SKILL.md)
+    for skill_folder in skills_dir.iterdir():
+        if not skill_folder.is_dir():
+            continue
+
+        skill_md_path = skill_folder / "SKILL.md"
+        if not skill_md_path.exists():
+            logger.debug(f"Skipping {skill_folder.name}: no SKILL.md found")
+            continue
+
+        skill_name = skill_folder.name
+        namespace = "default"
+
+        try:
+            # Check if skill already exists
+            existing = skill_kinds_service.get_skill_by_name(
+                db, name=skill_name, namespace=namespace, user_id=user_id
+            )
+
+            if existing:
+                if force:
+                    # Force mode: delete and recreate
+                    # Get skill ID from metadata.labels (Skill CRD stores ID in labels)
+                    skill_id = int(existing.metadata.labels.get("id"))
+                    skill_kinds_service.delete_skill(
+                        db, skill_id=skill_id, user_id=user_id
+                    )
+                    logger.info(
+                        f"Deleted existing skill for force update: {skill_name}"
+                    )
+                else:
+                    logger.info(f"Skipping existing skill: {skill_name}")
+                    results.append(
+                        {
+                            "kind": "Skill",
+                            "name": skill_name,
+                            "namespace": namespace,
+                            "operation": "skipped",
+                            "success": True,
+                            "reason": "already_exists",
+                        }
+                    )
+                    skipped_count += 1
+                    continue
+
+            # Create ZIP file in memory from skill folder
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+                for file_path in skill_folder.rglob("*"):
+                    if file_path.is_file():
+                        # Archive path should be: skill_name/filename
+                        arcname = f"{skill_name}/{file_path.relative_to(skill_folder)}"
+                        zip_file.write(file_path, arcname)
+
+            zip_content = zip_buffer.getvalue()
+            zip_filename = f"{skill_name}.zip"
+
+            # Create skill using skill_kinds_service
+            skill = skill_kinds_service.create_skill(
+                db,
+                name=skill_name,
+                namespace=namespace,
+                file_content=zip_content,
+                file_name=zip_filename,
+                user_id=user_id,
+            )
+
+            operation = "updated" if existing and force else "created"
+            logger.info(f"{operation.capitalize()} skill: {skill_name}")
+            results.append(
+                {
+                    "kind": "Skill",
+                    "name": skill_name,
+                    "namespace": namespace,
+                    "operation": operation,
+                    "success": True,
+                }
+            )
+            if operation == "updated":
+                updated_count += 1
+            else:
+                created_count += 1
+
+        except Exception as e:
+            logger.error(f"Failed to create skill {skill_name}: {e}")
+            results.append(
+                {
+                    "kind": "Skill",
+                    "name": skill_name,
+                    "namespace": namespace,
+                    "operation": "failed",
+                    "success": False,
+                    "error": str(e),
+                }
+            )
+
+    logger.info(
+        f"Skills initialization complete: {created_count} created, "
+        f"{updated_count} updated, {skipped_count} skipped"
     )
     return results
 
 
 def scan_and_apply_yaml_directory(
-    user_id: int, directory: Path, db: Session
+    user_id: int, directory: Path, db: Session, force: bool = False
 ) -> Dict[str, Any]:
     """
     Scan a directory for YAML files and apply all resources.
@@ -296,6 +477,7 @@ def scan_and_apply_yaml_directory(
         user_id: User ID to apply resources for
         directory: Directory to scan
         db: Database session for public_shells handling
+        force: If True, delete existing resources and recreate them
 
     Returns:
         Summary of operations
@@ -360,25 +542,43 @@ def scan_and_apply_yaml_directory(
     # This must be done before user resources because Bots may reference public shells
     public_shell_results = []
     if public_shell_resources:
-        logger.info(f"Applying {len(public_shell_resources)} public shell resources...")
-        public_shell_results = apply_public_shells(db, public_shell_resources)
+        logger.info(
+            f"Applying {len(public_shell_resources)} public shell resources (force={force})..."
+        )
+        public_shell_results = apply_public_shells(
+            db, public_shell_resources, force=force
+        )
         logger.info(f"Public shells applied: {len(public_shell_results)} results")
 
+    # Apply skills from skills subdirectory
+    # This must be done before user resources because Ghosts may reference skills
+    skills_dir = directory / "skills"
+    skill_results = []
+    if skills_dir.exists():
+        logger.info(f"Applying skills from {skills_dir} (force={force})...")
+        skill_results = apply_skills_from_directory(
+            db, user_id, skills_dir, force=force
+        )
+        logger.info(f"Skills applied: {len(skill_results)} results")
+
     # Apply user resources (goes to kinds table)
-    # This is done after public shells so that Bots can reference them
+    # This is done after public shells and skills so that Bots/Ghosts can reference them
     user_results = []
     if user_resources:
         logger.info(
-            f"Applying {len(user_resources)} user resources for user_id={user_id}..."
+            f"Applying {len(user_resources)} user resources for user_id={user_id} (force={force})..."
         )
-        user_results = apply_yaml_resources(user_id, user_resources)
+        user_results = apply_yaml_resources(user_id, user_resources, force=force)
         logger.info(f"User resources applied: {len(user_results)} results")
 
     # Combine results
     user_success = sum(1 for r in user_results if r.get("success"))
     shell_success = sum(1 for r in public_shell_results if r.get("success"))
-    total_resources = len(user_resources) + len(public_shell_resources)
-    total_success = user_success + shell_success
+    skill_success = sum(1 for r in skill_results if r.get("success"))
+    total_resources = (
+        len(user_resources) + len(public_shell_resources) + len(skill_results)
+    )
+    total_success = user_success + shell_success + skill_success
 
     return {
         "status": "completed",
@@ -389,6 +589,7 @@ def scan_and_apply_yaml_directory(
         "resources_failed": total_resources - total_success,
         "user_resources": len(user_resources),
         "public_shells": len(public_shell_resources),
+        "skills": len(skill_results),
     }
 
 
@@ -411,7 +612,8 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
         logger.info("YAML initialization is disabled (INIT_DATA_ENABLED=False)")
         return {"status": "disabled"}
 
-    logger.info("Starting YAML initialization...")
+    force = settings.INIT_DATA_FORCE
+    logger.info(f"Starting YAML initialization (force={force})...")
 
     # Ensure default admin user exists
     try:
@@ -440,7 +642,7 @@ def run_yaml_initialization(db: Session, skip_lock: bool = False) -> Dict[str, A
     logger.info(f"Scanning initialization directory: {init_dir}")
 
     try:
-        summary = scan_and_apply_yaml_directory(user_id, init_dir, db)
+        summary = scan_and_apply_yaml_directory(user_id, init_dir, db, force=force)
         logger.info(f"YAML initialization completed: {summary}")
         return summary
     except Exception as e:
