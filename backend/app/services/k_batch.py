@@ -224,3 +224,45 @@ async def apply_user_resources_async(user_id: int, resources: List[Dict[str, Any
             exc_info=True,
         )
         return {"error": "Failed to apply resources", "details": str(e)}
+
+
+def apply_default_resources_sync(user_id: int):
+    """
+    Synchronous version of apply_default_resources_async.
+    Used when default resources need to be applied synchronously during user creation.
+    """
+    try:
+        resource_file_path = "/app/resource.json"
+        logger.info(
+            f"Loading resources from {resource_file_path} for user_id={user_id}"
+        )
+        resources, error = load_resources_from_file(resource_file_path)
+
+        if error:
+            logger.warning(f"Error loading resources for user_id={user_id}: {error}")
+            return error
+
+        if not resources:
+            logger.info(
+                f"No resources found in {resource_file_path} for user_id={user_id}"
+            )
+            return None
+
+        logger.info(f"Found {len(resources)} resources to apply for user_id={user_id}")
+        results = batch_service.apply_resources(user_id, resources)
+        logger.info(
+            f"[SUCCESS] Default resources applied successfully: user_id={user_id}, results={results}"
+        )
+        return results
+    except json.JSONDecodeError as e:
+        logger.error(
+            f"Failed to parse DEFAULT_RESOURCES: user_id={user_id}, error={e}",
+            exc_info=True,
+        )
+        return {"error": "Invalid DEFAULT_RESOURCES format", "details": str(e)}
+    except Exception as e:
+        logger.error(
+            f"[ERROR] Failed to apply default resources: user_id={user_id}, error={e}",
+            exc_info=True,
+        )
+        return {"error": "Failed to apply default resources", "details": str(e)}
