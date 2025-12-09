@@ -60,6 +60,8 @@ interface ChatStreamContextType {
       onError?: (error: Error) => void;
       /** Callback when task ID is resolved (for new tasks) */
       onTaskIdResolved?: (taskId: number) => void;
+      /** Temporary task ID for immediate UI feedback (for new tasks) */
+      immediateTaskId?: number;
     }
   ) => Promise<number>;
   /** Stop the stream for a specific task */
@@ -168,6 +170,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         onError?: (error: Error) => void;
         /** Callback when task ID is resolved (for new tasks) */
         onTaskIdResolved?: (taskId: number) => void;
+        /** Temporary task ID for immediate UI feedback (for new tasks) */
+        immediateTaskId?: number;
       }
     ): Promise<number> => {
       // Task ID will be resolved from response headers immediately
@@ -176,14 +180,34 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       let resolvedTaskId = request.task_id || 0;
       let hasInitializedState = false;
 
+      // OPTIMIZATION: Use provided immediateTaskId or generate one
+      // This ensures ChatArea and this context use the same temporary ID
+      const immediateTaskId = options?.immediateTaskId || request.task_id || -Date.now();
+
       // Store callbacks (will be moved to real task ID when resolved)
-      const tempCallbacksKey = request.task_id || -Date.now();
+      const tempCallbacksKey = immediateTaskId;
       if (options?.onComplete || options?.onError || options?.onTaskIdResolved) {
         callbacksRef.current.set(tempCallbacksKey, {
           onComplete: options.onComplete,
           onError: options.onError,
         });
       }
+
+      // OPTIMIZATION: Initialize stream state IMMEDIATELY before API call
+      // This provides instant UI feedback (pending message appears right away)
+      updateStreamState(immediateTaskId, {
+        isStreaming: true,
+        isStopping: false,
+        streamingContent: '',
+        error: null,
+        subtaskId: null,
+        pendingUserMessage: options?.pendingUserMessage || null,
+        pendingAttachment: options?.pendingAttachment || null,
+      });
+      streamingContentRefs.current.set(immediateTaskId, '');
+
+      // Store abort controller with immediate task ID (will be moved when real ID is resolved)
+      // Note: We'll update this after streamChat returns
 
       const { abort, taskId: returnedTaskId } = await streamChat(request, {
         onMessage: (data: ChatStreamData) => {
@@ -192,19 +216,30 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             const oldTaskId = resolvedTaskId;
             resolvedTaskId = data.task_id;
 
-            // Initialize state with the real task ID
+            // Move state from immediate/old task ID to real task ID
             if (!hasInitializedState) {
               hasInitializedState = true;
-              updateStreamState(resolvedTaskId, {
-                isStreaming: true,
-                isStopping: false,
-                streamingContent: '',
-                error: null,
-                subtaskId: data.subtask_id || null,
-                pendingUserMessage: options?.pendingUserMessage || null,
-                pendingAttachment: options?.pendingAttachment || null,
+
+              // Move state from immediateTaskId to resolvedTaskId
+              setStreamStates(prev => {
+                const newMap = new Map(prev);
+                const oldState = newMap.get(immediateTaskId);
+                if (oldState) {
+                  newMap.delete(immediateTaskId);
+                  newMap.set(resolvedTaskId, {
+                    ...oldState,
+                    subtaskId: data.subtask_id || null,
+                  });
+                }
+                return newMap;
               });
-              streamingContentRefs.current.set(resolvedTaskId, '');
+
+              // Move refs from immediateTaskId to resolvedTaskId
+              const oldContent = streamingContentRefs.current.get(immediateTaskId);
+              if (oldContent !== undefined) {
+                streamingContentRefs.current.delete(immediateTaskId);
+                streamingContentRefs.current.set(resolvedTaskId, oldContent);
+              }
 
               // Move callbacks to real task ID
               const callbacks = callbacksRef.current.get(tempCallbacksKey);
@@ -212,10 +247,17 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
                 callbacksRef.current.delete(tempCallbacksKey);
                 callbacksRef.current.set(resolvedTaskId, callbacks);
               }
+
+              // Move abort controller
+              const oldAbort = abortControllersRef.current.get(immediateTaskId);
+              if (oldAbort) {
+                abortControllersRef.current.delete(immediateTaskId);
+                abortControllersRef.current.set(resolvedTaskId, oldAbort);
+              }
             }
 
-            // If we had state under old task ID (0), move it
-            if (oldTaskId !== 0 && oldTaskId !== resolvedTaskId) {
+            // If we had state under old task ID (not immediateTaskId), move it
+            if (oldTaskId !== 0 && oldTaskId !== resolvedTaskId && oldTaskId !== immediateTaskId) {
               setStreamStates(prev => {
                 const newMap = new Map(prev);
                 const oldState = newMap.get(oldTaskId);
@@ -249,26 +291,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             // Notify caller about the resolved task ID
             options?.onTaskIdResolved?.(resolvedTaskId);
           } else if (!hasInitializedState && resolvedTaskId > 0) {
-            // For existing tasks, initialize state on first message
+            // For existing tasks (task_id was provided in request), mark as initialized
+            // State was already set with immediateTaskId which equals request.task_id
             hasInitializedState = true;
-            updateStreamState(resolvedTaskId, {
-              isStreaming: true,
-              isStopping: false,
-              streamingContent: '',
-              error: null,
-              subtaskId: data.subtask_id || null,
-              pendingUserMessage: options?.pendingUserMessage || null,
-              pendingAttachment: options?.pendingAttachment || null,
-            });
-            streamingContentRefs.current.set(resolvedTaskId, '');
-
-            // Move callbacks to real task ID if needed
-            if (tempCallbacksKey !== resolvedTaskId) {
-              const callbacks = callbacksRef.current.get(tempCallbacksKey);
-              if (callbacks) {
-                callbacksRef.current.delete(tempCallbacksKey);
-                callbacksRef.current.set(resolvedTaskId, callbacks);
-              }
+            // Update subtask ID if provided
+            if (data.subtask_id) {
+              updateStreamState(resolvedTaskId, { subtaskId: data.subtask_id });
             }
           }
 
@@ -305,14 +333,22 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           callbacks?.onComplete?.(completedTaskId, completedSubtaskId);
         },
       });
-
-      // Store abort controller with the resolved task ID
-      if (resolvedTaskId > 0) {
-        abortControllersRef.current.set(resolvedTaskId, abort);
-      } else if (returnedTaskId > 0) {
+      // Store abort controller - update from immediateTaskId to resolvedTaskId if needed
+      if (resolvedTaskId > 0 && resolvedTaskId !== immediateTaskId) {
+        // Real task ID was resolved, abort controller should already be moved
+        // Just ensure it's set
+        if (!abortControllersRef.current.has(resolvedTaskId)) {
+          abortControllersRef.current.set(resolvedTaskId, abort);
+        }
+      } else if (returnedTaskId > 0 && returnedTaskId !== immediateTaskId) {
         // Use the task ID returned from streamChat if available
+        abortControllersRef.current.delete(immediateTaskId);
         abortControllersRef.current.set(returnedTaskId, abort);
         resolvedTaskId = returnedTaskId;
+      } else {
+        // Still using immediateTaskId, update abort controller
+        abortControllersRef.current.set(immediateTaskId, abort);
+        resolvedTaskId = immediateTaskId;
       }
 
       return resolvedTaskId;

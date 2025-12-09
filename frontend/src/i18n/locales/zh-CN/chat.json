@@ -183,5 +183,11 @@
   "web_search": {
     "enable": "启用联网搜索",
     "disable": "禁用联网搜索"
+  },
+  "streaming_wait": {
+    "thinking": "正在思考",
+    "analyzing": "正在深入分析",
+    "generating_response": "请稍候，正在生成回复",
+    "longer_than_usual": "响应时间较长，请耐心等待"
   }
 }
