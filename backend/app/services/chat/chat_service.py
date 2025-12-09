@@ -99,18 +99,12 @@ class ChatService(ChatServiceBase):
             chunk_count = 0
             start_time = time.time()
 
-            logger.info(f"[STREAM] subtask={subtask_id} consumer_task started")
-
             try:
                 # Incremental save timing
                 last_redis_save = time.time()
                 last_db_save = time.time()
                 redis_interval = settings.STREAMING_REDIS_SAVE_INTERVAL
                 db_interval = settings.STREAMING_DB_SAVE_INTERVAL
-
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} starting LLM stream, redis_interval={redis_interval}s, db_interval={db_interval}s"
-                )
 
                 async for chunk in self._call_llm_streaming_with_cancel(
                     model_config, messages, subtask_id, cancel_event
@@ -120,9 +114,6 @@ class ChatService(ChatServiceBase):
                     if cancel_event.is_set() or await session_manager.is_cancelled(
                         subtask_id
                     ):
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} cancelled after {chunk_count} chunks, {len(full_response)} chars"
-                        )
                         cancelled = True
                         break
 
@@ -134,9 +125,6 @@ class ChatService(ChatServiceBase):
 
                     # Incremental save to Redis (high frequency)
                     if current_time - last_redis_save >= redis_interval:
-                        logger.debug(
-                            f"[STREAM] subtask={subtask_id} saving to Redis, {len(full_response)} chars"
-                        )
                         await session_manager.save_streaming_content(
                             subtask_id, full_response
                         )
@@ -144,9 +132,6 @@ class ChatService(ChatServiceBase):
 
                     # Incremental save to database (low frequency)
                     if current_time - last_db_save >= db_interval:
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} saving to DB, {len(full_response)} chars, {chunk_count} chunks"
-                        )
                         await self._save_partial_response(
                             subtask_id, full_response, is_streaming=True
                         )
@@ -170,11 +155,6 @@ class ChatService(ChatServiceBase):
                             f"[STREAM] subtask={subtask_id} queue full at chunk {chunk_count}, client may be slow/disconnected"
                         )
 
-                elapsed = time.time() - start_time
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} LLM stream finished, {chunk_count} chunks, {len(full_response)} chars, {elapsed:.2f}s"
-                )
-
                 # LLM stream finished - save final state
                 if cancelled:
                     logger.info(
@@ -189,34 +169,22 @@ class ChatService(ChatServiceBase):
                         )
                 else:
                     # Normal completion - save everything to DB
-                    logger.info(
-                        f"[STREAM] subtask={subtask_id} normal completion, saving to chat history and DB"
-                    )
                     await session_manager.append_user_and_assistant_messages(
                         task_id, message, full_response
                     )
 
                     result = {"value": full_response}
-                    logger.info(
-                        f"[STREAM] subtask={subtask_id} updating status to COMPLETED"
-                    )
                     await self._update_subtask_status_sync(
                         subtask_id, "COMPLETED", result=result
                     )
 
                     # Clean up Redis streaming cache
-                    logger.debug(
-                        f"[STREAM] subtask={subtask_id} cleaning up Redis streaming cache"
-                    )
                     await session_manager.delete_streaming_content(subtask_id)
 
                     # Publish stream done signal
                     try:
                         await session_manager.publish_streaming_done(
                             subtask_id, result=result
-                        )
-                        logger.debug(
-                            f"[STREAM] subtask={subtask_id} published done signal"
                         )
                     except Exception as pub_err:
                         logger.warning(
@@ -226,20 +194,11 @@ class ChatService(ChatServiceBase):
                     # Put done signal to queue
                     try:
                         chunk_queue.put_nowait({"type": "done", "result": result})
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} put done signal to queue"
-                        )
                     except asyncio.QueueFull:
-                        logger.warning(
-                            f"[STREAM] subtask={subtask_id} queue full, cannot put done signal (but data is saved)"
-                        )
+                        pass  # Data is already saved
 
             except asyncio.CancelledError:
                 # Task was cancelled (e.g., server shutdown)
-                elapsed = time.time() - start_time
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} consumer_task CancelledError after {elapsed:.2f}s, {len(full_response)} chars"
-                )
                 if full_response:
                     await session_manager.append_user_and_assistant_messages(
                         task_id, message, full_response
@@ -253,17 +212,11 @@ class ChatService(ChatServiceBase):
                         subtask_id, "COMPLETED", result=result
                     )
                     await session_manager.delete_streaming_content(subtask_id)
-                    logger.info(
-                        f"[STREAM] subtask={subtask_id} saved partial response on CancelledError"
-                    )
                 raise
 
             except asyncio.TimeoutError:
-                elapsed = time.time() - start_time
                 error_info = {"type": "error", "message": "API call timeout"}
-                logger.error(
-                    f"[STREAM] subtask={subtask_id} TimeoutError after {elapsed:.2f}s, {len(full_response)} chars"
-                )
+                logger.error(f"[STREAM] subtask={subtask_id} API call timeout")
                 if full_response:
                     await self._save_partial_response(
                         subtask_id, full_response, is_streaming=False
@@ -273,12 +226,9 @@ class ChatService(ChatServiceBase):
                 )
 
             except httpx.RequestError as e:
-                elapsed = time.time() - start_time
                 error_msg = f"Network error: {str(e)}"
                 error_info = {"type": "error", "message": error_msg}
-                logger.error(
-                    f"[STREAM] subtask={subtask_id} RequestError after {elapsed:.2f}s: {e}, {len(full_response)} chars"
-                )
+                logger.error(f"[STREAM] subtask={subtask_id} network error: {e}")
                 if full_response:
                     await self._save_partial_response(
                         subtask_id, full_response, is_streaming=False
@@ -286,13 +236,9 @@ class ChatService(ChatServiceBase):
                 await self._update_subtask_status(subtask_id, "FAILED", error=error_msg)
 
             except Exception as e:
-                elapsed = time.time() - start_time
                 error_msg = str(e)
                 error_info = {"type": "error", "message": error_msg}
-                logger.error(
-                    f"[STREAM] subtask={subtask_id} Exception after {elapsed:.2f}s: {e}, {len(full_response)} chars",
-                    exc_info=True,
-                )
+                logger.error(f"[STREAM] subtask={subtask_id} error: {e}", exc_info=True)
                 if full_response:
                     await self._save_partial_response(
                         subtask_id, full_response, is_streaming=False
@@ -301,41 +247,24 @@ class ChatService(ChatServiceBase):
 
             finally:
                 # Always put end signal to queue so generator knows to stop
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} consumer_task finally block, putting end signal"
-                )
                 try:
                     if error_info:
                         chunk_queue.put_nowait(error_info)
                     chunk_queue.put_nowait({"type": "end"})
                 except asyncio.QueueFull:
-                    logger.warning(
-                        f"[STREAM] subtask={subtask_id} queue full in finally, cannot put end signal"
-                    )
+                    pass
 
                 # Clean up from background registry
                 _background_consumer_tasks.pop(subtask_id, None)
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} consumer_task removed from background registry"
-                )
 
                 # Clean up stream registration (if generate() didn't do it)
                 # This is safe to call multiple times
                 await session_manager.unregister_stream(subtask_id)
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} consumer_task unregistered stream"
-                )
 
         async def generate() -> AsyncGenerator[str, None]:
             nonlocal cancel_event, messages
             acquired = False
             consumer_task = None
-            start_time = time.time()
-            items_yielded = 0
-
-            logger.info(
-                f"[STREAM] subtask={subtask_id} task_id={task_id} generate() started"
-            )
 
             # Register this stream for cancellation support (async for Redis)
             cancel_event = await session_manager.register_stream(subtask_id)
@@ -344,13 +273,12 @@ class ChatService(ChatServiceBase):
                 # Try to acquire semaphore with timeout
                 try:
                     acquired = await asyncio.wait_for(semaphore.acquire(), timeout=5.0)
-                    logger.debug(f"[STREAM] subtask={subtask_id} acquired semaphore")
                 except asyncio.TimeoutError:
                     error_msg = (
                         "Too many concurrent chat requests, please try again later"
                     )
                     logger.warning(
-                        f"[STREAM] subtask={subtask_id} semaphore timeout, too many concurrent requests"
+                        f"[STREAM] subtask={subtask_id} too many concurrent requests"
                     )
                     yield f"data: {json.dumps({'error': error_msg})}\n\n"
                     await self._update_subtask_status(
@@ -360,13 +288,9 @@ class ChatService(ChatServiceBase):
 
                 # Update status to RUNNING
                 await self._update_subtask_status(subtask_id, "RUNNING")
-                logger.info(f"[STREAM] subtask={subtask_id} status set to RUNNING")
 
                 # Get chat history
                 history = await session_manager.get_chat_history(task_id)
-                logger.debug(
-                    f"[STREAM] subtask={subtask_id} got {len(history)} history messages"
-                )
 
                 # Build messages list - need to make this available to consumer task
                 messages = self._build_messages(
@@ -377,9 +301,6 @@ class ChatService(ChatServiceBase):
                 # CRITICAL: Register in global registry so it continues even if client disconnects
                 consumer_task = asyncio.create_task(llm_consumer_task())
                 _background_consumer_tasks[subtask_id] = consumer_task
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} started consumer_task (registered in background registry)"
-                )
 
                 # Read from queue and yield to client
                 # If yield blocks (nginx not reading), the consumer task continues independently
@@ -391,94 +312,44 @@ class ChatService(ChatServiceBase):
                     except asyncio.TimeoutError:
                         # Check if consumer task is done
                         if consumer_task.done():
-                            elapsed = time.time() - start_time
-                            logger.info(
-                                f"[STREAM] subtask={subtask_id} queue timeout and consumer done, breaking after {elapsed:.2f}s, {items_yielded} items yielded"
-                            )
                             # Consumer finished but we didn't get end signal, break
                             break
-                        logger.debug(
-                            f"[STREAM] subtask={subtask_id} queue timeout, consumer still running, continuing"
-                        )
                         continue
 
-                    items_yielded += 1
                     if item["type"] == "chunk":
                         yield f"data: {json.dumps({'content': item['content'], 'done': False})}\n\n"
                     elif item["type"] == "done":
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} received done signal, yielding to client"
-                        )
                         yield f"data: {json.dumps({'content': '', 'done': True, 'result': item.get('result')})}\n\n"
                         break
                     elif item["type"] == "cancelled":
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} received cancelled signal"
-                        )
                         yield f"data: {json.dumps({'content': '', 'done': True, 'cancelled': True})}\n\n"
                         break
                     elif item["type"] == "error":
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} received error signal: {item['message']}"
-                        )
                         yield f"data: {json.dumps({'error': item['message']})}\n\n"
                         break
                     elif item["type"] == "end":
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} received end signal"
-                        )
                         break
-
-                elapsed = time.time() - start_time
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} generate() loop finished, {items_yielded} items yielded, {elapsed:.2f}s"
-                )
 
             except asyncio.CancelledError:
                 # Client disconnected (e.g., user switched to another chat)
                 # CRITICAL: Do NOT cancel consumer_task - let it continue running in background
                 # This allows the LLM stream to complete and save data to Redis/DB
                 # so that when user switches back, they can resume the stream
-                elapsed = time.time() - start_time
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} generate() CancelledError after {elapsed:.2f}s, {items_yielded} items yielded"
-                )
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} client disconnected, consumer_task will continue in background"
-                )
                 # Don't cancel consumer_task - it will continue running and saving data
                 # The task is registered in _background_consumer_tasks and will clean itself up
                 raise
 
             except Exception as e:
-                elapsed = time.time() - start_time
-                logger.error(
-                    f"[STREAM] subtask={subtask_id} generate() Exception after {elapsed:.2f}s: {e}",
-                    exc_info=True,
-                )
+                logger.error(f"[STREAM] subtask={subtask_id} error: {e}", exc_info=True)
                 # Consumer task handles its own errors and saves data
 
             finally:
-                elapsed = time.time() - start_time
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} generate() finally block after {elapsed:.2f}s"
-                )
-
                 # Only wait for consumer task if it's done or we're not being cancelled
                 # If we're being cancelled (client disconnect), let consumer continue in background
                 if consumer_task:
                     if consumer_task.done():
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} consumer_task already done"
-                        )
                         # Clean up from registry
                         _background_consumer_tasks.pop(subtask_id, None)
-                    else:
-                        # Consumer task is still running - let it continue in background
-                        # It will clean itself up when done via the finally block in llm_consumer_task
-                        logger.info(
-                            f"[STREAM] subtask={subtask_id} consumer_task still running, leaving in background"
-                        )
 
                 # Cleanup: release semaphore
                 # Note: Do NOT unregister stream here if consumer_task is still running
@@ -487,19 +358,12 @@ class ChatService(ChatServiceBase):
                 if consumer_task and not consumer_task.done():
                     # Consumer task is still running - don't unregister stream
                     # The consumer task will handle cleanup when it finishes
-                    logger.info(
-                        f"[STREAM] subtask={subtask_id} skipping stream unregister, consumer_task still running"
-                    )
+                    pass
                 else:
                     # Consumer task is done, safe to unregister
                     await session_manager.unregister_stream(subtask_id)
                 if acquired:
                     semaphore.release()
-                    logger.debug(f"[STREAM] subtask={subtask_id} released semaphore")
-
-                logger.info(
-                    f"[STREAM] subtask={subtask_id} generate() cleanup complete"
-                )
 
         return StreamingResponse(
             generate(),
@@ -577,7 +441,6 @@ class ChatService(ChatServiceBase):
             )
             messages.append({"role": "user", "content": message_text})
 
-        logger.info("messages: %s", json.dumps(messages, ensure_ascii=False, indent=4))
         return messages
 
     async def _call_llm_streaming(
@@ -1489,9 +1352,6 @@ class ChatService(ChatServiceBase):
                     # Also update task status
                     self._update_task_status_sync(db, subtask.task_id)
 
-                    logger.debug(
-                        f"Subtask {subtask_id} status updated to {status} (sync)"
-                    )
             except Exception as e:
                 logger.error(f"Error updating subtask {subtask_id} status: {e}")
                 db.rollback()
@@ -1597,9 +1457,6 @@ class ChatService(ChatServiceBase):
                     }
                     subtask.updated_at = datetime.now()
                     db.commit()
-                    logger.debug(
-                        f"Saved partial response for subtask {subtask_id}: {len(content)} chars, streaming={is_streaming}"
-                    )
             except Exception as e:
                 logger.error(
                     f"Error saving partial response for subtask {subtask_id}: {e}"
