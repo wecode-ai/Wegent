@@ -252,9 +252,9 @@ export function QuickAccessCards({
                 </div>
               )}
 
-              {/* Hover hint for mode switch */}
+              {/* Hover hint for mode switch - absolute positioned to prevent width change */}
               {!isSwitching && willSwitchMode && (
-                <div className="hidden group-hover:flex items-center ml-1 text-text-muted transition-opacity duration-200">
+                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-text-muted opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   {targetMode === 'code' ? (
                     <HiOutlineCode className="w-3.5 h-3.5" />
                   ) : (
