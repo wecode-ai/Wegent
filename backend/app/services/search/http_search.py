@@ -195,7 +195,9 @@ class HttpSearchService(SearchServiceBase):
                 "HTTP search failed with status %s",
                 e.response.status_code,
             )
-            raise Exception(f"Search API returned error: {e.response.status_code}") from e
+            raise Exception(
+                f"Search API returned error: {e.response.status_code}"
+            ) from e
         except Exception as e:
             logger.exception("HTTP search failed for query '%s'", query)
             raise Exception(f"Search error: {e!s}") from e
