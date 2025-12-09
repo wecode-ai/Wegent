@@ -133,10 +133,23 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if obj_in.workflow and "mode" in obj_in.workflow:
             collaboration_model = obj_in.workflow["mode"]
 
+        # Build spec with bind_mode and description if provided
+        spec = {"members": members, "collaborationModel": collaboration_model}
+
+        # Handle bind_mode - get from obj_in directly (not from workflow)
+        bind_mode = getattr(obj_in, "bind_mode", None)
+        if bind_mode is not None:
+            spec["bind_mode"] = bind_mode
+
+        # Handle description - get from obj_in directly
+        description = getattr(obj_in, "description", None)
+        if description is not None:
+            spec["description"] = description
+
         # Create Team JSON
         team_json = {
             "kind": "Team",
-            "spec": {"members": members, "collaborationModel": collaboration_model},
+            "spec": spec,
             "status": {"state": "Available"},
             "metadata": {"name": obj_in.name, "namespace": "default"},
             "apiVersion": "agent.wecode.io/v1",
@@ -512,6 +525,14 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 collaboration_model = update_data["workflow"]["mode"]
 
             team_crd.spec.collaborationModel = collaboration_model
+
+        # Handle bind_mode update - directly from update_data (not from workflow)
+        if "bind_mode" in update_data:
+            team_crd.spec.bind_mode = update_data["bind_mode"]
+
+        # Handle description update
+        if "description" in update_data:
+            team_crd.spec.description = update_data["description"]
 
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
@@ -898,12 +919,20 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Convert collaboration model to workflow format
         workflow = {"mode": team_crd.spec.collaborationModel}
 
+        # Get bind_mode from spec (directly, not from workflow)
+        bind_mode = team_crd.spec.bind_mode
+
+        # Get description from spec
+        description = team_crd.spec.description
+
         return {
             "id": team.id,
             "user_id": team.user_id,
             "name": team.name,
+            "description": description,
             "bots": bots,
             "workflow": workflow,
+            "bind_mode": bind_mode,
             "is_mix_team": is_mix_team,
             "is_active": team.is_active,
             "created_at": team.created_at,

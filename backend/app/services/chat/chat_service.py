@@ -103,7 +103,9 @@ class ChatService(ChatServiceBase):
                 history = await session_manager.get_chat_history(task_id)
 
                 # Build messages list
-                messages = self._build_messages(history, message, system_prompt, tool_messages)
+                messages = self._build_messages(
+                    history, message, system_prompt, tool_messages
+                )
 
                 # Call LLM API and stream response with cancellation support
                 cancelled = False
@@ -274,7 +276,7 @@ class ChatService(ChatServiceBase):
 
         Returns:
             List of message dictionaries
-            
+
         Note:
             Tool messages are inserted before the current user message to provide context.
             The 'tool' role will be converted to 'user' role in provider-specific methods
@@ -445,7 +447,7 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call OpenAI-compatible API with streaming.
-        
+
         Note: Tool messages (role='tool') are converted to 'user' role because:
         1. It maintains natural conversation flow (tool results augment user's question)
         2. Most models expect user/assistant alternation
@@ -554,7 +556,7 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call Claude API with streaming.
-        
+
         Note: Claude does not support 'tool' role. Tool messages are converted to 'user' role
         because tool results provide contextual information for answering the user's question.
         """
@@ -617,9 +619,7 @@ class ChatService(ChatServiceBase):
                 else:
                     formatted_content = [{"type": "text", "text": str(content)}]
 
-                chat_messages.append(
-                    {"role": msg_role, "content": formatted_content}
-                )
+                chat_messages.append({"role": msg_role, "content": formatted_content})
 
         payload = {
             "model": model_id,
@@ -666,7 +666,7 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call OpenAI-compatible API with streaming and cancellation support.
-        
+
         Note: Tool messages (role='tool') are converted to 'user' role because:
         1. It maintains natural conversation flow (tool results augment user's question)
         2. Most models expect user/assistant alternation
@@ -777,7 +777,7 @@ class ChatService(ChatServiceBase):
         - API key is passed as query parameter
         - Messages use 'parts' array instead of 'content' string
         - Role mapping: assistant -> model, tool -> user
-        
+
         Note: Gemini does not support 'tool' role. Tool messages are converted to 'user' role
         because tool results provide contextual information for answering the user's question.
         """
@@ -914,7 +914,7 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call Gemini API with streaming and cancellation support.
-        
+
         Note: Gemini does not support 'tool' role. Tool messages are converted to 'user' role
         because tool results provide contextual information for answering the user's question.
         """
@@ -1047,7 +1047,7 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call Claude API with streaming and cancellation support.
-        
+
         Note: Claude does not support 'tool' role. Tool messages are converted to 'user' role
         because tool results provide contextual information for answering the user's question.
         """
@@ -1108,9 +1108,7 @@ class ChatService(ChatServiceBase):
                 else:
                     formatted_content = [{"type": "text", "text": str(content)}]
 
-                chat_messages.append(
-                    {"role": msg_role, "content": formatted_content}
-                )
+                chat_messages.append({"role": msg_role, "content": formatted_content})
 
         payload = {
             "model": model_id,

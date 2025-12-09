@@ -270,6 +270,11 @@ export default function TeamList() {
                                     </span>
                                   </div>
                                 </div>
+                                {team.description && (
+                                  <p className="text-xs text-text-muted mt-1 truncate max-w-md">
+                                    {team.description}
+                                  </p>
+                                )}
                                 <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
                                   {team.workflow?.mode && (
                                     <Tag variant="default" className="capitalize">

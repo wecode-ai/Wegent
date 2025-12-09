@@ -28,7 +28,7 @@ import { useChatStreamContext } from '../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { saveLastTeam, getLastTeamId, saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/userPreferences';
+import { saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/userPreferences';
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
@@ -63,7 +63,11 @@ export default function ChatArea({
   if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
     // Use mode-specific preference, with fallback to generic preference
     initialTeamIdRef.current = getLastTeamIdByMode(taskType);
-    console.log('[ChatArea] Pre-loaded team ID from localStorage for mode:', taskType, initialTeamIdRef.current);
+    console.log(
+      '[ChatArea] Pre-loaded team ID from localStorage for mode:',
+      taskType,
+      initialTeamIdRef.current
+    );
   }
 
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -959,6 +963,7 @@ export default function ChatArea({
                           teams={teams}
                           disabled={hasMessages}
                           isLoading={isTeamsLoading}
+                          currentMode={taskType}
                         />
                       )}
                       {selectedTeam && (
@@ -1197,6 +1202,7 @@ export default function ChatArea({
                         teams={teams}
                         disabled={hasMessages}
                         isLoading={isTeamsLoading}
+                        currentMode={taskType}
                       />
                     )}
                     {selectedTeam && (

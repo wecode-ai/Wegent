@@ -215,6 +215,8 @@
   "team": {
     "name": "Name",
     "name_placeholder": "Team Name",
+    "description": "Description",
+    "description_placeholder": "Brief description of this team",
     "leader": "Leader",
     "model": "Model",
     "bots": "Bots",
@@ -254,7 +256,10 @@
     "recommended_mode": "Recommended Mode",
     "recommended_mode_both": "Both",
     "recommended_mode_chat": "Chat",
-    "recommended_mode_code": "Code"
+    "recommended_mode_code": "Code",
+    "bind_mode": "Bind Mode",
+    "bind_mode_chat": "Chat",
+    "bind_mode_code": "Code"
   },
   "team_model": {
     "solo": "Solo",

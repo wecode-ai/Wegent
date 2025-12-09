@@ -121,9 +121,7 @@ async def get_user_quick_access(
     user_team_ids = quick_access_config.get("teams", [])
 
     # Determine if we should show system recommended
-    show_system_recommended = (
-        user_version is None or user_version < system_version
-    )
+    show_system_recommended = user_version is None or user_version < system_version
 
     # Build teams list
     result_teams = []

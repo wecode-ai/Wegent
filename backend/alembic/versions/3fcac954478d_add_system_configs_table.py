@@ -4,8 +4,8 @@
 
 """Add system_configs table for quick access and other system configurations
 
-Revision ID: c3d4e5f6g7h8
-Revises: b2c3d4e5f6a7
+Revision ID: 3fcac954478d
+Revises: c3d4e5f6a7b8
 Create Date: 2025-12-08 10:00:00.000000+08:00
 
 """
@@ -16,8 +16,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "c3d4e5f6g7h8"
-down_revision: Union[str, Sequence[str], None] = "b2c3d4e5f6a7"
+revision: str = "3fcac954478d"
+down_revision: Union[str, Sequence[str], None] = "c3d4e5f6a7b8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -28,7 +28,7 @@ def upgrade() -> None:
         "system_configs",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("config_key", sa.String(100), nullable=False),
-        sa.Column("config_value", sa.JSON(), nullable=False, server_default="{}"),
+        sa.Column("config_value", sa.String(4096), nullable=False, server_default="{}"),
         sa.Column("version", sa.Integer(), nullable=False, server_default="1"),
         sa.Column("updated_by", sa.Integer(), nullable=True),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now()),

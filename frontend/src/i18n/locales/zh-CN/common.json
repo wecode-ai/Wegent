@@ -216,6 +216,8 @@
   "team": {
     "name": "名称",
     "name_placeholder": "智能体名称",
+    "description": "描述",
+    "description_placeholder": "简要描述这个智能体",
     "leader": "领导者",
     "model": "协作模式",
     "bots": "候选人列表",
@@ -255,7 +257,10 @@
     "recommended_mode": "推荐模式",
     "recommended_mode_both": "都可以",
     "recommended_mode_chat": "聊天",
-    "recommended_mode_code": "编码"
+    "recommended_mode_code": "编码",
+    "bind_mode": "绑定模式",
+    "bind_mode_chat": "聊天",
+    "bind_mode_code": "编码"
   },
   "team_model": {
     "solo": "独立",
