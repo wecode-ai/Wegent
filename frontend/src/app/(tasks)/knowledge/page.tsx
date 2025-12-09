@@ -7,7 +7,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
-import UserMenu from '@/features/layout/UserMenu';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -91,43 +90,40 @@ export default function WikiPage() {
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      {/* Left module navigation sidebar */}
+      <KnowledgeModuleNav activeModule="code" />
+
+      {/* Main content area */}
       <div className="flex-1 flex flex-col min-w-0">
-        <TopNavigation activePage="wiki" variant="standalone">
+        <TopNavigation activePage="wiki" variant="with-sidebar">
           <GithubStarButton />
-          <UserMenu />
         </TopNavigation>
 
-        <div className="flex h-full">
-          {/* Left module navigation sidebar */}
-          <KnowledgeModuleNav activeModule="code" />
-
-          {/* Main content area */}
-          <div className="flex-1 overflow-auto p-6">
-            {/* Center search box - using shared component */}
-            <SearchBox
-              value={mainSearchTerm}
-              onChange={setMainSearchTerm}
-              placeholder={t('wiki.search_repositories')}
-              size="md"
-              className="mb-6 max-w-2xl mx-auto"
-            />
-            {/* Project list */}
-            <WikiProjectList
-              projects={userProjects}
-              loading={loading}
-              loadingMore={loadingMore}
-              error={error}
-              onAddRepo={handleAddRepo}
-              onProjectClick={navigateToWikiDetail}
-              onTaskClick={navigateToTask}
-              onCancelClick={handleCancelClick}
-              cancellingIds={cancellingIds}
-              searchTerm={mainSearchTerm}
-              hasMore={hasMore}
-              onLoadMore={loadMoreProjects}
-              currentUserId={user?.id}
-            />
-          </div>
+        <div className="flex-1 overflow-auto p-6">
+          {/* Center search box - using shared component */}
+          <SearchBox
+            value={mainSearchTerm}
+            onChange={setMainSearchTerm}
+            placeholder={t('wiki.search_repositories')}
+            size="md"
+            className="mb-6 max-w-2xl mx-auto"
+          />
+          {/* Project list */}
+          <WikiProjectList
+            projects={userProjects}
+            loading={loading}
+            loadingMore={loadingMore}
+            error={error}
+            onAddRepo={handleAddRepo}
+            onProjectClick={navigateToWikiDetail}
+            onTaskClick={navigateToTask}
+            onCancelClick={handleCancelClick}
+            cancellingIds={cancellingIds}
+            searchTerm={mainSearchTerm}
+            hasMore={hasMore}
+            onLoadMore={loadMoreProjects}
+            currentUserId={user?.id}
+          />
         </div>
       </div>
 

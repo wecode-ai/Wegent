@@ -11,9 +11,11 @@ import { useTranslation } from '@/hooks/useTranslation';
 export function DocsButton({
   className = '',
   onClick,
+  showLabel = false,
 }: {
   className?: string;
   onClick?: () => void;
+  showLabel?: boolean;
 }) {
   const { t } = useTranslation('common');
 
@@ -23,12 +25,11 @@ export function DocsButton({
     onClick?.();
   };
 
-  const mergedClassName = `
-    px-3 py-1 bg-muted border border-border rounded-full
-    flex items-center gap-1 text-sm font-medium text-text-primary
-    hover:bg-border/40 transition-colors duration-200
-    ${className}
-  `.trim();
+  const baseClassName = showLabel
+    ? 'flex items-center gap-3 text-sm text-text-primary hover:bg-muted transition-colors duration-150'
+    : 'px-3 py-1 bg-muted border border-border rounded-full flex items-center gap-1 text-sm font-medium text-text-primary hover:bg-border/40 transition-colors duration-200';
+
+  const mergedClassName = `${baseClassName} ${className}`.trim();
 
   return (
     <button
@@ -37,7 +38,8 @@ export function DocsButton({
       className={mergedClassName}
       aria-label={t('navigation.docs')}
     >
-      <FileText className="h-4 w-4" style={{ color: 'var(--text-primary)' }} />
+      <FileText className="h-4 w-4 text-text-muted" />
+      {showLabel && <span>{t('navigation.docs')}</span>}
     </button>
   );
 }

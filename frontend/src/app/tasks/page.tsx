@@ -7,7 +7,6 @@
 import { Suspense, useState } from 'react';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
-import UserMenu from '@/features/layout/UserMenu';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
@@ -16,6 +15,8 @@ import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
+import { ThemeToggle } from '@/features/theme/ThemeToggle';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { Team } from '@/types/api';
 import { UserProvider } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
@@ -24,6 +25,9 @@ import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
 function TasksPageContent() {
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
+
+  // Mobile detection
+  const isMobile = useIsMobile();
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -64,8 +68,7 @@ function TasksPageContent() {
             showLogo={false}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
-            <GithubStarButton />
-            <UserMenu />
+            {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
           {/* Chat area */}
           <ChatArea

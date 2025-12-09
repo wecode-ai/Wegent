@@ -8,7 +8,6 @@ import { Suspense, useState, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
-import UserMenu from '@/features/layout/UserMenu';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
@@ -22,6 +21,7 @@ import OpenMenu from '@/features/tasks/components/OpenMenu';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
+import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { Team } from '@/types/api';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { saveLastTab } from '@/utils/userPreferences';
@@ -179,8 +179,7 @@ export default function CodePage() {
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
             {shareButton}
-            <GithubStarButton />
-            <UserMenu />
+            {isMobile ? <ThemeToggle /> : <GithubStarButton />}
             {hasTaskId && <OpenMenu openLinks={openLinks} />}
             {hasTaskId && (
               <WorkbenchToggle

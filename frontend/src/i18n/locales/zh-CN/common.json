@@ -57,6 +57,10 @@
     "collapse": "缩起侧边栏",
     "expand": "展开侧边栏"
   },
+  "theme": {
+    "light": "浅色模式",
+    "dark": "深色模式"
+  },
   "user": {
     "default_name": "用户",
     "logout": "退出登录",
@@ -574,7 +578,7 @@
   },
   "knowledge": {
     "modules": {
-      "title": "知识空间",
+      "title": "我的知识",
       "code": "代码知识",
       "code_desc": "仓库文档",
       "wiki": "Wiki",
