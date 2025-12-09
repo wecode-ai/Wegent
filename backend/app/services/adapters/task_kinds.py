@@ -299,7 +299,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         """
         Get user's Task list with pagination (lightweight version for list display)
         Only returns essential fields without JOIN queries for better performance
+
+        Uses composite index (user_id, kind, is_active, created_at) to avoid
+        MySQL "Out of sort memory" error when sorting large result sets.
         """
+        # Optimized query that uses composite index for efficient sorting
+        # The filter order matches the index column order for optimal performance
         query = db.query(Kind).filter(
             Kind.user_id == user_id,
             Kind.kind == "Task",
@@ -307,8 +312,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
         )
 
+        # Count total without sorting to improve performance
         total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+
+        # Add USE INDEX hint to force MySQL to use our composite index
+        # This prevents MySQL from choosing a suboptimal query plan
+        tasks = (
+            query.with_hint(Kind, "USE INDEX (idx_user_kind_active_created)", "mysql")
+            .order_by(Kind.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
 
         if not tasks:
             return [], total
