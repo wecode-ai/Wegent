@@ -25,8 +25,8 @@ import ClarificationForm from './ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from './ClarificationAnswerSummary';
 import AttachmentPreview from './AttachmentPreview';
+import StreamingWaitIndicator from './StreamingWaitIndicator';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
-
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -51,6 +51,8 @@ export interface Message {
   isRecovered?: boolean;
   /** Flag indicating the content is incomplete (client disconnected) */
   isIncomplete?: boolean;
+  /** Flag indicating this message is waiting for first character (streaming but no content yet) */
+  isWaiting?: boolean;
 }
 
 // CopyButton component for copying markdown content
@@ -140,7 +142,6 @@ const BubbleTools = ({
     </div>
   );
 };
-
 export interface MessageBubbleProps {
   msg: Message;
   index: number;
@@ -150,6 +151,8 @@ export interface MessageBubbleProps {
   selectedBranch?: GitBranch | null;
   theme: 'light' | 'dark';
   t: (key: string) => string;
+  /** Whether to show waiting indicator (streaming but no content yet) */
+  isWaiting?: boolean;
 }
 
 const MessageBubble = memo(
@@ -162,6 +165,7 @@ const MessageBubble = memo(
     selectedBranch,
     theme,
     t,
+    isWaiting,
   }: MessageBubbleProps) {
     const bubbleBaseClasses = 'relative w-full p-5 pb-10 text-text-primary';
     const bubbleTypeClasses =
@@ -865,10 +869,17 @@ const MessageBubble = memo(
               </div>
             )}
             {isUserMessage && renderAttachments(msg.attachments)}
-            {/* Show recovered content if available, otherwise show normal content */}
-            {msg.recoveredContent && msg.subtaskStatus === 'RUNNING'
-              ? renderRecoveredContent()
-              : renderMessageBody(msg, index)}
+            {/* Show waiting indicator when streaming but no content yet */}
+            {isWaiting || msg.isWaiting ? (
+              <StreamingWaitIndicator isWaiting={true} />
+            ) : (
+              <>
+                {/* Show recovered content if available, otherwise show normal content */}
+                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING'
+                  ? renderRecoveredContent()
+                  : renderMessageBody(msg, index)}
+              </>
+            )}
             {/* Show incomplete notice for completed but incomplete messages */}
             {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
             {/* Show copy button for user messages - always visible */}
@@ -893,6 +904,8 @@ const MessageBubble = memo(
       prevProps.msg.recoveredContent === nextProps.msg.recoveredContent &&
       prevProps.msg.isRecovered === nextProps.msg.isRecovered &&
       prevProps.msg.isIncomplete === nextProps.msg.isIncomplete &&
+      prevProps.msg.isWaiting === nextProps.msg.isWaiting &&
+      prevProps.isWaiting === nextProps.isWaiting &&
       prevProps.theme === nextProps.theme
     );
   }
