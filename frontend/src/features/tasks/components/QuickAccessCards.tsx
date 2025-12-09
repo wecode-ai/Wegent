@@ -195,7 +195,7 @@ export function QuickAccessCards({
           animation: slide-fade 0.2s ease-out forwards;
         }
       `}</style>
-      <div className="flex flex-wrap gap-3 mt-4">
+      <div className="grid grid-cols-4 gap-3 mt-4">
         {displayTeams.map(team => {
           const isSelected = selectedTeam?.id === team.id;
           const isSwitching = switchingTeamId === team.id;
