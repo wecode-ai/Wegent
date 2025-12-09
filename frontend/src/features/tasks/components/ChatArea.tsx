@@ -6,6 +6,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Send, CircleStop, Upload, Globe } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
@@ -942,19 +943,29 @@ export default function ChatArea({
                         )}
                       {/* Web Search Toggle Button - only show for chat shell and when enabled */}
                       {isWebSearchEnabled && isChatShell(selectedTeam) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setEnableWebSearch(!enableWebSearch)}
-                          className={`h-8 w-8 rounded-lg flex-shrink-0 transition-colors ${
-                            enableWebSearch
-                              ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                              : 'text-text-muted hover:bg-surface hover:text-text-primary'
-                          }`}
-                          title={enableWebSearch ? t('web_search.disable') : t('web_search.enable')}
-                        >
-                          <Globe className="h-4 w-4" />
-                        </Button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={() => setEnableWebSearch(!enableWebSearch)}
+                                className={`h-8 w-8 rounded-lg flex-shrink-0 transition-colors ${
+                                  enableWebSearch
+                                    ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                                    : 'text-text-muted hover:bg-surface hover:text-text-primary'
+                                }`}
+                              >
+                                <Globe className="h-4 w-4" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              <p>
+                                {enableWebSearch ? t('web_search.disable') : t('web_search.enable')}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                       {teams.length > 0 && (
                         <TeamSelector
@@ -1181,19 +1192,29 @@ export default function ChatArea({
                       )}
                     {/* Web Search Toggle Button - only show for chat shell and when enabled */}
                     {isWebSearchEnabled && isChatShell(selectedTeam) && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setEnableWebSearch(!enableWebSearch)}
-                        className={`h-8 w-8 rounded-lg flex-shrink-0 transition-colors ${
-                          enableWebSearch
-                            ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                            : 'text-text-muted hover:bg-surface hover:text-text-primary'
-                        }`}
-                        title={enableWebSearch ? t('web_search.disable') : t('web_search.enable')}
-                      >
-                        <Globe className="h-4 w-4" />
-                      </Button>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => setEnableWebSearch(!enableWebSearch)}
+                              className={`h-8 w-8 rounded-lg flex-shrink-0 transition-colors ${
+                                enableWebSearch
+                                  ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                                  : 'text-text-muted hover:bg-surface hover:text-text-primary'
+                              }`}
+                            >
+                              <Globe className="h-4 w-4" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            <p>
+                              {enableWebSearch ? t('web_search.disable') : t('web_search.enable')}
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     )}
                     {teams.length > 0 && (
                       <TeamSelector
