@@ -325,3 +325,169 @@ def set_repository_context(
 
     if attributes:
         set_span_attributes(attributes)
+
+
+# ============================================================================
+# Trace Context Propagation Utilities
+# ============================================================================
+
+# Environment variable names for trace context propagation
+TRACE_PARENT_ENV = "OTEL_TRACEPARENT"
+TRACE_STATE_ENV = "OTEL_TRACESTATE"
+
+
+def get_trace_context_for_propagation() -> Dict[str, str]:
+    """
+    Extract current trace context as a dictionary for propagation.
+
+    This function extracts the current trace context (traceparent and tracestate)
+    in W3C Trace Context format, suitable for passing to child services via
+    HTTP headers or environment variables.
+
+    Returns:
+        Dict[str, str]: Dictionary with 'traceparent' and optionally 'tracestate' keys
+    """
+    from opentelemetry import trace
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+    context_dict: Dict[str, str] = {}
+
+    try:
+        # Get the current span context
+        span = trace.get_current_span()
+        if span is None or not span.get_span_context().is_valid:
+            return context_dict
+
+        # Use W3C TraceContext propagator to inject context
+        propagator = TraceContextTextMapPropagator()
+        propagator.inject(context_dict)
+
+    except Exception as e:
+        logger.debug(f"Failed to extract trace context for propagation: {e}")
+
+    return context_dict
+
+
+def get_trace_context_env_vars() -> Dict[str, str]:
+    """
+    Get trace context as environment variables for Docker container propagation.
+
+    Returns:
+        Dict[str, str]: Dictionary with OTEL_TRACEPARENT and optionally OTEL_TRACESTATE
+    """
+    env_vars: Dict[str, str] = {}
+
+    try:
+        context = get_trace_context_for_propagation()
+
+        if "traceparent" in context:
+            env_vars[TRACE_PARENT_ENV] = context["traceparent"]
+
+        if "tracestate" in context:
+            env_vars[TRACE_STATE_ENV] = context["tracestate"]
+
+    except Exception as e:
+        logger.debug(f"Failed to get trace context env vars: {e}")
+
+    return env_vars
+
+
+def restore_trace_context_from_env() -> None:
+    """
+    Restore trace context from environment variables.
+
+    This should be called at the start of a child process/container to restore
+    the parent trace context and continue the distributed trace.
+
+    The function reads OTEL_TRACEPARENT and OTEL_TRACESTATE environment variables
+    and sets them as the current context.
+    """
+    import os
+    from opentelemetry import context
+    from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
+
+    try:
+        traceparent = os.environ.get(TRACE_PARENT_ENV)
+        if not traceparent:
+            logger.debug("No trace context found in environment variables")
+            return
+
+        # Build carrier dictionary
+        carrier = {"traceparent": traceparent}
+        tracestate = os.environ.get(TRACE_STATE_ENV)
+        if tracestate:
+            carrier["tracestate"] = tracestate
+
+        # Extract context from carrier
+        propagator = TraceContextTextMapPropagator()
+        ctx = propagator.extract(carrier)
+
+        # Attach the extracted context
+        context.attach(ctx)
+
+        logger.debug(f"Restored trace context from env: traceparent={traceparent}")
+
+    except Exception as e:
+        logger.debug(f"Failed to restore trace context from env: {e}")
+
+
+def inject_trace_context_to_headers(headers: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """
+    Inject current trace context into HTTP headers.
+
+    This is useful for propagating trace context in HTTP requests to other services.
+
+    Args:
+        headers: Optional existing headers dictionary to update
+
+    Returns:
+        Dict[str, str]: Headers dictionary with trace context headers added
+    """
+    if headers is None:
+        headers = {}
+
+    try:
+        context = get_trace_context_for_propagation()
+        headers.update(context)
+    except Exception as e:
+        logger.debug(f"Failed to inject trace context to headers: {e}")
+
+    return headers
+
+
+def create_child_span(
+    name: str,
+    attributes: Optional[Dict[str, Any]] = None,
+) -> Optional[Span]:
+    """
+    Create a child span under the current trace context.
+
+    This is useful for creating spans for operations that are part of the current trace.
+
+    Args:
+        name: Name of the span
+        attributes: Optional attributes to set on the span
+
+    Returns:
+        Optional[Span]: The created span, or None if telemetry is disabled
+    """
+    if not is_telemetry_enabled():
+        return None
+
+    try:
+        tracer = trace.get_tracer(__name__)
+        span = tracer.start_span(name)
+
+        if attributes:
+            for key, value in attributes.items():
+                if value is not None:
+                    if isinstance(value, (str, int, float, bool)):
+                        span.set_attribute(key, value)
+                    else:
+                        span.set_attribute(key, str(value))
+
+        return span
+
+    except Exception as e:
+        logger.debug(f"Failed to create child span: {e}")
+        return None

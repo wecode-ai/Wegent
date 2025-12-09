@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 import httpx
 
-from executor_manager.config.config import EXECUTOR_ENV
+from executor_manager.config.config import EXECUTOR_ENV, OTEL_ENABLED
 from executor_manager.utils.executor_name import generate_executor_name
 from shared.logger import setup_logger
 from shared.status import TaskStatus
@@ -44,6 +44,14 @@ from executor_manager.executors.docker.constants import (
     DEFAULT_PROGRESS_COMPLETE,
     DEFAULT_TASK_ID,
 )
+
+# Import trace context utilities if available
+TRACE_PROPAGATION_AVAILABLE = False
+try:
+    from shared.telemetry_context import get_trace_context_env_vars
+    TRACE_PROPAGATION_AVAILABLE = True
+except ImportError:
+    pass
 
 logger = setup_logger(__name__)
 
@@ -483,6 +491,9 @@ class DockerExecutor(Executor):
         # Add callback URL
         self._add_callback_url(cmd, task)
 
+        # Add OpenTelemetry trace context for distributed tracing
+        self._add_trace_context(cmd)
+
         # Add executor image (use base_image if provided, otherwise use default executor_image)
         final_image = base_image if base_image else executor_image
         cmd.append(final_image)
@@ -513,6 +524,24 @@ class DockerExecutor(Executor):
         callback_url = build_callback_url(task)
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
+
+    def _add_trace_context(self, cmd: List[str]) -> None:
+        """
+        Add OpenTelemetry trace context environment variables for distributed tracing.
+
+        This propagates the current trace context to the executor container,
+        allowing it to continue the trace started by executor_manager.
+        """
+        if not OTEL_ENABLED or not TRACE_PROPAGATION_AVAILABLE:
+            return
+
+        try:
+            trace_env_vars = get_trace_context_env_vars()
+            for key, value in trace_env_vars.items():
+                cmd.extend(["-e", f"{key}={value}"])
+                logger.debug(f"Added trace context env var: {key}")
+        except Exception as e:
+            logger.debug(f"Failed to add trace context: {e}")
     
     def _handle_execution_exception(self, exception: Exception, task_id: int, status: Dict[str, Any]) -> None:
         """Handle exceptions during execution uniformly"""

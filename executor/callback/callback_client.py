@@ -23,6 +23,15 @@ from shared.status import TaskStatus
 from shared.utils.http_util import build_payload
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
+# Import trace context utilities if available
+TRACE_PROPAGATION_AVAILABLE = False
+try:
+    from shared.telemetry_context import inject_trace_context_to_headers
+    from shared.telemetry import is_telemetry_enabled
+    TRACE_PROPAGATION_AVAILABLE = True
+except ImportError:
+    pass
+
 logger = setup_logger("callback_client")
 
 
@@ -167,8 +176,19 @@ class CallbackClient:
         masked_data = mask_sensitive_data(data)
         logger.info("Sending callback to %s, body: %s", self.callback_url, masked_data)
 
+        # Prepare headers with trace context for distributed tracing
+        headers = {"Content-Type": "application/json"}
+        if TRACE_PROPAGATION_AVAILABLE:
+            try:
+                if is_telemetry_enabled():
+                    headers = inject_trace_context_to_headers(headers)
+            except Exception as e:
+                logger.debug(f"Failed to inject trace context to callback headers: {e}")
+
         # Send original unmasked data
-        response = requests.post(self.callback_url, json=data, timeout=self.timeout)
+        response = requests.post(
+            self.callback_url, json=data, headers=headers, timeout=self.timeout
+        )
         return self._handle_response(response)
 
     def _handle_response(self, response: requests.Response) -> Dict[str, Any]:

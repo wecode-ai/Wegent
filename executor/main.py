@@ -35,7 +35,11 @@ TELEMETRY_AVAILABLE = False
 try:
     from shared.telemetry import init_telemetry, shutdown_telemetry, is_telemetry_enabled
     from shared.telemetry_metrics import record_task_completed, record_task_failed, record_model_call
-    from shared.telemetry_context import set_task_context, set_agent_context
+    from shared.telemetry_context import (
+        set_task_context,
+        set_agent_context,
+        restore_trace_context_from_env,
+    )
     TELEMETRY_AVAILABLE = True
 except ImportError:
     logger.debug("OpenTelemetry not available (shared module not found)")
@@ -60,6 +64,11 @@ async def lifespan(app: FastAPI):
 
             # Apply instrumentation
             _setup_opentelemetry_instrumentation(app)
+
+            # Restore parent trace context from environment variables
+            # This continues the trace started by executor_manager
+            restore_trace_context_from_env()
+            logger.debug("Restored trace context from environment")
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
 
