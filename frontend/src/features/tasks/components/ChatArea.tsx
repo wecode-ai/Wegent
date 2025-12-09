@@ -19,6 +19,7 @@ import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
 import FileUpload from './FileUpload';
+import { QuickAccessCards } from './QuickAccessCards';
 import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
 import { sendMessage, isChatShell } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -28,7 +29,7 @@ import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import WeCodeGettingStarted from './WeCodeGettingStarted';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
+import { saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/userPreferences';
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
@@ -61,8 +62,13 @@ export default function ChatArea({
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
   if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
-    initialTeamIdRef.current = getLastTeamId();
-    console.log('[ChatArea] Pre-loaded team ID from localStorage:', initialTeamIdRef.current);
+    // Use mode-specific preference, with fallback to generic preference
+    initialTeamIdRef.current = getLastTeamIdByMode(taskType);
+    console.log(
+      '[ChatArea] Pre-loaded team ID from localStorage for mode:',
+      taskType,
+      initialTeamIdRef.current
+    );
   }
 
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -350,10 +356,10 @@ export default function ChatArea({
     setExternalApiParams({});
     setAppMode(undefined);
 
-    // Save team preference to localStorage
+    // Save team preference to localStorage by mode
     if (team && team.id) {
-      console.log('[ChatArea] Saving team to localStorage:', team.id);
-      saveLastTeam(team.id);
+      console.log('[ChatArea] Saving team to localStorage for mode:', taskType, team.id);
+      saveLastTeamByMode(team.id, taskType);
     }
   };
 
@@ -958,6 +964,7 @@ export default function ChatArea({
                           teams={teams}
                           disabled={hasMessages}
                           isLoading={isTeamsLoading}
+                          currentMode={taskType}
                         />
                       )}
                       {selectedTeam && (
@@ -1072,6 +1079,15 @@ export default function ChatArea({
                   )}
                 </div>
               </div>
+
+              {/* Quick Access Cards - show below input card when no messages */}
+              <QuickAccessCards
+                teams={teams}
+                selectedTeam={selectedTeam}
+                onTeamSelect={handleTeamChange}
+                currentMode={taskType}
+                isLoading={isTeamsLoading}
+              />
             </div>
           </div>
         )}
@@ -1187,6 +1203,7 @@ export default function ChatArea({
                         teams={teams}
                         disabled={hasMessages}
                         isLoading={isTeamsLoading}
+                        currentMode={taskType}
                       />
                     )}
                     {selectedTeam && (

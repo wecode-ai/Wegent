@@ -75,7 +75,7 @@ class WikiGeneration(WikiBase):
         index=True,
     )
     user_id = Column(Integer, nullable=False, index=True)
-    task_id = Column(Integer, nullable=True, index=True)
+    task_id = Column(Integer, nullable=False, default=0, index=True)
     team_id = Column(Integer, nullable=False)
     generation_type = Column(
         SQLEnum(WikiGenerationType), nullable=False, default=WikiGenerationType.FULL
@@ -92,7 +92,9 @@ class WikiGeneration(WikiBase):
     ext = Column(JSON, comment="Extension fields")
     created_at = Column(DateTime, default=func.now(), index=True)
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
-    completed_at = Column(DateTime)
+    completed_at = Column(
+        DateTime, nullable=False, default="1970-01-01 00:00:00"
+    )
 
     __table_args__ = (
         Index("idx_user_project", "user_id", "project_id"),
