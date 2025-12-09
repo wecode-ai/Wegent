@@ -12,6 +12,7 @@ SearXNG, and custom search APIs.
 
 import logging
 from typing import Any
+
 import httpx
 
 from .base import SearchServiceBase
