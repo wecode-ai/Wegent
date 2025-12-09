@@ -38,7 +38,12 @@ class Namespace(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # Relationships
-    members = relationship("NamespaceMember", back_populates="namespace", cascade="all, delete-orphan")
+    members = relationship(
+        "NamespaceMember",
+        back_populates="namespace",
+        cascade="all, delete-orphan",
+        primaryjoin="Namespace.name == foreign(NamespaceMember.group_name)"
+    )
 
     __table_args__ = (
         {

@@ -86,4 +86,4 @@ class GroupListResponse(BaseModel):
     """Group list response with pagination"""
 
     total: int
-    groups: list[GroupResponse]
+    items: list[GroupResponse]

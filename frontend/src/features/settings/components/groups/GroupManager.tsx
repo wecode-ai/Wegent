@@ -63,10 +63,10 @@ export function GroupManager() {
   }
 
   const getVisibilityBadge = (visibility: string) => {
-    const variants: Record<string, 'default' | 'secondary' | 'outline'> = {
+    const variants: Record<string, 'default' | 'secondary'> = {
       private: 'default',
       internal: 'secondary',
-      public: 'outline',
+      public: 'secondary',
     }
     return (
       <Badge variant={variants[visibility] || 'default'}>
@@ -152,7 +152,7 @@ export function GroupManager() {
                     <td className="px-4 py-3 text-sm">{getVisibilityBadge(group.visibility)}</td>
                     <td className="px-4 py-3 text-sm">
                       {group.my_role ? (
-                        <Badge variant="outline">{t(`groups.roles.${group.my_role}`)}</Badge>
+                        <Badge variant="secondary">{t(`groups.roles.${group.my_role}`)}</Badge>
                       ) : (
                         '-'
                       )}

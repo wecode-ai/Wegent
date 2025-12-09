@@ -52,7 +52,7 @@ def list_groups(
         )
         total = len(all_groups)
 
-    return GroupListResponse(total=total, groups=groups)
+    return GroupListResponse(total=total, items=groups)
 
 
 @router.post("", response_model=GroupResponse, status_code=status.HTTP_201_CREATED)

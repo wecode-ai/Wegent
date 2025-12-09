@@ -35,7 +35,12 @@ class NamespaceMember(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
 
     # Relationships (no foreign key constraints as per requirements)
-    namespace = relationship("Namespace", back_populates="members")
+    namespace = relationship(
+        "Namespace",
+        back_populates="members",
+        primaryjoin="NamespaceMember.group_name == Namespace.name",
+        foreign_keys="[NamespaceMember.group_name]"
+    )
 
     __table_args__ = (
         UniqueConstraint("group_name", "user_id", name="idx_group_user"),

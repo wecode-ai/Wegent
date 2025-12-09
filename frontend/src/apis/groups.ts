@@ -25,24 +25,24 @@ export const listGroups = async (params?: {
   page?: number
   limit?: number
 }): Promise<GroupListResponse> => {
-  const response = await apiClient.get('/groups', { params })
-  return response.data
+  const queryString = params
+    ? `?${new URLSearchParams(params as Record<string, string>).toString()}`
+    : ''
+  return await apiClient.get<GroupListResponse>(`/groups${queryString}`)
 }
 
 /**
  * Create a new group
  */
 export const createGroup = async (data: GroupCreate): Promise<Group> => {
-  const response = await apiClient.post('/groups', data)
-  return response.data
+  return await apiClient.post<Group>('/groups', data)
 }
 
 /**
  * Get group details
  */
 export const getGroup = async (groupName: string): Promise<Group> => {
-  const response = await apiClient.get(`/groups/${encodeURIComponent(groupName)}`)
-  return response.data
+  return await apiClient.get<Group>(`/groups/${encodeURIComponent(groupName)}`)
 }
 
 /**
@@ -52,8 +52,7 @@ export const updateGroup = async (
   groupName: string,
   data: GroupUpdate
 ): Promise<Group> => {
-  const response = await apiClient.put(`/groups/${encodeURIComponent(groupName)}`, data)
-  return response.data
+  return await apiClient.put<Group>(`/groups/${encodeURIComponent(groupName)}`, data)
 }
 
 /**
@@ -69,10 +68,9 @@ export const deleteGroup = async (groupName: string): Promise<void> => {
 export const listGroupMembers = async (
   groupName: string
 ): Promise<GroupMemberListResponse> => {
-  const response = await apiClient.get(
+  return await apiClient.get<GroupMemberListResponse>(
     `/groups/${encodeURIComponent(groupName)}/members`
   )
-  return response.data
 }
 
 /**
@@ -82,11 +80,10 @@ export const addGroupMember = async (
   groupName: string,
   data: GroupMemberCreate
 ): Promise<GroupMember> => {
-  const response = await apiClient.post(
+  return await apiClient.post<GroupMember>(
     `/groups/${encodeURIComponent(groupName)}/members`,
     data
   )
-  return response.data
 }
 
 /**
@@ -97,11 +94,10 @@ export const updateGroupMemberRole = async (
   userId: number,
   data: GroupMemberUpdate
 ): Promise<GroupMember> => {
-  const response = await apiClient.put(
+  return await apiClient.put<GroupMember>(
     `/groups/${encodeURIComponent(groupName)}/members/${userId}`,
     data
   )
-  return response.data
 }
 
 /**

@@ -307,8 +307,6 @@ class ModelAggregationService:
                 )
             else:
                 # Query group models (namespace = group_name, user_id can be any member)
-                from app.models.kind import Kind
-
                 group_model_resources = (
                     db.query(Kind)
                     .filter(
