@@ -27,6 +27,16 @@ from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.jobs import start_background_jobs, stop_background_jobs
 
+# OpenTelemetry imports
+try:
+    import sys
+    sys.path.insert(0, "/app")
+    from shared.telemetry import init_telemetry, shutdown_telemetry, is_telemetry_enabled
+    from shared.telemetry_context import set_user_context, set_request_context
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+
 # Redis lock keys for startup operations (migrations + YAML init)
 STARTUP_LOCK_KEY = "wegent:startup_lock"
 STARTUP_DONE_KEY = "wegent:startup_done"
@@ -53,6 +63,28 @@ def create_app():
     setup_logging()
     logger = logging.getLogger(__name__)
 
+    # Initialize OpenTelemetry if available and enabled
+    if TELEMETRY_AVAILABLE and settings.OTEL_ENABLED:
+        try:
+            init_telemetry(
+                service_name=settings.OTEL_SERVICE_NAME,
+                enabled=settings.OTEL_ENABLED,
+                otlp_endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,
+                sampler_ratio=settings.OTEL_TRACES_SAMPLER_ARG,
+                service_version=settings.VERSION,
+                deployment_environment=settings.ENVIRONMENT,
+            )
+            logger.info("OpenTelemetry initialized successfully")
+
+            # Apply instrumentation
+            _setup_opentelemetry_instrumentation(app, logger)
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenTelemetry: {e}")
+    elif not TELEMETRY_AVAILABLE:
+        logger.debug("OpenTelemetry not available (shared module not found)")
+    else:
+        logger.debug("OpenTelemetry is disabled")
+
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         # Skip logging for health check/probe requests (root path)
@@ -73,6 +105,15 @@ def create_app():
         username = get_username_from_request(request)
 
         client_ip = request.client.host if request.client else "Unknown"
+
+        # Add OpenTelemetry span attributes if enabled
+        if TELEMETRY_AVAILABLE and is_telemetry_enabled():
+            try:
+                set_request_context(request_id)
+                if username:
+                    set_user_context(user_name=username)
+            except Exception:
+                pass  # Silently ignore telemetry errors
 
         # Pre-request logging with request ID
         logger.info(
@@ -309,7 +350,64 @@ def create_app():
         stop_background_jobs(app)
         logger.info("✓ Application shutdown completed")
 
+        # Shutdown OpenTelemetry
+        if TELEMETRY_AVAILABLE and is_telemetry_enabled():
+            try:
+                shutdown_telemetry()
+                logger.info("✓ OpenTelemetry shutdown completed")
+            except Exception as e:
+                logger.warning(f"Error during OpenTelemetry shutdown: {e}")
+
     return app
+
+
+def _setup_opentelemetry_instrumentation(app: FastAPI, logger: logging.Logger) -> None:
+    """
+    Setup OpenTelemetry instrumentation for the backend service.
+
+    Args:
+        app: FastAPI application instance
+        logger: Logger instance
+    """
+    try:
+        # FastAPI instrumentation
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("✓ FastAPI instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup FastAPI instrumentation: {e}")
+
+    try:
+        # SQLAlchemy instrumentation
+        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+        SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
+        logger.info("✓ SQLAlchemy instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup SQLAlchemy instrumentation: {e}")
+
+    try:
+        # HTTPX instrumentation
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        HTTPXClientInstrumentor().instrument()
+        logger.info("✓ HTTPX instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup HTTPX instrumentation: {e}")
+
+    try:
+        # Requests instrumentation
+        from opentelemetry.instrumentation.requests import RequestsInstrumentor
+        RequestsInstrumentor().instrument()
+        logger.info("✓ Requests instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup Requests instrumentation: {e}")
+
+    try:
+        # System metrics instrumentation
+        from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
+        SystemMetricsInstrumentor().instrument()
+        logger.info("✓ System metrics instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup System metrics instrumentation: {e}")
 
 
 app = create_app()

@@ -137,6 +137,12 @@ class Settings(BaseSettings):
     WEB_SEARCH_CONFIG: str = "{}"  # JSON configuration for search API adapter
     WEB_SEARCH_MAX_RESULTS: int = 5  # Default maximum search results
 
+    # OpenTelemetry configuration
+    OTEL_ENABLED: bool = False  # Enable/disable OpenTelemetry
+    OTEL_SERVICE_NAME: str = "wegent-backend"  # Service name for tracing
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://jaeger:4317"  # OTLP gRPC endpoint
+    OTEL_TRACES_SAMPLER_ARG: float = 1.0  # Sampling ratio (0.0-1.0)
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

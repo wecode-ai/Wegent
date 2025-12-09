@@ -37,6 +37,14 @@ from app.services.adapters.task_kinds import task_kinds_service
 from app.services.export.docx_generator import generate_task_docx
 from app.services.shared_task import shared_task_service
 
+# OpenTelemetry imports for business metrics
+try:
+    from shared.telemetry_metrics import record_task_created
+    from shared.telemetry_context import set_user_context, set_task_context
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    TELEMETRY_AVAILABLE = False
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -97,9 +105,21 @@ def create_task_with_optional_id(
     db: Session = Depends(get_db),
 ):
     """Create new task with optional task_id in parameters"""
-    return task_kinds_service.create_task_or_append(
+    result = task_kinds_service.create_task_or_append(
         db=db, obj_in=task_create, user=current_user, task_id=task_id
     )
+
+    # Record task creation metric
+    if TELEMETRY_AVAILABLE:
+        try:
+            record_task_created(
+                user_id=str(current_user.id),
+                team_id=str(task_create.team_id) if task_create.team_id else None,
+            )
+        except Exception:
+            pass  # Silently ignore telemetry errors
+
+    return result
 
 
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)

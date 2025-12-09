@@ -20,9 +20,25 @@ from shared.logger import setup_logger
 from shared.status import TaskStatus
 from executor.tasks import process
 from executor.services.agent_service import AgentService
+from executor.config.config import (
+    OTEL_ENABLED,
+    OTEL_SERVICE_NAME,
+    OTEL_EXPORTER_OTLP_ENDPOINT,
+    OTEL_TRACES_SAMPLER_ARG,
+)
 
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
+
+# OpenTelemetry imports
+TELEMETRY_AVAILABLE = False
+try:
+    from shared.telemetry import init_telemetry, shutdown_telemetry, is_telemetry_enabled
+    from shared.telemetry_metrics import record_task_completed, record_task_failed, record_model_call
+    from shared.telemetry_context import set_task_context, set_agent_context
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    logger.debug("OpenTelemetry not available (shared module not found)")
 
 # Define lifespan context manager for startup and shutdown events
 @asynccontextmanager
@@ -30,6 +46,23 @@ async def lifespan(app: FastAPI):
     """
     Run task at startup if TASK_INFO is available
     """
+    # Initialize OpenTelemetry if available and enabled
+    if TELEMETRY_AVAILABLE and OTEL_ENABLED:
+        try:
+            init_telemetry(
+                service_name=OTEL_SERVICE_NAME,
+                enabled=OTEL_ENABLED,
+                otlp_endpoint=OTEL_EXPORTER_OTLP_ENDPOINT,
+                sampler_ratio=OTEL_TRACES_SAMPLER_ARG,
+                service_version="1.0.0",
+            )
+            logger.info("OpenTelemetry initialized successfully")
+
+            # Apply instrumentation
+            _setup_opentelemetry_instrumentation(app)
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenTelemetry: {e}")
+
     try:
         if os.getenv("TASK_INFO"):
             logger.info("TASK_INFO environment variable found, attempting to run task")
@@ -41,10 +74,16 @@ async def lifespan(app: FastAPI):
             )
     except Exception as e:
         logger.exception(f"Error running task at startup: {str(e)}")
-    
+
     yield  # Application runs here
-    
-    # Shutdown logic can be added here if needed
+
+    # Shutdown OpenTelemetry
+    if TELEMETRY_AVAILABLE and OTEL_ENABLED:
+        try:
+            shutdown_telemetry()
+            logger.info("OpenTelemetry shutdown completed")
+        except Exception as e:
+            logger.warning(f"Error during OpenTelemetry shutdown: {e}")
 
 # Create FastAPI app
 app = FastAPI(
@@ -197,6 +236,46 @@ def main():
     # Get port from environment variable, default to 10001
     port = int(os.getenv("PORT", 10001))
     uvicorn.run(app, host="0.0.0.0", port=port)
+
+
+def _setup_opentelemetry_instrumentation(app: FastAPI) -> None:
+    """
+    Setup OpenTelemetry instrumentation for the executor service.
+
+    Args:
+        app: FastAPI application instance
+    """
+    try:
+        # FastAPI instrumentation
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("FastAPI instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup FastAPI instrumentation: {e}")
+
+    try:
+        # HTTPX instrumentation
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        HTTPXClientInstrumentor().instrument()
+        logger.info("HTTPX instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup HTTPX instrumentation: {e}")
+
+    try:
+        # Requests instrumentation
+        from opentelemetry.instrumentation.requests import RequestsInstrumentor
+        RequestsInstrumentor().instrument()
+        logger.info("Requests instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup Requests instrumentation: {e}")
+
+    try:
+        # System metrics instrumentation
+        from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
+        SystemMetricsInstrumentor().instrument()
+        logger.info("System metrics instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup System metrics instrumentation: {e}")
 
 
 if __name__ == "__main__":

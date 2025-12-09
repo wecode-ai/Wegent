@@ -22,10 +22,24 @@ from shared.logger import setup_logger
 
 from scheduler.scheduler import TaskScheduler
 from routers.routers import app  # Import the FastAPI app defined in routes.py
+from config.config import (
+    OTEL_ENABLED,
+    OTEL_SERVICE_NAME,
+    OTEL_EXPORTER_OTLP_ENDPOINT,
+    OTEL_TRACES_SAMPLER_ARG,
+)
 
 
 # Setup logger
 logger = setup_logger(__name__)
+
+# OpenTelemetry imports
+TELEMETRY_AVAILABLE = False
+try:
+    from shared.telemetry import init_telemetry, shutdown_telemetry
+    TELEMETRY_AVAILABLE = True
+except ImportError:
+    logger.debug("OpenTelemetry not available (shared module not found)")
 
 @asynccontextmanager
 async def lifespan(app):
@@ -33,6 +47,23 @@ async def lifespan(app):
     FastAPI application lifecycle manager
     Starts the task scheduler when the application starts, and performs cleanup operations when the application shuts down
     """
+    # Initialize OpenTelemetry if available and enabled
+    if TELEMETRY_AVAILABLE and OTEL_ENABLED:
+        try:
+            init_telemetry(
+                service_name=OTEL_SERVICE_NAME,
+                enabled=OTEL_ENABLED,
+                otlp_endpoint=OTEL_EXPORTER_OTLP_ENDPOINT,
+                sampler_ratio=OTEL_TRACES_SAMPLER_ARG,
+                service_version="0.1.0",
+            )
+            logger.info("OpenTelemetry initialized successfully")
+
+            # Apply instrumentation
+            _setup_opentelemetry_instrumentation(app)
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenTelemetry: {e}")
+
     # Extract executor binary to Named Volume on startup
     logger.info("Extracting executor binary to Named Volume...")
     try:
@@ -63,6 +94,14 @@ async def lifespan(app):
     if scheduler_instance:
         scheduler_instance.stop()
 
+    # Shutdown OpenTelemetry
+    if TELEMETRY_AVAILABLE and OTEL_ENABLED:
+        try:
+            shutdown_telemetry()
+            logger.info("OpenTelemetry shutdown completed")
+        except Exception as e:
+            logger.warning(f"Error during OpenTelemetry shutdown: {e}")
+
 def start_scheduler(scheduler):
     """Start the task scheduler in a separate thread"""
     try:
@@ -89,6 +128,47 @@ def main():
         logger.error(f"Service startup failed: {e}")
         return 1
     return 0
+
+
+def _setup_opentelemetry_instrumentation(app) -> None:
+    """
+    Setup OpenTelemetry instrumentation for the executor manager service.
+
+    Args:
+        app: FastAPI application instance
+    """
+    try:
+        # FastAPI instrumentation
+        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+        FastAPIInstrumentor.instrument_app(app)
+        logger.info("FastAPI instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup FastAPI instrumentation: {e}")
+
+    try:
+        # HTTPX instrumentation
+        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        HTTPXClientInstrumentor().instrument()
+        logger.info("HTTPX instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup HTTPX instrumentation: {e}")
+
+    try:
+        # Requests instrumentation
+        from opentelemetry.instrumentation.requests import RequestsInstrumentor
+        RequestsInstrumentor().instrument()
+        logger.info("Requests instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup Requests instrumentation: {e}")
+
+    try:
+        # System metrics instrumentation
+        from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
+        SystemMetricsInstrumentor().instrument()
+        logger.info("System metrics instrumentation enabled")
+    except Exception as e:
+        logger.warning(f"Failed to setup System metrics instrumentation: {e}")
+
 
 if __name__ == "__main__":
     exit(main())
