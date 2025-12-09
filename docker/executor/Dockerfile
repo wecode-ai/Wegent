@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Build stage: compile executor to standalone binary
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0 AS builder
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1 AS builder
 
 WORKDIR /app
 
@@ -41,7 +41,7 @@ COPY shared /app/shared
 RUN cd /app/executor && bash build.sh
 
 # Runtime stage: minimal image with only the binary
-FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
+FROM ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1
 
 WORKDIR /app
 

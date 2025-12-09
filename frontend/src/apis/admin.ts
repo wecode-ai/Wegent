@@ -90,18 +90,22 @@ export const adminApis = {
   // ==================== User Management ====================
 
   /**
-   * Get list of all users with pagination
+   * Get list of all users with pagination and search
    */
   async getUsers(
     page: number = 1,
     limit: number = 20,
-    includeInactive: boolean = false
+    includeInactive: boolean = false,
+    search?: string
   ): Promise<AdminUserListResponse> {
     const params = new URLSearchParams();
     params.append('page', String(page));
     params.append('limit', String(limit));
     if (includeInactive) {
       params.append('include_inactive', 'true');
+    }
+    if (search) {
+      params.append('search', search);
     }
     return apiClient.get(`/admin/users?${params.toString()}`);
   },

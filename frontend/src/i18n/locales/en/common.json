@@ -375,7 +375,10 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "open_sidebar": "Open sidebar",
-    "close_sidebar": "Close sidebar"
+    "close_sidebar": "Close sidebar",
+    "previous": "Previous",
+    "next": "Next",
+    "page_info": "Page {{current}} of {{total}}"
   },
   "quota": {
     "load_failed": "Failed to fetch quota info",
