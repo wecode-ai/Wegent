@@ -189,10 +189,9 @@ class ModelAggregationService:
         Returns:
             List of supported model providers
         """
-        from app.models.public_shell import PublicShell
-
+        
         shell_row = (
-            db.query(PublicShell.json).filter(PublicShell.name == shell_type).first()
+            db.query(Kind.json).filter(Kind.user_id == 0, Kind.kind == "Shell", Kind.name == shell_type).first()
         )
 
         if shell_row and isinstance(shell_row[0], dict):
@@ -236,13 +235,21 @@ class ModelAggregationService:
         current_user: User,
         shell_type: Optional[str] = None,
         include_config: bool = False,
+        scope: str = "personal",
+        group_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        List all available models for the current user.
+        List all available models for the current user with scope support.
 
         This method aggregates models from:
         1. User's own models (via kind_service) - marked with type='user'
         2. Public models (via public_model_service) - marked with type='public'
+        3. Group models (when scope includes groups)
+
+        Scope behavior:
+        - scope='personal' (default): personal models + public models
+        - scope='group': group models + public models (requires group_name)
+        - scope='all': personal + public + all user's groups
 
         Each returned model includes a 'type' field to identify its source.
 
@@ -251,6 +258,8 @@ class ModelAggregationService:
             current_user: Current user
             shell_type: Optional shell type to filter compatible models
             include_config: Whether to include full config in response
+            scope: Query scope ('personal', 'group', or 'all')
+            group_name: Group name (required when scope='group')
 
         Returns:
             List of unified model dictionaries, each containing:
@@ -260,6 +269,8 @@ class ModelAggregationService:
             - provider: Model provider
             - modelId: Model ID
         """
+        from app.services.group_permission import get_user_groups
+
         # Get shell configuration if shell_type is provided
         support_model: List[str] = []
         if shell_type:
@@ -268,41 +279,81 @@ class ModelAggregationService:
         result: List[UnifiedModel] = []
         seen_names: Dict[str, ModelType] = {}  # Track names to handle duplicates
 
-        # 1. Get user's own models via kind_service (type='user')
+        # Determine which namespaces to query based on scope
+        namespaces_to_query = []
+
+        if scope == "personal":
+            # Personal models only
+            namespaces_to_query = ["default"]
+        elif scope == "group":
+            # Group models only (requires group_name)
+            if not group_name:
+                raise ValueError("group_name is required when scope='group'")
+            namespaces_to_query = [group_name]
+        elif scope == "all":
+            # Personal + all user's groups
+            namespaces_to_query = ["default"] + get_user_groups(db, current_user.id)
+        else:
+            raise ValueError(f"Invalid scope: {scope}")
+
+        # 1. Get user models from specified namespaces
         # Note: Only include non-custom models (isCustomConfig != True)
         # Custom models are user-specific configurations that should not appear in unified list
-        user_model_resources = kind_service.list_resources(
-            user_id=current_user.id, kind="Model", namespace="default"
-        )
+        for namespace in namespaces_to_query:
+            if namespace == "default":
+                # Query personal models
+                user_model_resources = kind_service.list_resources(
+                    user_id=current_user.id, kind="Model", namespace="default"
+                )
+            else:
+                # Query group models (namespace = group_name, user_id can be any member)
+                from app.models.kind import Kind
 
-        for resource in user_model_resources:
-            # Format the resource to get the full CRD data
-            model_data = kind_service._format_resource("Model", resource)
+                group_model_resources = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.kind == "Model",
+                        Kind.namespace == namespace,
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                user_model_resources = group_model_resources
 
-            # Skip custom config models - they should not appear in unified list
-            # Custom models are user-specific configurations (isCustomConfig=True)
-            if self._is_custom_model(model_data):
-                continue
-            info = self._extract_model_info_from_crd(model_data)
+            for resource in user_model_resources:
+                # Format the resource to get the full CRD data
+                model_data = kind_service._format_resource("Model", resource)
 
-            # Filter by shell compatibility if shell_type is provided
-            if shell_type and not self._is_model_compatible_with_shell(
-                info["provider"], shell_type, support_model
-            ):
-                continue
-            unified = UnifiedModel(
-                name=resource.name,
-                model_type=ModelType.USER,  # Mark as user-defined model
-                display_name=info["display_name"],
-                provider=info["provider"],
-                model_id=info["model_id"],
-                config=info["config"] if include_config else {},
-                is_active=resource.is_active,
-            )
-            result.append(unified)
-            seen_names[resource.name] = ModelType.USER
+                # Skip custom config models - they should not appear in unified list
+                # Custom models are user-specific configurations (isCustomConfig=True)
+                if self._is_custom_model(model_data):
+                    continue
+                info = self._extract_model_info_from_crd(model_data)
+
+                # Filter by shell compatibility if shell_type is provided
+                if shell_type and not self._is_model_compatible_with_shell(
+                    info["provider"], shell_type, support_model
+                ):
+                    continue
+
+                # Deduplicate by name
+                if resource.name in seen_names:
+                    continue
+
+                unified = UnifiedModel(
+                    name=resource.name,
+                    model_type=ModelType.USER,  # Mark as user-defined model
+                    display_name=info["display_name"],
+                    provider=info["provider"],
+                    model_id=info["model_id"],
+                    config=info["config"] if include_config else {},
+                    is_active=resource.is_active,
+                )
+                result.append(unified)
+                seen_names[resource.name] = ModelType.USER
 
         # 2. Get public models via public_model_service (type='public')
+        # Always include public models regardless of scope
         public_models = public_model_service.get_models(
             db=db,
             skip=0,
@@ -324,8 +375,13 @@ class ModelAggregationService:
             ):
                 continue
 
+            # Deduplicate by name
+            model_name = model_dict.get("name", "")
+            if model_name in seen_names:
+                continue
+
             unified = UnifiedModel(
-                name=model_dict.get("name", ""),
+                name=model_name,
                 model_type=ModelType.PUBLIC,  # Mark as public model
                 display_name=None,  # Public models don't have displayName in current schema
                 provider=provider,
@@ -333,17 +389,8 @@ class ModelAggregationService:
                 is_active=model_dict.get("is_active", True),
             )
 
-            # If name already exists as user model, we still add public model
-            # The type field will differentiate them
-            model_name = model_dict.get("name", "")
-            if model_name in seen_names:
-                logger.debug(
-                    f"Model name '{model_name}' exists in both user and public models"
-                )
-
             result.append(unified)
-            if model_name not in seen_names:
-                seen_names[model_name] = ModelType.PUBLIC
+            seen_names[model_name] = ModelType.PUBLIC
 
         # Sort by name
         result.sort(key=lambda x: x.name)

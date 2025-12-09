@@ -20,7 +20,6 @@ from app.api.endpoints.kind.common import (
 from app.api.endpoints.kind.kinds import KIND_SCHEMA_MAP
 from app.core.security import create_access_token, get_admin_user, get_password_hash
 from app.models.kind import Kind
-from app.models.public_model import PublicModel
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
@@ -391,7 +390,11 @@ async def list_public_models(
     """
     Get list of all public models with pagination
     """
-    query = db.query(PublicModel)
+    query = db.query(Kind).filter(
+        Kind.user_id == 0,
+        Kind.kind == "Model",
+        Kind.namespace == "default"
+    )
     total = query.count()
     models = query.offset((page - 1) * limit).limit(limit).all()
 
@@ -427,10 +430,12 @@ async def create_public_model(
     """
     # Check if model with same name and namespace already exists
     existing_model = (
-        db.query(PublicModel)
+        db.query(Kind)
         .filter(
-            PublicModel.name == model_data.name,
-            PublicModel.namespace == model_data.namespace,
+            Kind.user_id == 0,
+            Kind.kind == "Model",
+            Kind.name == model_data.name,
+            Kind.namespace == model_data.namespace,
         )
         .first()
     )
@@ -440,7 +445,9 @@ async def create_public_model(
             detail=f"Public model '{model_data.name}' already exists in namespace '{model_data.namespace}'",
         )
 
-    new_model = PublicModel(
+    new_model = Kind(
+        user_id=0,
+        kind="Model",
         name=model_data.name,
         namespace=model_data.namespace,
         json=model_data.model_json,
@@ -471,7 +478,11 @@ async def update_public_model(
     """
     Update a public model (admin only)
     """
-    model = db.query(PublicModel).filter(PublicModel.id == model_id).first()
+    model = db.query(Kind).filter(
+        Kind.id == model_id,
+        Kind.user_id == 0,
+        Kind.kind == "Model"
+    ).first()
     if not model:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -482,9 +493,12 @@ async def update_public_model(
     if model_data.name and model_data.name != model.name:
         namespace = model_data.namespace or model.namespace
         existing_model = (
-            db.query(PublicModel)
+            db.query(Kind)
             .filter(
-                PublicModel.name == model_data.name, PublicModel.namespace == namespace
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.name == model_data.name,
+                Kind.namespace == namespace
             )
             .first()
         )
@@ -527,7 +541,11 @@ async def delete_public_model(
     """
     Delete a public model (admin only)
     """
-    model = db.query(PublicModel).filter(PublicModel.id == model_id).first()
+    model = db.query(Kind).filter(
+        Kind.id == model_id,
+        Kind.user_id == 0,
+        Kind.kind == "Model"
+    ).first()
     if not model:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -559,7 +577,11 @@ async def get_system_stats(
         db.query(User).filter(User.role == "admin", User.is_active == True).count()
     )
     total_tasks = db.query(Task).count()
-    total_public_models = db.query(PublicModel).count()
+    total_public_models = db.query(Kind).filter(
+        Kind.user_id == 0,
+        Kind.kind == "Model",
+        Kind.namespace == "default"
+    ).count()
 
     return SystemStats(
         total_users=total_users,

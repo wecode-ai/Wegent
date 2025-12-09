@@ -57,13 +57,41 @@ export interface TeamInputParametersResponse {
 }
 
 export const teamApis = {
-  async getTeams(params?: PaginationParams): Promise<TeamListResponse> {
+  /**
+   * Get teams list
+   * @param params - Pagination parameters
+   * @param scope - Resource scope: 'personal', 'group', or 'all'
+   * @param groupName - Group name (required when scope is 'group')
+   */
+  async getTeams(
+    params?: PaginationParams,
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string
+  ): Promise<TeamListResponse> {
     const p = params ? params : { page: 1, limit: 100 };
-    const query = p ? `?page=${p.page || 1}&limit=${p.limit || 100}` : '';
-    return apiClient.get(`/teams${query}`);
+    const queryParams = new URLSearchParams();
+    queryParams.append('page', String(p.page || 1));
+    queryParams.append('limit', String(p.limit || 100));
+    if (scope) {
+      queryParams.append('scope', scope);
+    }
+    if (groupName) {
+      queryParams.append('group_name', groupName);
+    }
+    return apiClient.get(`/teams?${queryParams.toString()}`);
   },
-  async createTeam(data: CreateTeamRequest): Promise<Team> {
-    return apiClient.post('/teams', data);
+  /**
+   * Create a new team
+   * @param data - Team creation data
+   * @param groupName - Optional group name to create team in group scope
+   */
+  async createTeam(data: CreateTeamRequest, groupName?: string): Promise<Team> {
+    const params = new URLSearchParams();
+    if (groupName) {
+      params.append('group_name', groupName);
+    }
+    const queryString = params.toString();
+    return apiClient.post(`/teams${queryString ? `?${queryString}` : ''}`, data);
   },
   async deleteTeam(id: number): Promise<void> {
     await apiClient.delete(`/teams/${id}`);

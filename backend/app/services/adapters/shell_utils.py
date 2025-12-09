@@ -16,7 +16,6 @@ from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.public_shell import PublicShell
 from app.schemas.kind import Shell
 
 logger = logging.getLogger(__name__)
@@ -24,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 def get_shell_by_name(
     db: Session, shell_name: str, user_id: int, namespace: str = "default"
-) -> Optional[Union[Kind, PublicShell]]:
+) -> Optional[Kind]:
     """
     Get a Shell by name, first checking user's custom shells, then public shells.
 
@@ -35,7 +34,7 @@ def get_shell_by_name(
         namespace: Namespace (default: 'default')
 
     Returns:
-        Kind object (for user shells) or PublicShell object (for public shells),
+        Kind object (for user shells) or public shell Kind object (for public shells),
         or None if not found.
     """
     # First, try to find in user's custom shells (kinds table)
@@ -57,11 +56,11 @@ def get_shell_by_name(
 
     # Then, try to find in public shells
     public_shell = (
-        db.query(PublicShell)
+        db.query(Kind)
         .filter(
-            PublicShell.name == shell_name,
-            PublicShell.namespace == namespace,
-            PublicShell.is_active == True,
+            Kind.name == shell_name,
+            Kind.namespace == namespace,
+            Kind.is_active == True,
         )
         .first()
     )
@@ -134,11 +133,11 @@ def get_shell_info_by_name(
 
     # Then, try to find in public shells
     public_shell = (
-        db.query(PublicShell)
+        db.query(Kind)
         .filter(
-            PublicShell.name == shell_name,
-            PublicShell.namespace == namespace,
-            PublicShell.is_active == True,
+            Kind.name == shell_name,
+            Kind.namespace == namespace,
+            Kind.is_active == True,
         )
         .first()
     )
@@ -232,7 +231,7 @@ def get_shells_by_names_batch(
     db: Session,
     shell_keys: Set[Tuple[str, str]],
     user_id: int,
-) -> Dict[Tuple[str, str], Union[Kind, PublicShell]]:
+) -> Dict[Tuple[str, str], Kind]:
     """
     Batch-fetch shells by (name, namespace) keys.
 
@@ -245,12 +244,12 @@ def get_shells_by_names_batch(
         user_id: User ID
 
     Returns:
-        Dict mapping (name, namespace) to Kind or PublicShell objects
+        Dict mapping (name, namespace) to Kind objects
     """
     if not shell_keys:
         return {}
 
-    shell_map: Dict[Tuple[str, str], Union[Kind, PublicShell]] = {}
+    shell_map: Dict[Tuple[str, str], Kind] = {}
 
     # Build OR filter for user shells
     def build_user_shell_or_filters(keys: Set[Tuple[str, str]]):
@@ -287,7 +286,7 @@ def get_shells_by_names_batch(
             return (
                 or_(
                     *[
-                        and_(PublicShell.name == n, PublicShell.namespace == ns)
+                        and_(Kind.name == n, Kind.namespace == ns)
                         for (n, ns) in keys
                     ]
                 )
@@ -298,8 +297,8 @@ def get_shells_by_names_batch(
         public_shell_filter = build_public_shell_or_filters(missing_keys)
         if public_shell_filter is not None:
             public_shells = (
-                db.query(PublicShell)
-                .filter(PublicShell.is_active == True)
+                db.query(Kind)
+                .filter(Kind.is_active == True)
                 .filter(public_shell_filter)
                 .all()
             )

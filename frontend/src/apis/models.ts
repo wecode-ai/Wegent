@@ -124,10 +124,14 @@ export const modelApis = {
    *
    * @param shellType - Optional shell type to filter compatible models
    * @param includeConfig - Whether to include full model config in response
+   * @param scope - Resource scope: 'personal', 'group', or 'all'
+   * @param groupName - Group name (required when scope is 'group')
    */
   async getUnifiedModels(
     shellType?: string,
-    includeConfig: boolean = false
+    includeConfig: boolean = false,
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string
   ): Promise<UnifiedModelListResponse> {
     const params = new URLSearchParams();
     if (shellType) {
@@ -135,6 +139,12 @@ export const modelApis = {
     }
     if (includeConfig) {
       params.append('include_config', 'true');
+    }
+    if (scope) {
+      params.append('scope', scope);
+    }
+    if (groupName) {
+      params.append('group_name', groupName);
     }
     const queryString = params.toString();
     return apiClient.get(`/models/unified${queryString ? `?${queryString}` : ''}`);
@@ -158,9 +168,22 @@ export const modelApis = {
   },
   /**
    * Get all models as CRD resources (user's own models)
+   * @param scope - Resource scope: 'personal', 'group', or 'all'
+   * @param groupName - Group name (required when scope is 'group')
    */
-  async getAllModels(): Promise<ModelListResponse> {
-    return apiClient.get('/v1/namespaces/default/models');
+  async getAllModels(
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string
+  ): Promise<ModelListResponse> {
+    const params = new URLSearchParams();
+    if (scope) {
+      params.append('scope', scope);
+    }
+    if (groupName) {
+      params.append('group_name', groupName);
+    }
+    const queryString = params.toString();
+    return apiClient.get(`/v1/namespaces/default/models${queryString ? `?${queryString}` : ''}`);
   },
 
   /**
@@ -179,9 +202,16 @@ export const modelApis = {
 
   /**
    * Create a new model
+   * @param model - Model CRD data
+   * @param groupName - Optional group name to create model in group scope
    */
-  async createModel(model: ModelCRD): Promise<ModelCRD> {
-    return apiClient.post('/v1/namespaces/default/models', model);
+  async createModel(model: ModelCRD, groupName?: string): Promise<ModelCRD> {
+    const params = new URLSearchParams();
+    if (groupName) {
+      params.append('group_name', groupName);
+    }
+    const queryString = params.toString();
+    return apiClient.post(`/v1/namespaces/default/models${queryString ? `?${queryString}` : ''}`, model);
   },
 
   /**

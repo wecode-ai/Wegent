@@ -18,7 +18,6 @@ import yaml
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.models.public_shell import PublicShell
 from app.models.user import User
 from app.services.k_batch import batch_service
 
@@ -207,7 +206,7 @@ def apply_public_shells(
     db: Session, resources: List[Dict[str, Any]], force: bool = False
 ) -> List[Dict[str, Any]]:
     """
-    Apply public shell resources to the public_shells table.
+    Apply public shell resources to the kinds table (user_id=0).
     Only creates new shells, skips existing ones (create-only mode).
 
     Args:
@@ -221,6 +220,8 @@ def apply_public_shells(
     if not resources:
         logger.info("No public shells to apply")
         return []
+
+    from app.models.kind import Kind
 
     results = []
     created_count = 0
@@ -249,8 +250,13 @@ def apply_public_shells(
 
             # Check if public shell already exists
             existing = (
-                db.query(PublicShell)
-                .filter(PublicShell.name == name, PublicShell.namespace == namespace)
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Shell",
+                    Kind.name == name,
+                    Kind.namespace == namespace
+                )
                 .first()
             )
 
@@ -259,8 +265,13 @@ def apply_public_shells(
                     # Force mode: delete and recreate
                     db.delete(existing)
                     db.commit()
-                    new_shell = PublicShell(
-                        name=name, namespace=namespace, json=resource, is_active=True
+                    new_shell = Kind(
+                        user_id=0,
+                        kind="Shell",
+                        name=name,
+                        namespace=namespace,
+                        json=resource,
+                        is_active=True
                     )
                     db.add(new_shell)
                     db.commit()
@@ -296,8 +307,13 @@ def apply_public_shells(
                     skipped_count += 1
             else:
                 # Create new public shell
-                new_shell = PublicShell(
-                    name=name, namespace=namespace, json=resource, is_active=True
+                new_shell = Kind(
+                    user_id=0,
+                    kind="Shell",
+                    name=name,
+                    namespace=namespace,
+                    json=resource,
+                    is_active=True
                 )
                 db.add(new_shell)
                 db.commit()

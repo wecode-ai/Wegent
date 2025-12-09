@@ -765,5 +765,56 @@
     "switch_to_chat_message": "该智能体推荐在「聊天模式」下使用，是否切换？",
     "switch_mode": "切换模式",
     "stay_current": "留在当前"
+  },
+  "groups": {
+    "title": "群组",
+    "create": "创建群组",
+    "name": "名称",
+    "displayName": "显示名称",
+    "visibility": "可见性",
+    "description": "描述",
+    "owner": "所有者",
+    "role": "角色",
+    "members": "成员",
+    "resources": "资源",
+    "myRole": "我的角色",
+    "createdAt": "创建时间",
+    "private": "私有",
+    "internal": "内部",
+    "public": "公开",
+    "roles": {
+      "Owner": "所有者",
+      "Maintainer": "维护者",
+      "Developer": "开发者",
+      "Reporter": "报告者"
+    },
+    "actions": {
+      "addMember": "添加成员",
+      "removeMember": "移除成员",
+      "updateRole": "更新角色",
+      "inviteAll": "邀请所有用户",
+      "leave": "离开群组",
+      "transferOwnership": "转移所有权",
+      "delete": "删除群组"
+    },
+    "messages": {
+      "createSuccess": "群组创建成功",
+      "updateSuccess": "群组更新成功",
+      "deleteSuccess": "群组删除成功",
+      "memberAdded": "成员添加成功",
+      "memberRemoved": "成员移除成功",
+      "roleUpdated": "角色更新成功"
+    }
+  },
+  "resourceScope": {
+    "personal": "个人",
+    "group": "群组",
+    "all": "全部",
+    "selectGroup": "选择群组"
+  },
+  "resourceSource": {
+    "personal": "[个人]",
+    "shared": "[共享]",
+    "public": "[公共]"
   }
 }

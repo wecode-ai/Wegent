@@ -1,0 +1,10 @@
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Export index for group components
+ */
+
+export { GroupSelector } from './GroupSelector'
+export { GroupManager } from './GroupManager'

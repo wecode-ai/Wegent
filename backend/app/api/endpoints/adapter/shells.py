@@ -17,7 +17,6 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.core.cache import cache_manager
 from app.models.kind import Kind
-from app.models.public_shell import PublicShell
 from app.models.user import User
 from app.schemas.kind import Shell as ShellCRD
 
@@ -117,8 +116,8 @@ class ValidationStatusUpdateRequest(BaseModel):
     executor_name: Optional[str] = None  # Executor container name for cleanup
 
 
-def _public_shell_to_unified(shell: PublicShell) -> UnifiedShell:
-    """Convert PublicShell to UnifiedShell"""
+def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
+    """Convert public shell (Kind) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(shell.json)
     labels = shell_crd.metadata.labels or {}
     return UnifiedShell(
@@ -151,13 +150,26 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
 
 @router.get("/unified", response_model=dict)
 def list_unified_shells(
+    scope: str = Query(
+        "personal",
+        description="Query scope: 'personal' (default), 'group', or 'all'",
+    ),
+    group_name: Optional[str] = Query(
+        None, description="Group name (required when scope='group')"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-        Get unified list of all available shells (both public and user-defined).
+    Get unified list of all available shells (both public and user-defined) with scope support.
 
-        Each shell includes a 'type' field ('public' or 'user') to identify its source.
+    Scope behavior:
+    - scope='personal' (default): personal shells + public shells
+    - scope='group': group shells + public shells (requires group_name)
+    - scope='all': personal + public + all user's groups
+
+    Each shell includes a 'type' field ('public' or 'user') to identify its source.
+
     Response:
     {
       "data": [
@@ -171,40 +183,81 @@ def list_unified_shells(
         }
       ]
     }
-        }
     """
+    from app.services.group_permission import get_user_groups
+
     result = []
 
-    # Get public shells
+    # Determine which namespaces to query based on scope
+    namespaces_to_query = []
+    seen_names = set()
+
+    if scope == "personal":
+        namespaces_to_query = ["default"]
+    elif scope == "group":
+        if not group_name:
+            raise HTTPException(
+                status_code=400, detail="group_name is required when scope='group'"
+            )
+        namespaces_to_query = [group_name]
+    elif scope == "all":
+        namespaces_to_query = ["default"] + get_user_groups(db, current_user.id)
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid scope: {scope}")
+
+    # Get public shells (always included)
     public_shells = (
-        db.query(PublicShell)
-        .filter(PublicShell.is_active == True)  # noqa: E712
-        .order_by(PublicShell.name.asc())
+        db.query(Kind)
+        .filter(Kind.is_active == True)  # noqa: E712
+        .order_by(Kind.name.asc())
         .all()
     )
     for shell in public_shells:
         try:
-            result.append(_public_shell_to_unified(shell))
+            unified = _public_shell_to_unified(shell)
+            result.append(unified)
+            seen_names.add(shell.name)
         except Exception as e:
             logger.warning(f"Failed to parse public shell {shell.name}: {e}")
 
-    # Get user-defined shells
-    user_shells = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == current_user.id,
-            Kind.kind == "Shell",
-            Kind.namespace == "default",
-            Kind.is_active == True,  # noqa: E712
-        )
-        .order_by(Kind.name.asc())
-        .all()
-    )
-    for shell in user_shells:
-        try:
-            result.append(_user_shell_to_unified(shell))
-        except Exception as e:
-            logger.warning(f"Failed to parse user shell {shell.name}: {e}")
+    # Get user-defined shells from specified namespaces
+    for namespace in namespaces_to_query:
+        if namespace == "default":
+            # Query personal shells
+            user_shells = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == current_user.id,
+                    Kind.kind == "Shell",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .order_by(Kind.name.asc())
+                .all()
+            )
+        else:
+            # Query group shells
+            user_shells = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .order_by(Kind.name.asc())
+                .all()
+            )
+
+        for shell in user_shells:
+            try:
+                # Deduplicate by name
+                if shell.name in seen_names:
+                    continue
+                unified = _user_shell_to_unified(shell)
+                result.append(unified)
+                seen_names.add(shell.name)
+            except Exception as e:
+                logger.warning(f"Failed to parse user shell {shell.name}: {e}")
 
     return {"data": [s.model_dump() for s in result]}
 
@@ -246,10 +299,10 @@ def get_unified_shell(
 
     # Try public shells
     public_shell = (
-        db.query(PublicShell)
+        db.query(Kind)
         .filter(
-            PublicShell.name == shell_name,
-            PublicShell.is_active == True,  # noqa: E712
+            Kind.name == shell_name,
+            Kind.is_active == True,  # noqa: E712
         )
         .first()
     )
@@ -262,6 +315,7 @@ def get_unified_shell(
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 def create_shell(
     request: ShellCreateRequest,
+    group_name: Optional[str] = Query(None, description="Group name (namespace)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -269,7 +323,23 @@ def create_shell(
     Create a user-defined shell.
 
     The shell must be based on an existing public shell (baseShellRef).
+    If group_name is provided, creates the shell in that group's namespace.
+    User must have Developer+ permission in the group.
     """
+    from app.services.group_permission import check_group_permission
+    from app.schemas.namespace import GroupRole
+
+    namespace = "default"
+
+    if group_name:
+        # Validate user has Developer+ permission in group
+        if not check_group_permission(db, current_user.id, group_name, GroupRole.Developer):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{group_name}' to create shells"
+            )
+        namespace = group_name
+
     # Validate name format
     name_regex = r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$"
     if not re.match(name_regex, request.name):
@@ -278,27 +348,29 @@ def create_shell(
             detail="Shell name must contain only lowercase letters, numbers, and hyphens",
         )
 
-    # Check if name already exists for this user
+    # Check if name already exists in this namespace
     existing = (
         db.query(Kind)
         .filter(
-            Kind.user_id == current_user.id,
             Kind.kind == "Shell",
             Kind.name == request.name,
-            Kind.namespace == "default",
+            Kind.namespace == namespace,
             Kind.is_active == True,  # noqa: E712
         )
         .first()
     )
     if existing:
-        raise HTTPException(status_code=400, detail="Shell name already exists")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Shell '{request.name}' already exists in namespace '{namespace}'"
+        )
 
     # Validate baseShellRef - must be a public shell with local_engine type
     base_shell = (
-        db.query(PublicShell)
+        db.query(Kind)
         .filter(
-            PublicShell.name == request.baseShellRef,
-            PublicShell.is_active == True,  # noqa: E712
+            Kind.name == request.baseShellRef,
+            Kind.is_active == True,  # noqa: E712
         )
         .first()
     )
@@ -341,7 +413,7 @@ def create_shell(
         "kind": "Shell",
         "metadata": {
             "name": request.name,
-            "namespace": "default",
+            "namespace": namespace,
             "displayName": request.displayName,
             "labels": {"type": "local_engine"},  # User shells inherit local_engine type
         },
@@ -358,7 +430,7 @@ def create_shell(
         user_id=current_user.id,
         kind="Shell",
         name=request.name,
-        namespace="default",
+        namespace=namespace,
         json=shell_crd,
         is_active=True,
     )
@@ -380,8 +452,15 @@ def update_shell(
     Update a user-defined shell.
 
     Only user-defined shells can be updated. Public shells are read-only.
+    For group shells, user must have Developer+ permission.
     """
-    # Get user shell
+    from app.services.group_permission import check_group_permission, get_effective_role_in_group
+    from app.schemas.namespace import GroupRole
+
+    # Get user shell (try all accessible namespaces)
+    from app.services.group_permission import get_user_groups
+
+    # Try personal namespace first
     shell = (
         db.query(Kind)
         .filter(
@@ -393,8 +472,41 @@ def update_shell(
         )
         .first()
     )
+
+    if not shell:
+        # Try group namespaces
+        user_groups = get_user_groups(db, current_user.id)
+        for group_name in user_groups:
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.name == shell_name,
+                    Kind.namespace == group_name,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+            if shell:
+                break
+
     if not shell:
         raise HTTPException(status_code=404, detail="User shell not found")
+
+    # Check permissions
+    if shell.namespace != "default":
+        # Group shell - check permission
+        if not check_group_permission(
+            db, current_user.id, shell.namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{shell.namespace}' to update this shell"
+            )
+    else:
+        # Personal shell - check ownership
+        if shell.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
 
     # Parse existing CRD
     shell_crd = ShellCRD.model_validate(shell.json)
@@ -441,8 +553,12 @@ def delete_shell(
     Delete a user-defined shell.
 
     Only user-defined shells can be deleted. Public shells cannot be deleted.
+    For group shells, user must have Developer+ permission.
     """
-    # Get user shell
+    from app.services.group_permission import check_group_permission, get_user_groups
+    from app.schemas.namespace import GroupRole
+
+    # Try personal namespace first
     shell = (
         db.query(Kind)
         .filter(
@@ -454,8 +570,41 @@ def delete_shell(
         )
         .first()
     )
+
+    if not shell:
+        # Try group namespaces
+        user_groups = get_user_groups(db, current_user.id)
+        for group_name in user_groups:
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.name == shell_name,
+                    Kind.namespace == group_name,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+            if shell:
+                break
+
     if not shell:
         raise HTTPException(status_code=404, detail="User shell not found")
+
+    # Check permissions
+    if shell.namespace != "default":
+        # Group shell - check permission
+        if not check_group_permission(
+            db, current_user.id, shell.namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{shell.namespace}' to delete this shell"
+            )
+    else:
+        # Personal shell - check ownership
+        if shell.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
 
     # Hard delete
     db.delete(shell)

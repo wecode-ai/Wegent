@@ -770,5 +770,56 @@
     "switch_to_chat_message": "This agent is recommended for Chat mode. Would you like to switch?",
     "switch_mode": "Switch Mode",
     "stay_current": "Stay Here"
+  },
+  "groups": {
+    "title": "Groups",
+    "create": "Create Group",
+    "name": "Name",
+    "displayName": "Display Name",
+    "visibility": "Visibility",
+    "description": "Description",
+    "owner": "Owner",
+    "role": "Role",
+    "members": "Members",
+    "resources": "Resources",
+    "myRole": "My Role",
+    "createdAt": "Created At",
+    "private": "Private",
+    "internal": "Internal",
+    "public": "Public",
+    "roles": {
+      "Owner": "Owner",
+      "Maintainer": "Maintainer",
+      "Developer": "Developer",
+      "Reporter": "Reporter"
+    },
+    "actions": {
+      "addMember": "Add Member",
+      "removeMember": "Remove Member",
+      "updateRole": "Update Role",
+      "inviteAll": "Invite All Users",
+      "leave": "Leave Group",
+      "transferOwnership": "Transfer Ownership",
+      "delete": "Delete Group"
+    },
+    "messages": {
+      "createSuccess": "Group created successfully",
+      "updateSuccess": "Group updated successfully",
+      "deleteSuccess": "Group deleted successfully",
+      "memberAdded": "Member added successfully",
+      "memberRemoved": "Member removed successfully",
+      "roleUpdated": "Role updated successfully"
+    }
+  },
+  "resourceScope": {
+    "personal": "Personal",
+    "group": "Group",
+    "all": "All",
+    "selectGroup": "Select Group"
+  },
+  "resourceSource": {
+    "personal": "[Personal]",
+    "shared": "[Shared]",
+    "public": "[Public]"
   }
 }

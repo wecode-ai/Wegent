@@ -76,15 +76,27 @@ def list_unified_models(
     include_config: bool = Query(
         False, description="Whether to include full config in response"
     ),
+    scope: str = Query(
+        "personal",
+        description="Query scope: 'personal' (default), 'group', or 'all'",
+    ),
+    group_name: Optional[str] = Query(
+        None, description="Group name (required when scope='group')"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get unified list of all available models (both public and user-defined).
+    Get unified list of all available models (both public and user-defined) with scope support.
 
     This endpoint aggregates models from:
     - Public models (type='public'): Shared across all users
-    - User-defined models (type='user'): Private to the current user
+    - User-defined models (type='user'): Private to the current user or group
+
+    Scope behavior:
+    - scope='personal' (default): personal models + public models
+    - scope='group': group models + public models (requires group_name)
+    - scope='all': personal + public + all user's groups
 
     Each model includes a 'type' field to identify its source, which is
     important for avoiding naming conflicts when binding models.
@@ -92,6 +104,8 @@ def list_unified_models(
     Parameters:
     - shell_type: Optional shell type to filter compatible models
     - include_config: Whether to include full model config in response
+    - scope: Query scope ('personal', 'group', or 'all')
+    - group_name: Group name (required when scope='group')
 
     Response:
     {
@@ -111,6 +125,8 @@ def list_unified_models(
         current_user=current_user,
         shell_type=shell_type,
         include_config=include_config,
+        scope=scope,
+        group_name=group_name,
     )
     return {"data": data}
 
@@ -162,14 +178,84 @@ def get_unified_model(
 @router.post("", response_model=ModelInDB, status_code=status.HTTP_201_CREATED)
 def create_model(
     model_create: ModelCreate,
+    group_name: Optional[str] = Query(None, description="Group name (namespace)"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    Create new Model
+    Create new Model.
+
+    If group_name is provided, creates the model in that group's namespace.
+    User must have Developer+ permission in the group.
+    Otherwise, creates a personal model in 'default' namespace.
     """
-    return public_model_service.create_model(
-        db=db, obj_in=model_create, current_user=current_user
+    from app.services.group_permission import check_group_permission
+    from app.schemas.namespace import GroupRole
+
+    namespace = "default"
+
+    if group_name:
+        # Validate user has Developer+ permission in group
+        if not check_group_permission(db, current_user.id, group_name, GroupRole.Developer):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{group_name}' to create models"
+            )
+        namespace = group_name
+
+    # Check if model already exists in this namespace
+    existing = (
+        db.query(Kind)
+        .filter(
+            Kind.kind == "Model",
+            Kind.name == model_create.name,
+            Kind.namespace == namespace,
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Model '{model_create.name}' already exists in namespace '{namespace}'"
+        )
+
+    # Create model in Kind table
+    model_json = {
+        "kind": "Model",
+        "apiVersion": "agent.wecode.io/v1",
+        "metadata": {
+            "name": model_create.name,
+            "namespace": namespace,
+        },
+        "spec": {
+            "modelConfig": model_create.config,
+            "isCustomConfig": False,  # New models are not custom configs
+        },
+        "status": {"state": "Available"},
+    }
+
+    db_obj = Kind(
+        user_id=current_user.id,
+        kind="Model",
+        name=model_create.name,
+        namespace=namespace,
+        json=model_json,
+        is_active=model_create.is_active,
+    )
+    db.add(db_obj)
+    db.commit()
+    db.refresh(db_obj)
+
+    # Return in ModelInDB format
+    return ModelInDB(
+        id=db_obj.id,
+        name=db_obj.name,
+        config=model_create.config,
+        is_active=db_obj.is_active,
+        created_at=db_obj.created_at,
+        updated_at=db_obj.updated_at,
     )
 
 
@@ -206,7 +292,7 @@ def bulk_create_models(
         db=db, items=items, current_user=current_user
     )
 
-    # Convert PublicModel objects to Model-like objects
+    # Convert public model Kind objects to Model-like objects
     created = []
     for pm in result.get("created", []):
         model_data = {
@@ -260,10 +346,81 @@ def update_model(
     db: Session = Depends(get_db),
 ):
     """
-    Update Model information
+    Update Model information.
+    For group models, user must have Developer+ permission.
     """
-    return public_model_service.update_model(
-        db=db, model_id=model_id, obj_in=model_update, current_user=current_user
+    from app.services.group_permission import check_group_permission
+    from app.schemas.namespace import GroupRole
+
+    # Get the model
+    model = (
+        db.query(Kind)
+        .filter(Kind.id == model_id, Kind.kind == "Model", Kind.is_active == True)
+        .first()
+    )
+
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    # Check permissions
+    if model.namespace != "default":
+        # Group model - check permission
+        if not check_group_permission(
+            db, current_user.id, model.namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{model.namespace}' to update this model"
+            )
+    else:
+        # Personal model - check ownership
+        if model.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # Update model
+    if model_update.name is not None:
+        # Check name uniqueness in the same namespace
+        existing = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Model",
+                Kind.name == model_update.name,
+                Kind.namespace == model.namespace,
+                Kind.is_active == True,
+                Kind.id != model_id,
+            )
+            .first()
+        )
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Model '{model_update.name}' already exists in namespace '{model.namespace}'"
+            )
+
+        model.name = model_update.name
+        model.json["metadata"]["name"] = model_update.name
+
+    if model_update.config is not None:
+        model.json["spec"]["modelConfig"] = model_update.config
+
+    if model_update.is_active is not None:
+        model.is_active = model_update.is_active
+
+    from sqlalchemy.orm.attributes import flag_modified
+    from datetime import datetime
+
+    flag_modified(model, "json")
+    model.updated_at = datetime.now()
+    db.commit()
+    db.refresh(model)
+
+    return ModelInDB(
+        id=model.id,
+        name=model.name,
+        config=model.json["spec"]["modelConfig"],
+        is_active=model.is_active,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
     )
 
 
@@ -274,11 +431,44 @@ def delete_model(
     db: Session = Depends(get_db),
 ):
     """
-    Soft delete Model (set is_active to False)
+    Soft delete Model (set is_active to False).
+    For group models, user must have Developer+ permission.
     """
-    public_model_service.delete_model(
-        db=db, model_id=model_id, current_user=current_user
+    from app.services.group_permission import check_group_permission
+    from app.schemas.namespace import GroupRole
+
+    # Get the model
+    model = (
+        db.query(Kind)
+        .filter(Kind.id == model_id, Kind.kind == "Model", Kind.is_active == True)
+        .first()
     )
+
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    # Check permissions
+    if model.namespace != "default":
+        # Group model - check permission
+        if not check_group_permission(
+            db, current_user.id, model.namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{model.namespace}' to delete this model"
+            )
+    else:
+        # Personal model - check ownership
+        if model.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # Soft delete
+    model.is_active = False
+    from datetime import datetime
+
+    model.updated_at = datetime.now()
+    db.commit()
+
     return {"message": "Model deleted successfully"}
 
 
