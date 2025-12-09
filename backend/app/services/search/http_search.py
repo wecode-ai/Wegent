@@ -121,9 +121,11 @@ class HttpSearchService(SearchServiceBase):
         Returns:
             Formatted search results as a string suitable for LLM context
         """
+        if not query:
+            return ""
         try:
             results = await self.search_raw(query, limit)
-            results_for_llm = self.format_results_for_llm(results)
+            results_for_llm = self.format_results_for_llm(results[:limit])
             logger.info("results_for_llm: %s", results_for_llm)
             return results_for_llm
         except Exception as e:
@@ -189,12 +191,11 @@ class HttpSearchService(SearchServiceBase):
             return formatted_results
 
         except httpx.HTTPStatusError as e:
-            logger.error(
-                "HTTP search failed with status %s: %s",
+            logger.exception(
+                "HTTP search failed with status %s",
                 e.response.status_code,
-                e,
             )
-            raise Exception(f"Search API returned error: {e.response.status_code}")
+            raise Exception(f"Search API returned error: {e.response.status_code}") from e
         except Exception as e:
-            logger.error("HTTP search failed for query '%s': %s", query, e)
-            raise Exception(f"Search error: {str(e)}")
+            logger.exception("HTTP search failed for query '%s'", query)
+            raise Exception(f"Search error: {e!s}") from e
