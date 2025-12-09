@@ -302,7 +302,7 @@ wegent/
 │   │   ├── core/         # Config, security, cache, YAML init
 │   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, PublicModel, PublicShell, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
 │   │   ├── schemas/      # Pydantic schemas & CRD definitions
-│   │   ├── services/     # Business logic (chat/, adapters/, kind.py, repository.py)
+│   │   ├── services/     # Business logic (chat/, adapters/, search/, kind.py, repository.py)
 │   │   └── repository/   # Git providers (GitHub, GitLab, Gitee, Gerrit)
 │   ├── alembic/          # Database migrations
 │   └── init_data/        # YAML initialization data
@@ -409,6 +409,11 @@ Task (Team + Workspace) → Subtasks (messages/steps)
   - `ATTACHMENT_S3_BUCKET` - S3 bucket name (default: "attachments")
   - `ATTACHMENT_S3_REGION` - S3 region (default: "us-east-1")
   - `ATTACHMENT_S3_USE_SSL` - Use SSL for S3 connections (default: true)
+- `WEB_SEARCH_*` - Web search configuration (see `backend/app/services/search/README.md`)
+  - `WEB_SEARCH_ENABLED` - Enable/disable web search feature (default: false)
+  - `WEB_SEARCH_BASE_URL` - Search API endpoint URL (required when enabled)
+  - `WEB_SEARCH_CONFIG` - JSON string containing adapter configuration
+  - `WEB_SEARCH_MAX_RESULTS` - Default maximum search results (default: 5)
 
 #### Database Migrations (Alembic)
 
@@ -475,6 +480,12 @@ git commit -m "chore: merge alembic heads"
 - PDF export (`ExportPdfButton`, `pdf-generator.ts`)
 - Task/Team sharing (`TaskShareModal`, `TeamShareModal`)
 - Dify integration (`DifyAppSelector`, `DifyParamsForm`)
+- Web search integration (Globe icon toggle in chat interface)
+
+**Key environment variables:**
+- `NEXT_PUBLIC_API_URL` - Backend API URL
+- `NEXT_PUBLIC_LOGIN_MODE` - Authentication mode ('password', 'oidc', 'all')
+- `NEXT_PUBLIC_WEB_SEARCH_ENABLED` - Enable/disable web search feature (must match backend `WEB_SEARCH_ENABLED`)
 
 ### Executor
 

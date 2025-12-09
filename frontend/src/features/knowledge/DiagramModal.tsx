@@ -5,7 +5,12 @@
 'use client';
 
 import { useEffect, useCallback, useState, useRef } from 'react';
-import { XMarkIcon, MagnifyingGlassPlusIcon, MagnifyingGlassMinusIcon, ArrowsPointingOutIcon } from '@heroicons/react/24/outline';
+import {
+  XMarkIcon,
+  MagnifyingGlassPlusIcon,
+  MagnifyingGlassMinusIcon,
+  ArrowsPointingOutIcon,
+} from '@heroicons/react/24/outline';
 
 interface DiagramModalProps {
   isOpen: boolean;
@@ -22,7 +27,12 @@ interface DiagramModalProps {
  * - Keyboard shortcuts (Esc to close, +/- to zoom)
  * - Reset zoom button
  */
-export function DiagramModal({ isOpen, onClose, diagramContent, title = 'Diagram' }: DiagramModalProps) {
+export function DiagramModal({
+  isOpen,
+  onClose,
+  diagramContent,
+  title = 'Diagram',
+}: DiagramModalProps) {
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
@@ -73,20 +83,26 @@ export function DiagramModal({ isOpen, onClose, diagramContent, title = 'Diagram
   }, []);
 
   // Handle drag start
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button !== 0) return; // Only left mouse button
-    setIsDragging(true);
-    setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
-  }, [position]);
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      if (e.button !== 0) return; // Only left mouse button
+      setIsDragging(true);
+      setDragStart({ x: e.clientX - position.x, y: e.clientY - position.y });
+    },
+    [position]
+  );
 
   // Handle drag move
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (!isDragging) return;
-    setPosition({
-      x: e.clientX - dragStart.x,
-      y: e.clientY - dragStart.y,
-    });
-  }, [isDragging, dragStart]);
+  const handleMouseMove = useCallback(
+    (e: React.MouseEvent) => {
+      if (!isDragging) return;
+      setPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y,
+      });
+    },
+    [isDragging, dragStart]
+  );
 
   // Handle drag end
   const handleMouseUp = useCallback(() => {
@@ -116,10 +132,7 @@ export function DiagramModal({ isOpen, onClose, diagramContent, title = 'Diagram
       onMouseLeave={handleMouseUp}
     >
       {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/80 backdrop-blur-sm"
-        onClick={onClose}
-      />
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={onClose} />
 
       {/* Modal content */}
       <div className="relative w-full h-full flex flex-col">
@@ -127,14 +140,22 @@ export function DiagramModal({ isOpen, onClose, diagramContent, title = 'Diagram
         <div className="flex items-center justify-between px-6 py-4 bg-gradient-to-b from-black/50 to-transparent">
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 px-3 py-1.5 bg-white/10 rounded-full">
-              <svg className="w-4 h-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              <svg
+                className="w-4 h-4 text-primary"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
               </svg>
               <span className="text-sm font-medium text-white">{title}</span>
             </div>
-            <span className="text-xs text-white/50">
-              {Math.round(scale * 100)}%
-            </span>
+            <span className="text-xs text-white/50">{Math.round(scale * 100)}%</span>
           </div>
 
           {/* Controls */}
