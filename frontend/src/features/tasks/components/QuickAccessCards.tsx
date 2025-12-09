@@ -30,7 +30,7 @@ export function QuickAccessCards({
   const router = useRouter();
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([]);
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true);
-  const [switchingTeamId, setSwitchingTeamId] = useState<number | null>(null);
+  const [clickedTeamId, setClickedTeamId] = useState<number | null>(null);
   const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | null>(null);
 
   // Define the extended team type for display
@@ -102,9 +102,10 @@ export function QuickAccessCards({
       // Check if we need to switch mode
       const needsModeSwitch = targetMode !== 'both' && targetMode !== currentMode;
 
+      // Always trigger click animation
+      setClickedTeamId(team.id);
+
       if (needsModeSwitch) {
-        // Set switching state to trigger animation
-        setSwitchingTeamId(team.id);
         setSwitchingToMode(targetMode);
 
         // When switching mode, save the team preference to the TARGET mode's localStorage
@@ -117,8 +118,17 @@ export function QuickAccessCards({
           router.push(targetPath);
         }, 400);
       } else {
-        // No mode switch needed, just select the team in current page
-        onTeamSelect(team);
+        // No mode switch needed, just select the team in current page after animation
+        // First let the animation play, then select the team
+        setTimeout(() => {
+          onTeamSelect(team);
+        }, 300);
+
+        // Reset the clicked state after animation completes
+        setTimeout(() => {
+          setClickedTeamId(null);
+          setSwitchingToMode(null);
+        }, 400);
       }
     },
     [currentMode, router, onTeamSelect]
@@ -198,37 +208,37 @@ export function QuickAccessCards({
       <div className="grid grid-cols-4 gap-3 mt-4">
         {displayTeams.map(team => {
           const isSelected = selectedTeam?.id === team.id;
-          const isSwitching = switchingTeamId === team.id;
+          const isClicked = clickedTeamId === team.id;
           const targetMode = getTeamTargetMode(team);
           const willSwitchMode = targetMode !== 'both' && targetMode !== currentMode;
 
           return (
             <div
               key={team.id}
-              onClick={() => !isSwitching && handleTeamClick(team)}
+              onClick={() => !isClicked && handleTeamClick(team)}
               className={`
                 group relative flex items-center gap-2 px-4 py-2
                 rounded-lg border cursor-pointer transition-all duration-200
                 ${
-                  isSwitching
+                  isClicked
                     ? 'switching-card border-primary bg-primary/10 ring-2 ring-primary/50'
                     : isSelected
                       ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
                       : 'border-border bg-surface hover:bg-hover hover:border-border-strong'
                 }
-                ${isSwitching ? 'pointer-events-none' : ''}
+                ${isClicked ? 'pointer-events-none' : ''}
               `}
               title={team.description || undefined}
             >
               <FaUsers
                 className={`w-4 h-4 flex-shrink-0 transition-colors duration-200 ${
-                  isSwitching || isSelected ? 'text-primary' : 'text-text-muted'
+                  isClicked || isSelected ? 'text-primary' : 'text-text-muted'
                 }`}
               />
               <div className="flex flex-col min-w-0">
                 <span
                   className={`text-sm font-medium transition-colors duration-200 ${
-                    isSwitching || isSelected ? 'text-primary' : 'text-text-secondary'
+                    isClicked || isSelected ? 'text-primary' : 'text-text-secondary'
                   }`}
                 >
                   {team.name}
@@ -241,7 +251,7 @@ export function QuickAccessCards({
               </div>
 
               {/* Mode switch indicator */}
-              {isSwitching && switchingToMode && (
+              {isClicked && switchingToMode && (
                 <div className="mode-indicator flex items-center gap-1 ml-1 text-primary">
                   <span className="text-xs">→</span>
                   {switchingToMode === 'code' ? (
@@ -253,7 +263,7 @@ export function QuickAccessCards({
               )}
 
               {/* Hover hint for mode switch - absolute positioned to prevent width change */}
-              {!isSwitching && willSwitchMode && (
+              {!isClicked && willSwitchMode && (
                 <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-text-muted opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                   {targetMode === 'code' ? (
                     <HiOutlineCode className="w-3.5 h-3.5" />
