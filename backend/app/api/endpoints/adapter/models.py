@@ -20,7 +20,6 @@ from app.schemas.model import (
     ModelListResponse,
     ModelUpdate,
 )
-from app.services.adapters import public_model_service
 from app.services.model_aggregation_service import ModelType, model_aggregation_service
 
 router = APIRouter()
@@ -35,13 +34,35 @@ def list_models(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get Model list (paginated, active only)
+    Get Model list (paginated, active only) - User's personal models only
     """
     skip = (page - 1) * limit
-    items = public_model_service.get_models(
-        db=db, skip=skip, limit=limit, current_user=current_user
+
+    # Query user's personal models from kinds table
+    query = db.query(Kind).filter(
+        Kind.user_id == current_user.id,
+        Kind.kind == "Model",
+        Kind.namespace == "default",
+        Kind.is_active == True,
     )
-    total = public_model_service.count_active_models(db=db, current_user=current_user)
+
+    total = query.count()
+    models = query.offset(skip).limit(limit).all()
+
+    # Convert to ModelInDB format
+    items = []
+    for model in models:
+        config = model.json.get("spec", {}).get("modelConfig", {})
+        items.append(
+            ModelInDB(
+                id=model.id,
+                name=model.name,
+                config=config,
+                is_active=model.is_active,
+                created_at=model.created_at,
+                updated_at=model.updated_at,
+            )
+        )
 
     return {"total": total, "items": items}
 
@@ -62,9 +83,52 @@ def list_model_names(
       ]
     }
     """
-    data = public_model_service.list_model_names(
-        db=db, current_user=current_user, shell_type=shell_type
+    # Query user's personal models from kinds table
+    models = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == current_user.id,
+            Kind.kind == "Model",
+            Kind.namespace == "default",
+            Kind.is_active == True,
+        )
+        .all()
     )
+
+    # Filter by shell_type if needed
+    data = []
+    for model_kind in models:
+        try:
+            from app.schemas.kind import Model as ModelCRD
+
+            if not model_kind.json:
+                continue
+
+            model_crd = ModelCRD.model_validate(model_kind.json)
+            model_config = model_crd.spec.modelConfig
+            if isinstance(model_config, dict):
+                env = model_config.get("env", {})
+                model_type = env.get("model", "")
+
+                # Filter compatible models
+                if shell_type == "Agno" and model_type in ["openai", "claude"]:
+                    data.append(
+                        {
+                            "name": model_kind.name,
+                            "displayName": model_crd.metadata.displayName or model_kind.name,
+                        }
+                    )
+                elif shell_type == "ClaudeCode" and model_type == "claude":
+                    data.append(
+                        {
+                            "name": model_kind.name,
+                            "displayName": model_crd.metadata.displayName or model_kind.name,
+                        }
+                    )
+        except Exception as e:
+            logger.warning(f"Failed to parse model {model_kind.name}: {e}")
+            continue
+
     return {"data": data}
 
 
@@ -288,39 +352,94 @@ def bulk_create_models(
       "skipped": [{"name": "...", "reason": "..."}]
     }
     """
-    result = public_model_service.bulk_create_models(
-        db=db, items=items, current_user=current_user
-    )
+    from fastapi import HTTPException
 
-    # Convert public model Kind objects to Model-like objects
     created = []
-    for pm in result.get("created", []):
-        model_data = {
-            "id": pm.id,
-            "name": pm.name,
-            "config": pm.json.get("spec", {}).get("modelConfig", {}),
-            "is_active": pm.is_active,
-            "created_at": pm.created_at,
-            "updated_at": pm.updated_at,
-        }
-        created.append(ModelInDB.model_validate(model_data))
-
     updated = []
-    for pm in result.get("updated", []):
-        model_data = {
-            "id": pm.id,
-            "name": pm.name,
-            "config": pm.json.get("spec", {}).get("modelConfig", {}),
-            "is_active": pm.is_active,
-            "created_at": pm.created_at,
-            "updated_at": pm.updated_at,
-        }
-        updated.append(ModelInDB.model_validate(model_data))
+    skipped = []
+
+    for item in items:
+        try:
+            # Check if model already exists
+            existing = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == current_user.id,
+                    Kind.kind == "Model",
+                    Kind.name == item.name,
+                    Kind.namespace == "default",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            model_json = {
+                "kind": "Model",
+                "apiVersion": "agent.wecode.io/v1",
+                "metadata": {
+                    "name": item.name,
+                    "namespace": "default",
+                },
+                "spec": {
+                    "modelConfig": {"env": item.env},
+                    "isCustomConfig": False,
+                },
+                "status": {"state": "Available"},
+            }
+
+            if existing:
+                # Update existing model
+                existing.json = model_json
+                from sqlalchemy.orm.attributes import flag_modified
+                from datetime import datetime
+
+                flag_modified(existing, "json")
+                existing.updated_at = datetime.now()
+                db.commit()
+                db.refresh(existing)
+
+                updated.append(
+                    ModelInDB(
+                        id=existing.id,
+                        name=existing.name,
+                        config={"env": item.env},
+                        is_active=existing.is_active,
+                        created_at=existing.created_at,
+                        updated_at=existing.updated_at,
+                    )
+                )
+            else:
+                # Create new model
+                db_obj = Kind(
+                    user_id=current_user.id,
+                    kind="Model",
+                    name=item.name,
+                    namespace="default",
+                    json=model_json,
+                    is_active=True,
+                )
+                db.add(db_obj)
+                db.commit()
+                db.refresh(db_obj)
+
+                created.append(
+                    ModelInDB(
+                        id=db_obj.id,
+                        name=db_obj.name,
+                        config={"env": item.env},
+                        is_active=db_obj.is_active,
+                        created_at=db_obj.created_at,
+                        updated_at=db_obj.updated_at,
+                    )
+                )
+        except Exception as e:
+            logger.error(f"Failed to upsert model {item.name}: {e}")
+            skipped.append({"name": item.name, "reason": str(e)})
 
     return {
         "created": created,
         "updated": updated,
-        "skipped": result.get("skipped", []),
+        "skipped": skipped,
     }
 
 
@@ -333,8 +452,30 @@ def get_model(
     """
     Get specified Model details
     """
-    return public_model_service.get_by_id(
-        db=db, model_id=model_id, current_user=current_user
+    from fastapi import HTTPException
+
+    model = (
+        db.query(Kind)
+        .filter(
+            Kind.id == model_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Model",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not model:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    config = model.json.get("spec", {}).get("modelConfig", {})
+    return ModelDetail(
+        id=model.id,
+        name=model.name,
+        config=config,
+        is_active=model.is_active,
+        created_at=model.created_at,
+        updated_at=model.updated_at,
     )
 
 

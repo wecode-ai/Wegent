@@ -2,11 +2,12 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.agent import (
     AgentCreate,
@@ -15,7 +16,6 @@ from app.schemas.agent import (
     AgentListResponse,
     AgentUpdate,
 )
-from app.services.adapters import public_shell_service
 
 router = APIRouter()
 
@@ -28,13 +28,36 @@ def list_agents(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get Agent list (paginated)
+    Get Agent list (paginated) - User's personal shells/agents only
     """
     skip = (page - 1) * limit
-    items = public_shell_service.get_agents(
-        db=db, skip=skip, limit=limit, current_user=current_user
+
+    # Query user's personal shells from kinds table
+    query = db.query(Kind).filter(
+        Kind.user_id == current_user.id,
+        Kind.kind == "Shell",
+        Kind.namespace == "default",
+        Kind.is_active == True,
     )
-    total = public_shell_service.count_agents(db=db, current_user=current_user)
+
+    total = query.count()
+    shells = query.offset(skip).limit(limit).all()
+
+    # Convert to AgentInDB format (legacy schema)
+    items = []
+    for shell in shells:
+        # Extract shell info from CRD
+        shell_type = shell.json.get("spec", {}).get("shellType", "")
+        items.append(
+            AgentInDB(
+                id=shell.id,
+                name=shell.name,
+                agent_name=shell_type,  # shellType maps to agent_name
+                is_active=shell.is_active,
+                created_at=shell.created_at,
+                updated_at=shell.updated_at,
+            )
+        )
 
     return {"total": total, "items": items}
 
@@ -46,10 +69,62 @@ def create_agent(
     db: Session = Depends(get_db),
 ):
     """
-    Create new Agent
+    Create new Agent (Shell in CRD terms)
     """
-    return public_shell_service.create_agent(
-        db=db, obj_in=agent_create, current_user=current_user
+    # Check if agent/shell already exists
+    existing = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == current_user.id,
+            Kind.kind == "Shell",
+            Kind.name == agent_create.name,
+            Kind.namespace == "default",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Shell '{agent_create.name}' already exists",
+        )
+
+    # Create shell in Kind table
+    shell_json = {
+        "kind": "Shell",
+        "apiVersion": "agent.wecode.io/v1",
+        "metadata": {
+            "name": agent_create.name,
+            "namespace": "default",
+        },
+        "spec": {
+            "shellType": agent_create.agent_name,
+            "supportModel": [],
+            "baseImage": "",
+        },
+        "status": {"state": "Available"},
+    }
+
+    db_obj = Kind(
+        user_id=current_user.id,
+        kind="Shell",
+        name=agent_create.name,
+        namespace="default",
+        json=shell_json,
+        is_active=True,
+    )
+    db.add(db_obj)
+    db.commit()
+    db.refresh(db_obj)
+
+    return AgentInDB(
+        id=db_obj.id,
+        name=db_obj.name,
+        agent_name=agent_create.agent_name,
+        is_active=db_obj.is_active,
+        created_at=db_obj.created_at,
+        updated_at=db_obj.updated_at,
     )
 
 
@@ -62,8 +137,28 @@ def get_agent(
     """
     Get specified Agent details
     """
-    return public_shell_service.get_by_id(
-        db=db, agent_id=agent_id, current_user=current_user
+    shell = (
+        db.query(Kind)
+        .filter(
+            Kind.id == agent_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Shell",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not shell:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    shell_type = shell.json.get("spec", {}).get("shellType", "")
+    return AgentDetail(
+        id=shell.id,
+        name=shell.name,
+        agent_name=shell_type,
+        is_active=shell.is_active,
+        created_at=shell.created_at,
+        updated_at=shell.updated_at,
     )
 
 
@@ -77,8 +172,66 @@ def update_agent(
     """
     Update Agent information
     """
-    return public_shell_service.update_agent(
-        db=db, agent_id=agent_id, obj_in=agent_update, current_user=current_user
+    shell = (
+        db.query(Kind)
+        .filter(
+            Kind.id == agent_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Shell",
+            Kind.is_active == True,
+        )
+        .first()
+    )
+
+    if not shell:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Update shell
+    if agent_update.name is not None:
+        # Check name uniqueness
+        existing = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == current_user.id,
+                Kind.kind == "Shell",
+                Kind.name == agent_update.name,
+                Kind.namespace == "default",
+                Kind.is_active == True,
+                Kind.id != agent_id,
+            )
+            .first()
+        )
+        if existing:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Shell '{agent_update.name}' already exists",
+            )
+
+        shell.name = agent_update.name
+        shell.json["metadata"]["name"] = agent_update.name
+
+    if agent_update.agent_name is not None:
+        shell.json["spec"]["shellType"] = agent_update.agent_name
+
+    if agent_update.is_active is not None:
+        shell.is_active = agent_update.is_active
+
+    from datetime import datetime
+    from sqlalchemy.orm.attributes import flag_modified
+
+    flag_modified(shell, "json")
+    shell.updated_at = datetime.now()
+    db.commit()
+    db.refresh(shell)
+
+    shell_type = shell.json.get("spec", {}).get("shellType", "")
+    return AgentInDB(
+        id=shell.id,
+        name=shell.name,
+        agent_name=shell_type,
+        is_active=shell.is_active,
+        created_at=shell.created_at,
+        updated_at=shell.updated_at,
     )
 
 
@@ -89,9 +242,27 @@ def delete_agent(
     db: Session = Depends(get_db),
 ):
     """
-    Delete Agent
+    Delete Agent (soft delete)
     """
-    public_shell_service.delete_agent(
-        db=db, agent_id=agent_id, current_user=current_user
+    shell = (
+        db.query(Kind)
+        .filter(
+            Kind.id == agent_id,
+            Kind.user_id == current_user.id,
+            Kind.kind == "Shell",
+            Kind.is_active == True,
+        )
+        .first()
     )
+
+    if not shell:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    # Soft delete
+    shell.is_active = False
+    from datetime import datetime
+
+    shell.updated_at = datetime.now()
+    db.commit()
+
     return {"message": "Agent deleted successfully"}
