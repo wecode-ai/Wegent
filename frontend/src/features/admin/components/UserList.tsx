@@ -24,6 +24,7 @@ import {
   KeyIcon,
   NoSymbolIcon,
   CheckCircleIcon,
+  IdentificationIcon,
 } from '@heroicons/react/24/outline';
 import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
 import { Loader2 } from 'lucide-react';
@@ -49,6 +50,7 @@ import {
 } from '@/components/ui/dialog';
 import { adminApis, AdminUser, AdminUserCreate, AdminUserUpdate, UserRole } from '@/apis/admin';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
+import ImpersonateDialog from './ImpersonateDialog';
 
 const UserList: React.FC = () => {
   const { t } = useTranslation('admin');
@@ -77,6 +79,7 @@ const UserList: React.FC = () => {
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isResetPasswordDialogOpen, setIsResetPasswordDialogOpen] = useState(false);
+  const [isImpersonateDialogOpen, setIsImpersonateDialogOpen] = useState(false);
   const [selectedUser, setSelectedUser] = useState<AdminUser | null>(null);
 
   // Form states
@@ -371,6 +374,19 @@ const UserList: React.FC = () => {
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
+                      onClick={() => {
+                        setSelectedUser(user);
+                        setIsImpersonateDialogOpen(true);
+                      }}
+                      title={t('impersonation.impersonate_user')}
+                      disabled={!user.is_active}
+                    >
+                      <IdentificationIcon className="w-4 h-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
                       onClick={() => openEditDialog(user)}
                       title={t('users.edit_user')}
                     >
@@ -654,6 +670,16 @@ const UserList: React.FC = () => {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Impersonate Dialog */}
+      <ImpersonateDialog
+        isOpen={isImpersonateDialogOpen}
+        onClose={() => {
+          setIsImpersonateDialogOpen(false);
+          setSelectedUser(null);
+        }}
+        targetUser={selectedUser}
+      />
     </div>
   );
 };

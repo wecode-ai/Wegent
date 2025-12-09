@@ -159,5 +159,44 @@
     "title": "Access Denied",
     "message": "You do not have permission to access this page. Only administrators can view this content.",
     "go_home": "Go to Home"
+  },
+  "impersonation": {
+    "impersonate_user": "Impersonate User",
+    "dialog": {
+      "title": "Impersonate User",
+      "description": "Create an impersonation request for {{name}}",
+      "target_user": "Target User",
+      "confirmation_link": "Confirmation Link",
+      "link_instruction": "Send this link to the user. They must click it to approve the impersonation.",
+      "expires_in": "Expires In",
+      "refresh_status": "Refresh Status",
+      "approved_message": "Request Approved!",
+      "click_start": "Click below to start the impersonation session.",
+      "start_session": "Start Impersonation",
+      "rejected_message": "The user has rejected this request.",
+      "expired_message": "This request has expired."
+    },
+    "status": {
+      "pending": "Pending",
+      "approved": "Approved",
+      "rejected": "Rejected",
+      "expired": "Expired",
+      "used": "Used"
+    },
+    "banner": {
+      "viewing_as": "You are viewing as {{name}}",
+      "remaining_time": "Remaining",
+      "admin": "Admin",
+      "exit": "Exit Impersonation",
+      "exiting": "Exiting..."
+    },
+    "link_copied": "Link copied to clipboard",
+    "copy_failed": "Failed to copy link",
+    "request_cancelled": "Request cancelled",
+    "session_started": "Now impersonating {{name}}",
+    "errors": {
+      "create_failed": "Failed to create impersonation request",
+      "start_failed": "Failed to start impersonation session"
+    }
   }
 }

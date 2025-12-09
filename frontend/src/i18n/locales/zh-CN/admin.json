@@ -159,5 +159,44 @@
     "title": "访问被拒绝",
     "message": "您没有权限访问此页面，只有管理员可以查看此内容。",
     "go_home": "返回首页"
+  },
+  "impersonation": {
+    "impersonate_user": "模拟登录",
+    "dialog": {
+      "title": "模拟用户登录",
+      "description": "为 {{name}} 创建模拟登录请求",
+      "target_user": "目标用户",
+      "confirmation_link": "确认链接",
+      "link_instruction": "将此链接发送给用户，用户点击后确认授权即可开始模拟。",
+      "expires_in": "有效期",
+      "refresh_status": "刷新状态",
+      "approved_message": "请求已批准！",
+      "click_start": "点击下方按钮开始模拟登录会话。",
+      "start_session": "开始模拟",
+      "rejected_message": "用户已拒绝此请求。",
+      "expired_message": "此请求已过期。"
+    },
+    "status": {
+      "pending": "待处理",
+      "approved": "已批准",
+      "rejected": "已拒绝",
+      "expired": "已过期",
+      "used": "已使用"
+    },
+    "banner": {
+      "viewing_as": "您正在以 {{name}} 的身份浏览",
+      "remaining_time": "剩余时间",
+      "admin": "管理员",
+      "exit": "退出模拟",
+      "exiting": "退出中..."
+    },
+    "link_copied": "链接已复制到剪贴板",
+    "copy_failed": "复制链接失败",
+    "request_cancelled": "请求已取消",
+    "session_started": "正在模拟用户 {{name}}",
+    "errors": {
+      "create_failed": "创建模拟请求失败",
+      "start_failed": "启动模拟会话失败"
+    }
   }
 }
