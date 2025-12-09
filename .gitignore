@@ -71,3 +71,4 @@ Thumbs.db
 .python-version
 *.tsbuildinfo
 coverage/
+.claude

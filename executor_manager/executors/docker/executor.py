@@ -454,9 +454,20 @@ class DockerExecutor(Executor):
             "-e", f"TZ={DEFAULT_TIMEZONE}",
             "-e", f"LANG={DEFAULT_LOCALE}",
             "-e", f"EXECUTOR_ENV={EXECUTOR_ENV}",
-            # Mount
-            "-v", f"{DOCKER_SOCKET_PATH}:{DOCKER_SOCKET_PATH}"
         ]
+
+        # Add GitHub token if available
+        user_config = task.get("user", {})
+        git_token = user_config.get("git_token")
+        if git_token:
+            cmd.extend([
+                "-e", f"GH_TOKEN={git_token}",
+            ])
+
+        # Mount
+        cmd.extend([
+            "-v", f"{DOCKER_SOCKET_PATH}:{DOCKER_SOCKET_PATH}"
+        ])
 
         # If using custom base_image, mount executor binary from Named Volume
         if base_image:
