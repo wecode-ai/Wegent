@@ -39,8 +39,10 @@ class TeamBase(BaseModel):
     """Team base model"""
 
     name: str
+    description: Optional[str] = None  # Team description
     bots: List[BotInfo]
     workflow: Optional[dict[str, Any]] = None
+    bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     is_active: bool = True
 
 
@@ -54,8 +56,10 @@ class TeamUpdate(BaseModel):
     """Team update model"""
 
     name: Optional[str] = None
+    description: Optional[str] = None  # Team description
     bots: Optional[List[BotInfo]] = None
     workflow: Optional[dict[str, Any]] = None
+    bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     is_active: Optional[bool] = None
 
 
@@ -69,6 +73,7 @@ class TeamInDB(TeamBase):
     user: Optional[dict[str, Any]] = None
     share_status: int = 0  # 0-private, 1-sharing, 2-shared from others
     agent_type: Optional[str] = None  # agno, claude, dify, etc.
+    bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
 
     class Config:
         from_attributes = True
@@ -79,6 +84,7 @@ class TeamDetail(BaseModel):
 
     id: int
     name: str
+    description: Optional[str] = None  # Team description
     bots: List[BotDetailInfo]
     workflow: Optional[dict[str, Any]] = None
     is_active: bool = True

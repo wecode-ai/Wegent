@@ -66,6 +66,7 @@ metadata:
   namespace: default
   user_id: 1
 spec:
+  description: A development team for code generation, Git branch management, and PR workflows.
   members:
     - role: leader
       botRef:
@@ -73,6 +74,10 @@ spec:
         namespace: default
       prompt: ""
   collaborationModel: solo
+  bind_mode:
+    - code
+  workflow:
+    mode: solo
 status:
   state: Available
 ---
@@ -311,7 +316,6 @@ spec:
     namespace: default
 status:
   state: Available
----
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
@@ -319,6 +323,7 @@ metadata:
   namespace: default
   user_id: 1
 spec:
+  description: A team specialized in requirement specification clarification through structured questioning.
   members:
     - role: leader
       botRef:
@@ -326,7 +331,12 @@ spec:
         namespace: default
       prompt: ""
   collaborationModel: solo
+  bind_mode:
+    - code
+  workflow:
+    mode: solo
 status:
+  state: Available
   state: Available
 ---
 apiVersion: agent.wecode.io/v1
@@ -397,7 +407,6 @@ spec:
     namespace: default
 status:
   state: Available
----
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
@@ -405,6 +414,7 @@ metadata:
   namespace: default
   user_id: 1
 spec:
+  description: A general-purpose chat team for helpful, harmless, and honest AI assistance.
   members:
     - role: leader
       botRef:
@@ -412,7 +422,12 @@ spec:
         namespace: default
       prompt: ""
   collaborationModel: solo
+  bind_mode:
+    - chat
+  workflow:
+    mode: solo
 status:
+  state: Available
   state: Available
 ---
 apiVersion: agent.wecode.io/v1
@@ -469,7 +484,6 @@ spec:
     namespace: default
 status:
   state: Available
----
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
@@ -477,6 +491,7 @@ metadata:
   namespace: default
   user_id: 1
 spec:
+  description: A team for generating comprehensive wiki documentation for code repositories.
   members:
     - role: leader
       botRef:
@@ -484,5 +499,9 @@ spec:
         namespace: default
       prompt: ""
   collaborationModel: solo
+  bind_mode: []
+  workflow:
+    mode: solo
 status:
+  state: Available
   state: Available

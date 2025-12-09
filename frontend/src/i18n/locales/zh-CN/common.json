@@ -216,6 +216,8 @@
   "team": {
     "name": "名称",
     "name_placeholder": "智能体名称",
+    "description": "描述",
+    "description_placeholder": "简要描述这个智能体",
     "leader": "领导者",
     "model": "协作模式",
     "bots": "候选人列表",
@@ -251,7 +253,14 @@
     "select_bot": "配置机器人",
     "select_bot_placeholder": "请配置一个机器人",
     "no_bot_selected": "未配置机器人",
-    "edit_bot_config": "编辑机器人配置"
+    "edit_bot_config": "编辑机器人配置",
+    "recommended_mode": "推荐模式",
+    "recommended_mode_both": "都可以",
+    "recommended_mode_chat": "聊天",
+    "recommended_mode_code": "编码",
+    "bind_mode": "绑定模式",
+    "bind_mode_chat": "聊天",
+    "bind_mode_code": "编码"
   },
   "team_model": {
     "solo": "独立",
@@ -749,5 +758,12 @@
     "copyFailed": "复制失败，请手动复制浏览器地址栏中的链接。",
     "continueAnyway": "仍然继续（可能遇到登录问题）",
     "footerNote": "在默认浏览器中打开可以确保所有功能正常工作"
+  },
+  "quick_access": {
+    "switch_mode_title": "切换模式",
+    "switch_to_code_message": "该智能体推荐在「编码模式」下使用，是否切换？",
+    "switch_to_chat_message": "该智能体推荐在「聊天模式」下使用，是否切换？",
+    "switch_mode": "切换模式",
+    "stay_current": "留在当前"
   }
 }

@@ -498,14 +498,14 @@ async def stream_chat(
                     logger.info(
                         f"Web search completed for query: {request.message[:50]}..."
                     )
-                    
+
                     # Build tool messages with search results
                     if search_context:
                         tool_messages = [
                             {
                                 "role": "tool",
                                 "content": f"Web Search Results:\n{search_context}",
-                                "name": "web_search"
+                                "name": "web_search",
                             }
                         ]
                 except Exception as e:

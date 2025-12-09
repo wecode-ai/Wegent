@@ -120,3 +120,42 @@ class RoleUpdate(BaseModel):
     """Role update model"""
 
     role: Literal["admin", "user"]
+
+
+# System Config Schemas
+class SystemConfigUpdate(BaseModel):
+    """System config update model for quick access recommendations"""
+
+    teams: List[int] = Field(..., description="List of recommended team IDs")
+
+
+class SystemConfigResponse(BaseModel):
+    """System config response model"""
+
+    version: int
+    teams: List[int]
+
+    class Config:
+        from_attributes = True
+
+
+class QuickAccessTeam(BaseModel):
+    """Quick access team info"""
+
+    id: int
+    name: str
+    is_system: bool = False  # True if from system recommendations
+    recommended_mode: Optional[Literal["chat", "code", "both"]] = "both"
+    agent_type: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
+
+class QuickAccessResponse(BaseModel):
+    """Quick access response with merged system recommendations"""
+
+    system_version: int
+    user_version: Optional[int] = None
+    show_system_recommended: bool  # True if user_version < system_version
+    teams: List[QuickAccessTeam]

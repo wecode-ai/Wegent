@@ -2,6 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import json
 from typing import Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
@@ -9,8 +10,11 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.models.system_config import SystemConfig
 from app.models.user import User
+from app.schemas.admin import QuickAccessResponse, QuickAccessTeam
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
+from app.services.kind import kind_service
 from app.services.user import user_service
 
 router = APIRouter()
@@ -76,4 +80,100 @@ def create_user(
     """Create new user"""
     return user_service.create_user(
         db=db, obj_in=user_create, background_tasks=background_tasks
+    )
+
+
+QUICK_ACCESS_CONFIG_KEY = "quick_access_recommended"
+
+
+@router.get("/quick-access", response_model=QuickAccessResponse)
+async def get_user_quick_access(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get user's quick access teams merged with system recommendations.
+    Returns teams based on version comparison logic.
+    """
+    # Get system config
+    system_config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == QUICK_ACCESS_CONFIG_KEY)
+        .first()
+    )
+    system_version = system_config.version if system_config else 0
+    system_team_ids = (
+        system_config.config_value.get("teams", [])
+        if system_config and system_config.config_value
+        else []
+    )
+
+    # Get user preferences
+    user_preferences = {}
+    if current_user.preferences:
+        try:
+            user_preferences = json.loads(current_user.preferences)
+        except (json.JSONDecodeError, TypeError):
+            user_preferences = {}
+
+    quick_access_config = user_preferences.get("quick_access", {})
+    user_version = quick_access_config.get("version")
+    user_team_ids = quick_access_config.get("teams", [])
+
+    # Determine if we should show system recommended
+    show_system_recommended = user_version is None or user_version < system_version
+
+    # Build teams list
+    result_teams = []
+    seen_team_ids = set()
+
+    # Helper function to get team info
+    def get_team_info(team_id: int, is_system: bool) -> Optional[QuickAccessTeam]:
+        # Get team from Kind service
+        team_data = kind_service.get_team_by_id(team_id)
+        if not team_data:
+            return None
+
+        # Extract recommended_mode from spec if available
+        spec = team_data.get("spec", {})
+        recommended_mode = spec.get("recommended_mode", "both")
+
+        return QuickAccessTeam(
+            id=team_data.get("id", team_id),
+            name=team_data.get("metadata", {}).get("name", f"Team {team_id}"),
+            is_system=is_system,
+            recommended_mode=recommended_mode,
+            agent_type=team_data.get("agent_type"),
+        )
+
+    if show_system_recommended:
+        # Add system teams first
+        for team_id in system_team_ids:
+            if team_id not in seen_team_ids:
+                team_info = get_team_info(team_id, is_system=True)
+                if team_info:
+                    result_teams.append(team_info)
+                    seen_team_ids.add(team_id)
+
+        # Add user teams (excluding duplicates)
+        for team_id in user_team_ids:
+            if team_id not in seen_team_ids:
+                team_info = get_team_info(team_id, is_system=False)
+                if team_info:
+                    result_teams.append(team_info)
+                    seen_team_ids.add(team_id)
+    else:
+        # Only show user teams
+        for team_id in user_team_ids:
+            if team_id not in seen_team_ids:
+                team_info = get_team_info(team_id, is_system=False)
+                if team_info:
+                    result_teams.append(team_info)
+                    seen_team_ids.add(team_id)
+
+    return QuickAccessResponse(
+        system_version=system_version,
+        user_version=user_version,
+        show_system_recommended=show_system_recommended,
+        teams=result_teams,
     )

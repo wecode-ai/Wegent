@@ -203,4 +203,20 @@ export const adminApis = {
   async getSystemStats(): Promise<SystemStats> {
     return apiClient.get('/admin/stats');
   },
+
+  // ==================== System Config (Quick Access) ====================
+
+  /**
+   * Get system recommended quick access configuration
+   */
+  async getQuickAccessConfig(): Promise<{ version: number; teams: number[] }> {
+    return apiClient.get('/admin/system-config/quick-access');
+  },
+
+  /**
+   * Update system recommended quick access configuration
+   */
+  async updateQuickAccessConfig(teams: number[]): Promise<{ version: number; teams: number[] }> {
+    return apiClient.put('/admin/system-config/quick-access', { teams });
+  },
 };

@@ -10,6 +10,7 @@ import json
 import logging
 
 from app.core.config import settings
+
 from .base import SearchServiceBase
 from .http_search import HttpSearchService
 

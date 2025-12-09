@@ -212,6 +212,8 @@ class TeamSpec(BaseModel):
 
     members: List[TeamMember]
     collaborationModel: str  # pipeline、route、coordinate、collaborate
+    bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    description: Optional[str] = None  # Team description
 
 
 class TeamStatus(Status):

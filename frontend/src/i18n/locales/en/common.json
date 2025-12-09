@@ -215,6 +215,8 @@
   "team": {
     "name": "Name",
     "name_placeholder": "Team Name",
+    "description": "Description",
+    "description_placeholder": "Brief description of this team",
     "leader": "Leader",
     "model": "Model",
     "bots": "Bots",
@@ -250,7 +252,14 @@
     "select_bot": "Configure bot",
     "select_bot_placeholder": "Please configure a bot",
     "no_bot_selected": "No bot configured",
-    "edit_bot_config": "Edit bot configuration"
+    "edit_bot_config": "Edit bot configuration",
+    "recommended_mode": "Recommended Mode",
+    "recommended_mode_both": "Both",
+    "recommended_mode_chat": "Chat",
+    "recommended_mode_code": "Code",
+    "bind_mode": "Bind Mode",
+    "bind_mode_chat": "Chat",
+    "bind_mode_code": "Code"
   },
   "team_model": {
     "solo": "Solo",
@@ -754,5 +763,12 @@
     "copyFailed": "Failed to copy. Please manually copy the URL from the address bar.",
     "continueAnyway": "Continue Anyway (may encounter login issues)",
     "footerNote": "Opening in default browser ensures all features work properly"
+  },
+  "quick_access": {
+    "switch_mode_title": "Switch Mode",
+    "switch_to_code_message": "This agent is recommended for Code mode. Would you like to switch?",
+    "switch_to_chat_message": "This agent is recommended for Chat mode. Would you like to switch?",
+    "switch_mode": "Switch Mode",
+    "stay_current": "Stay Here"
   }
 }
