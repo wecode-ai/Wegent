@@ -188,63 +188,6 @@
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Ghost",
         "metadata": {
-            "name": "开发bot(Claude模型)-ghost",
-            "namespace": "default"
-        },
-        "spec": {
-            "systemPrompt": "你是一名资深开发工程师，并且精通开发流程中的 Git、Gitlab Cli 工具、分支管理和代码提交流程。你将使用指定的开发语言生成可执行代码，并完成分支提交和 MR 流程。请严格按照以下步骤操作：\n\n**输入参数**：\n\n- `code_requirements`：用户需求详细描述\n\n**操作步骤**：\n\n1. **新建分支**  \n   - 首先获取 git remote 所有以 `wegent/` 开头的分支名称，然后根据用户的需求从当前分支生成一个合适的且当前在远程不存在的分支名，确保分支名以 `wegent/` 开头且具有描述性。\n   - **分支名必须以 `wegent/` 开头，禁止在未新建分支前更改任何代码**\n   - **确定分支名称之后，必须校验该分支在本地和远程都不存在，确保新建分支不会与现有分支冲突。**\n   - **如果分支已存在，请为分支名增加一个递增的数字后缀或重新生成分支名，直到生成一个不存在的分支名为止。**\n\n2. **生成代码**  \n   - 代码必须符合语法规范和 `code_requirements`。  \n   - 不需要解释生成逻辑，只需生成可执行代码。\n\n3. **提交代码到远程仓库**  \n   - 使用 Git Bash 命令提交新分支代码。  \n   - 提交信息应简明、描述性，符合常规提交规范。\n\n4. **创建 MR（Merge Request）**  \n   - MR 标题自动根据分支名生成。  \n   - MR 描述自动包含提交摘要。\n   - **以环境变量中 BRANCH_NAME 为合并的 target 分支**\n   - **使用 Gitlab Cli 工具创建 MR。glab mr create --title $TITLE --description $DESC --target-branch $TARGET_BRANCH**\n\n5. **输出 MR 信息**  \n   - **在返回信息的内容中首先描述思路和代码更改内容，然后在底部展示 MR 的 id, url 等内容**：\n\n**要求**：  \n\n- 分支名自动生成，不需用户输入。  \n- 严格按顺序执行每一步，不跳过任何操作。 \n- **写提交信息和 MR 内容的时候，禁止出现 \"Generated with Claude Code\" 之类的表述**\n\n### code_requirements",
-            "mcpServers": {}
-        }
-    },
-    {
-        "apiVersion": "agent.wecode.io/v1",
-        "kind": "Bot",
-        "metadata": {
-            "name": "开发bot(Claude模型)",
-            "namespace": "default"
-        },
-        "spec": {
-            "ghostRef": {
-                "name": "开发bot(Claude模型)-ghost",
-                "namespace": "default"
-            },
-            "shellRef": {
-                "name": "ClaudeCode",
-                "namespace": "default"
-            },
-            "modelRef": {
-                "name": "wecode-claude-sonnet-4-5(海外)",
-                "namespace": "default"
-            }
-        }
-    },
-    {
-        "apiVersion": "agent.wecode.io/v1",
-        "kind": "Team",
-        "metadata": {
-            "name": "开发团队(Claude模型)",
-            "namespace": "default"
-        },
-        "spec": {
-            "members": [
-                {
-                    "botRef": {
-                        "name": "开发bot(Claude模型)",
-                        "namespace": "default"
-                    },
-                    "prompt": "",
-                    "role": "leader"
-                }
-            ],
-            "collaborationModel": "solo",
-            "bind_mode": "code",
-            "description": "使用Claude模型的开发团队，专注于代码生成、分支管理和MR流程"
-        }
-    },
-    {
-        "apiVersion": "agent.wecode.io/v1",
-        "kind": "Ghost",
-        "metadata": {
             "name": "开发bot(示例)-ghost",
             "namespace": "default"
         },
@@ -295,7 +238,7 @@
             ],
             "collaborationModel": "solo",
             "bind_mode": "code",
-            "description": "开发团队示例，用于演示代码生成、分支管理和MR流程"
+            "description": "AI自动进行代码分析和修改"
         }
     },
     {
@@ -565,7 +508,7 @@
                 ],
                 "collaborationModel": "coordinate",
                 "bind_mode": "chat",
-                "description": "深度研究团队，包含协调员、规划员、研究员和报告员，协作完成深度信息研究和报告生成"
+                "description": "对问题做深度检索、调研和分析"
             }
         },
     {
