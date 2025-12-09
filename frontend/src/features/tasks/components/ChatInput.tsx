@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import TextareaAutosize from 'react-textarea-autosize';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -18,6 +18,7 @@ interface ChatInputProps {
   isLoading: boolean;
   disabled?: boolean;
   taskType?: 'chat' | 'code';
+  autoFocus?: boolean;
 }
 
 export default function ChatInput({
@@ -26,12 +27,25 @@ export default function ChatInput({
   handleSendMessage,
   disabled = false,
   taskType = 'code',
+  autoFocus = false,
 }: ChatInputProps) {
   const { t } = useTranslation('chat');
   const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
   const [isComposing, setIsComposing] = useState(false);
   const isMobile = useIsMobile();
   const { user } = useUser();
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Auto focus the input when autoFocus is true and not disabled
+  useEffect(() => {
+    if (autoFocus && !disabled && textareaRef.current) {
+      // Use setTimeout to ensure the DOM is fully rendered
+      const timer = setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [autoFocus, disabled]);
 
   // Get user's send key preference (default to 'enter')
   const sendKey = user?.preferences?.send_key || 'enter';
@@ -90,6 +104,7 @@ export default function ChatInput({
         <TooltipTrigger asChild>
           <div className="w-full" data-tour="task-input">
             <TextareaAutosize
+              ref={textareaRef}
               value={message}
               onChange={e => {
                 if (!disabled) setMessage(e.target.value);
