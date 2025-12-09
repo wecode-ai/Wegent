@@ -27,6 +27,9 @@ export const paths = {
   code: {
     getHref: () => '/code',
   },
+  wiki: {
+    getHref: () => '/knowledge',
+  },
   settings: {
     root: {
       getHref: () => '/settings',

@@ -13,7 +13,7 @@ const STORAGE_KEYS = {
   LAST_REPO_NAME: 'wegent_last_repo_name',
 } as const;
 
-export type TabType = 'chat' | 'code';
+export type TabType = 'chat' | 'code' | 'wiki';
 
 /**
  * Save user's last active tab
@@ -32,7 +32,7 @@ export function saveLastTab(tab: TabType): void {
 export function getLastTab(): TabType | null {
   try {
     const tab = localStorage.getItem(STORAGE_KEYS.LAST_TAB);
-    return tab === 'chat' || tab === 'code' ? tab : null;
+    return tab === 'chat' || tab === 'code' || tab === 'wiki' ? tab : null;
   } catch (error) {
     console.warn('Failed to get last tab from localStorage:', error);
     return null;

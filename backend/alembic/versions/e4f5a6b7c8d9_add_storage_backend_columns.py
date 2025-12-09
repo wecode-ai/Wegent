@@ -4,8 +4,8 @@
 
 """Add storage backend columns to subtask_attachments table
 
-Revision ID: add_storage_backend_columns
-Revises: add_subtask_attachments
+Revision ID: e4f5a6b7c8d9
+Revises: d3e4f5a6b7c8
 Create Date: 2025-12-05
 
 This migration adds storage_key and storage_backend columns to support
@@ -19,8 +19,8 @@ import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
-revision: str = "add_storage_backend_columns"
-down_revision: Union[str, None] = "add_subtask_attachments"
+revision: str = "e4f5a6b7c8d9"
+down_revision: Union[str, None] = "d3e4f5a6b7c8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

@@ -13,7 +13,7 @@ import { MobileNavTabs } from './components/MobileNavTabs';
 import { DesktopNavLinks } from './components/DesktopNavLinks';
 
 type TopNavigationProps = {
-  activePage: 'chat' | 'code' | 'dashboard';
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
   variant?: 'with-sidebar' | 'standalone';
   showLogo?: boolean;
   children?: React.ReactNode;

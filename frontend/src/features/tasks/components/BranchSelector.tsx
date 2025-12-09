@@ -4,14 +4,15 @@
 
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useContext } from 'react';
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGitBranch } from 'react-icons/fi';
-import { GitRepoInfo, GitBranch } from '@/types/api';
+import { GitRepoInfo, GitBranch, TaskDetail } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
 import { githubApis } from '@/apis/github';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
+import { TaskContext } from '../contexts/taskContext';
 
 /**
  * BranchSelector component
@@ -22,15 +23,16 @@ interface BranchSelectorProps {
   selectedBranch: GitBranch | null;
   handleBranchChange: (branch: GitBranch | null) => void;
   disabled: boolean;
+  // Optional: pass task detail directly instead of using context
+  taskDetail?: TaskDetail | null;
 }
-
-import { useTaskContext } from '../contexts/taskContext';
 
 export default function BranchSelector({
   selectedRepo,
   selectedBranch,
   handleBranchChange,
   disabled,
+  taskDetail,
 }: BranchSelectorProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
@@ -40,7 +42,10 @@ export default function BranchSelector({
   // Used antd message.error for unified error prompt, no need for local error state
   const [error, setError] = useState<string | null>(null);
   const [userCleared, setUserCleared] = useState(false);
-  const { selectedTaskDetail } = useTaskContext();
+
+  // Try to get context, but don't throw if not available
+  const taskContext = useContext(TaskContext);
+  const selectedTaskDetail = taskDetail ?? taskContext?.selectedTaskDetail ?? null;
 
   // antd Select does not need dropdownDirection
 
