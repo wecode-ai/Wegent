@@ -212,14 +212,19 @@ class WikiService:
             # Use system_user_id for generation ownership (not current user)
             source_snapshot_dict = obj_in.source_snapshot.model_dump()
 
+            # Default completed_at for pending/running generations (epoch time)
+            default_completed_at = datetime(1970, 1, 1, 0, 0, 0)
+
             generation = WikiGeneration(
                 project_id=project.id,
                 user_id=system_user_id,  # Use system-bound user ID for generation ownership
+                task_id=0,  # Initialize with 0, will be updated after task creation
                 team_id=team_id,
                 generation_type=WikiGenerationType(obj_in.generation_type),
                 source_snapshot=source_snapshot_dict,
                 status=WikiGenerationStatus.PENDING,
                 ext=obj_in.ext or {},
+                completed_at=default_completed_at,  # Use epoch time as default for NOT NULL constraint
             )
             wiki_db.add(generation)
             wiki_db.flush()
@@ -471,6 +476,8 @@ class WikiService:
             source_url=source_url,
             source_id=source_id,
             source_domain=source_domain,
+            description="",  # Default to empty string as description is NOT NULL
+            ext={},  # Default to empty dict as ext is NOT NULL
             is_active=True,
         )
         db.add(project)
@@ -654,8 +661,7 @@ class WikiService:
                 WikiGenerationStatus.CANCELLED,
             }:
                 generation.completed_at = now
-            else:
-                generation.completed_at = None
+            # For non-terminal statuses, keep the default epoch time (NOT NULL constraint)
             if status_enum == WikiGenerationStatus.FAILED:
                 if summary.error_message:
                     content_meta["error_message"] = summary.error_message
@@ -664,7 +670,7 @@ class WikiService:
         else:
             if generation.status != WikiGenerationStatus.RUNNING:
                 generation.status = WikiGenerationStatus.RUNNING
-                generation.completed_at = None
+                # Keep the default epoch time for completed_at (NOT NULL constraint)
             content_meta.pop("error_message", None)
 
         content_meta["status_after_write"] = (
