@@ -5,13 +5,21 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { ChatBubbleLeftIcon, CodeBracketIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
+import {
+  ChatBubbleLeftIcon,
+  CodeBracketIcon,
+  BookOpenIcon,
+  Cog6ToothIcon,
+} from '@heroicons/react/24/outline';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface MobileNavTabsProps {
-  activePage: 'chat' | 'code' | 'dashboard';
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
 }
+
+// Check if Wiki module is enabled via environment variable
+const isWikiEnabled = process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false';
 
 export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
   const router = useRouter();
@@ -30,6 +38,16 @@ export function MobileNavTabs({ activePage }: MobileNavTabsProps) {
       icon: CodeBracketIcon,
       path: paths.code.getHref(),
     },
+    ...(isWikiEnabled
+      ? [
+          {
+            key: 'wiki' as const,
+            label: t('navigation.wiki'),
+            icon: BookOpenIcon,
+            path: paths.wiki.getHref(),
+          },
+        ]
+      : []),
     {
       key: 'dashboard' as const,
       label: t('navigation.settings'),

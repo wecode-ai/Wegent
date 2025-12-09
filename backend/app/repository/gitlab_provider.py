@@ -859,3 +859,92 @@ class GitLabProvider(RepositoryProvider):
 
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=502, detail=f"GitLab API error: {str(e)}")
+
+    def check_user_project_access(
+        self,
+        token: str,
+        git_domain: str,
+        project_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Check if a user has access to a specific GitLab project.
+
+        Args:
+            token: GitLab access token
+            git_domain: GitLab domain (e.g., gitlab.com or custom domain)
+            project_id: Project ID or URL-encoded path (e.g., "namespace/project")
+
+        Returns:
+            Dictionary with access information:
+            - has_access: bool - Whether the user has access to the project
+            - access_level: int - Access level (0=No access, 10=Guest, 20=Reporter, 30=Developer, 40=Maintainer, 50=Owner)
+            - access_level_name: str - Human readable access level name
+            - username: str - Username associated with the token
+
+        Raises:
+            HTTPException: When API call fails
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        decrypt_token = self.decrypt_token(token)
+
+        # First get the current user info from the token
+        try:
+            user_response = self._make_request_with_auth_retry(
+                method="GET",
+                url=f"{api_base_url}/user",
+                token=decrypt_token,
+            )
+            user_data = user_response.json()
+            user_id = user_data.get("id")
+            username = user_data.get("username", "")
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to get user info: {str(e)}")
+            if hasattr(e, "response") and e.response and e.response.status_code == 401:
+                return {
+                    "has_access": False,
+                    "access_level": 0,
+                    "access_level_name": "No Access",
+                    "username": "",
+                    "error": "Invalid token",
+                }
+            raise HTTPException(status_code=502, detail=f"GitLab API error: {str(e)}")
+
+        # Check project member access
+        encoded_project_id = (
+            project_id.replace("/", "%2F") if "/" in project_id else project_id
+        )
+        try:
+            # Try to get the project member info for this user
+            member_response = self._make_request_with_auth_retry(
+                method="GET",
+                url=f"{api_base_url}/projects/{encoded_project_id}/members/all/{user_id}",
+                token=decrypt_token,
+            )
+            member_data = member_response.json()
+            access_level = member_data.get("access_level", 0)
+
+            access_level_names = {
+                10: "Guest",
+                20: "Reporter",
+                30: "Developer",
+                40: "Maintainer",
+                50: "Owner",
+            }
+
+            return {
+                "has_access": True,
+                "access_level": access_level,
+                "access_level_name": access_level_names.get(access_level, "Unknown"),
+                "username": username,
+            }
+        except requests.exceptions.RequestException as e:
+            # 404 means user is not a member of the project
+            if hasattr(e, "response") and e.response and e.response.status_code == 404:
+                return {
+                    "has_access": False,
+                    "access_level": 0,
+                    "access_level_name": "No Access",
+                    "username": username,
+                }
+            self.logger.error(f"Failed to check project access: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"GitLab API error: {str(e)}")

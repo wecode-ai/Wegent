@@ -31,8 +31,52 @@ class GhostKindService(KindBaseService):
     def _validate_references(
         self, db: Session, user_id: int, resource: Dict[str, Any]
     ) -> None:
-        """No references to validate for Ghost"""
-        pass
+        """Validate skill references for Ghost"""
+        from app.schemas.kind import Ghost
+
+        ghost_crd = Ghost.model_validate(resource)
+
+        # Validate skills if provided
+        if ghost_crd.spec.skills:
+            self._validate_skills(db, ghost_crd.spec.skills, user_id)
+
+    def _validate_skills(self, db: Session, skill_names: list, user_id: int) -> None:
+        """
+        Validate that all skill names exist for the user.
+
+        Args:
+            db: Database session
+            skill_names: List of skill names to validate
+            user_id: User ID
+
+        Raises:
+            NotFoundException: If any skill does not exist
+        """
+        if not skill_names:
+            return
+
+        # Query all skills at once for efficiency
+        existing_skills = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Skill",
+                Kind.name.in_(skill_names),
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .all()
+        )
+
+        existing_skill_names = {skill.name for skill in existing_skills}
+        missing_skills = [
+            name for name in skill_names if name not in existing_skill_names
+        ]
+
+        if missing_skills:
+            raise NotFoundException(
+                f"The following Skills do not exist: {', '.join(missing_skills)}"
+            )
 
 
 class ModelKindService(KindBaseService):

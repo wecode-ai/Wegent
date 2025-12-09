@@ -43,6 +43,8 @@ interface RepositorySelectorProps {
   handleRepoChange: (repo: GitRepoInfo | null) => void;
   disabled: boolean;
   selectedTaskDetail?: TaskDetail | null;
+  /** When true, the selector will take full width of its container */
+  fullWidth?: boolean;
 }
 
 export default function RepositorySelector({
@@ -50,6 +52,7 @@ export default function RepositorySelector({
   handleRepoChange,
   disabled,
   selectedTaskDetail,
+  fullWidth = false,
 }: RepositorySelectorProps) {
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -413,12 +416,12 @@ export default function RepositorySelector({
 
   return (
     <div
-      className="flex items-center space-x-2 min-w-0"
+      className={cn('flex items-center space-x-2 min-w-0', fullWidth && 'w-full')}
       data-tour="repo-selector"
-      style={{ maxWidth: isMobile ? 200 : 280 }}
+      style={fullWidth ? undefined : { maxWidth: isMobile ? 200 : 280 }}
     >
       <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0 ml-1" />
-      <div className="relative flex items-center gap-2 min-w-0 flex-1">
+      <div className={cn('relative flex items-center gap-2 min-w-0 flex-1', fullWidth && 'w-full')}>
         <SearchableSelect
           value={selectedRepo?.git_repo_id.toString()}
           onValueChange={handleChange}
@@ -431,11 +434,12 @@ export default function RepositorySelector({
           error={error}
           emptyText={t('branches.select_repository')}
           noMatchText={t('branches.no_match')}
+          className={fullWidth ? 'w-full' : undefined}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
-          contentClassName="max-w-[280px]"
+          contentClassName={fullWidth ? 'max-w-[400px]' : 'max-w-[280px]'}
           renderTriggerValue={item => (
             <span className="block" title={item?.label}>
-              {item?.label ? truncateMiddle(item.label, isMobile ? 20 : 25) : ''}
+              {item?.label ? truncateMiddle(item.label, fullWidth ? 60 : isMobile ? 20 : 25) : ''}
             </span>
           )}
           footer={

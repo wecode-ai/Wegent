@@ -45,6 +45,7 @@
     "tasks": "Tasks",
     "chat": "Chat",
     "code": "Code",
+    "wiki": "Wiki",
     "settings": "Settings",
     "docs": "Docs",
     "admin": "Admin"
@@ -560,6 +561,50 @@
     "default_model": "Default",
     "use_bot_model": "Use Bot's predefined model",
     "model_required": "Please select a model"
+  },
+  "knowledge": {
+    "modules": {
+      "title": "Knowledge Space",
+      "code": "Code Knowledge",
+      "code_desc": "Repository documentation",
+      "wiki": "Wiki",
+      "wiki_desc": "Team knowledge base"
+    }
+  },
+  "wiki": {
+    "add_repository": "Add Repository",
+    "add_repository_desc": "Click to add a new repository",
+    "no_projects": "No projects found",
+    "source": "Source",
+    "indexing": "Indexing...",
+    "cancelling": "Cancelling...",
+    "cancel": "Cancel",
+    "cancel_title": "Click to cancel generation",
+    "view_task": "Click to view task progress",
+    "cancel_dialog_title": "Cancel Generation",
+    "cancel_dialog_description": "Are you sure you want to cancel the wiki generation? This action cannot be undone.",
+    "repository": "Repository",
+    "branch": "Branch",
+    "document_language": "Document Language",
+    "adding": "Adding...",
+    "language_en": "English",
+    "language_zh": "Chinese",
+    "repositories": "Git Repositories",
+    "search": "Search...",
+    "search_repositories": "Search repositories...",
+    "back_to_list": "Back to list",
+    "last_indexed": "Last indexed",
+    "loading": "Loading...",
+    "loading_content": "Loading content...",
+    "select_content": "Select content from the sidebar",
+    "select_content_hint": "Choose a topic to view its documentation",
+    "diagram": "Diagram",
+    "click_to_expand": "Click to expand",
+    "copy_code": "Copy code",
+    "copied": "Copied!",
+    "access_denied_title": "Repository Access Denied",
+    "access_denied_description": "The wiki task user does not have access to this repository. Please add the user to the GitLab project or configure a different user.",
+    "no_bound_model_warning": "Wiki generation is not available. The default wiki team does not have a model configured. Please contact administrator."
   },
   "shells": {
     "title": "Shell Management",

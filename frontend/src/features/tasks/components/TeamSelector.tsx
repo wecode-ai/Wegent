@@ -4,14 +4,14 @@
 
 'use client';
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useContext } from 'react';
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FaUsers } from 'react-icons/fa';
 import { Tag } from '@/components/ui/tag';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { useRouter } from 'next/navigation';
-import { Team } from '@/types/api';
-import { useTaskContext } from '../contexts/taskContext';
+import { Team, TaskDetail } from '@/types/api';
+import { TaskContext } from '../contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { paths } from '@/config/paths';
@@ -23,6 +23,10 @@ interface TeamSelectorProps {
   teams: Team[];
   disabled: boolean;
   isLoading?: boolean;
+  // Optional: pass task detail directly instead of using context
+  taskDetail?: TaskDetail | null;
+  // Optional: hide the settings footer link
+  hideSettingsLink?: boolean;
 }
 
 export default function TeamSelector({
@@ -31,8 +35,12 @@ export default function TeamSelector({
   teams,
   disabled,
   isLoading,
+  taskDetail,
+  hideSettingsLink = false,
 }: TeamSelectorProps) {
-  const { selectedTaskDetail } = useTaskContext();
+  // Try to get context, but don't throw if not available
+  const taskContext = useContext(TaskContext);
+  const selectedTaskDetail = taskDetail ?? taskContext?.selectedTaskDetail ?? null;
   const { t } = useTranslation('common');
   const router = useRouter();
   const isMobile = useMediaQuery('(max-width: 767px)');
@@ -151,21 +159,25 @@ export default function TeamSelector({
             );
           }}
           footer={
-            <div
-              className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
-              onClick={() => router.push(paths.settings.team.getHref())}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  router.push(paths.settings.team.getHref());
-                }
-              }}
-            >
-              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-              <span className="font-medium group-hover:text-text-primary">{t('teams.manage')}</span>
-            </div>
+            hideSettingsLink ? undefined : (
+              <div
+                className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
+                onClick={() => router.push(paths.settings.team.getHref())}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    router.push(paths.settings.team.getHref());
+                  }
+                }}
+              >
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('teams.manage')}
+                </span>
+              </div>
+            )
           }
         />
       </div>

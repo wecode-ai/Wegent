@@ -106,6 +106,9 @@ class Settings(BaseSettings):
     # YAML initialization configuration
     INIT_DATA_DIR: str = "/app/init_data"
     INIT_DATA_ENABLED: bool = True
+    INIT_DATA_FORCE: bool = (
+        False  # Force re-initialize YAML resources (delete and recreate)
+    )
 
     # default header
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
