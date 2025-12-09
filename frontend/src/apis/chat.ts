@@ -56,6 +56,8 @@ export interface StreamChatRequest {
   force_override_bot_model?: boolean;
   /** Attachment ID for file upload (optional) */
   attachment_id?: number;
+  /** Enable web search for this message */
+  enable_web_search?: boolean;
   /** Git info for record keeping (optional) */
   git_url?: string;
   git_repo?: string;

@@ -179,5 +179,9 @@
     "docx_failed": "Failed to export DOCX",
     "select_from_here": "Select from here",
     "select_below": "Select below"
+  },
+  "web_search": {
+    "enable": "Enable web search",
+    "disable": "Disable web search"
   }
 }

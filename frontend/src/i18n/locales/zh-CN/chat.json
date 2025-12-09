@@ -179,5 +179,9 @@
     "docx_failed": "DOCX 导出失败",
     "select_from_here": "从此处开始选择",
     "select_below": "选择以下所有"
+  },
+  "web_search": {
+    "enable": "启用联网搜索",
+    "disable": "禁用联网搜索"
   }
 }
