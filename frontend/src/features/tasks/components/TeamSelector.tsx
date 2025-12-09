@@ -86,15 +86,19 @@ export default function TeamSelector({
     }
 
     // Priority 2: Validate selected team still exists in filtered list
-    if (selectedTeam && filteredTeams.length > 0) {
-      const exists = filteredTeams.some(team => team.id === selectedTeam.id);
-      if (!exists) {
-        console.log('[TeamSelector] Selected team not in filtered list, clearing selection');
+    if (selectedTeam) {
+      if (filteredTeams.length > 0) {
+        const exists = filteredTeams.some(team => team.id === selectedTeam.id);
+        if (!exists) {
+          // When selected team is filtered out, auto-select the first available team
+          setSelectedTeam(filteredTeams[0]);
+        }
+      } else {
+        // No teams available after filtering, clear selection
         setSelectedTeam(null);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail, filteredTeams]);
+  }, [selectedTaskDetail, filteredTeams, selectedTeam, setSelectedTeam]);
 
   const handleChange = (value: string) => {
     const team = filteredTeams.find(t => t.id === Number(value));
