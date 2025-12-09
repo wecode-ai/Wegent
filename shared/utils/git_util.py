@@ -6,7 +6,7 @@ import subprocess
 from urllib.parse import urlparse
 
 from shared.logger import setup_logger
-from shared.utils.crypto import is_token_encrypted, decrypt_git_token
+from shared.utils.crypto import decrypt_git_token, is_token_encrypted
 
 logger = setup_logger(__name__)
 
@@ -80,13 +80,16 @@ def clone_repo_with_token(project_url, branch, project_path, username, token):
     else:
         auth_url = project_url
 
-    logger.info(f"Git clone {auth_url} to {project_path}")
+    logger.info(
+        f"Git clone {auth_url} to {project_path}, branch: {branch if branch else '(default)'}"
+    )
 
     # Build basic command
     cmd = ["git", "clone"]
 
-    # Add branch parameter if branch is specified
-    if branch:
+    # Add branch parameter only if branch is specified and not empty
+    # When branch is empty/None, git will clone the repository's default branch
+    if branch and branch.strip():
         cmd.extend(["--branch", branch, "--single-branch"])
 
     # Add URL and path
@@ -94,13 +97,11 @@ def clone_repo_with_token(project_url, branch, project_path, username, token):
     try:
         # Use subprocess.run to capture output and errors
         result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        logger.info(
-            f"git clone url: {project_url}, code: {result.returncode}"
-        )
-        
+        logger.info(f"git clone url: {project_url}, code: {result.returncode}")
+
         # Setup git hooks after successful clone
         setup_git_hooks(project_path)
-        
+
         return True, None
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else str(e)
@@ -160,31 +161,35 @@ def setup_git_hooks(repo_path):
     """
     Setup git hooks for a repository by configuring core.hooksPath
     to use the .githooks directory if it exists in the repository.
-    
+
     This enables pre-push quality checks automatically after cloning.
-    
+
     Args:
         repo_path: Path to the git repository
-        
+
     Returns:
         Tuple (success, message):
         - On success: (True, None)
         - On failure: (False, error_message)
     """
     import os
-    
+
     try:
         # Check if .githooks directory exists in the repository
         githooks_path = os.path.join(repo_path, ".githooks")
         if not os.path.isdir(githooks_path):
-            logger.debug(f"No .githooks directory found in {repo_path}, skipping hooks setup")
+            logger.debug(
+                f"No .githooks directory found in {repo_path}, skipping hooks setup"
+            )
             return True, None
-        
+
         # Configure git to use .githooks directory
         cmd = ["git", "config", "core.hooksPath", ".githooks"]
         subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, check=True)
-        
-        logger.info(f"Git hooks configured successfully in {repo_path}: core.hooksPath=.githooks")
+
+        logger.info(
+            f"Git hooks configured successfully in {repo_path}: core.hooksPath=.githooks"
+        )
         return True, None
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else str(e)
@@ -198,12 +203,12 @@ def setup_git_hooks(repo_path):
 def set_git_config(repo_path, name, email):
     """
     Set git config user.name and user.email for a repository
-    
+
     Args:
         repo_path: Path to the git repository
         name: Git user name to set
         email: Git user email to set
-        
+
     Returns:
         Tuple (success, message):
         - On success: (True, None)
@@ -211,10 +216,14 @@ def set_git_config(repo_path, name, email):
     """
     try:
         # Set both user.name and user.email in a single command
-        cmd = f"git config user.name \"{name}\" && git config user.email \"{email}\""
-        result = subprocess.run(cmd, cwd=repo_path, shell=True, capture_output=True, text=True, check=True)
-        
-        logger.info(f"Git config set successfully in {repo_path}: user.name={name}, user.email={email}")
+        cmd = f'git config user.name "{name}" && git config user.email "{email}"'
+        result = subprocess.run(
+            cmd, cwd=repo_path, shell=True, capture_output=True, text=True, check=True
+        )
+
+        logger.info(
+            f"Git config set successfully in {repo_path}: user.name={name}, user.email={email}"
+        )
         return True, None
     except subprocess.CalledProcessError as e:
         error_msg = e.stderr if e.stderr else str(e)

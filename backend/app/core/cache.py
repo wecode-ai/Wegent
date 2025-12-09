@@ -7,6 +7,7 @@ import logging
 from typing import Any, Optional
 
 import orjson
+from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 
 from app.core.config import settings
@@ -59,6 +60,47 @@ class RedisCache:
         except Exception as e:
             logger.error(f"Error getting cache key {key}: {str(e)}")
             return None
+
+    def get_sync(self, key: str) -> Optional[Any]:
+        """Get value from cache synchronously"""
+        try:
+            client = SyncRedis.from_url(
+                self._url,
+                encoding="utf-8",
+                decode_responses=False,
+                socket_timeout=5.0,
+                socket_connect_timeout=2.0,
+            )
+            try:
+                data = client.get(key)
+                if data is None:
+                    return None
+                try:
+                    return orjson.loads(data)
+                except Exception:
+                    # If value was stored as plain bytes/string
+                    return data
+            finally:
+                client.close()
+        except Exception as e:
+            logger.error(f"Error getting cache key {key} (sync): {str(e)}")
+            return None
+
+    def get_user_repositories_sync(
+        self, user_id: int, git_domain: str
+    ) -> Optional[list]:
+        """
+        Get user's cached repository list synchronously.
+
+        Args:
+            user_id: User ID
+            git_domain: Git domain (e.g., gitlab.com, github.com)
+
+        Returns:
+            List of cached repositories, or None if not cached
+        """
+        cache_key = self.generate_full_cache_key(user_id, git_domain)
+        return self.get_sync(cache_key)
 
     async def set(
         self, key: str, value: Any, expire: int = settings.REPO_CACHE_EXPIRED_TIME
