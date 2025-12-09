@@ -11,7 +11,7 @@ SearXNG, and custom search APIs.
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import Any
 import httpx
 
 from .base import SearchServiceBase
@@ -41,13 +41,14 @@ class HttpSearchService(SearchServiceBase):
         self,
         base_url: str,
         query_param: str = "q",
-        limit_param: Optional[str] = "limit",
-        auth_header: Optional[Dict[str, str]] = None,
-        extra_params: Optional[Dict[str, str]] = None,
-        response_path: Optional[str] = None,
+        limit_param: str | None = "limit",
+        auth_header: dict[str, str] | None = None,
+        extra_params: dict[str, str] | None = None,
+        response_path: str | None = None,
         title_field: str = "title",
         url_field: str = "url",
         snippet_field: str = "snippet",
+        content_field: str = "content",
         timeout: int = 10,
     ):
         """
@@ -57,12 +58,13 @@ class HttpSearchService(SearchServiceBase):
             base_url: API endpoint URL
             query_param: Query string parameter name (default: "q")
             limit_param: Results limit parameter name (default: "limit", None to disable)
-            auth_header: Optional authentication headers (e.g., {"Authorization": "Bearer token"})
+            auth_header: Authentication headers (e.g., {"Authorization": "Bearer token"})
             extra_params: Additional query parameters to include in every request
             response_path: JSONPath to results array (e.g., "data.results", None for root)
             title_field: Field name for result title
             url_field: Field name for result URL
             snippet_field: Field name for result snippet/description
+            content_field: Field name for result main content
             timeout: Request timeout in seconds
         """
         self.base_url = base_url.rstrip("/")
@@ -74,9 +76,10 @@ class HttpSearchService(SearchServiceBase):
         self.title_field = title_field
         self.url_field = url_field
         self.snippet_field = snippet_field
+        self.content_field = content_field
         self.timeout = timeout
 
-    def _extract_results(self, response_data: Any) -> List[Dict[str, Any]]:
+    def _extract_results(self, response_data: Any) -> list[dict[str, Any]]:
         """
         Extract results array from response using configured path.
 
@@ -84,7 +87,7 @@ class HttpSearchService(SearchServiceBase):
             response_data: JSON response data
 
         Returns:
-            List of result dictionaries
+            list of result dictionaries
         """
         if not self.response_path:
             # Response is the results array itself
@@ -120,12 +123,14 @@ class HttpSearchService(SearchServiceBase):
         """
         try:
             results = await self.search_raw(query, limit)
-            return self.format_results_for_llm(results)
+            results_for_llm = self.format_results_for_llm(results)
+            logger.info("results_for_llm: %s", results_for_llm)
+            return results_for_llm
         except Exception as e:
-            logger.error(f"HTTP search failed for query '{query}': {e}")
+            logger.exception("HTTP search failed for query '%s'", query)
             return f"Search failed: {str(e)}"
 
-    async def search_raw(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    async def search_raw(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """
         Perform a web search and return raw results.
 
@@ -134,7 +139,7 @@ class HttpSearchService(SearchServiceBase):
             limit: Maximum number of results to return (default: 5)
 
         Returns:
-            List of search result dictionaries
+            list of search result dictionaries
         """
         try:
             # Build query parameters
@@ -172,17 +177,24 @@ class HttpSearchService(SearchServiceBase):
                         "title": str(item.get(self.title_field, "")).strip(),
                         "url": str(item.get(self.url_field, "")).strip(),
                         "snippet": str(item.get(self.snippet_field, "")).strip(),
+                        "content": str(item.get(self.content_field, "")).strip(),
                     }
                 )
 
             logger.info(
-                f"HTTP search successful for query '{query}': {len(formatted_results)} results"
+                "HTTP search successful for query '%s': %s results",
+                query,
+                len(formatted_results),
             )
             return formatted_results
 
         except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP search failed with status {e.response.status_code}: {e}")
+            logger.error(
+                "HTTP search failed with status %s: %s",
+                e.response.status_code,
+                e,
+            )
             raise Exception(f"Search API returned error: {e.response.status_code}")
         except Exception as e:
-            logger.error(f"HTTP search failed for query '{query}': {e}")
+            logger.error("HTTP search failed for query '%s': %s", query, e)
             raise Exception(f"Search error: {str(e)}")

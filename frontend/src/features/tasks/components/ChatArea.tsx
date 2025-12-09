@@ -31,6 +31,7 @@ import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferenc
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
+import { useTranslation } from '@/hooks/useTranslation';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 // Threshold for combined team name + model name length to trigger compact quota mode
@@ -54,6 +55,7 @@ export default function ChatArea({
   onShareButtonRender,
 }: ChatAreaProps) {
   const { toast } = useToast();
+  const { t } = useTranslation('chat');
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -940,7 +942,7 @@ export default function ChatArea({
                               ? 'bg-primary/10 text-primary hover:bg-primary/20'
                               : 'text-text-muted hover:bg-surface hover:text-text-primary'
                           }`}
-                          title={enableWebSearch ? 'Disable web search' : 'Enable web search'}
+                          title={enableWebSearch ? t('web_search.disable') : t('web_search.enable')}
                         >
                           <Globe className="h-4 w-4" />
                         </Button>
@@ -1158,6 +1160,22 @@ export default function ChatArea({
                           onRemove={handleAttachmentRemove}
                         />
                       )}
+                    {/* Web Search Toggle Button - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => setEnableWebSearch(!enableWebSearch)}
+                        className={`h-8 w-8 rounded-lg flex-shrink-0 transition-colors ${
+                          enableWebSearch
+                            ? 'bg-primary/10 text-primary hover:bg-primary/20'
+                            : 'text-text-muted hover:bg-surface hover:text-text-primary'
+                        }`}
+                        title={enableWebSearch ? t('web_search.disable') : t('web_search.enable')}
+                      >
+                        <Globe className="h-4 w-4" />
+                      </Button>
+                    )}
                     {teams.length > 0 && (
                       <TeamSelector
                         selectedTeam={selectedTeam}

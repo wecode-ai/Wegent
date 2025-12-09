@@ -8,7 +8,6 @@ Factory for creating search service instances based on configuration.
 
 import json
 import logging
-from typing import Optional
 
 from app.core.config import settings
 from .base import SearchServiceBase
@@ -17,7 +16,7 @@ from .http_search import HttpSearchService
 logger = logging.getLogger(__name__)
 
 
-def get_search_service() -> Optional[SearchServiceBase]:
+def get_search_service() -> SearchServiceBase | None:
     """
     Get the configured search service instance.
 
@@ -65,8 +64,8 @@ def get_search_service() -> Optional[SearchServiceBase]:
     config_str = getattr(settings, "WEB_SEARCH_CONFIG", "{}")
     try:
         config = json.loads(config_str) if config_str else {}
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse WEB_SEARCH_CONFIG: {e}")
+    except json.JSONDecodeError:
+        logger.exception("Failed to parse WEB_SEARCH_CONFIG")
         return None
 
     # Extract configuration with defaults
@@ -78,9 +77,10 @@ def get_search_service() -> Optional[SearchServiceBase]:
     title_field = config.get("title_field", "title")
     url_field = config.get("url_field", "url")
     snippet_field = config.get("snippet_field", "snippet")
+    content_field = config.get("content_field", "main_content")
     timeout = config.get("timeout", 10)
 
-    logger.info(f"Initializing HTTP search service with base_url={base_url}")
+    logger.info("Initializing HTTP search service with base_url=%s", base_url)
 
     return HttpSearchService(
         base_url=base_url,
@@ -92,15 +92,16 @@ def get_search_service() -> Optional[SearchServiceBase]:
         title_field=title_field,
         url_field=url_field,
         snippet_field=snippet_field,
+        content_field=content_field,
         timeout=timeout,
     )
 
 
 # Global search service instance (lazy initialization)
-_search_service: Optional[SearchServiceBase] = None
+_search_service: SearchServiceBase | None = None
 
 
-def get_global_search_service() -> Optional[SearchServiceBase]:
+def get_global_search_service() -> SearchServiceBase | None:
     """
     Get or create the global search service instance.
 

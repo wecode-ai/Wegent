@@ -7,7 +7,7 @@ Base interface for web search services.
 """
 
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any
+from typing import Any
 
 
 class SearchServiceBase(ABC):
@@ -37,7 +37,7 @@ class SearchServiceBase(ABC):
         pass
 
     @abstractmethod
-    async def search_raw(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
+    async def search_raw(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """
         Perform a web search and return raw results.
 
@@ -46,7 +46,7 @@ class SearchServiceBase(ABC):
             limit: Maximum number of results to return (default: 5)
 
         Returns:
-            List of search result dictionaries with keys like:
+            list of search result dictionaries with keys like:
             - title: Result title
             - url: Result URL
             - snippet: Result description/snippet
@@ -56,12 +56,12 @@ class SearchServiceBase(ABC):
         """
         pass
 
-    def format_results_for_llm(self, results: List[Dict[str, Any]]) -> str:
+    def format_results_for_llm(self, results: list[dict[str, Any]]) -> str:
         """
         Format raw search results into a readable string for LLM context.
 
         Args:
-            results: List of search result dictionaries
+            results: list of search result dictionaries
 
         Returns:
             Formatted string with search results
@@ -74,9 +74,11 @@ class SearchServiceBase(ABC):
             title = result.get("title", "No title")
             url = result.get("url", "")
             snippet = result.get("snippet", "No description available")
+            content = result.get("content", "No description available")
 
             formatted += f"{idx}. {title}\n"
             formatted += f"   URL: {url}\n"
-            formatted += f"   {snippet}\n\n"
+            formatted += f"   snippet: {snippet}\n"
+            formatted += f"   content: {content}\n\n"
 
         return formatted.strip()

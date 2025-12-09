@@ -478,7 +478,7 @@ async def stream_chat(
         )
 
     # Handle web search if enabled
-    search_context = ""
+    tool_messages = None
     if request.enable_web_search:
         from app.core.config import settings
         from app.services.search import get_global_search_service
@@ -491,19 +491,26 @@ async def stream_chat(
             if search_service:
                 try:
                     # Perform search with configured max results
-                    max_results = getattr(
-                        settings, "WEB_SEARCH_MAX_RESULTS", 5
-                    )
+                    max_results = getattr(settings, "WEB_SEARCH_MAX_RESULTS", 5)
                     search_context = await search_service.search(
                         request.message, limit=max_results
                     )
                     logger.info(
                         f"Web search completed for query: {request.message[:50]}..."
                     )
+                    
+                    # Build tool messages with search results
+                    if search_context:
+                        tool_messages = [
+                            {
+                                "role": "tool",
+                                "content": f"Web Search Results:\n{search_context}",
+                                "name": "web_search"
+                            }
+                        ]
                 except Exception as e:
                     logger.error(f"Web search failed: {e}")
                     # Continue without search results rather than failing the request
-                    search_context = ""
 
     # Create task and subtasks (use original message for storage, final_message for LLM)
     task, assistant_subtask = await _create_task_and_subtasks(
@@ -627,22 +634,14 @@ async def stream_chat(
         }
         yield f"data: {json.dumps(first_msg)}\n\n"
 
-        # Prepare the final message for LLM
-        # If web search is enabled and we have search results, prepend them
-        llm_message = final_message
-        if search_context:
-            llm_message = (
-                f"Web Search Results:\n{search_context}\n\n"
-                f"User Question: {final_message}"
-            )
-
-        # Get the actual stream from chat service
+        # Get the actual stream from chat service (use final_message with attachment content)
         stream_response = await chat_service.chat_stream(
             subtask_id=assistant_subtask.id,
             task_id=task.id,
-            message=llm_message,
+            message=final_message,
             model_config=model_config,
             system_prompt=system_prompt,
+            tool_messages=tool_messages,
         )
 
         # Forward the stream

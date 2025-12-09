@@ -19,20 +19,23 @@ The web search service uses a generic HTTP adapter that can be configured to wor
 
 ```json
 {
-  "query_param": "q",           // Query string parameter name
-  "limit_param": "limit",       // Results limit parameter name (null to disable)
-  "auth_header": {              // Optional authentication headers
+  "query_param": "q", // Query string parameter name
+  "limit_param": "limit", // Results limit parameter name (null to disable)
+  "auth_header": {
+    // Optional authentication headers
     "Authorization": "Bearer YOUR_TOKEN"
   },
-  "extra_params": {             // Additional query parameters
+  "extra_params": {
+    // Additional query parameters
     "format": "json",
     "lang": "en"
   },
-  "response_path": "results",   // JSONPath to results array (null for root)
-  "title_field": "title",       // Field name for result title
-  "url_field": "url",           // Field name for result URL
-  "snippet_field": "content",   // Field name for result description
-  "timeout": 10                 // Request timeout in seconds
+  "response_path": "results", // JSONPath to results array (null for root)
+  "title_field": "title", // Field name for result title
+  "url_field": "url", // Field name for result URL
+  "snippet_field": "snippet", // Field name for result description
+  "content_field": "content", // Field name for main content
+  "timeout": 10 // Request timeout in seconds
 }
 ```
 

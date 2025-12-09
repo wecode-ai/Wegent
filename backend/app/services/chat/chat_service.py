@@ -55,6 +55,7 @@ class ChatService(ChatServiceBase):
         message: Union[str, Dict[str, Any]],
         model_config: Dict[str, Any],
         system_prompt: str = "",
+        tool_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> StreamingResponse:
         """
         Stream chat response from LLM API.
@@ -65,6 +66,7 @@ class ChatService(ChatServiceBase):
             message: User message (string or vision dict)
             model_config: Model configuration (api_key, base_url, model_id, model)
             system_prompt: Bot's system prompt
+            tool_messages: Optional list of tool call result messages to include in context
 
         Returns:
             StreamingResponse with SSE events
@@ -101,7 +103,7 @@ class ChatService(ChatServiceBase):
                 history = await session_manager.get_chat_history(task_id)
 
                 # Build messages list
-                messages = self._build_messages(history, message, system_prompt)
+                messages = self._build_messages(history, message, system_prompt, tool_messages)
 
                 # Call LLM API and stream response with cancellation support
                 cancelled = False
@@ -259,6 +261,7 @@ class ChatService(ChatServiceBase):
         history: List[Dict[str, str]],
         current_message: Union[str, Dict[str, Any]],
         system_prompt: str,
+        tool_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Build message list for LLM API.
@@ -267,9 +270,16 @@ class ChatService(ChatServiceBase):
             history: Previous conversation history
             current_message: Current user message (string or vision dict)
             system_prompt: System prompt
+            tool_messages: Optional list of tool call result messages (with role='tool')
 
         Returns:
             List of message dictionaries
+            
+        Note:
+            Tool messages are inserted before the current user message to provide context.
+            The 'tool' role will be converted to 'user' role in provider-specific methods
+            because most LLM providers don't support 'tool' role or expect tool results
+            to be presented as user messages for better context flow.
         """
         messages = []
 
@@ -279,6 +289,12 @@ class ChatService(ChatServiceBase):
 
         # Add history messages
         messages.extend(history)
+
+        # Add tool messages before the current user message
+        # Tool messages provide additional context (e.g., web search results) without modifying the user's message
+        # They will be converted to 'user' role in provider-specific methods for compatibility
+        if tool_messages:
+            messages.extend(tool_messages)
 
         # Add current message
         if (
@@ -305,6 +321,7 @@ class ChatService(ChatServiceBase):
             )
             messages.append({"role": "user", "content": message_text})
 
+        logger.info("messages: %s", json.dumps(messages, ensure_ascii=False, indent=4))
         return messages
 
     async def _call_llm_streaming(
@@ -428,6 +445,11 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call OpenAI-compatible API with streaming.
+        
+        Note: Tool messages (role='tool') are converted to 'user' role because:
+        1. It maintains natural conversation flow (tool results augment user's question)
+        2. Most models expect user/assistant alternation
+        3. Tool results are contextual information for answering the user's question
         """
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
@@ -457,6 +479,8 @@ class ChatService(ChatServiceBase):
         )
 
         for msg in messages:
+            # Convert 'tool' role to 'user' role (tool results are context for user's question)
+            msg_role = "user" if msg.get("role") == "tool" else msg.get("role", "user")
             content = msg.get("content", "")
             if isinstance(content, list):
                 # This is a multi-part content (vision message)
@@ -480,10 +504,10 @@ class ChatService(ChatServiceBase):
 
                     combined_text = "\n".join(text_parts)
                     processed_messages.append(
-                        {"role": msg["role"], "content": combined_text}
+                        {"role": msg_role, "content": combined_text}
                     )
             else:
-                processed_messages.append(msg)
+                processed_messages.append({"role": msg_role, "content": content})
 
         payload = {
             "model": model_id,
@@ -530,6 +554,9 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call Claude API with streaming.
+        
+        Note: Claude does not support 'tool' role. Tool messages are converted to 'user' role
+        because tool results provide contextual information for answering the user's question.
         """
         base_url_stripped = base_url.rstrip("/")
         if base_url_stripped.endswith("/v1"):
@@ -547,12 +574,15 @@ class ChatService(ChatServiceBase):
             headers.update(default_headers)
 
         # Separate system message from chat messages (Claude API requirement)
+        # Convert 'tool' role to 'user' role (Claude doesn't support 'tool' role)
         system_content = ""
         chat_messages = []
         for msg in messages:
             if msg["role"] == "system":
                 system_content = msg["content"]
             else:
+                # Convert 'tool' role to 'user' role for Claude
+                msg_role = "user" if msg["role"] == "tool" else msg["role"]
                 content = msg.get("content", "")
                 if isinstance(content, str):
                     formatted_content = [{"type": "text", "text": content}]
@@ -588,7 +618,7 @@ class ChatService(ChatServiceBase):
                     formatted_content = [{"type": "text", "text": str(content)}]
 
                 chat_messages.append(
-                    {"role": msg["role"], "content": formatted_content}
+                    {"role": msg_role, "content": formatted_content}
                 )
 
         payload = {
@@ -636,6 +666,11 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call OpenAI-compatible API with streaming and cancellation support.
+        
+        Note: Tool messages (role='tool') are converted to 'user' role because:
+        1. It maintains natural conversation flow (tool results augment user's question)
+        2. Most models expect user/assistant alternation
+        3. Tool results are contextual information for answering the user's question
         """
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
@@ -662,6 +697,8 @@ class ChatService(ChatServiceBase):
         )
 
         for msg in messages:
+            # Convert 'tool' role to 'user' role (tool results are context for user's question)
+            msg_role = "user" if msg.get("role") == "tool" else msg.get("role", "user")
             content = msg.get("content", "")
             if isinstance(content, list):
                 has_vision = True
@@ -680,10 +717,10 @@ class ChatService(ChatServiceBase):
                             )
                     combined_text = "\n".join(text_parts)
                     processed_messages.append(
-                        {"role": msg["role"], "content": combined_text}
+                        {"role": msg_role, "content": combined_text}
                     )
             else:
-                processed_messages.append(msg)
+                processed_messages.append({"role": msg_role, "content": content})
 
         payload = {
             "model": model_id,
@@ -739,7 +776,10 @@ class ChatService(ChatServiceBase):
         - Endpoint: {base_url}/v1beta/models/{model_id}:streamGenerateContent
         - API key is passed as query parameter
         - Messages use 'parts' array instead of 'content' string
-        - Role mapping: assistant -> model
+        - Role mapping: assistant -> model, tool -> user
+        
+        Note: Gemini does not support 'tool' role. Tool messages are converted to 'user' role
+        because tool results provide contextual information for answering the user's question.
         """
         # Build URL with API key as query parameter
         base_url_stripped = base_url.rstrip("/")
@@ -782,8 +822,11 @@ class ChatService(ChatServiceBase):
                     system_instruction = {"parts": [{"text": content}]}
                 continue
 
-            # Map roles: assistant -> model
-            gemini_role = "model" if role == "assistant" else "user"
+            # Map roles: assistant -> model, tool -> user (Gemini doesn't support 'tool' role)
+            if role == "assistant":
+                gemini_role = "model"
+            else:
+                gemini_role = "user"  # Both 'user' and 'tool' map to 'user'
 
             # Convert content to parts format
             if isinstance(content, str):
@@ -871,6 +914,9 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call Gemini API with streaming and cancellation support.
+        
+        Note: Gemini does not support 'tool' role. Tool messages are converted to 'user' role
+        because tool results provide contextual information for answering the user's question.
         """
         # Build URL with API key as query parameter
         base_url_stripped = base_url.rstrip("/")
@@ -908,7 +954,11 @@ class ChatService(ChatServiceBase):
                     system_instruction = {"parts": [{"text": content}]}
                 continue
 
-            gemini_role = "model" if role == "assistant" else "user"
+            # Map roles: assistant -> model, tool -> user (Gemini doesn't support 'tool' role)
+            if role == "assistant":
+                gemini_role = "model"
+            else:
+                gemini_role = "user"  # Both 'user' and 'tool' map to 'user'
 
             if isinstance(content, str):
                 parts = [{"text": content}]
@@ -997,6 +1047,9 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call Claude API with streaming and cancellation support.
+        
+        Note: Claude does not support 'tool' role. Tool messages are converted to 'user' role
+        because tool results provide contextual information for answering the user's question.
         """
         base_url_stripped = base_url.rstrip("/")
         if base_url_stripped.endswith("/v1"):
@@ -1012,12 +1065,15 @@ class ChatService(ChatServiceBase):
         if default_headers:
             headers.update(default_headers)
 
+        # Convert 'tool' role to 'user' role (Claude doesn't support 'tool' role)
         system_content = ""
         chat_messages = []
         for msg in messages:
             if msg["role"] == "system":
                 system_content = msg["content"]
             else:
+                # Convert 'tool' role to 'user' role for Claude
+                msg_role = "user" if msg["role"] == "tool" else msg["role"]
                 content = msg.get("content", "")
                 if isinstance(content, str):
                     formatted_content = [{"type": "text", "text": content}]
@@ -1053,7 +1109,7 @@ class ChatService(ChatServiceBase):
                     formatted_content = [{"type": "text", "text": str(content)}]
 
                 chat_messages.append(
-                    {"role": msg["role"], "content": formatted_content}
+                    {"role": msg_role, "content": formatted_content}
                 )
 
         payload = {
