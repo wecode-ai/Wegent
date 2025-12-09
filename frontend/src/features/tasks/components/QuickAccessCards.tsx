@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { FaUsers } from 'react-icons/fa';
 import { HiOutlineCode, HiOutlineChatAlt2 } from 'react-icons/hi';
@@ -28,6 +28,7 @@ export function QuickAccessCards({
   isLoading,
 }: QuickAccessCardsProps) {
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([]);
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true);
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null);
@@ -35,6 +36,12 @@ export function QuickAccessCards({
 
   // Define the extended team type for display
   type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' };
+
+  // Prefetch both chat and code pages on mount for smoother navigation
+  useEffect(() => {
+    router.prefetch('/chat');
+    router.prefetch('/code');
+  }, [router]);
 
   // Fetch quick access teams
   useEffect(() => {
@@ -112,11 +119,14 @@ export function QuickAccessCards({
         // This ensures the new page will restore the correct team
         saveLastTeamByMode(team.id, targetMode);
 
-        // Delay navigation to allow animation to play
+        // Use startTransition for smoother navigation without blocking UI
+        // Delay slightly to allow animation to start
         setTimeout(() => {
           const targetPath = targetMode === 'code' ? '/code' : '/chat';
-          router.push(targetPath);
-        }, 400);
+          startTransition(() => {
+            router.push(targetPath);
+          });
+        }, 200);
       } else {
         // No mode switch needed, just select the team in current page after animation
         // First let the animation play, then select the team
@@ -131,7 +141,7 @@ export function QuickAccessCards({
         }, 400);
       }
     },
-    [currentMode, router, onTeamSelect]
+    [currentMode, router, onTeamSelect, startTransition]
   );
 
   if (isLoading || isQuickAccessLoading) {
@@ -215,18 +225,18 @@ export function QuickAccessCards({
           return (
             <div
               key={team.id}
-              onClick={() => !isClicked && handleTeamClick(team)}
+              onClick={() => !isClicked && !isPending && handleTeamClick(team)}
               className={`
                 group relative flex items-center gap-2 px-4 py-2
                 rounded-lg border cursor-pointer transition-all duration-200
                 ${
-                  isClicked
+                  isClicked || isPending
                     ? 'switching-card border-primary bg-primary/10 ring-2 ring-primary/50'
                     : isSelected
                       ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
                       : 'border-border bg-surface hover:bg-hover hover:border-border-strong'
                 }
-                ${isClicked ? 'pointer-events-none' : ''}
+                ${isClicked || isPending ? 'pointer-events-none' : ''}
               `}
               title={team.description || undefined}
             >

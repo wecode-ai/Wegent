@@ -8,7 +8,6 @@ import { Suspense, useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
-import UserMenu from '@/features/layout/UserMenu';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
@@ -19,6 +18,8 @@ import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
+import { ThemeToggle } from '@/features/theme/ThemeToggle';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import PoweredByFooter from '@/components/common/PoweredByFooter';
 import { Team } from '@/types/api';
 import ChatArea from '@/features/tasks/components/ChatArea';
@@ -54,6 +55,9 @@ export default function ChatPage() {
       router.push(`/chat?taskShare=${pendingToken}`);
     }
   }, [router]);
+
+  // Mobile detection
+  const isMobile = useIsMobile();
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -144,8 +148,7 @@ export default function ChatPage() {
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
             {shareButton}
-            <GithubStarButton />
-            <UserMenu />
+            {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
           {/* Chat area without repository selector */}
           <ChatArea

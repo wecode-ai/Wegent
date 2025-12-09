@@ -57,6 +57,10 @@
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar"
   },
+  "theme": {
+    "light": "Light Mode",
+    "dark": "Dark Mode"
+  },
   "user": {
     "default_name": "User",
     "logout": "Logout",

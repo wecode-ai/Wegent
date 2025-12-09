@@ -6,8 +6,10 @@
 
 import { usePathname } from 'next/navigation';
 import Link from 'next/link';
+import Image from 'next/image';
 import { useTranslation } from '@/hooks/useTranslation';
 import { CodeBracketIcon } from '@heroicons/react/24/outline';
+import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
 
 export type KnowledgeModule = 'code' | 'wiki';
 
@@ -44,6 +46,7 @@ const modules: ModuleItem[] = [
 /**
  * Knowledge module navigation sidebar component
  * Displays navigation for different knowledge modules (Code Knowledge, Wiki, etc.)
+ * Layout matches TaskSidebar with logo at top
  */
 export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
   const { t } = useTranslation('common');
@@ -53,9 +56,24 @@ export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
   const currentModule = activeModule || (pathname?.includes('/knowledge/wiki') ? 'wiki' : 'code');
 
   return (
-    <div className="w-56 border-r border-border bg-surface h-full flex flex-col">
-      <div className="p-4">
-        <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wider mb-4">
+    <div className="hidden lg:flex lg:flex-col w-56 border-r border-border bg-surface h-full">
+      {/* Logo - matches TopNavigation height (min-h-[44px] with py-2 sm:py-3) */}
+      <div className="px-3 py-2 sm:py-3 min-h-[44px] flex items-center">
+        <div className="flex items-center gap-2">
+          <Image
+            src="/weibo-logo.png"
+            alt="Weibo Logo"
+            width={20}
+            height={20}
+            className="object-container"
+          />
+          <span className="text-sm text-text-primary">Wegent</span>
+        </div>
+      </div>
+
+      {/* Module navigation */}
+      <div className="px-2 flex-1">
+        <h2 className="text-sm font-semibold text-text-secondary uppercase tracking-wider mb-4 px-2">
           {t('knowledge.modules.title')}
         </h2>
         <nav className="space-y-1">
@@ -89,6 +107,11 @@ export function KnowledgeModuleNav({ activeModule }: KnowledgeModuleNavProps) {
             );
           })}
         </nav>
+      </div>
+
+      {/* User Menu */}
+      <div className="p-2 border-t border-border">
+        <UserFloatingMenu />
       </div>
     </div>
   );
