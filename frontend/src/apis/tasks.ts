@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client';
+import { getToken } from './user';
 import { Task, PaginationParams, TaskStatus, SuccessMessage, TaskDetail } from '../types/api';
 
 // Task Request/Response Types
@@ -281,5 +282,34 @@ export const taskApis = {
     }
 
     return response.json();
+  },
+
+  /**
+   * Export task to DOCX format
+   */
+  exportTaskDocx: async (taskId: number): Promise<Blob> => {
+    const token = getToken();
+    const response = await fetch(`/api/tasks/${taskId}/export/docx`, {
+      method: 'GET',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMsg = errorText;
+      try {
+        const json = JSON.parse(errorText);
+        if (json && typeof json.detail === 'string') {
+          errorMsg = json.detail;
+        }
+      } catch {
+        // Not JSON, use original text
+      }
+      throw new Error(errorMsg);
+    }
+
+    return response.blob();
   },
 };

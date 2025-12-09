@@ -76,7 +76,10 @@ dependencies = [
     "python-pptx>=0.6.23",
     "openpyxl>=3.1.2",
     "chardet>=5.0.0",
-    "pillow>=10.0.0",
+    "pillow>=12.0.0",
+    "markdown>=3.5.0",
+    "beautifulsoup4>=4.12.0",
+    "emoji>=2.9.0",
 ]
 
 [dependency-groups]
