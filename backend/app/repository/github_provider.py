@@ -823,3 +823,121 @@ class GitHubProvider(RepositoryProvider):
 
         except requests.exceptions.RequestException as e:
             raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")
+
+    def check_user_project_access(
+        self,
+        token: str,
+        git_domain: str,
+        repo_name: str,
+    ) -> Dict[str, Any]:
+        """
+        Check if a user has access to a specific GitHub repository.
+
+        Args:
+            token: GitHub access token
+            git_domain: GitHub domain (e.g., github.com or custom GHE domain)
+            repo_name: Repository full name (e.g., "owner/repo")
+
+        Returns:
+            Dictionary with access information:
+            - has_access: bool - Whether the user has access to the project
+            - access_level: int - Access level (mapped from GitHub permission)
+            - access_level_name: str - Human readable access level name
+            - username: str - Username associated with the token
+
+        Raises:
+            HTTPException: When API call fails
+        """
+        api_base_url = self._get_api_base_url(git_domain)
+        decrypt_token = self.decrypt_token(token)
+
+        headers = {
+            "Authorization": f"token {decrypt_token}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+
+        # First get the current user info from the token
+        try:
+            user_response = requests.get(f"{api_base_url}/user", headers=headers)
+            if user_response.status_code == 401:
+                return {
+                    "has_access": False,
+                    "access_level": 0,
+                    "access_level_name": "No Access",
+                    "username": "",
+                    "error": "Invalid token",
+                }
+            user_response.raise_for_status()
+            user_data = user_response.json()
+            username = user_data.get("login", "")
+        except requests.exceptions.RequestException as e:
+            self.logger.error(f"Failed to get user info: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")
+
+        # Check repository access by getting user's permission level
+        try:
+            permission_response = requests.get(
+                f"{api_base_url}/repos/{repo_name}/collaborators/{username}/permission",
+                headers=headers,
+            )
+
+            if permission_response.status_code == 404:
+                # User is not a collaborator
+                return {
+                    "has_access": False,
+                    "access_level": 0,
+                    "access_level_name": "No Access",
+                    "username": username,
+                }
+
+            permission_response.raise_for_status()
+            permission_data = permission_response.json()
+            permission = permission_data.get("permission", "none")
+
+            # Map GitHub permission to access level (similar to GitLab)
+            permission_mapping = {
+                "admin": (50, "Admin"),
+                "maintain": (40, "Maintainer"),
+                "push": (30, "Developer"),
+                "triage": (20, "Triage"),
+                "pull": (10, "Read"),
+                "none": (0, "No Access"),
+            }
+
+            access_level, access_level_name = permission_mapping.get(
+                permission, (0, "Unknown")
+            )
+
+            return {
+                "has_access": access_level > 0,
+                "access_level": access_level,
+                "access_level_name": access_level_name,
+                "username": username,
+            }
+        except requests.exceptions.RequestException as e:
+            # If we can't check permissions, assume no access
+            if hasattr(e, "response") and e.response and e.response.status_code == 403:
+                # 403 might mean the token doesn't have permission to check collaborators
+                # Try to access the repo directly
+                try:
+                    repo_response = requests.get(
+                        f"{api_base_url}/repos/{repo_name}",
+                        headers=headers,
+                    )
+                    if repo_response.status_code == 200:
+                        return {
+                            "has_access": True,
+                            "access_level": 10,
+                            "access_level_name": "Read",
+                            "username": username,
+                        }
+                except Exception:
+                    pass
+                return {
+                    "has_access": False,
+                    "access_level": 0,
+                    "access_level_name": "No Access",
+                    "username": username,
+                }
+            self.logger.error(f"Failed to check repository access: {str(e)}")
+            raise HTTPException(status_code=502, detail=f"GitHub API error: {str(e)}")

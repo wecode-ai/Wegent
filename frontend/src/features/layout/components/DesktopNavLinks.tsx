@@ -10,8 +10,11 @@ import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface DesktopNavLinksProps {
-  activePage: 'chat' | 'code' | 'dashboard';
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
 }
+
+// Check if Wiki module is enabled via environment variable
+const isWikiEnabled = process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false';
 
 export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
   const { t } = useTranslation('common');
@@ -33,6 +36,15 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
         label: t('navigation.code'),
         onClick: () => router.push(paths.code.getHref()),
       },
+      ...(isWikiEnabled
+        ? [
+            {
+              key: 'wiki' as const,
+              label: t('navigation.wiki'),
+              onClick: () => router.push(paths.wiki.getHref()),
+            },
+          ]
+        : []),
       {
         key: 'dashboard' as const,
         label: t('navigation.settings'),

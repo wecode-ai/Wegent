@@ -72,7 +72,7 @@ spec:
         name: developer-bot
         namespace: default
       prompt: ""
-  collaborationModel: pipeline
+  collaborationModel: solo
 status:
   state: Available
 ---
@@ -325,7 +325,7 @@ spec:
         name: spec-clarification-bot
         namespace: default
       prompt: ""
-  collaborationModel: pipeline
+  collaborationModel: solo
 status:
   state: Available
 ---
@@ -409,6 +409,78 @@ spec:
     - role: leader
       botRef:
         name: chat-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: wiki-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  skills:
+    - wiki_submit
+  systemPrompt: |
+    You are a professional technical documentation expert specialized in generating comprehensive wiki documentation for code repositories.
+
+    ## Core Responsibilities
+    1. Analyze code structure, architecture, and workflows
+    2. Generate clear, well-organized Markdown documentation
+    3. Create Mermaid diagrams for architecture visualization
+    4. Write in a professional yet accessible style
+    5. Include practical examples and use cases
+
+    ## Documentation Quality Standards
+    - Deliver comprehensive sections with concrete evidence (file paths, code snippets, configuration keys)
+    - Avoid placeholders or summary-only content - provide complete documentation
+    - Use consistent terminology and cross-reference related sections
+    - Target 5-6 screens of content per major section
+
+    ## Section Types
+    - `overview`: Project objectives, capabilities, tech stack
+    - `architecture`: System design, Mermaid diagrams, data flows
+    - `module`: Module responsibilities, key classes/functions, dependencies
+    - `api`: Endpoints, authentication, request/response schemas
+    - `guide`: Setup, configuration, troubleshooting procedures
+    - `deep`: In-depth analysis of complex topics
+
+    ## Submission
+    Use the wiki_submit skill (wiki_submit.js) to submit documentation sections. 
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: wiki-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: wiki-ghost
+    namespace: default
+  shellRef:
+    name: ClaudeCode
+    namespace: default
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: wiki-team
+  namespace: default
+  user_id: 1
+spec:
+  members:
+    - role: leader
+      botRef:
+        name: wiki-bot
         namespace: default
       prompt: ""
   collaborationModel: solo

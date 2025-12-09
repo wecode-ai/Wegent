@@ -23,3 +23,19 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 # Declare base class
 Base = declarative_base()
+
+# Wiki tables now use the main database (Base)
+# Alias for backward compatibility
+WikiBase = Base
+
+
+def get_wiki_db():
+    """
+    Wiki database session dependency
+    Now uses main database session for wiki tables
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
