@@ -84,6 +84,10 @@ export default function ChatArea({
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
 
+  // Local pending state for immediate UI feedback (before context state is updated)
+  const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null);
+  const [localPendingAttachment, setLocalPendingAttachment] = useState<Attachment | null>(null);
+
   // Web search toggle state
   const [enableWebSearch, setEnableWebSearch] = useState(false);
 
@@ -169,8 +173,11 @@ export default function ChatArea({
   const isStreaming = isCurrentTaskStreaming;
   const isStopping = currentStreamState?.isStopping || false;
   const streamingContent = currentStreamState?.streamingContent || '';
-  const pendingUserMessage = currentStreamState?.pendingUserMessage || null;
-  const pendingAttachment = currentStreamState?.pendingAttachment as Attachment | null;
+  // Use local pending state first, then fall back to context state
+  // This ensures immediate UI feedback before context state is updated
+  const pendingUserMessage = localPendingMessage || currentStreamState?.pendingUserMessage || null;
+  const pendingAttachment =
+    localPendingAttachment || (currentStreamState?.pendingAttachment as Attachment | null);
   const streamingSubtaskId = currentStreamState?.subtaskId || null;
 
   // Wrapper for stopStream that uses the current display task ID
@@ -221,10 +228,12 @@ export default function ChatArea({
   // 4. We're creating a new task (no selected task) and have an active stream
   // 5. CRITICAL: Once we have messages, keep showing them even during data refresh
   //    to prevent the "flash of empty state" bug
+  // 6. NEW: Local pending message for immediate UI feedback
   const hasMessages = React.useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream = !selectedTaskDetail?.id && streamingTaskId && isStreamingTaskActive;
     const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
+    const hasLocalPending = localPendingMessage !== null;
 
     // Once we have a task with subtasks, always show messages view
     // This prevents flashing back to empty state during refresh
@@ -232,8 +241,17 @@ export default function ChatArea({
       return true;
     }
 
-    return Boolean(hasSelectedTask || pendingUserMessage || isStreaming || hasNewTaskStream);
-  }, [selectedTaskDetail, pendingUserMessage, isStreaming, streamingTaskId, isStreamingTaskActive]);
+    return Boolean(
+      hasSelectedTask || pendingUserMessage || isStreaming || hasNewTaskStream || hasLocalPending
+    );
+  }, [
+    selectedTaskDetail,
+    pendingUserMessage,
+    isStreaming,
+    streamingTaskId,
+    isStreamingTaskActive,
+    localPendingMessage,
+  ]);
 
   // Determine if chat input should be hidden (workflow mode always hides chat input)
   const shouldHideChatInput = React.useMemo(() => {
@@ -470,6 +488,12 @@ export default function ChatArea({
 
     if (isChatShell(selectedTeam)) {
       console.log('[ChatArea] Using Chat Shell streaming mode');
+
+      // OPTIMIZATION: Set local pending state IMMEDIATELY for instant UI feedback
+      // This happens synchronously before any async operations
+      setLocalPendingMessage(message);
+      setLocalPendingAttachment(attachmentState.attachment || null);
+
       setTaskInputMessage('');
       // Reset attachment immediately after sending (clear from input area)
       resetAttachment();
@@ -478,7 +502,18 @@ export default function ChatArea({
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
 
       try {
+        // OPTIMIZATION: For new tasks, generate a temporary ID immediately
+        // This allows the UI to show the pending message right away
+        const immediateTaskId = selectedTaskDetail?.id || -Date.now();
+
+        // Set streaming task ID BEFORE calling contextStartStream
+        // This ensures hasMessages becomes true immediately
+        if (!selectedTaskDetail?.id) {
+          setStreamingTaskId(immediateTaskId);
+        }
+
         // Use the global context to start stream with callbacks
+        // Pass immediateTaskId to ensure ChatArea and context use the same temporary ID
         const tempTaskId = await contextStartStream(
           {
             message,
@@ -492,6 +527,7 @@ export default function ChatArea({
           {
             pendingUserMessage: message,
             pendingAttachment: attachmentState.attachment,
+            immediateTaskId: immediateTaskId,
             onTaskIdResolved: realTaskId => {
               // Update streaming task ID when real task ID is resolved
               setStreamingTaskId(realTaskId);
@@ -505,6 +541,10 @@ export default function ChatArea({
               // URL will be updated when stream completes.
             },
             onComplete: async (completedTaskId, _subtaskId) => {
+              // Clear local pending state when stream completes
+              setLocalPendingMessage(null);
+              setLocalPendingAttachment(null);
+
               // Refresh task list after stream ends
               refreshTasks();
 
@@ -545,6 +585,10 @@ export default function ChatArea({
               }
             },
             onError: error => {
+              // Clear local pending state on error
+              setLocalPendingMessage(null);
+              setLocalPendingAttachment(null);
+
               toast({
                 variant: 'destructive',
                 title: error.message,
@@ -553,8 +597,11 @@ export default function ChatArea({
           }
         );
 
-        // Track the streaming task ID (may be temporary ID for new tasks)
-        setStreamingTaskId(tempTaskId);
+        // Update streaming task ID if it changed (e.g., from immediate to returned)
+        // Only update if we got a different ID back
+        if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+          setStreamingTaskId(tempTaskId);
+        }
 
         // Note: For new tasks, the selected task is now set in onTaskIdResolved callback
         // when the real task ID is received from the backend

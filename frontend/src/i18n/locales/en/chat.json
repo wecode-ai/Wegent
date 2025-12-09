@@ -183,5 +183,11 @@
   "web_search": {
     "enable": "Enable web search",
     "disable": "Disable web search"
+  },
+  "streaming_wait": {
+    "thinking": "Thinking",
+    "analyzing": "Analyzing in depth",
+    "generating_response": "Please wait, generating response",
+    "longer_than_usual": "Response is taking longer than usual"
   }
 }
