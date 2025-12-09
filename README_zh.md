@@ -28,7 +28,7 @@
 Wegent 让你通过智能体编排创建强大的 AI 应用：
 
 ### 💬 **即开即用的 AI 对话**
-内置默认聊天团队，无需配置即可立即开始。支持多种 LLM 提供商，包括 Claude、OpenAI 和 Gemini。
+内置默认聊天团队，无需配置即可立即开始。支持多种 LLM 提供商，包括 Claude、OpenAI 和 Gemini。可选的联网搜索集成，实现实时信息检索。
 
 ### 🖥️ **网页版编程助手**
 在浏览器中构建全功能开发环境，可与 GitHub 集成，支持本地或云端的独立开发空间，可运行多个 Coding Agent 同时编码。
@@ -57,6 +57,7 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 3. **🔒 独立沙箱环境**：每个 Agent 团队运行在独立沙箱环境中，支持多个 Agent 团队同时运行
 4. **🤝 高级协作模式**：对话模式可以实现并行、Leader、Solo 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
 5. **💻 AI 编码集成**：编码模式可以与 GitHub/GitLab 等代码服务对接，实现代码开发、review 等 AI Coding 工作流
+6. **🔍 联网搜索集成**：Chat Shell 团队可选的联网搜索功能，通过通用 HTTP 适配器支持多种搜索引擎（SearXNG、Google Custom Search、Bing、Brave 等）
 
 ```mermaid
 graph LR
