@@ -10,12 +10,13 @@ import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { Search, Plus, Settings, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Search, Plus, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import TaskListSection from './TaskListSection';
 import { useTranslation } from '@/hooks/useTranslation';
 import MobileSidebar from '@/features/layout/MobileSidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
@@ -357,45 +358,9 @@ export default function TaskSidebar({
         )}
       </div>
 
-      {/* Settings */}
-      <div className="p-3 border-t border-border">
-        {isCollapsed ? (
-          <TooltipProvider>
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  onClick={() => {
-                    router.push(paths.settings.root.getHref());
-                    setIsMobileSidebarOpen(false);
-                  }}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:text-text-primary hover:bg-hover rounded"
-                  data-tour="settings-link"
-                  aria-label={t('tasks.settings')}
-                >
-                  <Settings className="h-3.5 w-3.5" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>{t('tasks.settings')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => {
-              router.push(paths.settings.root.getHref());
-              setIsMobileSidebarOpen(false);
-            }}
-            className="text-text-primary hover:text-text-primary hover:bg-hover"
-            data-tour="settings-link"
-          >
-            <Settings className="h-3.5 w-3.5 mr-2" />
-            {t('tasks.settings')}
-          </Button>
-        )}
+      {/* User Menu */}
+      <div className="p-2 border-t border-border" data-tour="settings-link">
+        <UserFloatingMenu />
       </div>
     </>
   );
