@@ -12,6 +12,7 @@ import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
 import { Search, Plus, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
 import { useTranslation } from '@/hooks/useTranslation';
 import MobileSidebar from '@/features/layout/MobileSidebar';
@@ -35,6 +36,7 @@ export default function TaskSidebar({
 }: TaskSidebarProps) {
   const { t } = useTranslation('common');
   const router = useRouter();
+  const { clearAllStreams } = useChatStreamContext();
   const {
     tasks,
     loadMore,
@@ -128,6 +130,9 @@ export default function TaskSidebar({
 
   // New task
   const handleNewAgentClick = () => {
+    // Clear all stream states to reset the chat area to initial state
+    clearAllStreams();
+
     if (typeof window !== 'undefined') {
       // Navigate to the same page type for new task creation
       switch (pageType) {
