@@ -25,7 +25,7 @@ def _is_telemetry_enabled() -> bool:
     if not otel_enabled:
         return False
     try:
-        from shared.telemetry import is_telemetry_enabled
+        from shared.telemetry.core import is_telemetry_enabled
         return is_telemetry_enabled()
     except Exception:
         return False
@@ -34,7 +34,7 @@ def _is_telemetry_enabled() -> bool:
 def _get_tracer(name: str):
     """Get a tracer instance."""
     try:
-        from shared.telemetry import get_tracer
+        from shared.telemetry.core import get_tracer
         return get_tracer(name)
     except Exception:
         return None

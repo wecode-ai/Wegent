@@ -244,7 +244,7 @@ async def lifespan(app: FastAPI):
 
     # Shutdown OpenTelemetry
     if settings.OTEL_ENABLED:
-        from shared.telemetry import is_telemetry_enabled, shutdown_telemetry
+        from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
         if is_telemetry_enabled():
             shutdown_telemetry()
@@ -273,7 +273,7 @@ def create_app():
     # Initialize OpenTelemetry if enabled
     if settings.OTEL_ENABLED:
         try:
-            from shared.telemetry import init_telemetry
+            from shared.telemetry.core import init_telemetry
 
             init_telemetry(
                 service_name=settings.OTEL_SERVICE_NAME,
@@ -355,8 +355,8 @@ def create_app():
         # Add OpenTelemetry span attributes if enabled
         if settings.OTEL_ENABLED:
             from opentelemetry import trace
-            from shared.telemetry import is_telemetry_enabled
-            from shared.telemetry_context import set_request_context, set_user_context
+            from shared.telemetry.core import is_telemetry_enabled
+            from shared.telemetry.context import set_request_context, set_user_context
 
             if is_telemetry_enabled():
                 set_request_context(request_id)
@@ -381,7 +381,7 @@ def create_app():
         # Capture response headers and body if OTEL is enabled
         if settings.OTEL_ENABLED:
             from opentelemetry import trace
-            from shared.telemetry import is_telemetry_enabled
+            from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
                 current_span = trace.get_current_span()

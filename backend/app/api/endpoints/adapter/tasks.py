@@ -103,7 +103,7 @@ def create_task_with_optional_id(
 
     # Record task creation metric (only if telemetry is enabled)
     if settings.OTEL_ENABLED:
-        from shared.telemetry_metrics import record_task_created
+        from shared.telemetry.metrics import record_task_created
 
         record_task_created(
             user_id=str(current_user.id),

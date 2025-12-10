@@ -84,8 +84,8 @@ async def log_requests(request: Request, call_next):
     if OTEL_ENABLED:
         try:
             from opentelemetry import trace
-            from shared.telemetry import is_telemetry_enabled
-            from shared.telemetry_context import set_request_context
+            from shared.telemetry.core import is_telemetry_enabled
+            from shared.telemetry.context import set_request_context
 
             if is_telemetry_enabled():
                 set_request_context(request_id)
@@ -112,7 +112,7 @@ async def log_requests(request: Request, call_next):
     if OTEL_ENABLED:
         try:
             from opentelemetry import trace
-            from shared.telemetry import is_telemetry_enabled
+            from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
                 current_span = trace.get_current_span()

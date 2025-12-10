@@ -172,8 +172,8 @@ class CallbackClient:
         # Prepare headers with trace context for distributed tracing
         headers = {"Content-Type": "application/json"}
         if OTEL_ENABLED:
-            from shared.telemetry import is_telemetry_enabled
-            from shared.telemetry_context import inject_trace_context_to_headers
+            from shared.telemetry.core import is_telemetry_enabled
+            from shared.telemetry.context import inject_trace_context_to_headers
 
             if is_telemetry_enabled():
                 headers = inject_trace_context_to_headers(headers)

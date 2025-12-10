@@ -41,7 +41,7 @@ async def lifespan(app):
     # Initialize OpenTelemetry if enabled
     if OTEL_ENABLED:
         try:
-            from shared.telemetry import init_telemetry
+            from shared.telemetry.core import init_telemetry
 
             init_telemetry(
                 service_name=OTEL_SERVICE_NAME,
@@ -96,7 +96,7 @@ async def lifespan(app):
 
     # Shutdown OpenTelemetry
     if OTEL_ENABLED:
-        from shared.telemetry import shutdown_telemetry
+        from shared.telemetry.core import shutdown_telemetry
         shutdown_telemetry()
         logger.info("OpenTelemetry shutdown completed")
 

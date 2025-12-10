@@ -546,7 +546,7 @@ class DockerExecutor(Executor):
             logger.debug("Added OTEL configuration env vars to container")
 
             # Add trace context for distributed tracing continuity
-            from shared.telemetry_context import get_trace_context_env_vars
+            from shared.telemetry.context import get_trace_context_env_vars
 
             trace_env_vars = get_trace_context_env_vars()
             for key, value in trace_env_vars.items():
