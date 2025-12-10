@@ -7,6 +7,8 @@
 # -*- coding: utf-8 -*-
 
 import json
+import time
+import uuid
 from typing import Dict, Optional, Any
 from fastapi import FastAPI, HTTPException, Body, Request, Query, BackgroundTasks
 from pydantic import BaseModel
@@ -98,6 +100,129 @@ app = FastAPI(
     description="API for executing tasks with agents",
     lifespan=lifespan
 )
+
+
+# Add middleware for request/response logging and OTEL capture
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    from starlette.responses import StreamingResponse
+
+    # Skip logging for health check requests
+    if request.url.path == "/":
+        return await call_next(request)
+
+    # Generate a unique request ID
+    request_id = str(uuid.uuid4())[:8]
+    request.state.request_id = request_id
+
+    start_time = time.time()
+
+    # Capture request body if OTEL is enabled and body capture is configured
+    request_body = None
+    if (
+        OTEL_ENABLED
+        and OTEL_CAPTURE_REQUEST_BODY
+        and request.method in ("POST", "PUT", "PATCH")
+    ):
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                max_body_size = 4096
+                if len(body_bytes) <= max_body_size:
+                    request_body = body_bytes.decode("utf-8", errors="replace")
+                else:
+                    request_body = (
+                        body_bytes[:max_body_size].decode("utf-8", errors="replace")
+                        + f"... [truncated, total size: {len(body_bytes)} bytes]"
+                    )
+        except Exception as e:
+            logger.debug(f"Failed to capture request body: {e}")
+
+    # Add OpenTelemetry span attributes if enabled
+    if OTEL_ENABLED:
+        try:
+            from opentelemetry import trace
+            from shared.telemetry import is_telemetry_enabled
+            from shared.telemetry_context import set_request_context
+
+            if is_telemetry_enabled():
+                set_request_context(request_id)
+
+                if request_body:
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        current_span.set_attribute("http.request.body", request_body)
+        except Exception as e:
+            logger.debug(f"Failed to set OTEL context: {e}")
+
+    # Pre-request logging
+    logger.info(
+        f"request : {request.method} {request.url.path} {request.query_params} {request_id}"
+    )
+
+    # Process request
+    response = await call_next(request)
+    process_time = (time.time() - start_time) * 1000
+
+    # Capture response headers and body if OTEL is enabled
+    if OTEL_ENABLED:
+        try:
+            from opentelemetry import trace
+            from shared.telemetry import is_telemetry_enabled
+
+            if is_telemetry_enabled():
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    # Capture response headers
+                    if OTEL_CAPTURE_RESPONSE_HEADERS:
+                        for header_name, header_value in response.headers.items():
+                            if header_name.lower() in ("authorization", "cookie", "set-cookie"):
+                                header_value = "[REDACTED]"
+                            current_span.set_attribute(
+                                f"http.response.header.{header_name}", header_value
+                            )
+
+                    # Capture response body (only for non-streaming responses)
+                    if OTEL_CAPTURE_RESPONSE_BODY:
+                        if not isinstance(response, StreamingResponse):
+                            try:
+                                response_body_chunks = []
+                                async for chunk in response.body_iterator:
+                                    response_body_chunks.append(chunk)
+
+                                response_body = b"".join(response_body_chunks)
+
+                                max_body_size = 4096
+                                if response_body:
+                                    if len(response_body) <= max_body_size:
+                                        body_str = response_body.decode("utf-8", errors="replace")
+                                    else:
+                                        body_str = (
+                                            response_body[:max_body_size].decode("utf-8", errors="replace")
+                                            + f"... [truncated, total size: {len(response_body)} bytes]"
+                                        )
+                                    current_span.set_attribute("http.response.body", body_str)
+
+                                from starlette.responses import Response
+                                response = Response(
+                                    content=response_body,
+                                    status_code=response.status_code,
+                                    headers=dict(response.headers),
+                                    media_type=response.media_type,
+                                )
+                            except Exception as e:
+                                logger.debug(f"Failed to capture response body: {e}")
+        except Exception as e:
+            logger.debug(f"Failed to capture OTEL response: {e}")
+
+    # Post-request logging
+    logger.info(
+        f"response: {request.method} {request.url.path} {request_id} {response.status_code} {process_time:.2f}ms"
+    )
+
+    response.headers["X-Request-ID"] = request_id
+    return response
+
 
 agent_service = AgentService()
 

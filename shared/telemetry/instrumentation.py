@@ -50,12 +50,167 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        FastAPIInstrumentor.instrument_app(app)
+        from shared.telemetry.config import get_http_capture_settings
+
+        # Get HTTP capture settings
+        capture_settings = get_http_capture_settings()
+
+        # Build hooks for capturing request/response data
+        server_request_hook = None
+        client_request_hook = None
+        client_response_hook = None
+
+        if (
+            capture_settings.get("capture_request_headers")
+            or capture_settings.get("capture_request_body")
+        ):
+            server_request_hook = _create_server_request_hook(capture_settings, logger)
+
+        if (
+            capture_settings.get("capture_response_headers")
+            or capture_settings.get("capture_response_body")
+        ):
+            client_response_hook = _create_client_response_hook(capture_settings, logger)
+
+        FastAPIInstrumentor.instrument_app(
+            app,
+            server_request_hook=server_request_hook,
+            client_request_hook=client_request_hook,
+            client_response_hook=client_response_hook,
+        )
         logger.info("✓ FastAPI instrumentation enabled")
+
+        # Log capture settings
+        if any(capture_settings.values()):
+            enabled_captures = [k for k, v in capture_settings.items() if v]
+            logger.info(f"  HTTP capture enabled for: {', '.join(enabled_captures)}")
+
     except ImportError:
         logger.debug("FastAPI instrumentation not available (package not installed)")
     except Exception as e:
         logger.warning(f"Failed to setup FastAPI instrumentation: {e}")
+
+
+def _create_server_request_hook(capture_settings: dict, logger: logging.Logger):
+    """Create a server request hook for capturing request headers, query params, and body."""
+
+    def server_request_hook(span, scope):
+        """Hook called when a request is received."""
+        if span is None or not span.is_recording():
+            return
+
+        try:
+            # Capture request headers
+            if capture_settings.get("capture_request_headers"):
+                headers = scope.get("headers", [])
+                for header_name, header_value in headers:
+                    # Decode bytes to string
+                    name = (
+                        header_name.decode("utf-8")
+                        if isinstance(header_name, bytes)
+                        else header_name
+                    )
+                    value = (
+                        header_value.decode("utf-8")
+                        if isinstance(header_value, bytes)
+                        else header_value
+                    )
+                    # Skip sensitive headers
+                    if name.lower() in ("authorization", "cookie", "set-cookie"):
+                        value = "[REDACTED]"
+                    span.set_attribute(f"http.request.header.{name}", value)
+
+            # Capture query parameters
+            if capture_settings.get("capture_request_body"):
+                query_string = scope.get("query_string", b"")
+                if query_string:
+                    if isinstance(query_string, bytes):
+                        query_string = query_string.decode("utf-8", errors="replace")
+                    span.set_attribute("http.request.query_string", query_string)
+
+                    # Parse query parameters into individual attributes
+                    try:
+                        from urllib.parse import parse_qs
+
+                        params = parse_qs(query_string)
+                        for key, values in params.items():
+                            # Join multiple values with comma
+                            value = ",".join(values)
+                            # Redact sensitive parameters
+                            if key.lower() in (
+                                "password",
+                                "token",
+                                "api_key",
+                                "apikey",
+                                "secret",
+                                "access_token",
+                            ):
+                                value = "[REDACTED]"
+                            span.set_attribute(f"http.request.param.{key}", value)
+                    except Exception:
+                        pass  # If parsing fails, we still have the raw query_string
+
+                # Capture path parameters from scope
+                path_params = scope.get("path_params", {})
+                if path_params:
+                    for key, value in path_params.items():
+                        span.set_attribute(f"http.request.path_param.{key}", str(value))
+
+        except Exception as e:
+            logger.debug(f"Error in server_request_hook: {e}")
+
+    return server_request_hook
+
+
+def _create_client_response_hook(capture_settings: dict, logger: logging.Logger):
+    """Create a client response hook for capturing response headers and body."""
+
+    def client_response_hook(span, message):
+        """Hook called when a response is sent."""
+        if span is None or not span.is_recording():
+            return
+
+        try:
+            # Capture response headers
+            if capture_settings.get("capture_response_headers"):
+                headers = message.get("headers", [])
+                for header_name, header_value in headers:
+                    # Decode bytes to string
+                    name = (
+                        header_name.decode("utf-8")
+                        if isinstance(header_name, bytes)
+                        else header_name
+                    )
+                    value = (
+                        header_value.decode("utf-8")
+                        if isinstance(header_value, bytes)
+                        else header_value
+                    )
+                    # Skip sensitive headers
+                    if name.lower() in ("authorization", "cookie", "set-cookie"):
+                        value = "[REDACTED]"
+                    span.set_attribute(f"http.response.header.{name}", value)
+
+            # Capture response body (be careful with large bodies)
+            if capture_settings.get("capture_response_body"):
+                body = message.get("body", b"")
+                if body:
+                    # Limit body size to avoid huge spans
+                    max_body_size = 4096  # 4KB limit
+                    if isinstance(body, bytes):
+                        body_str = body[:max_body_size].decode("utf-8", errors="replace")
+                    else:
+                        body_str = str(body)[:max_body_size]
+
+                    if len(body) > max_body_size:
+                        body_str += f"... [truncated, total size: {len(body)} bytes]"
+
+                    span.set_attribute("http.response.body", body_str)
+
+        except Exception as e:
+            logger.debug(f"Error in client_response_hook: {e}")
+
+    return client_response_hook
 
 
 def _setup_sqlalchemy_instrumentation(
