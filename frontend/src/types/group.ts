@@ -72,6 +72,15 @@ export interface GroupMemberListResponse {
 }
 
 /**
+ * Result of adding a member operation
+ */
+export interface AddMemberResult {
+  success: boolean
+  message: string
+  data: GroupMember | null
+}
+
+/**
  * Scope type for resource queries
  */
 export type ResourceScope = 'personal' | 'group' | 'all'

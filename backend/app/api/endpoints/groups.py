@@ -17,6 +17,7 @@ from app.schemas.namespace import (
     GroupUpdate,
 )
 from app.schemas.namespace_member import (
+    AddMemberResult,
     GroupMemberCreate,
     GroupMemberResponse,
     GroupMemberUpdate,
@@ -195,7 +196,7 @@ def list_members(
             detail="You are not a member of this group",
         )
 
-    # Get all active members
+    # Get all active members with user information
     members = (
         db.query(NamespaceMember)
         .filter(
@@ -205,8 +206,34 @@ def list_members(
         .all()
     )
 
-    return [GroupMemberResponse.model_validate(m) for m in members]
+    # Enrich with user names
+    result = []
+    for m in members:
+        member_dict = {
+            "id": m.id,
+            "group_name": m.group_name,
+            "user_id": m.user_id,
+            "role": m.role,
+            "invited_by_user_id": m.invited_by_user_id,
+            "is_active": m.is_active,
+            "created_at": m.created_at,
+            "updated_at": m.updated_at,
+        }
+        
+        # Get user name
+        user = db.query(User).filter(User.id == m.user_id).first()
+        if user:
+            member_dict["user_name"] = user.user_name
+        
+        # Get invited_by user name
+        if m.invited_by_user_id:
+            invited_by_user = db.query(User).filter(User.id == m.invited_by_user_id).first()
+            if invited_by_user:
+                member_dict["invited_by_user_name"] = invited_by_user.user_name
+        
+        result.append(GroupMemberResponse(**member_dict))
 
+    return result
 
 @router.post(
     "/{group_name}/members",
@@ -237,6 +264,60 @@ def add_member_endpoint(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to add member: {str(e)}",
+        )
+
+
+@router.post(
+    "/{group_name}/members/by-username",
+    response_model=AddMemberResult,
+    status_code=status.HTTP_200_OK,
+)
+def add_member_by_username_endpoint(
+    group_name: str,
+    username: str = Query(..., description="Username of the user to add"),
+    role: GroupRole = Query(GroupRole.Reporter, description="Role to assign"),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Add a member to the group by username.
+    Only Maintainers and Owners can add members.
+    Returns a result object with success status and message.
+    """
+    # Find user by username
+    user = db.query(User).filter(User.user_name == username, User.is_active == True).first()
+    
+    if not user:
+        return AddMemberResult(
+            success=False,
+            message=f"User '{username}' not found",
+            data=None
+        )
+    
+    try:
+        member = group_service.add_member(
+            db=db,
+            group_name=group_name,
+            user_id=user.id,
+            role=role,
+            invited_by_user_id=current_user.id,
+        )
+        return AddMemberResult(
+            success=True,
+            message="Member added successfully",
+            data=member
+        )
+    except HTTPException as e:
+        return AddMemberResult(
+            success=False,
+            message=e.detail,
+            data=None
+        )
+    except Exception as e:
+        return AddMemberResult(
+            success=False,
+            message=f"Failed to add member: {str(e)}",
+            data=None
         )
 
 

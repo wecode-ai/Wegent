@@ -704,7 +704,7 @@
     "error_invalid_link": "无效的分享链接",
     "error_invalid_link_desc": "分享链接格式无效，请检查链接后重试。",
     "error_task_deleted": "任务已不可用",
-    "error_task_deleted_desc": "此分享任务已被所有者删除，无法访问。",
+    "error_task_deleted_desc": "此分享任务已被ower删除，无法访问。",
     "error_load_failed": "加载失败",
     "error_load_failed_desc": "无法加载分享任务，请稍后重试。",
     "go_home": "返回聊天页",
@@ -785,7 +785,7 @@
     "displayName": "显示名称",
     "visibility": "可见性",
     "description": "描述",
-    "owner": "所有者",
+    "owner": "Ower",
     "role": "角色",
     "members": "成员",
     "resources": "资源",
@@ -795,10 +795,10 @@
     "internal": "内部",
     "public": "公开",
     "roles": {
-      "Owner": "所有者",
-      "Maintainer": "维护者",
-      "Developer": "开发者",
-      "Reporter": "报告者"
+      "Owner": "Ower",
+      "Maintainer": "Maintainer",
+      "Developer": "Developer",
+      "Reporter": "Reporter"
     },
     "actions": {
       "addMember": "添加成员",
@@ -853,7 +853,7 @@
   },
   "groupMembers": {
     "selectUser": "选择用户...",
-    "selectMaintainer": "选择维护者...",
+    "selectMaintainer": "选择Maintainer...",
     "username": "用户名",
     "invitedBy": "邀请人",
     "joinDate": "加入日期",
@@ -863,19 +863,23 @@
     "add": "添加",
     "transfer": "转让",
     "confirmRemove": "确定要移除此成员吗？",
-    "confirmInviteAll": "邀请所有系统用户为报告者？",
-    "confirmLeave": "确定要离开此群组吗？您的资源将转移给群组所有者。",
-    "confirmTransfer": "确定要转让所有权吗？您将成为维护者。",
+    "confirmInviteAll": "邀请所有系统用户为Reporter？",
+    "confirmLeave": "确定要离开此群组吗？您的资源将转移给群组ower。",
+    "confirmTransfer": "确定要转让所有权吗？您将成为Maintainer。",
     "inviteAllSuccess": "所有用户邀请成功",
     "leaveSuccess": "您已离开群组",
     "transferSuccess": "所有权转让成功",
-    "transferDescription": "选择一个维护者来转让所有权。您将成为维护者。",
+    "transferDescription": "选择一个Maintainer来转让所有权。您将成为Maintainer。",
     "loadMembersFailed": "加载成员失败",
     "addMemberFailed": "添加成员失败",
     "removeMemberFailed": "移除成员失败",
     "updateRoleFailed": "更新角色失败",
     "inviteAllFailed": "邀请所有用户失败",
     "leaveFailed": "离开群组失败",
-    "transferFailed": "转让所有权失败"
+    "transferFailed": "转让所有权失败",
+    "enterUsername": "输入用户名",
+    "addMemberByUsername": "输入要添加的用户名。注意：此功能需要后端支持通过用户名添加成员。",
+    "userAlreadyMember": "该用户已经是群组成员",
+    "addByUsernameNotSupported": "暂不支持通过用户名添加成员，请联系管理员使用\"邀请所有用户\"功能"
   }
 }

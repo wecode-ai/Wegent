@@ -9,6 +9,7 @@ import { useTranslation } from 'react-i18next'
 import Modal from '@/features/common/Modal'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Input } from '@/components/ui/input'
 import {
   Select,
   SelectContent,
@@ -18,14 +19,13 @@ import {
 } from '@/components/ui/select'
 import {
   listGroupMembers,
-  addGroupMember,
+  addGroupMemberByUsername,
   removeGroupMember,
   updateGroupMemberRole,
   inviteAllUsers,
   leaveGroup,
   transferOwnership,
 } from '@/apis/groups'
-import { adminApis, type AdminUser } from '@/apis/admin'
 import { toast } from 'sonner'
 import type { Group, GroupMember, GroupRole } from '@/types/group'
 import { UserPlusIcon, LogOutIcon, ArrowRightLeftIcon } from 'lucide-react'
@@ -47,10 +47,10 @@ export function GroupMembersDialog({
 }: GroupMembersDialogProps) {
   const { t } = useTranslation()
   const [members, setMembers] = useState<GroupMember[]>([])
-  const [allUsers, setAllUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [showTransferOwnership, setShowTransferOwnership] = useState(false)
+  const [newMemberUsername, setNewMemberUsername] = useState('')
   const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter')
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -68,9 +68,6 @@ export function GroupMembersDialog({
   useEffect(() => {
     if (isOpen && group) {
       loadMembers()
-      if (canAddMember) {
-        loadUsers()
-      }
     }
   }, [isOpen, group])
 
@@ -80,7 +77,9 @@ export function GroupMembersDialog({
     setLoading(true)
     try {
       const response = await listGroupMembers(group.name)
-      setMembers(response.items || [])
+      // Backend returns array directly, not wrapped in {items: []}
+      const membersList = Array.isArray(response) ? response : (response.items || [])
+      setMembers(membersList)
     } catch (error) {
       console.error('Failed to load members:', error)
       toast.error(t('groupMembers.loadMembersFailed'))
@@ -89,33 +88,33 @@ export function GroupMembersDialog({
     }
   }
 
-  const loadUsers = async () => {
-    try {
-      const response = await adminApis.getUsers(1, 1000, true)
-      setAllUsers(response.items)
-    } catch (error) {
-      console.error('Failed to load users:', error)
-    }
-  }
-
   const handleAddMember = async () => {
-    if (!group || !selectedUserId) return
+    if (!group || !newMemberUsername.trim()) return
+
+    // Check if user already exists in members
+    const existingMember = members.find(m => m.user_name === newMemberUsername.trim())
+    if (existingMember) {
+      toast.error(t('groupMembers.userAlreadyMember'))
+      return
+    }
 
     setIsSubmitting(true)
     try {
-      await addGroupMember(group.name, {
-        user_id: selectedUserId,
-        role: selectedRole,
-      })
-      toast.success(t('groups.messages.memberAdded'))
-      setShowAddMember(false)
-      setSelectedUserId(null)
-      setSelectedRole('Reporter')
-      loadMembers()
-      onSuccess()
+      const result = await addGroupMemberByUsername(group.name, newMemberUsername.trim(), selectedRole)
+      
+      if (result.success) {
+        toast.success(result.message || t('groups.messages.memberAdded'))
+        setShowAddMember(false)
+        setNewMemberUsername('')
+        setSelectedRole('Reporter')
+        loadMembers()
+        onSuccess()
+      } else {
+        toast.error(result.message || t('groupMembers.addMemberFailed'))
+      }
     } catch (error: any) {
       console.error('Failed to add member:', error)
-      const errorMessage = error?.response?.data?.detail || t('groupMembers.addMemberFailed')
+      const errorMessage = error?.message || t('groupMembers.addMemberFailed')
       toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)
@@ -136,7 +135,7 @@ export function GroupMembersDialog({
       onSuccess()
     } catch (error: any) {
       console.error('Failed to remove member:', error)
-      const errorMessage = error?.response?.data?.detail || t('groupMembers.removeMemberFailed')
+      const errorMessage = error?.message || t('groupMembers.removeMemberFailed')
       toast.error(errorMessage)
     }
   }
@@ -151,7 +150,7 @@ export function GroupMembersDialog({
       onSuccess()
     } catch (error: any) {
       console.error('Failed to update role:', error)
-      const errorMessage = error?.response?.data?.detail || t('groupMembers.updateRoleFailed')
+      const errorMessage = error?.message || t('groupMembers.updateRoleFailed')
       toast.error(errorMessage)
     }
   }
@@ -171,7 +170,7 @@ export function GroupMembersDialog({
       onSuccess()
     } catch (error: any) {
       console.error('Failed to invite all users:', error)
-      const errorMessage = error?.response?.data?.detail || t('groupMembers.inviteAllFailed')
+      const errorMessage = error?.message || t('groupMembers.inviteAllFailed')
       toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)
@@ -192,7 +191,7 @@ export function GroupMembersDialog({
       onClose()
     } catch (error: any) {
       console.error('Failed to leave group:', error)
-      const errorMessage = error?.response?.data?.detail || t('groupMembers.leaveFailed')
+      const errorMessage = error?.message || t('groupMembers.leaveFailed')
       toast.error(errorMessage)
     }
   }
@@ -214,7 +213,7 @@ export function GroupMembersDialog({
       onClose()
     } catch (error: any) {
       console.error('Failed to transfer ownership:', error)
-      const errorMessage = error?.response?.data?.detail || t('groupMembers.transferFailed')
+      const errorMessage = error?.message || t('groupMembers.transferFailed')
       toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)
@@ -234,11 +233,6 @@ export function GroupMembersDialog({
       default:
         return 'info'
     }
-  }
-
-  const getAvailableUsers = () => {
-    const memberUserIds = new Set(members.map((m) => m.user_id))
-    return allUsers.filter((user) => !memberUserIds.has(user.id))
   }
 
   const getMaintainers = () => {
@@ -306,21 +300,12 @@ export function GroupMembersDialog({
             <h3 className="text-sm font-medium">{t('groups.actions.addMember')}</h3>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
-                <Select
-                  value={selectedUserId?.toString() || ''}
-                  onValueChange={(value) => setSelectedUserId(parseInt(value))}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder={t('groupMembers.selectUser')} />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {getAvailableUsers().map((user) => (
-                      <SelectItem key={user.id} value={user.id.toString()}>
-                        {user.user_name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Input
+                  value={newMemberUsername}
+                  onChange={(e) => setNewMemberUsername(e.target.value)}
+                  placeholder={t('groupMembers.enterUsername')}
+                  disabled={isSubmitting}
+                />
               </div>
               <div>
                 <Select
@@ -340,10 +325,13 @@ export function GroupMembersDialog({
               </div>
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowAddMember(false)}>
+              <Button variant="outline" size="sm" onClick={() => {
+                setShowAddMember(false)
+                setNewMemberUsername('')
+              }}>
                 {t('actions.cancel')}
               </Button>
-              <Button size="sm" onClick={handleAddMember} disabled={!selectedUserId || isSubmitting}>
+              <Button size="sm" onClick={handleAddMember} disabled={!newMemberUsername.trim() || isSubmitting}>
                 {t('groupMembers.add')}
               </Button>
             </div>

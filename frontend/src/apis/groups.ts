@@ -87,6 +87,19 @@ export const addGroupMember = async (
 }
 
 /**
+ * Add a member to the group by username
+ */
+export const addGroupMemberByUsername = async (
+  groupName: string,
+  username: string,
+  role: string
+): Promise<AddMemberResult> => {
+  return await apiClient.post<AddMemberResult>(
+    `/groups/${encodeURIComponent(groupName)}/members/by-username?username=${encodeURIComponent(username)}&role=${role}`
+  )
+}
+
+/**
  * Update a member's role
  */
 export const updateGroupMemberRole = async (

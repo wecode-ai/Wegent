@@ -881,6 +881,10 @@
     "updateRoleFailed": "Failed to update role",
     "inviteAllFailed": "Failed to invite all users",
     "leaveFailed": "Failed to leave group",
-    "transferFailed": "Failed to transfer ownership"
+    "transferFailed": "Failed to transfer ownership",
+    "enterUsername": "Enter username",
+    "addMemberByUsername": "Enter the username to add. Note: This feature requires backend support for adding members by username.",
+    "userAlreadyMember": "This user is already a member of the group",
+    "addByUsernameNotSupported": "Adding members by username is not yet supported. Please contact admin to use 'Invite All Users' feature"
   }
 }
