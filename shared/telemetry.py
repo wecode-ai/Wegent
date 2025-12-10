@@ -44,35 +44,39 @@ def get_otel_config_from_env() -> dict:
             - service_name: str
             - otlp_endpoint: str
             - sampler_ratio: float
+            - metrics_enabled: bool
     """
     return {
         "enabled": os.getenv("OTEL_ENABLED", "false").lower() == "true",
         "service_name": os.getenv("OTEL_SERVICE_NAME", "wegent-service"),
         "otlp_endpoint": os.getenv(
-            "OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317"
+            "OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317"
         ),
         "sampler_ratio": float(os.getenv("OTEL_TRACES_SAMPLER_ARG", "1.0")),
+        "metrics_enabled": os.getenv("OTEL_METRICS_ENABLED", "false").lower() == "true",
     }
 
 
 def init_telemetry(
     service_name: str,
     enabled: bool = True,
-    otlp_endpoint: str = "http://jaeger:4317",
+    otlp_endpoint: str = "http://otel-collector:4317",
     sampler_ratio: float = 1.0,
     service_version: str = "1.0.0",
     deployment_environment: Optional[str] = None,
+    metrics_enabled: bool = False,
 ) -> bool:
     """
-    Initialize OpenTelemetry with tracing and metrics support.
+    Initialize OpenTelemetry with tracing and optional metrics support.
 
     Args:
         service_name: Name of the service (e.g., "wegent-backend")
         enabled: Whether to enable telemetry (default: True)
-        otlp_endpoint: OTLP gRPC endpoint URL (default: "http://jaeger:4317")
+        otlp_endpoint: OTLP gRPC endpoint URL (default: "http://otel-collector:4317")
         sampler_ratio: Trace sampling ratio from 0.0 to 1.0 (default: 1.0)
         service_version: Version of the service (default: "1.0.0")
         deployment_environment: Deployment environment (e.g., "production", "development")
+        metrics_enabled: Whether to enable metrics export (default: False)
 
     Returns:
         bool: True if initialization was successful, False otherwise
@@ -105,11 +109,15 @@ def init_telemetry(
 
         resource = Resource.create(resource_attributes)
 
-        # Initialize TracerProvider
+        # Initialize TracerProvider (always enabled when telemetry is enabled)
         _init_tracer_provider(resource, otlp_endpoint, sampler_ratio)
 
-        # Initialize MeterProvider
-        _init_meter_provider(resource, otlp_endpoint)
+        # Initialize MeterProvider only if metrics are enabled
+        if metrics_enabled:
+            _init_meter_provider(resource, otlp_endpoint)
+            logger.info("OpenTelemetry metrics export enabled")
+        else:
+            logger.info("OpenTelemetry metrics export disabled")
 
         _telemetry_initialized = True
         _telemetry_enabled = True

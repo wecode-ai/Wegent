@@ -79,6 +79,7 @@ def create_app():
                 sampler_ratio=settings.OTEL_TRACES_SAMPLER_ARG,
                 service_version=settings.VERSION,
                 deployment_environment=settings.ENVIRONMENT,
+                metrics_enabled=settings.OTEL_METRICS_ENABLED,
             )
             logger.info("OpenTelemetry initialized successfully")
 

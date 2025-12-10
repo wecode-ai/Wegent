@@ -59,5 +59,6 @@ EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 # OpenTelemetry configuration
 OTEL_ENABLED = os.getenv("OTEL_ENABLED", "false").lower() == "true"
 OTEL_SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "wegent-executor-manager")
-OTEL_EXPORTER_OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://jaeger:4317")
+OTEL_EXPORTER_OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
 OTEL_TRACES_SAMPLER_ARG = float(os.getenv("OTEL_TRACES_SAMPLER_ARG", "1.0"))
+OTEL_METRICS_ENABLED = os.getenv("OTEL_METRICS_ENABLED", "false").lower() == "true"

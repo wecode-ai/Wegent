@@ -27,6 +27,7 @@ from config.config import (
     OTEL_SERVICE_NAME,
     OTEL_EXPORTER_OTLP_ENDPOINT,
     OTEL_TRACES_SAMPLER_ARG,
+    OTEL_METRICS_ENABLED,
 )
 
 
@@ -56,6 +57,7 @@ async def lifespan(app):
                 otlp_endpoint=OTEL_EXPORTER_OTLP_ENDPOINT,
                 sampler_ratio=OTEL_TRACES_SAMPLER_ARG,
                 service_version="0.1.0",
+                metrics_enabled=OTEL_METRICS_ENABLED,
             )
             logger.info("OpenTelemetry initialized successfully")
 
