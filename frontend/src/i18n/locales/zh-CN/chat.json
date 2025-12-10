@@ -182,7 +182,8 @@
   },
   "web_search": {
     "enable": "启用联网搜索",
-    "disable": "禁用联网搜索"
+    "disable": "禁用联网搜索",
+    "select_engine": "选择搜索引擎"
   },
   "streaming_wait": {
     "thinking": "正在思考",

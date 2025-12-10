@@ -107,13 +107,19 @@ export function getLastTeamIdByMode(mode: 'chat' | 'code'): number | null {
     const key = mode === 'chat' ? STORAGE_KEYS.LAST_TEAM_ID_CHAT : STORAGE_KEYS.LAST_TEAM_ID_CODE;
     const teamId = localStorage.getItem(key);
     if (!teamId || teamId === 'undefined' || teamId === 'null' || teamId === 'NaN') {
-      console.log(`[userPreferences] Invalid or missing team ID in localStorage for ${mode} mode:`, teamId);
+      console.log(
+        `[userPreferences] Invalid or missing team ID in localStorage for ${mode} mode:`,
+        teamId
+      );
       // Fallback to generic key
       return getLastTeamId();
     }
     const result = parseInt(teamId, 10);
     if (isNaN(result)) {
-      console.log(`[userPreferences] Failed to parse team ID for ${mode} mode, got NaN from:`, teamId);
+      console.log(
+        `[userPreferences] Failed to parse team ID for ${mode} mode, got NaN from:`,
+        teamId
+      );
       return getLastTeamId();
     }
     console.log(`[userPreferences] Getting team from localStorage for ${mode} mode:`, result);

@@ -44,6 +44,7 @@ export async function sendMessage(params: {
   taskType?: 'chat' | 'code';
   model_id?: string;
   force_override_bot_model?: boolean;
+  search_engine?: string;
   /** Stream callbacks for Chat Shell (required for Chat Shell) */
   streamCallbacks?: StreamChatCallbacks;
 }): Promise<SendMessageResult> {
@@ -56,6 +57,7 @@ export async function sendMessage(params: {
     taskType = 'chat',
     model_id,
     force_override_bot_model,
+    search_engine,
     streamCallbacks,
   } = params;
   const trimmed = message?.trim() ?? '';
@@ -79,6 +81,7 @@ export async function sendMessage(params: {
           task_id: task_id,
           model_id: model_id,
           force_override_bot_model: force_override_bot_model,
+          search_engine: search_engine,
           git_url: repo?.git_url,
           git_repo: repo?.git_repo,
           git_repo_id: repo?.git_repo_id,

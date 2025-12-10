@@ -58,6 +58,8 @@ export interface StreamChatRequest {
   attachment_id?: number;
   /** Enable web search for this message */
   enable_web_search?: boolean;
+  /** Search engine to use (when web search is enabled) */
+  search_engine?: string;
   /** Git info for record keeping (optional) */
   git_url?: string;
   git_repo?: string;
@@ -431,6 +433,55 @@ export async function resumeStreamWithOffset(
 }
 
 /**
+ * Search engine information
+ */
+export interface SearchEngine {
+  name: string;
+  display_name: string;
+}
+
+/**
+ * Response from get search engines API
+ */
+export interface SearchEnginesResponse {
+  enabled: boolean;
+  engines: SearchEngine[];
+}
+
+/**
+ * Get available search engines from backend configuration.
+ *
+ * @returns Search engines configuration
+ */
+export async function getSearchEngines(): Promise<SearchEnginesResponse> {
+  const token = getToken();
+
+  const response = await fetch(`${API_BASE_URL}/chat/search-engines`, {
+    method: 'GET',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token && { Authorization: `Bearer ${token}` }),
+    },
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let errorMsg = errorText;
+    try {
+      const json = JSON.parse(errorText);
+      if (json && typeof json.detail === 'string') {
+        errorMsg = json.detail;
+      }
+    } catch {
+      // Not JSON
+    }
+    throw new Error(errorMsg);
+  }
+
+  return response.json();
+}
+
+/**
  * Chat API exports
  */
 export const chatApis = {
@@ -440,4 +491,5 @@ export const chatApis = {
   getStreamingContent,
   resumeStream,
   resumeStreamWithOffset,
+  getSearchEngines,
 };

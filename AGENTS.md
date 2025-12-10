@@ -469,9 +469,7 @@ Task (Team + Workspace) → Subtasks (messages/steps)
   - `ATTACHMENT_S3_USE_SSL` - Use SSL for S3 connections (default: true)
 - `WEB_SEARCH_*` - Web search configuration (see `backend/app/services/search/README.md`)
   - `WEB_SEARCH_ENABLED` - Enable/disable web search feature (default: false)
-  - `WEB_SEARCH_BASE_URL` - Search API endpoint URL (required when enabled)
-  - `WEB_SEARCH_CONFIG` - JSON string containing adapter configuration
-  - `WEB_SEARCH_MAX_RESULTS` - Default maximum search results (default: 5)
+  - `WEB_SEARCH_ENGINES` - JSON string containing adapter configuration
 
 #### Database Migrations (Alembic)
 
@@ -543,7 +541,6 @@ git commit -m "chore: merge alembic heads"
 **Key environment variables:**
 - `NEXT_PUBLIC_API_URL` - Backend API URL
 - `NEXT_PUBLIC_LOGIN_MODE` - Authentication mode ('password', 'oidc', 'all')
-- `NEXT_PUBLIC_WEB_SEARCH_ENABLED` - Enable/disable web search feature (must match backend `WEB_SEARCH_ENABLED`)
 
 ### Executor
 

@@ -41,6 +41,7 @@ class HttpSearchService(SearchServiceBase):
     def __init__(
         self,
         base_url: str,
+        max_results: int = 10,
         query_param: str = "q",
         limit_param: str | None = "limit",
         auth_header: dict[str, str] | None = None,
@@ -57,6 +58,7 @@ class HttpSearchService(SearchServiceBase):
 
         Args:
             base_url: API endpoint URL
+            max_results: Maximum number of results to fetch (default: 10)
             query_param: Query string parameter name (default: "q")
             limit_param: Results limit parameter name (default: "limit", None to disable)
             auth_header: Authentication headers (e.g., {"Authorization": "Bearer token"})
@@ -69,6 +71,7 @@ class HttpSearchService(SearchServiceBase):
             timeout: Request timeout in seconds
         """
         self.base_url = base_url.rstrip("/")
+        self.max_results = max_results
         self.query_param = query_param
         self.limit_param = limit_param
         self.auth_header = auth_header or {}
@@ -81,57 +84,17 @@ class HttpSearchService(SearchServiceBase):
         self.timeout = timeout
 
     def _extract_results(self, response_data: Any) -> list[dict[str, Any]]:
-        """
-        Extract results array from response using configured path.
-
-        Args:
-            response_data: JSON response data
-
-        Returns:
-            list of result dictionaries
-        """
+        """Extract results array from response using configured path."""
         if not self.response_path:
-            # Response is the results array itself
-            if isinstance(response_data, list):
-                return response_data
-            return []
+            return response_data if isinstance(response_data, list) else []
 
-        # Navigate through nested path (e.g., "data.results")
         current = response_data
         for key in self.response_path.split("."):
-            if isinstance(current, dict):
-                current = current.get(key)
-            else:
+            if not isinstance(current, dict):
                 return []
+            current = current.get(key)
 
-            if current is None:
-                return []
-
-        if isinstance(current, list):
-            return current
-        return []
-
-    async def search(self, query: str, limit: int = 5) -> str:
-        """
-        Perform a web search and return formatted results.
-
-        Args:
-            query: The search query string
-            limit: Maximum number of results to return (default: 5)
-
-        Returns:
-            Formatted search results as a string suitable for LLM context
-        """
-        if not query:
-            return ""
-        try:
-            results = await self.search_raw(query, limit)
-            results_for_llm = self.format_results_for_llm(results[:limit])
-            logger.info("results_for_llm: %s", results_for_llm)
-            return results_for_llm
-        except Exception as e:
-            logger.exception("HTTP search failed for query '%s'", query)
-            return f"Search failed: {str(e)}"
+        return current if isinstance(current, list) else []
 
     async def search_raw(self, query: str, limit: int = 5) -> list[dict[str, Any]]:
         """
@@ -146,41 +109,41 @@ class HttpSearchService(SearchServiceBase):
         """
         try:
             # Build query parameters
-            params = {self.query_param: query}
-
-            # Add limit parameter if configured
+            params = {self.query_param: query, **self.extra_params}
             if self.limit_param:
+                # Dynamic limit overrides extra_params if key collision exists
                 params[self.limit_param] = limit
 
-            # Add extra parameters
-            params.update(self.extra_params)
-
             # Make HTTP request
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(
                     self.base_url,
                     params=params,
                     headers=self.auth_header,
-                    timeout=self.timeout,
                 )
                 response.raise_for_status()
                 data = response.json()
 
             # Extract results array
             raw_results = self._extract_results(data)
+            effective_limit = min(limit, self.max_results)
 
             # Transform to standard format
             formatted_results = []
-            for item in raw_results[:limit]:
+            for item in raw_results[:effective_limit]:
                 if not isinstance(item, dict):
                     continue
 
+                def get_clean_str(key: str) -> str:
+                    val = item.get(key)
+                    return str(val).strip() if val is not None else ""
+
                 formatted_results.append(
                     {
-                        "title": str(item.get(self.title_field, "")).strip(),
-                        "url": str(item.get(self.url_field, "")).strip(),
-                        "snippet": str(item.get(self.snippet_field, "")).strip(),
-                        "content": str(item.get(self.content_field, "")).strip(),
+                        "title": get_clean_str(self.title_field),
+                        "url": get_clean_str(self.url_field),
+                        "snippet": get_clean_str(self.snippet_field),
+                        "content": get_clean_str(self.content_field),
                     }
                 )
 
@@ -192,9 +155,10 @@ class HttpSearchService(SearchServiceBase):
             return formatted_results
 
         except httpx.HTTPStatusError as e:
-            logger.exception(
-                "HTTP search failed with status %s",
+            logger.error(
+                "HTTP search failed with status %s: %s",
                 e.response.status_code,
+                e.response.text,
             )
             raise Exception(
                 f"Search API returned error: {e.response.status_code}"

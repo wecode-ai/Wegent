@@ -57,7 +57,7 @@ Wegent is an open-source AI native operating system that enables you to define, 
 3. **🔒 Isolated Sandbox Environments**: Each agent team runs in an independent sandbox, enabling multiple teams to execute simultaneously
 4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, solo mode and other agent collaboration patterns for complex workflows like news insights and content retrieval
 5. **💻 AI Coding Integration**: Coding mode integrates with GitHub/GitLab and other code services to implement AI-driven development, code review, and other coding workflows
-6. **🔍 Web Search Integration**: Optional web search capability for Chat Shell teams, supporting multiple search engines through a generic HTTP adapter (SearXNG, Google Custom Search, Bing, Brave, etc.)
+6. **🔍 Web Search Integration**: Optional web search capability for Chat Shell teams, supporting multiple search engines through a generic HTTP adapter (SearXNG, Google Custom Search, Bing, Brave, etc.) with user-selectable engine preferences.
 
 ```mermaid
 graph LR
