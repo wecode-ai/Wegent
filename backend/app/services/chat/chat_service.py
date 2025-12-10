@@ -99,34 +99,8 @@ class ChatService(ChatServiceBase):
             cancelled = False
             error_info = None
             chunk_count = 0
-            start_time = time.time()
 
             try:
-                # Try to acquire semaphore with timeout
-                try:
-                    acquired = await asyncio.wait_for(semaphore.acquire(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    error_msg = (
-                        "Too many concurrent chat requests, please try again later"
-                    )
-                    try:
-                        chunk_queue.put_nowait({"type": "error", "message": error_msg})
-                    except asyncio.QueueFull:
-                        pass
-                    await self._update_subtask_status(
-                        subtask_id, "FAILED", error=error_msg
-                    )
-                    return
-
-                # Update status to RUNNING
-                await self._update_subtask_status(subtask_id, "RUNNING")
-
-                # Get chat history
-                history = await session_manager.get_chat_history(task_id)
-
-                # Build messages list
-                messages = self._build_messages(history, message, system_prompt)
-
                 # Determine which streaming method to use
                 if tools:
                     # Tool calling flow
@@ -785,7 +759,6 @@ class ChatService(ChatServiceBase):
 
         # Check if any messages contain vision content (array format)
         processed_messages = []
-        has_vision = False
 
         supports_vision = any(
             domain in base_url.lower()
@@ -816,8 +789,6 @@ class ChatService(ChatServiceBase):
                 )
             elif isinstance(content, list):
                 # This is a multi-part content (vision message)
-                has_vision = True
-
                 if supports_vision:
                     # Keep the original vision format
                     processed_messages.append(msg)
@@ -1010,7 +981,6 @@ class ChatService(ChatServiceBase):
             headers.update(default_headers)
 
         processed_messages = []
-        has_vision = False
 
         supports_vision = any(
             domain in base_url.lower()
@@ -1040,7 +1010,6 @@ class ChatService(ChatServiceBase):
                     }
                 )
             elif isinstance(content, list):
-                has_vision = True
                 if supports_vision:
                     processed_messages.append(msg)
                 else:
@@ -1779,7 +1748,7 @@ class ChatService(ChatServiceBase):
         try:
             task = (
                 db.query(Kind)
-                .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True)
+                .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active)
                 .first()
             )
             if not task:
