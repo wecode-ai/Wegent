@@ -194,7 +194,6 @@ class WikiService:
                             error_detail = (
                                 f"Wiki task user does not have access to repository '{obj_in.project_name}'. "
                                 f"Please add {platform_name} user '{git_username}' to the repository with at least Reporter/Read access level. "
-                                f"Alternatively, set WIKI_DEFAULT_USER_ID=0 in your .env file to use the current user's credentials instead."
                             )
                         else:
                             error_detail = (
@@ -263,7 +262,8 @@ class WikiService:
 
             # Note: model_id is not passed - wiki uses the team's bound model
             # The team's bot should have a model configured (bind_model or custom config)
-            # When branch_name is empty, git will clone the repository's default branch
+            # Always use empty branch_name to clone the repository's default branch
+            # This ensures wiki generation always uses the latest default branch
             task_create = TaskCreate(
                 title=f"Generate Wiki: {obj_in.project_name}",
                 team_id=team_id,
@@ -275,7 +275,7 @@ class WikiService:
                     else 0
                 ),
                 git_domain=obj_in.source_domain or "",
-                branch_name=obj_in.source_snapshot.branch_name or "",
+                branch_name="",  # Always use default branch
                 prompt=wiki_prompt,
                 type="online",
                 task_type="code",
