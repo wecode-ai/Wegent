@@ -355,8 +355,8 @@ def create_app():
         # Add OpenTelemetry span attributes if enabled
         if settings.OTEL_ENABLED:
             from opentelemetry import trace
-            from shared.telemetry.core import is_telemetry_enabled
             from shared.telemetry.context import set_request_context, set_user_context
+            from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
                 set_request_context(request_id)
