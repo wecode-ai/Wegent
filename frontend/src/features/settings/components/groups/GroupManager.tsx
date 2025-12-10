@@ -164,22 +164,26 @@ export function GroupManager() {
                     </td>
                     <td className="px-4 py-3 text-sm text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleEditClick(group)}
-                          title={t('groupManager.editGroup')}
-                        >
-                          <PencilIcon className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleMembersClick(group)}
-                          title={t('groupManager.manageMembers')}
-                        >
-                          <UsersIcon className="w-4 h-4" />
-                        </Button>
+                        {group.my_role === 'Owner' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEditClick(group)}
+                            title={t('groupManager.editGroup')}
+                          >
+                            <PencilIcon className="w-4 h-4" />
+                          </Button>
+                        )}
+                        {(group.my_role === 'Owner' || group.my_role === 'Maintainer') && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleMembersClick(group)}
+                            title={t('groupManager.manageMembers')}
+                          >
+                            <UsersIcon className="w-4 h-4" />
+                          </Button>
+                        )}
                         {group.my_role === 'Owner' && (
                           <Button
                             variant="ghost"

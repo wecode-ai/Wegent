@@ -339,11 +339,10 @@ def delete_group(db: Session, group_name: str, user_id: int) -> None:
     # Soft delete group
     group.is_active = False
 
-    # Deactivate all members
+    # Hard delete all members
     db.query(NamespaceMember).filter(
-        NamespaceMember.group_name == group_name,
-        NamespaceMember.is_active == True,
-    ).update({"is_active": False})
+        NamespaceMember.group_name == group_name
+    ).delete()
 
     db.commit()
 
@@ -516,8 +515,8 @@ def remove_member(
     # Transfer resources to owner
     _transfer_resources_to_owner(db, group_name, user_id, group.owner_user_id)
 
-    # Remove member (soft delete)
-    member.is_active = False
+    # Remove member (hard delete)
+    db.delete(member)
     db.commit()
 
 
@@ -558,16 +557,30 @@ def update_member_role(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    # Check permission (must be Owner to change roles)
+    # Check permission (must be at least Maintainer to change roles)
     updater_role = get_user_role_in_group(db, updated_by_user_id, group_name)
-    if updater_role != GroupRole.Owner:
+    if updater_role not in [GroupRole.Owner, GroupRole.Maintainer]:
         raise HTTPException(
             status_code=403,
-            detail="Only group Owner can update member roles",
+            detail="Only Maintainers and Owners can update member roles",
         )
+    
+    current_role = GroupRole(member.role)
+    
+    # Maintainers cannot modify Owner roles or promote to Owner
+    if updater_role == GroupRole.Maintainer:
+        if current_role == GroupRole.Owner:
+            raise HTTPException(
+                status_code=403,
+                detail="Maintainers cannot modify Owner roles",
+            )
+        if new_role == GroupRole.Owner:
+            raise HTTPException(
+                status_code=403,
+                detail="Only Owners can promote members to Owner role",
+            )
 
     # Prevent downgrading the last owner
-    current_role = GroupRole(member.role)
     if current_role == GroupRole.Owner and new_role != GroupRole.Owner:
         owner_count = (
             db.query(NamespaceMember)

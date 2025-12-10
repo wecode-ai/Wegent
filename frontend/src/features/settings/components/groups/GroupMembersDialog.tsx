@@ -60,8 +60,8 @@ export function GroupMembersDialog({
   // Permission checks
   const canAddMember = myRole === 'Owner' || myRole === 'Maintainer'
   const canRemoveMember = myRole === 'Owner' || myRole === 'Maintainer'
-  const canUpdateRole = myRole === 'Owner'
-  const canInviteAll = myRole === 'Owner'
+  const canUpdateRole = myRole === 'Owner' || myRole === 'Maintainer'
+  const canInviteAll = myRole === 'Owner' || myRole === 'Maintainer'
   const canTransferOwnership = myRole === 'Owner'
   const canLeave = myRole !== 'Owner'
 
@@ -324,6 +324,46 @@ export function GroupMembersDialog({
                 </Select>
               </div>
             </div>
+            
+            {/* Role Permission Description */}
+            <div className="p-3 bg-muted rounded-md">
+              <h4 className="text-sm font-medium mb-2">{t('groupMembers.rolePermissions')}</h4>
+              <div className="space-y-2 text-xs text-text-muted">
+                {selectedRole === 'Reporter' && (
+                  <div>
+                    <strong>Reporter：</strong>{t('groupMembers.roleDescriptions.Reporter')}
+                  </div>
+                )}
+                {selectedRole === 'Developer' && (
+                  <div>
+                    <strong>Developer：</strong>{t('groupMembers.roleDescriptions.Developer')}
+                  </div>
+                )}
+                {selectedRole === 'Maintainer' && (
+                  <div>
+                    <strong>Maintainer：</strong>{t('groupMembers.roleDescriptions.Maintainer')}
+                    <ul className="list-disc list-inside ml-2 mt-1">
+                      <li>{t('groupMembers.roleDescriptions.MaintainerDetails.manageResources')}</li>
+                      <li>{t('groupMembers.roleDescriptions.MaintainerDetails.manageMembers')}</li>
+                      <li>{t('groupMembers.roleDescriptions.MaintainerDetails.updateRoles')}</li>
+                      <li>{t('groupMembers.roleDescriptions.MaintainerDetails.canLeave')}</li>
+                    </ul>
+                  </div>
+                )}
+                {selectedRole === 'Owner' && (
+                  <div>
+                    <strong>Owner：</strong>{t('groupMembers.roleDescriptions.Owner')}
+                    <ul className="list-disc list-inside ml-2 mt-1">
+                      <li>{t('groupMembers.roleDescriptions.OwnerDetails.fullControl')}</li>
+                      <li>{t('groupMembers.roleDescriptions.OwnerDetails.deleteGroup')}</li>
+                      <li>{t('groupMembers.roleDescriptions.OwnerDetails.transferOwnership')}</li>
+                      <li>{t('groupMembers.roleDescriptions.OwnerDetails.cannotLeave')}</li>
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </div>
+            
             <div className="flex justify-end gap-2">
               <Button variant="outline" size="sm" onClick={() => {
                 setShowAddMember(false)
@@ -418,7 +458,7 @@ export function GroupMembersDialog({
                           )}
                         </td>
                         <td className="px-4 py-3 text-sm">
-                          {canUpdateRole && !isOwner ? (
+                          {canUpdateRole && !isMe && !(myRole === 'Maintainer' && isOwner) ? (
                             <Select
                               value={member.role}
                               onValueChange={(value: GroupRole) =>
@@ -431,6 +471,11 @@ export function GroupMembersDialog({
                                 </Badge>
                               </SelectTrigger>
                               <SelectContent>
+                                {myRole === 'Owner' && (
+                                  <SelectItem value="Owner">
+                                    {t('groups.roles.Owner')}
+                                  </SelectItem>
+                                )}
                                 <SelectItem value="Maintainer">
                                   {t('groups.roles.Maintainer')}
                                 </SelectItem>

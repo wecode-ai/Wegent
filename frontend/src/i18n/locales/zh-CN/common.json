@@ -864,7 +864,7 @@
     "transfer": "转让",
     "confirmRemove": "确定要移除此成员吗？",
     "confirmInviteAll": "邀请所有系统用户为Reporter？",
-    "confirmLeave": "确定要离开此群组吗？您的资源将转移给群组ower。",
+    "confirmLeave": "确定要离开此群组吗？",
     "confirmTransfer": "确定要转让所有权吗？您将成为Maintainer。",
     "inviteAllSuccess": "所有用户邀请成功",
     "leaveSuccess": "您已离开群组",
@@ -880,6 +880,27 @@
     "enterUsername": "输入用户名",
     "addMemberByUsername": "输入要添加的用户名。注意：此功能需要后端支持通过用户名添加成员。",
     "userAlreadyMember": "该用户已经是群组成员",
-    "addByUsernameNotSupported": "暂不支持通过用户名添加成员，请联系管理员使用\"邀请所有用户\"功能"
+    "addByUsernameNotSupported": "暂不支持通过用户名添加成员，请联系管理员使用\"邀请所有用户\"功能",
+    "rolePermissions": "角色权限说明",
+    "roleDescriptions": {
+      "Reporter": "只能查看群组资源，无法进行任何修改操作，可离开群组",
+      "Developer": "可查看、创建、编辑群组资源，可离开群组，但无法删除资源或管理成员",
+      "Maintainer": "拥有除删除群组和转让Owner外的所有权限",
+      "MaintainerDetails": {
+        "title": "包括：",
+        "manageResources": "管理所有资源（查看、创建、编辑、删除）",
+        "manageMembers": "邀请和移除成员",
+        "updateRoles": "修改成员角色（除Owner外）",
+        "canLeave": "可离开群组"
+      },
+      "Owner": "拥有群组的完全控制权",
+      "OwnerDetails": {
+        "title": "包括：",
+        "fullControl": "管理所有资源和成员",
+        "deleteGroup": "删除群组",
+        "transferOwnership": "转让Owner权限",
+        "cannotLeave": "无法直接离开群组（需先转让Owner）"
+      }
+    }
   }
 }
