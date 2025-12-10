@@ -44,7 +44,7 @@ class GiteaProvider(RepositoryProvider):
             git_domain: Optional domain to filter a specific Gitea entry
 
         Returns:
-            List of dictionaries containing git_domain, git_token, type
+            List of dictionaries containing git_domain, git_token, type, user_name
 
         Raises:
             HTTPException: Raised when Gitea information is not configured
@@ -62,6 +62,7 @@ class GiteaProvider(RepositoryProvider):
                         "git_domain": info.get("git_domain", ""),
                         "git_token": info.get("git_token", ""),
                         "type": info.get("type", ""),
+                        "user_name": info.get("user_name", ""),
                     }
                 )
 
@@ -229,6 +230,7 @@ class GiteaProvider(RepositoryProvider):
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
         git_domain = git_info["git_domain"]
+        user_name = git_info.get("user_name", "")
 
         if not git_token:
             raise HTTPException(status_code=400, detail="Git token not configured")
@@ -683,6 +685,7 @@ class GiteaProvider(RepositoryProvider):
         """
         git_info = self._pick_git_info(user, git_domain)
         git_token = git_info["git_token"]
+        user_name = git_info.get("user_name", "")
 
         if not git_token:
             raise HTTPException(status_code=400, detail="Git token not configured")

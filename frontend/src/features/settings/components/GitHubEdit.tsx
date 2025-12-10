@@ -129,11 +129,12 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       return;
     }
 
-    // Gerrit requires username
-    if (isGerrit && !usernameToSave) {
+    // Gerrit and Gitea require username
+    if ((isGerrit || isGitea) && !usernameToSave) {
+      const platformName = isGerrit ? 'Gerrit' : 'Gitea';
       toast({
         variant: 'destructive',
-        title: t('github.error.gerrit_username_required') || 'Gerrit username is required',
+        title: `${platformName} username is required`,
       });
       return;
     }
@@ -261,8 +262,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             <p className="mt-1 text-xs text-red-500">{t('github.error.invalid_domain')}</p>
           )}
         </div>
-        {/* Username input (Gerrit only) */}
-        {isGerrit && (
+        {/* Username input (Gerrit and Gitea only) */}
+        {(isGerrit || isGitea) && (
           <div>
             <label className="block text-sm font-medium text-text-secondary mb-2">
               {t('github.username') || 'Username'}
@@ -271,7 +272,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               type="text"
               value={username}
               onChange={e => setUsername(e.target.value)}
-              placeholder={t('github.username_placeholder') || 'Gerrit username'}
+              placeholder={
+                isGerrit
+                  ? (t('github.username_placeholder') || 'Gerrit username')
+                  : (t('github.username_placeholder') || 'Gitea username')
+              }
               className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
           </div>
@@ -413,7 +418,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
           disabled={
             !domain ||
             isDomainInvalid ||
-            (isGerrit && !username.trim()) ||
+            ((isGerrit || isGitea) && !username.trim()) ||
             !token.trim() ||
             tokenSaving
           }
