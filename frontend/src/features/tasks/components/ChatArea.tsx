@@ -894,29 +894,41 @@ export default function ChatArea({
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
       {/* Messages Area: always mounted to keep scroll container stable */}
-      <div
-        ref={scrollContainerRef}
-        className={
-          (hasMessages ? 'flex-1 overflow-y-auto custom-scrollbar' : 'overflow-y-hidden') +
-          ' transition-opacity duration-200 ' +
-          (hasMessages ? 'opacity-100' : 'opacity-0 pointer-events-none h-0')
-        }
-        aria-hidden={!hasMessages}
-        style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
-      >
-        <div className="w-full max-w-5xl mx-auto px-4 sm:px-6">
-          <MessagesArea
-            selectedTeam={selectedTeam}
-            selectedRepo={selectedRepo}
-            selectedBranch={selectedBranch}
-            streamingContent={streamingContent}
-            isStreaming={isStreaming}
-            pendingUserMessage={pendingUserMessage}
-            pendingAttachment={pendingAttachment}
-            onContentChange={handleMessagesContentChange}
-            streamingSubtaskId={streamingSubtaskId}
-            onShareButtonRender={onShareButtonRender}
+      <div className="relative flex-1 min-h-0">
+        {/* Top gradient fade effect - only show when has messages */}
+        {hasMessages && (
+          <div
+            className="absolute top-0 left-0 right-0 h-12 z-10 pointer-events-none"
+            style={{
+              background:
+                'linear-gradient(to bottom, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.8) 40%, rgb(var(--color-bg-base) / 0) 100%)',
+            }}
           />
+        )}
+        <div
+          ref={scrollContainerRef}
+          className={
+            (hasMessages ? 'h-full overflow-y-auto custom-scrollbar' : 'overflow-y-hidden') +
+            ' transition-opacity duration-200 ' +
+            (hasMessages ? 'opacity-100' : 'opacity-0 pointer-events-none h-0')
+          }
+          aria-hidden={!hasMessages}
+          style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
+        >
+          <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-12">
+            <MessagesArea
+              selectedTeam={selectedTeam}
+              selectedRepo={selectedRepo}
+              selectedBranch={selectedBranch}
+              streamingContent={streamingContent}
+              isStreaming={isStreaming}
+              pendingUserMessage={pendingUserMessage}
+              pendingAttachment={pendingAttachment}
+              onContentChange={handleMessagesContentChange}
+              streamingSubtaskId={streamingSubtaskId}
+              onShareButtonRender={onShareButtonRender}
+            />
+          </div>
         </div>
       </div>
 
