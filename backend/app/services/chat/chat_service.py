@@ -14,6 +14,7 @@ import inspect
 import json
 import logging
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
@@ -24,6 +25,7 @@ from app.services.chat.base import ChatServiceBase, get_http_client
 from app.services.chat.session_manager import session_manager
 from fastapi.responses import StreamingResponse
 from fastmcp import FastMCP
+from sqlalchemy.orm.attributes import flag_modified
 
 logger = logging.getLogger(__name__)
 
@@ -1400,9 +1402,6 @@ class ChatService(ChatServiceBase):
                 )
             response.raise_for_status()
 
-            # For Gemini, we use UUID for generating IDs
-            import uuid
-
             async for line in response.aiter_lines():
                 # Check cancellation at each line
                 if cancel_event.is_set():
@@ -1741,8 +1740,6 @@ class ChatService(ChatServiceBase):
         """
         Update task status based on subtask status (synchronous).
         """
-        from sqlalchemy.orm.attributes import flag_modified
-
         from app.models.kind import Kind
         from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
         from app.schemas.kind import Task
