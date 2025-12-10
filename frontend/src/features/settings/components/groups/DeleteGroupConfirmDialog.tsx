@@ -41,7 +41,7 @@ export function DeleteGroupConfirmDialog({
 
     // Check for blocking conditions
     if ((group.resource_count || 0) > 0) {
-      toast.error('Cannot delete group with existing resources. Please remove all resources first.')
+      toast.error(t('groups.messages.cannotDeleteWithResources'))
       return
     }
 
@@ -54,7 +54,7 @@ export function DeleteGroupConfirmDialog({
     } catch (error: any) {
       console.error('Failed to delete group:', error)
       const errorMessage =
-        error?.response?.data?.detail || error?.message || 'Failed to delete group'
+        error?.response?.data?.detail || error?.message || t('groups.messages.deleteFailed')
       toast.error(errorMessage)
     } finally {
       setIsDeleting(false)
@@ -74,27 +74,27 @@ export function DeleteGroupConfirmDialog({
           <AlertDialogTitle>{t('groups.actions.delete')}</AlertDialogTitle>
           <AlertDialogDescription className="space-y-3">
             <p>
-              Are you sure you want to delete the group <strong>{group.name}</strong>?
+              {t('groups.messages.confirmDelete', { name: group.name })}
             </p>
 
             {hasBlockers && (
               <div className="bg-error/10 border border-error/20 text-error px-3 py-2 rounded-md text-sm">
-                <p className="font-medium">Cannot delete group:</p>
+                <p className="font-medium">{t('groups.messages.cannotDelete')}</p>
                 <ul className="list-disc list-inside mt-1 space-y-1">
                   {(group.resource_count || 0) > 0 && (
-                    <li>Group has {group.resource_count} resource(s)</li>
+                    <li>{t('groups.messages.hasResources', { count: group.resource_count })}</li>
                   )}
                 </ul>
                 <p className="mt-2">
-                  Please remove all resources and subgroups before deleting this group.
+                  {t('groups.messages.removeResourcesFirst')}
                 </p>
               </div>
             )}
 
             {!hasBlockers && (
               <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-3 py-2 rounded-md text-sm">
-                <p className="font-medium">Warning:</p>
-                <p className="mt-1">This action cannot be undone.</p>
+                <p className="font-medium">{t('common.warning')}:</p>
+                <p className="mt-1">{t('common.cannotUndo')}</p>
               </div>
             )}
           </AlertDialogDescription>

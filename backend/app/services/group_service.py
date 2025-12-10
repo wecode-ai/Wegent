@@ -149,6 +149,7 @@ def list_user_groups(
 ) -> list[GroupResponse]:
     """
     List groups where user is a member (created or joined).
+    Includes my_role and member_count for each group.
 
     Args:
         db: Database session
@@ -157,11 +158,11 @@ def list_user_groups(
         limit: Maximum number of records to return
 
     Returns:
-        List of group responses
+        List of GroupResponse objects with additional fields
     """
-    # Get all groups where user is an active member
-    member_group_names = (
-        db.query(NamespaceMember.group_name)
+    # Get all groups where user is an active member with their role
+    member_data = (
+        db.query(NamespaceMember.group_name, NamespaceMember.role)
         .filter(
             NamespaceMember.user_id == user_id,
             NamespaceMember.is_active == True,
@@ -169,10 +170,12 @@ def list_user_groups(
         .all()
     )
 
-    group_names = [name for (name,) in member_group_names]
-
-    if not group_names:
+    if not member_data:
         return []
+
+    # Create a mapping of group_name -> role
+    group_roles = {name: role for name, role in member_data}
+    group_names = list(group_roles.keys())
 
     groups = (
         db.query(Namespace)
@@ -186,7 +189,28 @@ def list_user_groups(
         .all()
     )
 
-    return [GroupResponse.model_validate(group) for group in groups]
+    # Get member counts for all groups
+    member_counts = {}
+    for group_name in group_names:
+        count = (
+            db.query(NamespaceMember)
+            .filter(
+                NamespaceMember.group_name == group_name,
+                NamespaceMember.is_active == True,
+            )
+            .count()
+        )
+        member_counts[group_name] = count
+
+    # Build response with additional fields
+    result = []
+    for group in groups:
+        group_response = GroupResponse.model_validate(group)
+        group_response.my_role = group_roles.get(group.name)
+        group_response.member_count = member_counts.get(group.name, 0)
+        result.append(group_response)
+
+    return result
 
 
 def update_group(

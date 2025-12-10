@@ -108,7 +108,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
         <div>
           <Label htmlFor="name">{t('groups.name')}</Label>
           <Input id="name" value={group.name} disabled className="bg-muted" />
-          <p className="text-xs text-text-muted mt-1">Group name cannot be changed</p>
+          <p className="text-xs text-text-muted mt-1">{t('groupCreate.nameImmutable')}</p>
         </div>
 
         {/* Display Name */}
@@ -160,7 +160,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
             id="description"
             value={formData.description}
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-            placeholder="Enter group description..."
+            placeholder={t('groupCreate.descriptionPlaceholder')}
             rows={3}
             disabled={isSubmitting}
           />

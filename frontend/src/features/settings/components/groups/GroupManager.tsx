@@ -137,9 +137,6 @@ export function GroupManager() {
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.members')}
                   </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.resources')}
-                  </th>
                   <th className="px-4 py-3 text-right text-sm font-medium text-text-primary">
                     {t('actions.edit')}
                   </th>
@@ -164,9 +161,6 @@ export function GroupManager() {
                     </td>
                     <td className="px-4 py-3 text-sm text-text-secondary">
                       {group.member_count || 0}
-                    </td>
-                    <td className="px-4 py-3 text-sm text-text-secondary">
-                      {group.resource_count || 0}
                     </td>
                     <td className="px-4 py-3 text-sm text-right">
                       <div className="flex items-center justify-end gap-2">

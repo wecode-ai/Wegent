@@ -398,7 +398,9 @@
     "close_sidebar": "Close sidebar",
     "previous": "Previous",
     "next": "Next",
-    "page_info": "Page {{current}} of {{total}}"
+    "page_info": "Page {{current}} of {{total}}",
+    "warning": "Warning",
+    "cannotUndo": "This action cannot be undone"
   },
   "quota": {
     "load_failed": "Failed to fetch quota info",
@@ -819,7 +821,13 @@
       "deleteSuccess": "Group deleted successfully",
       "memberAdded": "Member added successfully",
       "memberRemoved": "Member removed successfully",
-      "roleUpdated": "Role updated successfully"
+      "roleUpdated": "Role updated successfully",
+      "cannotDeleteWithResources": "Cannot delete group with resources",
+      "deleteFailed": "Failed to delete group",
+      "confirmDelete": "Confirm Delete Group",
+      "cannotDelete": "Cannot Delete",
+      "hasResources": "This group contains {{count}} resources",
+      "removeResourcesFirst": "Please delete or transfer all resources before deleting the group"
     }
   },
   "resourceScope": {
@@ -847,5 +855,32 @@
     "displayNamePlaceholder": "My Group",
     "descriptionPlaceholder": "Enter group description...",
     "nameValidation": "Name must contain only letters, numbers, dashes, and underscores"
+  },
+  "groupMembers": {
+    "selectUser": "Select user...",
+    "selectMaintainer": "Select maintainer...",
+    "username": "Username",
+    "invitedBy": "Invited By",
+    "joinDate": "Join Date",
+    "actions": "Actions",
+    "you": "You",
+    "remove": "Remove",
+    "add": "Add",
+    "transfer": "Transfer",
+    "confirmRemove": "Are you sure you want to remove this member?",
+    "confirmInviteAll": "Invite all system users as Reporters?",
+    "confirmLeave": "Are you sure you want to leave this group? Your resources will be transferred to the group owner.",
+    "confirmTransfer": "Are you sure you want to transfer ownership? You will become a Maintainer.",
+    "inviteAllSuccess": "All users invited successfully",
+    "leaveSuccess": "You have left the group",
+    "transferSuccess": "Ownership transferred successfully",
+    "transferDescription": "Select a Maintainer to transfer ownership. You will become a Maintainer.",
+    "loadMembersFailed": "Failed to load members",
+    "addMemberFailed": "Failed to add member",
+    "removeMemberFailed": "Failed to remove member",
+    "updateRoleFailed": "Failed to update role",
+    "inviteAllFailed": "Failed to invite all users",
+    "leaveFailed": "Failed to leave group",
+    "transferFailed": "Failed to transfer ownership"
   }
 }

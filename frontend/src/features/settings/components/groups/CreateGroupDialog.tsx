@@ -80,7 +80,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
     try {
       const payload: GroupCreate = {
         name: formData.name.trim(),
-        display_name: formData.display_name?.trim() || undefined,
+        display_name: formData.display_name?.trim() || formData.name.trim(),
         visibility: formData.visibility,
         description: formData.description?.trim() || undefined,
       }
