@@ -73,7 +73,8 @@ async def lifespan(app: FastAPI):
             logger.info("OpenTelemetry initialized successfully")
 
             # Apply instrumentation
-            _setup_opentelemetry_instrumentation(app)
+            from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
+            setup_opentelemetry_instrumentation(app, logger)
 
             # Restore parent trace context from environment variables
             # This continues the trace started by executor_manager
@@ -255,46 +256,6 @@ def main():
     # Get port from environment variable, default to 10001
     port = int(os.getenv("PORT", 10001))
     uvicorn.run(app, host="0.0.0.0", port=port)
-
-
-def _setup_opentelemetry_instrumentation(app: FastAPI) -> None:
-    """
-    Setup OpenTelemetry instrumentation for the executor service.
-
-    Args:
-        app: FastAPI application instance
-    """
-    try:
-        # FastAPI instrumentation
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-        FastAPIInstrumentor.instrument_app(app)
-        logger.info("FastAPI instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup FastAPI instrumentation: {e}")
-
-    try:
-        # HTTPX instrumentation
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-        HTTPXClientInstrumentor().instrument()
-        logger.info("HTTPX instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup HTTPX instrumentation: {e}")
-
-    try:
-        # Requests instrumentation
-        from opentelemetry.instrumentation.requests import RequestsInstrumentor
-        RequestsInstrumentor().instrument()
-        logger.info("Requests instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup Requests instrumentation: {e}")
-
-    try:
-        # System metrics instrumentation
-        from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
-        SystemMetricsInstrumentor().instrument()
-        logger.info("System metrics instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup System metrics instrumentation: {e}")
 
 
 if __name__ == "__main__":

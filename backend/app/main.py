@@ -88,7 +88,9 @@ def create_app():
             logger.info("OpenTelemetry initialized successfully")
 
             # Apply instrumentation
-            _setup_opentelemetry_instrumentation(app, logger)
+            from app.core.telemetry import setup_opentelemetry_instrumentation
+
+            setup_opentelemetry_instrumentation(app, logger)
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     elif not TELEMETRY_AVAILABLE:
@@ -370,62 +372,6 @@ def create_app():
                 logger.warning(f"Error during OpenTelemetry shutdown: {e}")
 
     return app
-
-
-def _setup_opentelemetry_instrumentation(app: FastAPI, logger: logging.Logger) -> None:
-    """
-    Setup OpenTelemetry instrumentation for the backend service.
-
-    Args:
-        app: FastAPI application instance
-        logger: Logger instance
-    """
-    try:
-        # FastAPI instrumentation
-        from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-
-        FastAPIInstrumentor.instrument_app(app)
-        logger.info("✓ FastAPI instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup FastAPI instrumentation: {e}")
-
-    try:
-        # SQLAlchemy instrumentation
-        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-
-        SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
-        logger.info("✓ SQLAlchemy instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup SQLAlchemy instrumentation: {e}")
-
-    try:
-        # HTTPX instrumentation
-        from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-
-        HTTPXClientInstrumentor().instrument()
-        logger.info("✓ HTTPX instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup HTTPX instrumentation: {e}")
-
-    try:
-        # Requests instrumentation
-        from opentelemetry.instrumentation.requests import RequestsInstrumentor
-
-        RequestsInstrumentor().instrument()
-        logger.info("✓ Requests instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup Requests instrumentation: {e}")
-
-    try:
-        # System metrics instrumentation
-        from opentelemetry.instrumentation.system_metrics import (
-            SystemMetricsInstrumentor,
-        )
-
-        SystemMetricsInstrumentor().instrument()
-        logger.info("✓ System metrics instrumentation enabled")
-    except Exception as e:
-        logger.warning(f"Failed to setup System metrics instrumentation: {e}")
 
 
 app = create_app()

@@ -1,42 +1,29 @@
-#!/usr/bin/env python
-
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
-# -*- coding: utf-8 -*-
-
 """
-OpenTelemetry business metrics module.
+OpenTelemetry metrics module for Wegent services.
 
-DEPRECATED: This module is kept for backward compatibility.
-Please use `shared.telemetry.metrics` package instead:
-
-    from shared.telemetry.metrics import WegentMetrics, record_task_completed
-    from shared.telemetry.metrics import track_metric, track_duration
+Provides pre-defined business metrics and decorators for automatic metric collection.
 """
-
-# Re-export from new module structure for backward compatibility
 
 # Business metrics
 from shared.telemetry.metrics.business import (
     WegentMetrics,
     get_wegent_metrics,
-    record_session_opened,
-    record_session_active_change,
     record_message_sent,
-    record_task_created,
+    record_model_call,
+    record_session_active_change,
+    record_session_opened,
     record_task_completed,
+    record_task_created,
     record_task_failed,
     record_user_activity,
-    record_model_call,
 )
 
 # Metric tracking decorators
-from shared.telemetry.metrics.decorators import (
-    track_metric,
-    track_duration,
-)
+from shared.telemetry.metrics.decorators import track_duration, track_metric
 
 __all__ = [
     # Business metrics
