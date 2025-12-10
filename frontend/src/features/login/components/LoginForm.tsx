@@ -96,9 +96,12 @@ export default function LoginForm() {
         user_name: formData.user_name,
         password: formData.password,
       });
+      // Login succeeded - clean up session storage
       if (typeof window !== 'undefined') {
         sessionStorage.removeItem(POST_LOGIN_REDIRECT_KEY);
       }
+      // Force an immediate redirect after successful login
+      // This ensures redirect happens even if useEffect timing is delayed
       router.replace(redirectPath);
     } catch {
       // Error handling is already done in UserContext.login, no need to show error message here
