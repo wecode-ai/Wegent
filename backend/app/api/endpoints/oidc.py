@@ -26,7 +26,10 @@ from app.schemas.user import (
     LoginResponse,
     UserAuthTypeResponse,
 )
-from app.services.k_batch import apply_default_resources_async, apply_default_resources_sync
+from app.services.k_batch import (
+    apply_default_resources_async,
+    apply_default_resources_sync,
+)
 from app.services.oidc import oidc_service
 
 logger = logging.getLogger(__name__)
