@@ -818,6 +818,7 @@ export default function MessagesArea({
           )}
 
           {/* Streaming AI response - use MessageBubble component for consistency */}
+          {/* Show waiting indicator inside MessageBubble when streaming but no content yet */}
           {(isStreaming || streamingContent) &&
             streamingContent !== undefined &&
             !isStreamingContentAlreadyDisplayed && (
@@ -840,11 +841,11 @@ export default function MessagesArea({
                 selectedBranch={selectedBranch}
                 theme={theme as 'light' | 'dark'}
                 t={t}
+                isWaiting={Boolean(isStreaming && !streamingContent)}
               />
             )}
         </div>
       )}
-
       {/* Task Share Modal */}
       <TaskShareModal
         visible={showShareModal}

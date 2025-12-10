@@ -20,6 +20,7 @@ import BranchSelector from './BranchSelector';
 import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
 import FileUpload from './FileUpload';
+import { QuickAccessCards } from './QuickAccessCards';
 import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
 import { sendMessage, isChatShell } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -28,7 +29,7 @@ import { useChatStreamContext } from '../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
-import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferences';
+import { saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/userPreferences';
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
@@ -60,8 +61,13 @@ export default function ChatArea({
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
   if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
-    initialTeamIdRef.current = getLastTeamId();
-    console.log('[ChatArea] Pre-loaded team ID from localStorage:', initialTeamIdRef.current);
+    // Use mode-specific preference, with fallback to generic preference
+    initialTeamIdRef.current = getLastTeamIdByMode(taskType);
+    console.log(
+      '[ChatArea] Pre-loaded team ID from localStorage for mode:',
+      taskType,
+      initialTeamIdRef.current
+    );
   }
 
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -76,6 +82,18 @@ export default function ChatArea({
   const [isLoading, setIsLoading] = useState(false);
   // Unified error prompt using antd message.error, no local error state needed
   const [_error, setError] = useState('');
+
+  // Local pending state for immediate UI feedback (before context state is updated)
+  const [localPendingMessage, setLocalPendingMessage] = useState<string | null>(null);
+  const [localPendingAttachment, setLocalPendingAttachment] = useState<Attachment | null>(null);
+
+  // Unified function to reset streaming-related state
+  // This is called in multiple scenarios: task switch, stream complete, stream error, etc.
+  const resetStreamingState = useCallback(() => {
+    setLocalPendingMessage(null);
+    setLocalPendingAttachment(null);
+    setStreamingTaskId(null);
+  }, []);
 
   // Web search toggle state
   const [enableWebSearch, setEnableWebSearch] = useState(false);
@@ -189,8 +207,11 @@ export default function ChatArea({
   const isStreaming = isCurrentTaskStreaming;
   const isStopping = currentStreamState?.isStopping || false;
   const streamingContent = currentStreamState?.streamingContent || '';
-  const pendingUserMessage = currentStreamState?.pendingUserMessage || null;
-  const pendingAttachment = currentStreamState?.pendingAttachment as Attachment | null;
+  // Use local pending state first, then fall back to context state
+  // This ensures immediate UI feedback before context state is updated
+  const pendingUserMessage = localPendingMessage || currentStreamState?.pendingUserMessage || null;
+  const pendingAttachment =
+    localPendingAttachment || (currentStreamState?.pendingAttachment as Attachment | null);
   const streamingSubtaskId = currentStreamState?.subtaskId || null;
 
   // Wrapper for stopStream that uses the current display task ID
@@ -221,12 +242,25 @@ export default function ChatArea({
     }
   }, [selectedTaskDetail?.id, streamingTaskId]);
 
-  // Clear streamingTaskId when the stream completes
+  // Unified effect to reset streaming state in all necessary scenarios:
+  // 1. Stream completes or is externally cleared (streamingTaskId exists but stream is not active)
+  // 2. User navigates to a fresh new task state (no selectedTaskDetail and no streamingTaskId)
   useEffect(() => {
+    // Scenario 1: Stream was cleared (either completed or externally cleared via clearAllStreams)
     if (streamingTaskId && !isStreamingTaskActive) {
-      setStreamingTaskId(null);
+      resetStreamingState();
     }
-  }, [streamingTaskId, isStreamingTaskActive]);
+    // Scenario 2: No task selected and no active streaming task
+    else if (!selectedTaskDetail?.id && !streamingTaskId) {
+      resetStreamingState();
+    }
+  }, [streamingTaskId, isStreamingTaskActive, selectedTaskDetail?.id, resetStreamingState]);
+
+  // Reset streaming state when task ID changes (user switches tasks)
+  // This ensures pending message from task A doesn't show up in task B
+  useEffect(() => {
+    resetStreamingState();
+  }, [selectedTaskDetail?.id, resetStreamingState]);
 
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
@@ -241,10 +275,12 @@ export default function ChatArea({
   // 4. We're creating a new task (no selected task) and have an active stream
   // 5. CRITICAL: Once we have messages, keep showing them even during data refresh
   //    to prevent the "flash of empty state" bug
+  // 6. NEW: Local pending message for immediate UI feedback
   const hasMessages = React.useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream = !selectedTaskDetail?.id && streamingTaskId && isStreamingTaskActive;
     const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
+    const hasLocalPending = localPendingMessage !== null;
 
     // Once we have a task with subtasks, always show messages view
     // This prevents flashing back to empty state during refresh
@@ -252,8 +288,17 @@ export default function ChatArea({
       return true;
     }
 
-    return Boolean(hasSelectedTask || pendingUserMessage || isStreaming || hasNewTaskStream);
-  }, [selectedTaskDetail, pendingUserMessage, isStreaming, streamingTaskId, isStreamingTaskActive]);
+    return Boolean(
+      hasSelectedTask || pendingUserMessage || isStreaming || hasNewTaskStream || hasLocalPending
+    );
+  }, [
+    selectedTaskDetail,
+    pendingUserMessage,
+    isStreaming,
+    streamingTaskId,
+    isStreamingTaskActive,
+    localPendingMessage,
+  ]);
 
   // Determine if chat input should be hidden (workflow mode always hides chat input)
   const shouldHideChatInput = React.useMemo(() => {
@@ -376,10 +421,10 @@ export default function ChatArea({
     setExternalApiParams({});
     setAppMode(undefined);
 
-    // Save team preference to localStorage
+    // Save team preference to localStorage by mode
     if (team && team.id) {
-      console.log('[ChatArea] Saving team to localStorage:', team.id);
-      saveLastTeam(team.id);
+      console.log('[ChatArea] Saving team to localStorage for mode:', taskType, team.id);
+      saveLastTeamByMode(team.id, taskType);
     }
   };
 
@@ -490,6 +535,12 @@ export default function ChatArea({
 
     if (isChatShell(selectedTeam)) {
       console.log('[ChatArea] Using Chat Shell streaming mode');
+
+      // OPTIMIZATION: Set local pending state IMMEDIATELY for instant UI feedback
+      // This happens synchronously before any async operations
+      setLocalPendingMessage(message);
+      setLocalPendingAttachment(attachmentState.attachment || null);
+
       setTaskInputMessage('');
       // Reset attachment immediately after sending (clear from input area)
       resetAttachment();
@@ -498,7 +549,18 @@ export default function ChatArea({
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
 
       try {
+        // OPTIMIZATION: For new tasks, generate a temporary ID immediately
+        // This allows the UI to show the pending message right away
+        const immediateTaskId = selectedTaskDetail?.id || -Date.now();
+
+        // Set streaming task ID BEFORE calling contextStartStream
+        // This ensures hasMessages becomes true immediately
+        if (!selectedTaskDetail?.id) {
+          setStreamingTaskId(immediateTaskId);
+        }
+
         // Use the global context to start stream with callbacks
+        // Pass immediateTaskId to ensure ChatArea and context use the same temporary ID
         const tempTaskId = await contextStartStream(
           {
             message,
@@ -513,6 +575,7 @@ export default function ChatArea({
           {
             pendingUserMessage: message,
             pendingAttachment: attachmentState.attachment,
+            immediateTaskId: immediateTaskId,
             onTaskIdResolved: realTaskId => {
               // Update streaming task ID when real task ID is resolved
               setStreamingTaskId(realTaskId);
@@ -526,6 +589,9 @@ export default function ChatArea({
               // URL will be updated when stream completes.
             },
             onComplete: async (completedTaskId, _subtaskId) => {
+              // Note: Don't call resetStreamingState here as we handle streamingTaskId separately below
+              // and we need to wait for task detail refresh before clearing
+
               // Refresh task list after stream ends
               refreshTasks();
 
@@ -566,6 +632,9 @@ export default function ChatArea({
               }
             },
             onError: error => {
+              // Reset all streaming state on error
+              resetStreamingState();
+
               toast({
                 variant: 'destructive',
                 title: error.message,
@@ -574,8 +643,11 @@ export default function ChatArea({
           }
         );
 
-        // Track the streaming task ID (may be temporary ID for new tasks)
-        setStreamingTaskId(tempTaskId);
+        // Update streaming task ID if it changed (e.g., from immediate to returned)
+        // Only update if we got a different ID back
+        if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+          setStreamingTaskId(tempTaskId);
+        }
 
         // Note: For new tasks, the selected task is now set in onTaskIdResolved callback
         // when the real task ID is received from the backend
@@ -849,29 +921,41 @@ export default function ChatArea({
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
       {/* Messages Area: always mounted to keep scroll container stable */}
-      <div
-        ref={scrollContainerRef}
-        className={
-          (hasMessages ? 'flex-1 overflow-y-auto custom-scrollbar' : 'overflow-y-hidden') +
-          ' transition-opacity duration-200 ' +
-          (hasMessages ? 'opacity-100' : 'opacity-0 pointer-events-none h-0')
-        }
-        aria-hidden={!hasMessages}
-        style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
-      >
-        <div className="w-full max-w-5xl mx-auto px-4 sm:px-6">
-          <MessagesArea
-            selectedTeam={selectedTeam}
-            selectedRepo={selectedRepo}
-            selectedBranch={selectedBranch}
-            streamingContent={streamingContent}
-            isStreaming={isStreaming}
-            pendingUserMessage={pendingUserMessage}
-            pendingAttachment={pendingAttachment}
-            onContentChange={handleMessagesContentChange}
-            streamingSubtaskId={streamingSubtaskId}
-            onShareButtonRender={onShareButtonRender}
+      <div className="relative flex-1 min-h-0">
+        {/* Top gradient fade effect - only show when has messages */}
+        {hasMessages && (
+          <div
+            className="absolute top-0 left-0 right-0 h-12 z-10 pointer-events-none"
+            style={{
+              background:
+                'linear-gradient(to bottom, rgb(var(--color-bg-base)) 0%, rgb(var(--color-bg-base) / 0.8) 40%, rgb(var(--color-bg-base) / 0) 100%)',
+            }}
           />
+        )}
+        <div
+          ref={scrollContainerRef}
+          className={
+            (hasMessages ? 'h-full overflow-y-auto custom-scrollbar' : 'overflow-y-hidden') +
+            ' transition-opacity duration-200 ' +
+            (hasMessages ? 'opacity-100' : 'opacity-0 pointer-events-none h-0')
+          }
+          aria-hidden={!hasMessages}
+          style={{ paddingBottom: hasMessages ? `${inputHeight + 16}px` : '0' }}
+        >
+          <div className="w-full max-w-5xl mx-auto px-4 sm:px-6 pt-12">
+            <MessagesArea
+              selectedTeam={selectedTeam}
+              selectedRepo={selectedRepo}
+              selectedBranch={selectedBranch}
+              streamingContent={streamingContent}
+              isStreaming={isStreaming}
+              pendingUserMessage={pendingUserMessage}
+              pendingAttachment={pendingAttachment}
+              onContentChange={handleMessagesContentChange}
+              streamingSubtaskId={streamingSubtaskId}
+              onShareButtonRender={onShareButtonRender}
+            />
+          </div>
         </div>
       </div>
 
@@ -938,6 +1022,7 @@ export default function ChatArea({
                       handleSendMessage={handleSendMessage}
                       isLoading={isLoading}
                       taskType={taskType}
+                      autoFocus={!hasMessages}
                     />
                   )}
                   {/* Team Selector and Send Button - always show */}
@@ -980,6 +1065,7 @@ export default function ChatArea({
                           teams={teams}
                           disabled={hasMessages}
                           isLoading={isTeamsLoading}
+                          currentMode={taskType}
                         />
                       )}
                       {selectedTeam && (
@@ -1094,6 +1180,15 @@ export default function ChatArea({
                   )}
                 </div>
               </div>
+
+              {/* Quick Access Cards - show below input card when no messages */}
+              <QuickAccessCards
+                teams={teams}
+                selectedTeam={selectedTeam}
+                onTeamSelect={handleTeamChange}
+                currentMode={taskType}
+                isLoading={isTeamsLoading}
+              />
             </div>
           </div>
         )}
@@ -1204,6 +1299,7 @@ export default function ChatArea({
                         teams={teams}
                         disabled={hasMessages}
                         isLoading={isTeamsLoading}
+                        currentMode={taskType}
                       />
                     )}
                     {selectedTeam && (

@@ -27,6 +27,8 @@ interface TeamSelectorProps {
   taskDetail?: TaskDetail | null;
   // Optional: hide the settings footer link
   hideSettingsLink?: boolean;
+  // Optional: current mode for filtering teams by bind_mode
+  currentMode?: 'chat' | 'code';
 }
 
 export default function TeamSelector({
@@ -37,6 +39,7 @@ export default function TeamSelector({
   isLoading,
   taskDetail,
   hideSettingsLink = false,
+  currentMode,
 }: TeamSelectorProps) {
   // Try to get context, but don't throw if not available
   const taskContext = useContext(TaskContext);
@@ -45,6 +48,25 @@ export default function TeamSelector({
   const router = useRouter();
   const isMobile = useMediaQuery('(max-width: 767px)');
   const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), []);
+
+  // Filter teams by bind_mode based on current mode
+  const filteredTeams = useMemo(() => {
+    // First filter out teams with empty bind_mode array
+    const teamsWithValidBindMode = teams.filter(team => {
+      // If bind_mode is an empty array, filter it out
+      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false;
+      return true;
+    });
+
+    if (!currentMode) return teamsWithValidBindMode;
+    return teamsWithValidBindMode.filter(team => {
+      // If bind_mode is not set (undefined/null), show in all modes
+      if (!team.bind_mode) return true;
+      // Otherwise, only show if current mode is in bind_mode
+      return team.bind_mode.includes(currentMode);
+    });
+  }, [teams, currentMode]);
+
   // Handle team selection from task detail
   useEffect(() => {
     // Priority 1: Set team from task detail if viewing a task
@@ -52,10 +74,10 @@ export default function TeamSelector({
       selectedTaskDetail &&
       'team' in selectedTaskDetail &&
       selectedTaskDetail.team &&
-      teams.length > 0
+      filteredTeams.length > 0
     ) {
       const foundTeam =
-        teams.find(t => t.id === (selectedTaskDetail.team as { id: number }).id) || null;
+        filteredTeams.find(t => t.id === (selectedTaskDetail.team as { id: number }).id) || null;
       if (foundTeam && (!selectedTeam || selectedTeam.id !== foundTeam.id)) {
         console.log('[TeamSelector] Setting team from task detail:', foundTeam.name, foundTeam.id);
         setSelectedTeam(foundTeam);
@@ -63,27 +85,31 @@ export default function TeamSelector({
       }
     }
 
-    // Priority 2: Validate selected team still exists in list
-    if (selectedTeam && teams.length > 0) {
-      const exists = teams.some(team => team.id === selectedTeam.id);
-      if (!exists) {
-        console.log('[TeamSelector] Selected team not in list, clearing selection');
+    // Priority 2: Validate selected team still exists in filtered list
+    if (selectedTeam) {
+      if (filteredTeams.length > 0) {
+        const exists = filteredTeams.some(team => team.id === selectedTeam.id);
+        if (!exists) {
+          // When selected team is filtered out, auto-select the first available team
+          setSelectedTeam(filteredTeams[0]);
+        }
+      } else {
+        // No teams available after filtering, clear selection
         setSelectedTeam(null);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail, teams]);
+  }, [selectedTaskDetail, filteredTeams, selectedTeam, setSelectedTeam]);
 
   const handleChange = (value: string) => {
-    const team = teams.find(t => t.id === Number(value));
+    const team = filteredTeams.find(t => t.id === Number(value));
     if (team) {
       setSelectedTeam(team);
     }
   };
 
-  // Convert teams to SearchableSelectItem format
+  // Convert filtered teams to SearchableSelectItem format
   const selectItems: SearchableSelectItem[] = useMemo(() => {
-    return teams.map(team => {
+    return filteredTeams.map(team => {
       const isSharedTeam = team.share_status === 2 && team.user?.user_name;
       return {
         value: team.id.toString(),
@@ -111,9 +137,9 @@ export default function TeamSelector({
         ),
       };
     });
-  }, [teams, t, sharedBadgeStyle]);
+  }, [filteredTeams, t, sharedBadgeStyle]);
 
-  if (!selectedTeam || teams.length === 0) return null;
+  if (!selectedTeam || filteredTeams.length === 0) return null;
 
   return (
     <div
@@ -139,7 +165,7 @@ export default function TeamSelector({
           contentClassName="max-w-[320px]"
           renderTriggerValue={item => {
             if (!item) return null;
-            const team = teams.find(t => t.id.toString() === item.value);
+            const team = filteredTeams.find(t => t.id.toString() === item.value);
             const isSharedTeam = team?.share_status === 2 && team?.user?.user_name;
             return (
               <div className="flex items-center gap-2 min-w-0">

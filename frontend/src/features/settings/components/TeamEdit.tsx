@@ -65,9 +65,11 @@ export default function TeamEdit(props: TeamEditProps) {
 
   const formTeam = editingTeam ?? (editingTeamId === 0 ? initialTeam : null) ?? null;
 
-  // Left column: Team Name, Mode, Description
+  // Left column: Team Name, Description, Mode
   const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
   const [mode, setMode] = useState<TeamMode>('solo');
+  const [bindMode, setBindMode] = useState<('chat' | 'code')[]>(['chat', 'code']);
 
   // Right column: LeaderBot (single select), Bots Transfer (multi-select)
   // Use string key for antd Transfer, stringify bot.id here
@@ -214,23 +216,42 @@ export default function TeamEdit(props: TeamEditProps) {
   }, [mode, t]);
 
   // Reset form when initializing/switching editing object
+  // Reset form when initializing/switching editing object
   useEffect(() => {
     if (formTeam) {
       setName(formTeam.name);
+      setDescription(formTeam.description || '');
       const m = (formTeam.workflow?.mode as TeamMode) || 'pipeline';
       setMode(m);
+      // Restore bind_mode from team data (directly from team.bind_mode)
+      if (formTeam.bind_mode && Array.isArray(formTeam.bind_mode)) {
+        setBindMode(formTeam.bind_mode);
+      } else {
+        // Fallback: convert old recommended_mode to bind_mode
+        const recMode =
+          formTeam.recommended_mode ||
+          (formTeam.workflow?.recommended_mode as 'chat' | 'code' | 'both' | undefined);
+        if (recMode === 'chat') {
+          setBindMode(['chat']);
+        } else if (recMode === 'code') {
+          setBindMode(['code']);
+        } else {
+          setBindMode(['chat', 'code']);
+        }
+      }
       const ids = formTeam.bots.map(b => String(b.bot_id));
       setSelectedBotKeys(ids);
       const leaderBot = formTeam.bots.find(b => b.role === 'leader');
       setLeaderBotId(leaderBot?.bot_id ?? null);
     } else {
       setName('');
+      setDescription('');
       setMode('solo');
+      setBindMode(['chat', 'code']);
       setSelectedBotKeys([]);
       setLeaderBotId(null);
     }
   }, [editingTeamId, formTeam]);
-
   // When bots change, only update bots-related state, do not reset name and mode
   useEffect(() => {
     if (formTeam) {
@@ -397,14 +418,18 @@ export default function TeamEdit(props: TeamEditProps) {
           if (editingTeam && editingTeamId && editingTeamId > 0) {
             const updated = await updateTeam(editingTeamId, {
               name: name.trim(),
+              description: description.trim() || undefined,
               workflow,
+              bind_mode: bindMode,
               bots: botsData,
             });
             setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
           } else {
             const created = await createTeam({
               name: name.trim(),
+              description: description.trim() || undefined,
               workflow,
+              bind_mode: bindMode,
               bots: botsData,
             });
             setTeams(prev => [created, ...prev]);
@@ -482,19 +507,22 @@ export default function TeamEdit(props: TeamEditProps) {
       if (editingTeam && editingTeamId && editingTeamId > 0) {
         const updated = await updateTeam(editingTeamId, {
           name: name.trim(),
+          description: description.trim() || undefined,
           workflow,
+          bind_mode: bindMode,
           bots: botsData,
         });
         setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
       } else {
         const created = await createTeam({
           name: name.trim(),
+          description: description.trim() || undefined,
           workflow,
+          bind_mode: bindMode,
           bots: botsData,
         });
         setTeams(prev => [created, ...prev]);
       }
-      // Clear unsaved prompts
       setUnsavedPrompts({});
       setEditingTeamId(null);
     } catch (error) {
@@ -571,6 +599,60 @@ export default function TeamEdit(props: TeamEditProps) {
               placeholder={t('team.name_placeholder')}
               className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base h-9"
             />
+          </div>
+          {/* Team Description */}
+          <div className="flex flex-col">
+            <div className="flex items-center mb-1">
+              <label className="block text-sm font-medium text-text-primary">
+                {t('team.description')}
+              </label>
+            </div>
+            <input
+              type="text"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder={t('team.description_placeholder')}
+              className="w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-sm h-9"
+            />
+          </div>
+          {/* Bind Mode */}
+          <div className="flex flex-col">
+            <div className="flex items-center mb-1">
+              <label className="block text-sm font-medium text-text-primary">
+                {t('team.bind_mode')}
+              </label>
+            </div>
+            <div className="flex gap-2">
+              {(['chat', 'code'] as const).map(opt => {
+                const isSelected = bindMode.includes(opt);
+                return (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => {
+                      if (isSelected) {
+                        // Don't allow deselecting if it's the only one selected
+                        if (bindMode.length > 1) {
+                          setBindMode(bindMode.filter(m => m !== opt));
+                        }
+                      } else {
+                        setBindMode([...bindMode, opt]);
+                      }
+                    }}
+                    className={`
+                      px-3 py-1.5 text-sm font-medium rounded-md border transition-colors
+                      ${
+                        isSelected
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'border-border hover:bg-accent hover:text-accent-foreground'
+                      }
+                    `}
+                  >
+                    {t(`team.bind_mode_${opt}`)}
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           {/* Mode component */}
