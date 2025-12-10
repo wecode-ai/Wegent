@@ -164,21 +164,35 @@ jobs:
 
           # Wait for backend initialization to complete (database migration + YAML init)
           # by checking if the login API works with the default admin credentials
+          # Increased timeout to 90 iterations (3 minutes) to allow for slow CI environments
           echo "Waiting for backend initialization (migration + user creation)..."
-          for i in {1..30}; do
+          for i in {1..90}; do
             # Try to login with admin credentials to verify the user exists
             RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8000/api/auth/login \
               -H "Content-Type: application/json" \
               -d '{"user_name": "admin", "password": "Wegent2025!"}' 2>/dev/null)
             HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
 
             if [ "$HTTP_CODE" = "200" ]; then
               echo "Backend initialization complete - admin user exists and login works!"
               break
             fi
-            echo "Waiting for backend initialization... ($i/30) - HTTP code: $HTTP_CODE"
+            # Show more details for debugging when initialization fails
+            if [ $((i % 10)) -eq 0 ]; then
+              echo "Login response body: $BODY"
+            fi
+            echo "Waiting for backend initialization... ($i/90) - HTTP code: $HTTP_CODE"
             sleep 2
           done
+
+          # Final check - if login still fails, show error and continue anyway
+          # to let the E2E tests provide better diagnostic information
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "WARNING: Backend initialization may not be complete. HTTP code: $HTTP_CODE"
+            echo "Login response body: $BODY"
+            echo "Continuing with E2E tests for better diagnostics..."
+          fi
 
           echo "Waiting for frontend..."
           for i in {1..30}; do
