@@ -222,7 +222,7 @@
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Team",
         "metadata": {
-            "name": "开发团队(示例)",
+            "name": "代码开发",
             "namespace": "default"
         },
         "spec": {
@@ -275,7 +275,7 @@
         "apiVersion": "agent.wecode.io/v1",
         "kind": "Team",
         "metadata": {
-            "name": "spec-clarification",
+            "name": "需求澄清",
             "namespace": "default"
         },
         "spec": {
@@ -291,7 +291,7 @@
             ],
             "collaborationModel": "solo",
             "bind_mode": ["code"],
-            "description": "需求澄清团队，通过结构化问答帮助用户将模糊需求细化为清晰可执行的开发任务"
+            "description": "通过结构化问答帮助用户将模糊需求细化为清晰可执行的开发任务"
         }
     },
     {
