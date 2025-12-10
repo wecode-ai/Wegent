@@ -207,10 +207,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             # Personal teams only (default namespace)
             namespaces_to_query = ["default"]
         elif scope == "group":
-            # Group teams only (requires group_name)
-            if not group_name:
-                raise ValueError("group_name is required when scope='group'")
-            namespaces_to_query = [group_name]
+            # Group teams - if group_name not provided, query all user's groups
+            if group_name:
+                namespaces_to_query = [group_name]
+            else:
+                # Query all user's groups (excluding default)
+                user_groups = get_user_groups(db, user_id)
+                namespaces_to_query = user_groups if user_groups else []
         elif scope == "all":
             # Personal + all user's groups
             namespaces_to_query = ["default"] + get_user_groups(db, user_id)
@@ -730,9 +733,13 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if scope == "personal":
             namespaces_to_count = ["default"]
         elif scope == "group":
-            if not group_name:
-                raise ValueError("group_name is required when scope='group'")
-            namespaces_to_count = [group_name]
+            # Group teams - if group_name not provided, count all user's groups
+            if group_name:
+                namespaces_to_count = [group_name]
+            else:
+                # Count all user's groups (excluding default)
+                user_groups = get_user_groups(db, user_id)
+                namespaces_to_count = user_groups if user_groups else []
         elif scope == "all":
             namespaces_to_count = ["default"] + get_user_groups(db, user_id)
         else:

@@ -27,7 +27,12 @@ import {
 import { shellApis, UnifiedShell } from '@/apis/shells';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
-const ShellList: React.FC = () => {
+interface ShellListProps {
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
+}
+
+const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) => {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [shells, setShells] = useState<UnifiedShell[]>([]);
@@ -39,7 +44,7 @@ const ShellList: React.FC = () => {
   const fetchShells = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await shellApis.getUnifiedShells();
+      const response = await shellApis.getUnifiedShells(scope, groupName);
       setShells(response.data || []);
     } catch (error) {
       console.error('Failed to fetch shells:', error);
@@ -50,11 +55,11 @@ const ShellList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [toast, t]);
+  }, [toast, t, scope, groupName]);
 
   useEffect(() => {
     fetchShells();
-  }, [fetchShells]);
+  }, [fetchShells, scope, groupName]);
 
   const handleDelete = async () => {
     if (!deleteConfirmShell) return;

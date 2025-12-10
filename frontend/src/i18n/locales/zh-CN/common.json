@@ -343,6 +343,9 @@
     "team": "智能体",
     "models": "模型",
     "shells": "执行器",
+    "personal": "个人",
+    "groups": "组",
+    "groupManager": "组管理",
     "sections": {
       "general": "通用"
     }
@@ -818,11 +821,26 @@
     "personal": "个人",
     "group": "群组",
     "all": "全部",
-    "selectGroup": "选择群组"
+    "selectGroup": "选择群组",
+    "allGroups": "所有群组"
   },
   "resourceSource": {
     "personal": "[个人]",
     "shared": "[共享]",
     "public": "[公共]"
+  },
+  "groupManager": {
+    "subtitle": "管理您的群组和成员关系",
+    "noGroups": "暂无群组",
+    "editGroup": "编辑群组",
+    "manageMembers": "管理成员",
+    "deleteGroup": "删除群组"
+  },
+  "groupCreate": {
+    "nameImmutable": "创建后不可修改。仅使用字母、数字、短横线和下划线。",
+    "namePlaceholder": "my-group",
+    "displayNamePlaceholder": "我的群组",
+    "descriptionPlaceholder": "输入群组描述...",
+    "nameValidation": "名称只能包含字母、数字、短横线和下划线"
   }
 }

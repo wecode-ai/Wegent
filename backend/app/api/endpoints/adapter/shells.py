@@ -195,11 +195,13 @@ def list_unified_shells(
     if scope == "personal":
         namespaces_to_query = ["default"]
     elif scope == "group":
-        if not group_name:
-            raise HTTPException(
-                status_code=400, detail="group_name is required when scope='group'"
-            )
-        namespaces_to_query = [group_name]
+        # Group shells - if group_name not provided, query all user's groups
+        if group_name:
+            namespaces_to_query = [group_name]
+        else:
+            # Query all user's groups (excluding default)
+            user_groups = get_user_groups(db, current_user.id)
+            namespaces_to_query = user_groups if user_groups else []
     elif scope == "all":
         namespaces_to_query = ["default"] + get_user_groups(db, current_user.id)
     else:

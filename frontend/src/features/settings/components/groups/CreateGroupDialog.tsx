@@ -48,7 +48,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
     }
     // Name must be alphanumeric with dashes/underscores, no spaces
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
-      return 'Name must contain only letters, numbers, dashes, and underscores'
+      return t('groupCreate.nameValidation')
     }
     return null
   }
@@ -138,13 +138,13 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
                 setErrors({ ...errors, name: '' })
               }
             }}
-            placeholder="my-group"
+            placeholder={t('groupCreate.namePlaceholder')}
             disabled={isSubmitting}
             className={errors.name ? 'border-error' : ''}
           />
           {errors.name && <p className="text-sm text-error mt-1">{errors.name}</p>}
           <p className="text-xs text-text-muted mt-1">
-            Immutable after creation. Use letters, numbers, dashes, and underscores only.
+            {t('groupCreate.nameImmutable')}
           </p>
         </div>
 
@@ -160,7 +160,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
                 setErrors({ ...errors, display_name: '' })
               }
             }}
-            placeholder="My Group"
+            placeholder={t('groupCreate.displayNamePlaceholder')}
             disabled={isSubmitting}
             className={errors.display_name ? 'border-error' : ''}
           />
@@ -197,7 +197,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
             id="description"
             value={formData.description}
             onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-            placeholder="Enter group description..."
+            placeholder={t('groupCreate.descriptionPlaceholder')}
             rows={3}
             disabled={isSubmitting}
           />

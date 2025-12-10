@@ -342,6 +342,9 @@
     "team": "Team",
     "models": "Models",
     "shells": "Shells",
+    "personal": "Personal",
+    "groups": "Groups",
+    "groupManager": "Group Manager",
     "sections": {
       "general": "General"
     }
@@ -823,11 +826,26 @@
     "personal": "Personal",
     "group": "Group",
     "all": "All",
-    "selectGroup": "Select Group"
+    "selectGroup": "Select Group",
+    "allGroups": "All Groups"
   },
   "resourceSource": {
     "personal": "[Personal]",
     "shared": "[Shared]",
     "public": "[Public]"
+  },
+  "groupManager": {
+    "subtitle": "Manage your groups and memberships",
+    "noGroups": "No groups yet",
+    "editGroup": "Edit group",
+    "manageMembers": "Manage members",
+    "deleteGroup": "Delete group"
+  },
+  "groupCreate": {
+    "nameImmutable": "Immutable after creation. Use letters, numbers, dashes, and underscores only.",
+    "namePlaceholder": "my-group",
+    "displayNamePlaceholder": "My Group",
+    "descriptionPlaceholder": "Enter group description...",
+    "nameValidation": "Name must contain only letters, numbers, dashes, and underscores"
   }
 }

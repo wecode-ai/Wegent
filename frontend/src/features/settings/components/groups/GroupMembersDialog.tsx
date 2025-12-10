@@ -25,10 +25,9 @@ import {
   leaveGroup,
   transferOwnership,
 } from '@/apis/groups'
-import { getUsers } from '@/apis/users'
+import { adminApis, type AdminUser } from '@/apis/admin'
 import { toast } from 'sonner'
 import type { Group, GroupMember, GroupRole } from '@/types/group'
-import type { UserInfo } from '@/types/api'
 import { UserPlusIcon, LogOutIcon, ArrowRightLeftIcon } from 'lucide-react'
 
 interface GroupMembersDialogProps {
@@ -48,7 +47,7 @@ export function GroupMembersDialog({
 }: GroupMembersDialogProps) {
   const { t } = useTranslation()
   const [members, setMembers] = useState<GroupMember[]>([])
-  const [allUsers, setAllUsers] = useState<UserInfo[]>([])
+  const [allUsers, setAllUsers] = useState<AdminUser[]>([])
   const [loading, setLoading] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
   const [showTransferOwnership, setShowTransferOwnership] = useState(false)
@@ -92,8 +91,8 @@ export function GroupMembersDialog({
 
   const loadUsers = async () => {
     try {
-      const users = await getUsers()
-      setAllUsers(users)
+      const response = await adminApis.getUsers(1, 1000, true)
+      setAllUsers(response.items)
     } catch (error) {
       console.error('Failed to load users:', error)
     }
@@ -222,18 +221,18 @@ export function GroupMembersDialog({
     }
   }
 
-  const getRoleBadgeVariant = (role: GroupRole): 'default' | 'secondary' | 'outline' | 'destructive' => {
+  const getRoleBadgeVariant = (role: GroupRole): 'default' | 'secondary' | 'success' | 'error' | 'warning' | 'info' => {
     switch (role) {
       case 'Owner':
-        return 'destructive'
+        return 'error'
       case 'Maintainer':
         return 'default'
       case 'Developer':
         return 'secondary'
       case 'Reporter':
-        return 'outline'
+        return 'info'
       default:
-        return 'outline'
+        return 'info'
     }
   }
 
@@ -425,7 +424,7 @@ export function GroupMembersDialog({
                         <td className="px-4 py-3 text-sm font-medium text-text-primary">
                           {member.user_name || `User ${member.user_id}`}
                           {isMe && (
-                            <Badge variant="outline" className="ml-2">
+                            <Badge variant="info" className="ml-2">
                               You
                             </Badge>
                           )}

@@ -98,7 +98,7 @@ export function GroupManager() {
         <div>
           <h2 className="text-xl font-semibold text-text-primary">{t('groups.title')}</h2>
           <p className="text-sm text-text-secondary mt-1">
-            Manage your groups and memberships
+            {t('groupManager.subtitle')}
           </p>
         </div>
         <Button onClick={handleCreateClick}>
@@ -110,7 +110,7 @@ export function GroupManager() {
       {groups.length === 0 ? (
         <div className="text-center py-12 bg-surface rounded-lg border border-border">
           <UsersIcon className="w-12 h-12 mx-auto text-text-muted mb-4" />
-          <p className="text-text-secondary">No groups yet</p>
+          <p className="text-text-secondary">{t('groupManager.noGroups')}</p>
           <Button variant="outline" className="mt-4" onClick={handleCreateClick}>
             <PlusIcon className="w-4 h-4 mr-2" />
             {t('groups.create')}
@@ -174,7 +174,7 @@ export function GroupManager() {
                           variant="ghost"
                           size="icon"
                           onClick={() => handleEditClick(group)}
-                          title="Edit group"
+                          title={t('groupManager.editGroup')}
                         >
                           <PencilIcon className="w-4 h-4" />
                         </Button>
@@ -182,7 +182,7 @@ export function GroupManager() {
                           variant="ghost"
                           size="icon"
                           onClick={() => handleMembersClick(group)}
-                          title="Manage members"
+                          title={t('groupManager.manageMembers')}
                         >
                           <UsersIcon className="w-4 h-4" />
                         </Button>
@@ -191,7 +191,7 @@ export function GroupManager() {
                             variant="ghost"
                             size="icon"
                             onClick={() => handleDeleteClick(group)}
-                            title="Delete group"
+                            title={t('groupManager.deleteGroup')}
                           >
                             <TrashIcon className="w-4 h-4 text-error" />
                           </Button>

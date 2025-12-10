@@ -41,7 +41,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 
-export default function TeamList() {
+interface TeamListProps {
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
+}
+
+export default function TeamList({ scope = 'personal', groupName }: TeamListProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [teams, setTeams] = useState<Team[]>([]);
@@ -86,7 +91,10 @@ export default function TeamList() {
     async function loadData() {
       setIsLoading(true);
       try {
-        const [teamsData, botsData] = await Promise.all([fetchTeamsList(), fetchBotsList()]);
+        const [teamsData, botsData] = await Promise.all([
+          fetchTeamsList(scope, groupName),
+          fetchBotsList()
+        ]);
         setTeamsSorted(teamsData);
         setBotsSorted(botsData);
       } catch {
@@ -99,7 +107,7 @@ export default function TeamList() {
       }
     }
     loadData();
-  }, [toast, setBotsSorted, setTeamsSorted, t]);
+  }, [toast, setBotsSorted, setTeamsSorted, t, scope, groupName]);
 
   useEffect(() => {
     if (editingTeamId === null) {

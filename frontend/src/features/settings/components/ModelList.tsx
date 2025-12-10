@@ -43,7 +43,12 @@ interface DisplayModel {
   config: Record<string, unknown>; // Full config from unified API
 }
 
-const ModelList: React.FC = () => {
+interface ModelListProps {
+  scope?: 'personal' | 'group' | 'all';
+  groupName?: string;
+}
+
+const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [unifiedModels, setUnifiedModels] = useState<UnifiedModel[]>([]);
@@ -58,7 +63,7 @@ const ModelList: React.FC = () => {
     setLoading(true);
     try {
       // Use unified API to get all models (both public and user-defined)
-      const unifiedResponse = await modelApis.getUnifiedModels(undefined, true); // include_config=true for full details
+      const unifiedResponse = await modelApis.getUnifiedModels(undefined, true, scope, groupName);
       setUnifiedModels(unifiedResponse.data || []);
     } catch (error) {
       console.error('Failed to fetch models:', error);
@@ -69,7 +74,7 @@ const ModelList: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [toast, t]);
+  }, [toast, t, scope, groupName]);
 
   useEffect(() => {
     fetchModels();

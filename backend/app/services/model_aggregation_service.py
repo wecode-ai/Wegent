@@ -286,10 +286,13 @@ class ModelAggregationService:
             # Personal models only
             namespaces_to_query = ["default"]
         elif scope == "group":
-            # Group models only (requires group_name)
-            if not group_name:
-                raise ValueError("group_name is required when scope='group'")
-            namespaces_to_query = [group_name]
+            # Group models - if group_name not provided, query all user's groups
+            if group_name:
+                namespaces_to_query = [group_name]
+            else:
+                # Query all user's groups (excluding default)
+                user_groups = get_user_groups(db, current_user.id)
+                namespaces_to_query = user_groups if user_groups else []
         elif scope == "all":
             # Personal + all user's groups
             namespaces_to_query = ["default"] + get_user_groups(db, current_user.id)
