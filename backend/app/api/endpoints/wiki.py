@@ -118,10 +118,25 @@ def create_wiki_generation(
     wiki_db: Session = Depends(get_wiki_db),
     main_db: Session = Depends(get_db),
 ):
-    """Create wiki document generation task"""
+
+    """Create wiki document generation task.
+
+    Verifies that the current user has access to the repository before creating
+    the wiki generation task. This ensures users can only generate wikis for
+    repositories they have read access to.
+    """
     user_id = _resolve_user_id(account_id, current_user, main_db)
+
+    # Get the latest user info from main_db to ensure we have current git_info
+    user_for_access_check = (
+        main_db.query(User).filter(User.id == current_user.id).first()
+    )
+
     return wiki_service.create_wiki_generation(
-        wiki_db=wiki_db, obj_in=generation_create, user_id=user_id
+        wiki_db=wiki_db,
+        obj_in=generation_create,
+        user_id=user_id,
+        current_user=user_for_access_check,
     )
 
 

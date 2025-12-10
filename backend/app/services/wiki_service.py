@@ -29,6 +29,7 @@ from app.schemas.wiki import (
 )
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.adapters.team_kinds import team_kinds_service
+from app.services.user import user_service
 
 logger = logging.getLogger(__name__)
 
@@ -81,16 +82,21 @@ class WikiService:
         return ext
 
     def create_wiki_generation(
-        self, wiki_db: Session, obj_in: WikiGenerationCreate, user_id: int
+        self,
+        wiki_db: Session,
+        obj_in: WikiGenerationCreate,
+        user_id: int,
+        current_user: Optional[User] = None,
     ) -> WikiGeneration:
         """
         Create wiki document generation task (system-level)
 
         Process:
-        1. Find or create project record
-        2. Create generation record
-        3. Create task using system-level configuration (team and model from backend config)
-        4. Update generation record with task_id
+        1. Verify current user has access to the repository
+        2. Find or create project record
+        3. Create generation record
+        4. Create task using system-level configuration (team and model from backend config)
+        5. Update generation record with task_id
 
         Note: Wiki generation is system-level, team and model are configured in backend,
         not selected by frontend users.
@@ -98,6 +104,12 @@ class WikiService:
         The generation record's user_id is set to the system-bound user (WIKI_DEFAULT_USER_ID)
         when configured, so that all wiki generations are owned by the system user.
         This allows centralized management of wiki content.
+
+        Args:
+            wiki_db: Wiki database session
+            obj_in: Wiki generation creation request
+            user_id: User ID (may be overridden by admin)
+            current_user: Current user object for repository access verification
         """
         # Import here to avoid circular imports
         from app.api.dependencies import get_db
@@ -107,7 +119,31 @@ class WikiService:
         main_db = next(get_db())
 
         try:
-            # 1. Find or create project record
+            # 1. Verify current user has access to the repository (for GitLab/GitHub projects)
+            # This ensures users can only create wiki generations for repositories they have access to
+            if current_user and obj_in.source_type in ("gitlab", "github"):
+                access_result = self._check_task_user_repo_access(
+                    task_user=current_user,
+                    source_type=obj_in.source_type,
+                    source_url=obj_in.source_url,
+                    source_id=obj_in.source_id,
+                    source_domain=obj_in.source_domain,
+                    project_name=obj_in.project_name,
+                )
+                if not access_result.get("has_access", False):
+                    platform_name = (
+                        "GitLab" if obj_in.source_type == "gitlab" else "GitHub"
+                    )
+                    error_msg = access_result.get("error", "No access")
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You do not have access to repository '{obj_in.project_name}' on {platform_name}. {error_msg}",
+                    )
+                logger.info(
+                    f"User {current_user.id} has {access_result.get('access_level_name')} access to repository {obj_in.project_name}"
+                )
+
+            # 2. Find or create project record
             project = self._get_or_create_project(
                 db=wiki_db,
                 project_name=obj_in.project_name,
@@ -118,7 +154,7 @@ class WikiService:
                 source_type=obj_in.source_type,
             )
 
-            # 2. Check if there's already a running or pending generation for this project (any user)
+            # 3. Check if there's already a running or pending generation for this project (any user)
             existing_active_generation = (
                 wiki_db.query(WikiGeneration)
                 .filter(
@@ -137,7 +173,7 @@ class WikiService:
                     f"Please wait for it to complete or cancel it (generation ID: {existing_active_generation.id}) before creating a new one.",
                 )
 
-            # 3. Determine user ID for both generation record and task creation (system-level)
+            # 4. Determine user ID for both generation record and task creation (system-level)
             # Use configured DEFAULT_USER_ID if set (non-zero), otherwise use current user
             # This ensures wiki generations are owned by the system-bound user
             system_user_id = (
@@ -147,7 +183,7 @@ class WikiService:
             )
             task_user_id = system_user_id
 
-            # 4. Determine team to use (always from backend configuration, ignore frontend input)
+            # 5. Determine team to use (always from backend configuration, ignore frontend input)
             # Use configured default team name to find team
             default_team_name = wiki_settings.DEFAULT_TEAM_NAME
             if not default_team_name:
@@ -170,9 +206,10 @@ class WikiService:
                 )
             team_id = team.id
 
-            # 4.1 Check if task_user has access to the repository (for GitLab projects)
+            # 5.1 Check if task_user has access to the repository (for GitLab/GitHub projects)
             if obj_in.source_type in ("gitlab", "github") and task_user_id != user_id:
-                task_user = main_db.query(User).filter(User.id == task_user_id).first()
+                task_user = user_service.get_user_by_id(main_db, task_user_id)
+
                 if task_user:
                     access_result = self._check_task_user_repo_access(
                         task_user=task_user,
@@ -194,6 +231,7 @@ class WikiService:
                             error_detail = (
                                 f"Wiki task user does not have access to repository '{obj_in.project_name}'. "
                                 f"Please add {platform_name} user '{git_username}' to the repository with at least Reporter/Read access level. "
+                                f"Alternatively, set WIKI_DEFAULT_USER_ID=0 in your .env file to use the current user's credentials instead."
                             )
                         else:
                             error_detail = (
@@ -207,7 +245,7 @@ class WikiService:
                         f"Task user {task_user_id} has {access_result.get('access_level_name')} access to repository {obj_in.project_name}"
                     )
 
-            # 5. Create generation record
+            # 6. Create generation record
             # Use system_user_id for generation ownership (not current user)
             source_snapshot_dict = obj_in.source_snapshot.model_dump()
 
@@ -237,7 +275,7 @@ class WikiService:
                 f"Created wiki generation {generation.id} for project {project.id}"
             )
 
-            # 6. Create task
+            # 7. Create task
             task_id = task_kinds_service.create_task_id(main_db, task_user_id)
 
             content_meta = (
@@ -303,7 +341,7 @@ class WikiService:
                     status_code=400, detail=f"Failed to create task: {str(e)}"
                 )
 
-            # 7. Update generation record
+            # 8. Update generation record
             generation.task_id = task_id
             generation.status = WikiGenerationStatus.RUNNING
 
