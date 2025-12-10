@@ -40,6 +40,7 @@ interface DisplayModel {
   modelType: string; // Provider type: 'openai' | 'claude'
   modelId: string;
   isPublic: boolean;
+  isGroup: boolean; // Whether it's a group resource
   config: Record<string, unknown>; // Full config from unified API
 }
 
@@ -86,6 +87,7 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
 
     for (const model of unifiedModels) {
       const isPublic = model.type === 'public';
+      const isGroup = model.type === 'group';
 
       // Extract config info from unified model
       const config = (model.config as Record<string, unknown>) || {};
@@ -97,6 +99,7 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
         modelType: model.provider || (env.model as string) || 'claude',
         modelId: model.modelId || (env.model_id as string) || '',
         isPublic,
+        isGroup,
         config,
       });
     }
@@ -261,50 +264,54 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
         {!loading && displayModels.length > 0 && (
           <>
             <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
-              {displayModels.map(displayModel => {
-                return (
-                  <Card
-                    key={`${displayModel.isPublic ? 'public' : 'user'}-${displayModel.name}`}
-                    className={`p-4 bg-base hover:bg-hover transition-colors ${displayModel.isPublic ? 'border-l-2 border-l-primary' : ''}`}
-                  >
-                    <div className="flex items-center justify-between min-w-0">
-                      <div className="flex items-center space-x-3 min-w-0 flex-1">
-                        {displayModel.isPublic ? (
-                          <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                        ) : (
-                          <CpuChipIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                        )}
-                        <div className="flex flex-col justify-center min-w-0 flex-1">
-                          <div className="flex items-center space-x-2 min-w-0">
-                            <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                              {displayModel.displayName}
-                            </h3>
-                            {displayModel.isPublic && (
-                              <Tag variant="info" className="text-xs">
-                                {t('models.public')}
-                              </Tag>
-                            )}
-                          </div>
-                          {/* Show ID if different from display name */}
-                          {!displayModel.isPublic &&
-                            displayModel.displayName !== displayModel.name && (
-                              <p className="text-xs text-text-muted truncate">
-                                ID: {displayModel.name}
-                              </p>
-                            )}
-                          <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                            <Tag variant="default" className="capitalize">
-                              {getProviderLabel(displayModel.modelType)}
+              {displayModels.map(displayModel => (
+                <Card
+                  key={`${displayModel.isPublic ? 'public' : displayModel.isGroup ? 'group' : 'user'}-${displayModel.name}`}
+                  className={`p-4 bg-base hover:bg-hover transition-colors ${displayModel.isPublic || displayModel.isGroup ? 'border-l-2 border-l-primary' : ''}`}
+                >
+                  <div className="flex items-center justify-between min-w-0">
+                    <div className="flex items-center space-x-3 min-w-0 flex-1">
+                      {displayModel.isPublic ? (
+                        <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                      ) : (
+                        <CpuChipIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                      )}
+                      <div className="flex flex-col justify-center min-w-0 flex-1">
+                        <div className="flex items-center space-x-2 min-w-0">
+                          <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                            {displayModel.displayName}
+                          </h3>
+                          {displayModel.isPublic && (
+                            <Tag variant="info" className="text-xs">
+                              {t('models.public')}
                             </Tag>
-                            <Tag variant="info" className="hidden sm:inline-flex">
-                              {displayModel.modelId}
+                          )}
+                          {displayModel.isGroup && (
+                            <Tag variant="success" className="text-xs">
+                              {t('models.group')}
                             </Tag>
-                          </div>
+                          )}
+                        </div>
+                        {/* Show ID if different from display name */}
+                        {!displayModel.isPublic && !displayModel.isGroup &&
+                          displayModel.displayName !== displayModel.name && (
+                            <p className="text-xs text-text-muted truncate">
+                              ID: {displayModel.name}
+                            </p>
+                          )}
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                          <Tag variant="default" className="capitalize">
+                            {getProviderLabel(displayModel.modelType)}
+                          </Tag>
+                          <Tag variant="info" className="hidden sm:inline-flex">
+                            {displayModel.modelId}
+                          </Tag>
                         </div>
                       </div>
-                      <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                        {/* Only show action buttons for user's own models */}
-                        {!displayModel.isPublic && (
+                    </div>
+                    <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                        {/* Only show action buttons for user's own models (not public or group) */}
+                        {!displayModel.isPublic && !displayModel.isGroup && (
                           <>
                             <Button
                               variant="ghost"
@@ -345,11 +352,10 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
                             </Button>
                           </>
                         )}
-                      </div>
                     </div>
-                  </Card>
-                );
-              })}
+                  </div>
+                </Card>
+              ))}
             </div>
           </>
         )}

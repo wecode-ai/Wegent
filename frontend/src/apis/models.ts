@@ -68,7 +68,7 @@ export interface ModelNamesResponse {
 }
 
 // Unified Model Types (new API with type differentiation)
-export type ModelTypeEnum = 'public' | 'user';
+export type ModelTypeEnum = 'public' | 'user' | 'group';
 
 export interface UnifiedModel {
   name: string;

@@ -522,6 +522,7 @@
     "title": "Model Management",
     "description": "Manage your AI model configurations",
     "public": "Public",
+    "group": "Group",
     "manage": "Model settings",
     "create": "Create Model",
     "edit": "Edit Model",

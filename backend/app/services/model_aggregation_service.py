@@ -33,19 +33,21 @@ class ModelType(str, Enum):
 
     - PUBLIC: Models from kinds table with user_id=0, shared across all users
     - USER: User-defined models from kinds table, private to each user
+    - GROUP: Models from kinds table in group namespace, shared within group
     """
 
     PUBLIC = "public"
     USER = "user"
+    GROUP = "group"
 
 
 class UnifiedModel:
     """
     Unified model representation that includes type information
-    to distinguish between public and user-defined models.
+    to distinguish between public, user-defined, and group models.
 
     The 'type' field is critical for:
-    1. Avoiding naming conflicts between public and user models
+    1. Avoiding naming conflicts between public, user, and group models
     2. Determining which table to query when resolving a model
     3. Frontend display differentiation
     """
@@ -74,14 +76,14 @@ class UnifiedModel:
 
         Returns dict with:
         - name: Model name
-        - type: 'public' or 'user' - IMPORTANT for identifying model source
+        - type: 'public', 'user', or 'group' - IMPORTANT for identifying model source
         - displayName: Human-readable name
         - provider: Model provider (e.g., 'openai', 'claude')
         - modelId: Model ID
         """
         return {
             "name": self.name,
-            "type": self.type.value,  # 'public' or 'user'
+            "type": self.type.value,  # 'public', 'user', or 'group'
             "displayName": self.display_name,
             "provider": self.provider,
             "modelId": self.model_id,
@@ -104,7 +106,7 @@ class ModelAggregationService:
     2. Model lookup by name and type
     3. Agent-compatible model filtering
 
-    All returned models include a 'type' field ('public' or 'user')
+    All returned models include a 'type' field ('public', 'user', or 'group')
     to distinguish their source and avoid naming conflicts.
     """
 
@@ -224,11 +226,10 @@ class ModelAggregationService:
 
         try:
             model_crd = Model.model_validate(model_data)
+            return model_crd.spec.isCustomConfig or False
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to check if model is custom: %s", e)
             return False
-        else:
-            return model_crd.spec.isCustomConfig is True
 
     def list_available_models(
         self,
@@ -245,7 +246,7 @@ class ModelAggregationService:
         This method aggregates models from:
         1. User's own models (via kind_service) - marked with type='user'
         2. Public models (user_id=0 in kinds table) - marked with type='public'
-        3. Group models (when scope includes groups)
+        3. Group models (when scope includes groups) - marked with type='group'
 
         Scope behavior:
         - scope='personal' (default): personal models + public models
@@ -265,7 +266,7 @@ class ModelAggregationService:
         Returns:
             List of unified model dictionaries, each containing:
             - name: Model name
-            - type: 'public' or 'user' (identifies model source)
+            - type: 'public', 'user', or 'group' (identifies model source)
             - displayName: Human-readable name
             - provider: Model provider
             - modelId: Model ID
@@ -309,6 +310,7 @@ class ModelAggregationService:
                 user_model_resources = kind_service.list_resources(
                     user_id=current_user.id, kind="Model", namespace="default"
                 )
+                resource_type = ModelType.USER  # Personal models
             else:
                 # Query group models (namespace = group_name, user_id can be any member)
                 group_model_resources = (
@@ -321,6 +323,7 @@ class ModelAggregationService:
                     .all()
                 )
                 user_model_resources = group_model_resources
+                resource_type = ModelType.GROUP  # Group models
 
             for resource in user_model_resources:
                 # Format the resource to get the full CRD data
@@ -344,7 +347,7 @@ class ModelAggregationService:
 
                 unified = UnifiedModel(
                     name=resource.name,
-                    model_type=ModelType.USER,  # Mark as user-defined model
+                    model_type=resource_type,  # Use determined type (USER or GROUP)
                     display_name=info["display_name"],
                     provider=info["provider"],
                     model_id=info["model_id"],
@@ -352,7 +355,7 @@ class ModelAggregationService:
                     is_active=resource.is_active,
                 )
                 result.append(unified)
-                seen_names[resource.name] = ModelType.USER
+                seen_names[resource.name] = resource_type
 
         # 2. Get public models via public_model_service (type='public')
         public_models = public_model_service.get_models(
