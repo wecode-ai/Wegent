@@ -194,7 +194,6 @@ class WikiService:
                             error_detail = (
                                 f"Wiki task user does not have access to repository '{obj_in.project_name}'. "
                                 f"Please add {platform_name} user '{git_username}' to the repository with at least Reporter/Read access level. "
-                                f"Alternatively, set WIKI_DEFAULT_USER_ID=0 in your .env file to use the current user's credentials instead."
                             )
                         else:
                             error_detail = (
