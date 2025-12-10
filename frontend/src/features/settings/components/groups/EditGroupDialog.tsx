@@ -132,27 +132,6 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
           )}
         </div>
 
-        {/* Visibility */}
-        <div>
-          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
-          <Select
-            value={formData.visibility}
-            onValueChange={(value: GroupVisibility) =>
-              setFormData({ ...formData, visibility: value })
-            }
-            disabled={isSubmitting}
-          >
-            <SelectTrigger id="visibility">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="private">{t('groups.private')}</SelectItem>
-              <SelectItem value="internal">{t('groups.internal')}</SelectItem>
-              <SelectItem value="public">{t('groups.public')}</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
         {/* Description */}
         <div>
           <Label htmlFor="description">{t('groups.description')}</Label>

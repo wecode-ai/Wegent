@@ -24,12 +24,10 @@ import {
   updateGroupMemberRole,
   inviteAllUsers,
   leaveGroup,
-  transferOwnership,
 } from '@/apis/groups'
 import { toast } from 'sonner'
 import type { Group, GroupMember, GroupRole } from '@/types/group'
-import { UserPlusIcon, LogOutIcon, ArrowRightLeftIcon } from 'lucide-react'
-
+import { UserPlusIcon, LogOutIcon } from 'lucide-react'
 interface GroupMembersDialogProps {
   isOpen: boolean
   onClose: () => void
@@ -49,9 +47,7 @@ export function GroupMembersDialog({
   const [members, setMembers] = useState<GroupMember[]>([])
   const [loading, setLoading] = useState(false)
   const [showAddMember, setShowAddMember] = useState(false)
-  const [showTransferOwnership, setShowTransferOwnership] = useState(false)
   const [newMemberUsername, setNewMemberUsername] = useState('')
-  const [selectedUserId, setSelectedUserId] = useState<number | null>(null)
   const [selectedRole, setSelectedRole] = useState<GroupRole>('Reporter')
   const [isSubmitting, setIsSubmitting] = useState(false)
 
@@ -62,7 +58,6 @@ export function GroupMembersDialog({
   const canRemoveMember = myRole === 'Owner' || myRole === 'Maintainer'
   const canUpdateRole = myRole === 'Owner' || myRole === 'Maintainer'
   const canInviteAll = myRole === 'Owner' || myRole === 'Maintainer'
-  const canTransferOwnership = myRole === 'Owner'
   const canLeave = myRole !== 'Owner'
 
   useEffect(() => {
@@ -196,30 +191,6 @@ export function GroupMembersDialog({
     }
   }
 
-  const handleTransferOwnership = async () => {
-    if (!group || !selectedUserId) return
-
-    if (!confirm(t('groupMembers.confirmTransfer'))) {
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      await transferOwnership(group.name, selectedUserId)
-      toast.success(t('groupMembers.transferSuccess'))
-      setShowTransferOwnership(false)
-      setSelectedUserId(null)
-      onSuccess()
-      onClose()
-    } catch (error: any) {
-      console.error('Failed to transfer ownership:', error)
-      const errorMessage = error?.message || t('groupMembers.transferFailed')
-      toast.error(errorMessage)
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   const getRoleBadgeVariant = (role: GroupRole): 'default' | 'secondary' | 'success' | 'error' | 'warning' | 'info' => {
     switch (role) {
       case 'Owner':
@@ -233,10 +204,6 @@ export function GroupMembersDialog({
       default:
         return 'info'
     }
-  }
-
-  const getMaintainers = () => {
-    return members.filter((m) => m.role === 'Maintainer')
   }
 
   if (!group) {
@@ -273,17 +240,6 @@ export function GroupMembersDialog({
             >
               <UserPlusIcon className="w-4 h-4 mr-2" />
               {t('groups.actions.inviteAll')}
-            </Button>
-          )}
-          {canTransferOwnership && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setShowTransferOwnership(!showTransferOwnership)}
-              disabled={isSubmitting}
-            >
-              <ArrowRightLeftIcon className="w-4 h-4 mr-2" />
-              {t('groups.actions.transferOwnership')}
             </Button>
           )}
           {canLeave && (
@@ -373,44 +329,6 @@ export function GroupMembersDialog({
               </Button>
               <Button size="sm" onClick={handleAddMember} disabled={!newMemberUsername.trim() || isSubmitting}>
                 {t('groupMembers.add')}
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Transfer Ownership Form */}
-        {showTransferOwnership && canTransferOwnership && (
-          <div className="p-4 border border-border rounded-lg bg-surface space-y-3">
-            <h3 className="text-sm font-medium">{t('groups.actions.transferOwnership')}</h3>
-            <p className="text-xs text-text-secondary">
-              {t('groupMembers.transferDescription')}
-            </p>
-            <Select
-              value={selectedUserId?.toString() || ''}
-              onValueChange={(value) => setSelectedUserId(parseInt(value))}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder={t('groupMembers.selectMaintainer')} />
-              </SelectTrigger>
-              <SelectContent>
-                {getMaintainers().map((member) => (
-                  <SelectItem key={member.id} value={member.user_id.toString()}>
-                    {member.user_name || `User ${member.user_id}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="flex justify-end gap-2">
-              <Button variant="outline" size="sm" onClick={() => setShowTransferOwnership(false)}>
-                {t('actions.cancel')}
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleTransferOwnership}
-                disabled={!selectedUserId || isSubmitting}
-                className="bg-error hover:bg-error/90"
-              >
-                {t('groupMembers.transfer')}
               </Button>
             </div>
           </div>

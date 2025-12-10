@@ -120,16 +120,13 @@ export function GroupManager() {
         <div className="border border-border rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-muted border-b border-border">
+              <thead className="bg-muted">
                 <tr>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.name')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.displayName')}
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.visibility')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.myRole')}
@@ -151,7 +148,6 @@ export function GroupManager() {
                     <td className="px-4 py-3 text-sm text-text-secondary">
                       {group.display_name || '-'}
                     </td>
-                    <td className="px-4 py-3 text-sm">{getVisibilityBadge(group.visibility)}</td>
                     <td className="px-4 py-3 text-sm">
                       {group.my_role ? (
                         <Badge variant="secondary">{t(`groups.roles.${group.my_role}`)}</Badge>

@@ -33,7 +33,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
   const [formData, setFormData] = useState<GroupCreate>({
     name: '',
     display_name: '',
-    visibility: 'private',
+    visibility: 'public',
     description: '',
   })
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -92,7 +92,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
       setFormData({
         name: '',
         display_name: '',
-        visibility: 'private',
+        visibility: 'public',
         description: '',
       })
       setErrors({})
@@ -113,7 +113,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
       setFormData({
         name: '',
         display_name: '',
-        visibility: 'private',
+        visibility: 'public',
         description: '',
       })
       setErrors({})
@@ -167,27 +167,6 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
           {errors.display_name && (
             <p className="text-sm text-error mt-1">{errors.display_name}</p>
           )}
-        </div>
-
-        {/* Visibility */}
-        <div>
-          <Label htmlFor="visibility">{t('groups.visibility')}</Label>
-          <Select
-            value={formData.visibility}
-            onValueChange={(value: GroupVisibility) =>
-              setFormData({ ...formData, visibility: value })
-            }
-            disabled={isSubmitting}
-          >
-            <SelectTrigger id="visibility">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="private">{t('groups.private')}</SelectItem>
-              <SelectItem value="internal">{t('groups.internal')}</SelectItem>
-              <SelectItem value="public">{t('groups.public')}</SelectItem>
-            </SelectContent>
-          </Select>
         </div>
 
         {/* Description */}
