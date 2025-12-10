@@ -24,6 +24,7 @@ from app.schemas.namespace_member import (
 from app.services.group_permission import (
     check_group_permission,
     get_user_role_in_group,
+    get_effective_role_in_group,
 )
 from app.schemas.namespace import GroupRole
 
@@ -83,7 +84,16 @@ def create_group(
             )
 
         # Check if user has permission to create subgroups (must be at least Maintainer)
-        if not check_group_permission(db, owner_user_id, parent_name, GroupRole.Maintainer):
+        # Use effective role to support inheritance
+        user_role = get_effective_role_in_group(db, owner_user_id, parent_name)
+        role_hierarchy = {
+            GroupRole.Owner: 0,
+            GroupRole.Maintainer: 1,
+            GroupRole.Developer: 2,
+            GroupRole.Reporter: 3,
+        }
+
+        if user_role is None or role_hierarchy.get(user_role, 999) > role_hierarchy[GroupRole.Maintainer]:
             raise HTTPException(
                 status_code=403,
                 detail=f"Insufficient permissions to create subgroup under '{parent_name}'",

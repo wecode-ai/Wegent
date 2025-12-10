@@ -4,7 +4,7 @@
 
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import Modal from '@/features/common/Modal'
 import { Button } from '@/components/ui/button'
@@ -18,9 +18,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { createGroup } from '@/apis/groups'
+import { createGroup, listGroups } from '@/apis/groups'
 import { toast } from 'sonner'
-import type { GroupCreate, GroupVisibility } from '@/types/group'
+import type { GroupCreate, GroupVisibility, Group } from '@/types/group'
 
 interface CreateGroupDialogProps {
   isOpen: boolean
@@ -36,8 +36,35 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
     visibility: 'public',
     description: '',
   })
+  const [parentGroup, setParentGroup] = useState<string>('__none__')
+  const [availableGroups, setAvailableGroups] = useState<Group[]>([])
+  const [loadingGroups, setLoadingGroups] = useState(false)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Load available groups when dialog opens
+  useEffect(() => {
+    if (isOpen) {
+      loadAvailableGroups()
+    }
+  }, [isOpen])
+
+  const loadAvailableGroups = async () => {
+    try {
+      setLoadingGroups(true)
+      const response = await listGroups({ page: 1, limit: 100 })
+      // Filter groups that can be parent (max nesting level is 5)
+      const eligibleGroups = (response.items || []).filter((group) => {
+        const depth = group.name.split('/').length
+        return depth < 5 // Can only be parent if depth < 5
+      })
+      setAvailableGroups(eligibleGroups)
+    } catch (error) {
+      console.error('Failed to load groups:', error)
+    } finally {
+      setLoadingGroups(false)
+    }
+  }
 
   const validateName = (name: string): string | null => {
     if (!name) {
@@ -78,9 +105,13 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
 
     setIsSubmitting(true)
     try {
+      // Construct the final group name
+      const baseName = formData.name.trim()
+      const finalName = parentGroup && parentGroup !== '__none__' ? `${parentGroup}/${baseName}` : baseName
+
       const payload: GroupCreate = {
-        name: formData.name.trim(),
-        display_name: formData.display_name?.trim() || formData.name.trim(),
+        name: finalName,
+        display_name: formData.display_name?.trim() || baseName,
         visibility: formData.visibility,
         description: formData.description?.trim() || undefined,
       }
@@ -95,6 +126,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         visibility: 'public',
         description: '',
       })
+      setParentGroup('__none__')
       setErrors({})
       onSuccess()
       onClose()
@@ -116,6 +148,7 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
         visibility: 'public',
         description: '',
       })
+      setParentGroup('__none__')
       setErrors({})
       onClose()
     }
@@ -144,7 +177,9 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
           />
           {errors.name && <p className="text-sm text-error mt-1">{errors.name}</p>}
           <p className="text-xs text-text-muted mt-1">
-            {t('groupCreate.nameImmutable')}
+            {parentGroup && parentGroup !== '__none__'
+              ? t('groupCreate.finalNameWillBe', { name: `${parentGroup}/${formData.name}` })
+              : t('groupCreate.nameImmutable')}
           </p>
         </div>
 
@@ -167,6 +202,31 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
           {errors.display_name && (
             <p className="text-sm text-error mt-1">{errors.display_name}</p>
           )}
+        </div>
+
+        {/* Parent Group */}
+        <div>
+          <Label htmlFor="parent_group">{t('groupCreate.parentGroup')}</Label>
+          <Select
+            value={parentGroup}
+            onValueChange={setParentGroup}
+            disabled={isSubmitting || loadingGroups}
+          >
+            <SelectTrigger id="parent_group">
+              <SelectValue placeholder={t('groupCreate.noParentGroup')} />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">{t('groupCreate.noParentGroup')}</SelectItem>
+              {availableGroups.map((group) => (
+                <SelectItem key={group.id} value={group.name}>
+                  {group.display_name || group.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-text-muted mt-1">
+            {t('groupCreate.parentGroupHint')}
+          </p>
         </div>
 
         {/* Description */}
