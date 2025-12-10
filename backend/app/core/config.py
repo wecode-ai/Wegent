@@ -138,9 +138,7 @@ class Settings(BaseSettings):
     # OpenTelemetry configuration
     OTEL_ENABLED: bool = False  # Enable/disable OpenTelemetry
     OTEL_SERVICE_NAME: str = "wegent-backend"  # Service name for tracing
-    OTEL_EXPORTER_OTLP_ENDPOINT: str = (
-        "http://localhost:4317"  # OTLP gRPC endpoint
-    )
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://localhost:4317"  # OTLP gRPC endpoint
     OTEL_TRACES_SAMPLER_ARG: float = 1.0  # Sampling ratio (0.0-1.0)
     OTEL_METRICS_ENABLED: bool = (
         False  # Enable/disable metrics export (default: disabled)

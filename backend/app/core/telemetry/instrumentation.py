@@ -36,7 +36,9 @@ def setup_opentelemetry_instrumentation(
 
             engine = db_engine
         except ImportError:
-            logger.warning("Could not import database engine for SQLAlchemy instrumentation")
+            logger.warning(
+                "Could not import database engine for SQLAlchemy instrumentation"
+            )
 
     # Use the shared telemetry instrumentation module
     try:
