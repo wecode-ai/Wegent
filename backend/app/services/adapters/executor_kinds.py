@@ -365,12 +365,20 @@ class ExecutorKindsService(
 
             # Build user git information - query user by user_id
             user = db.query(User).filter(User.id == subtask.user_id).first()
+
+            # Import and use user service to decrypt git info
+            from app.services.user import UserService
+            user_service = UserService(db)
+            user = user_service.decrypt_user_git_info(user)
+
+            # Default to github.com when git_domain is empty
+            target_domain = git_domain if git_domain else "github.com"
             git_info = (
                 next(
                     (
                         info
                         for info in user.git_info
-                        if info.get("git_domain") == git_domain
+                        if info.get("git_domain") == target_domain
                     ),
                     None,
                 )
