@@ -8,7 +8,6 @@ import '@/features/common/scrollbar.css';
 import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
 import { ResourceListItem } from '@/components/common/ResourceListItem';
 import {
   CpuChipIcon,

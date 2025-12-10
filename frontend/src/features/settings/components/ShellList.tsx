@@ -8,7 +8,6 @@ import '@/features/common/scrollbar.css';
 import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
 import { ResourceListItem } from '@/components/common/ResourceListItem';
 import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { Loader2 } from 'lucide-react';
@@ -137,7 +136,7 @@ const ShellList: React.FC = () => {
                     <div className="flex items-center justify-between min-w-0">
                       <ResourceListItem
                         name={shell.name}
-                        displayName={shell.displayName}
+                        displayName={shell.displayName ?? undefined}
                         isPublic={isPublic}
                         showId={!isPublic}
                         publicLabel={t('shells.public')}

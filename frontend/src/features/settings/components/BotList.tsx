@@ -17,7 +17,6 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { sortBotsByUpdatedAt } from '@/utils/bot';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
 import { ResourceListItem } from '@/components/common/ResourceListItem';
 import {
   Dialog,
