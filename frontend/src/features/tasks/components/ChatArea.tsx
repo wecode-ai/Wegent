@@ -894,7 +894,7 @@ export default function ChatArea({
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
       {/* Messages Area: always mounted to keep scroll container stable */}
-      <div className="relative flex-1 min-h-0">
+      <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
         {/* Top gradient fade effect - only show when has messages */}
         {hasMessages && (
           <div
@@ -936,7 +936,10 @@ export default function ChatArea({
       <div className={hasMessages ? 'w-full' : 'flex-1 flex flex-col w-full'}>
         {/* Center area for input when no messages */}
         {!hasMessages && (
-          <div className="flex-1 flex items-center justify-center w-full">
+          <div
+            className="flex-1 flex items-center justify-center w-full"
+            style={{ marginBottom: '20vh' }}
+          >
             {/* Floating Input Area */}
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               <div className="w-full">
