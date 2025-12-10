@@ -98,9 +98,7 @@ async def lifespan(app: FastAPI):
                         )
                         break
                     if not redis_client.exists(STARTUP_LOCK_KEY):
-                        logger.warning(
-                            "Lock released but startup not marked as done"
-                        )
+                        logger.warning("Lock released but startup not marked as done")
                         break
             else:
                 logger.info("Acquired startup initialization lock")
@@ -110,10 +108,7 @@ async def lifespan(app: FastAPI):
             startup_success = False
             try:
                 # Step 1: Run database migrations
-                if (
-                    settings.ENVIRONMENT == "development"
-                    and settings.DB_AUTO_MIGRATE
-                ):
+                if settings.ENVIRONMENT == "development" and settings.DB_AUTO_MIGRATE:
                     logger.info(
                         "Running database migrations automatically (development mode)..."
                     )
@@ -360,7 +355,6 @@ def create_app():
         # Add OpenTelemetry span attributes if enabled
         if settings.OTEL_ENABLED:
             from opentelemetry import trace
-
             from shared.telemetry import is_telemetry_enabled
             from shared.telemetry_context import set_request_context, set_user_context
 
@@ -387,7 +381,6 @@ def create_app():
         # Capture response headers and body if OTEL is enabled
         if settings.OTEL_ENABLED:
             from opentelemetry import trace
-
             from shared.telemetry import is_telemetry_enabled
 
             if is_telemetry_enabled():
