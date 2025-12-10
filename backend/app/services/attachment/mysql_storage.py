@@ -8,11 +8,17 @@ MySQL storage backend implementation.
 This module provides a MySQL-based storage backend that stores
 binary data directly in the database using the SubtaskAttachment model.
 This is the default storage backend when no external storage is configured.
+
+Note: MySQL has a max_allowed_packet limit that restricts the size of data
+that can be sent in a single query. By default, this is 16MB, but it can
+vary depending on MySQL configuration. Large file uploads may fail with
+"Got a packet bigger than 'max_allowed_packet' bytes" error.
 """
 
 import logging
 from typing import Dict, Optional
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from app.models.subtask_attachment import SubtaskAttachment
@@ -62,7 +68,8 @@ class MySQLStorageBackend(StorageBackend):
             The storage key
 
         Raises:
-            StorageError: If attachment not found or save fails
+            StorageError: If attachment not found, save fails, or file exceeds
+                         MySQL max_allowed_packet limit
         """
         try:
             attachment_id = self._extract_attachment_id(key)
@@ -85,6 +92,24 @@ class MySQLStorageBackend(StorageBackend):
 
         except StorageError:
             raise
+        except OperationalError as e:
+            # Handle MySQL max_allowed_packet error
+            error_str = str(e)
+            if "max_allowed_packet" in error_str or "1153" in error_str:
+                file_size_mb = len(data) / (1024 * 1024)
+                logger.error(
+                    f"File size ({file_size_mb:.1f} MB) exceeds MySQL "
+                    f"max_allowed_packet limit: {e}"
+                )
+                raise StorageError(
+                    f"File size ({file_size_mb:.1f} MB) exceeds MySQL "
+                    f"max_allowed_packet limit. Please configure a larger "
+                    f"max_allowed_packet in MySQL, or use S3/MinIO storage backend "
+                    f"for larger files.",
+                    key,
+                )
+            logger.error(f"Database error saving to MySQL storage: {e}")
+            raise StorageError(f"Failed to save data: {e}", key)
         except Exception as e:
             logger.error(f"Failed to save to MySQL storage: {e}")
             raise StorageError(f"Failed to save data: {e}", key)

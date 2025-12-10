@@ -10,14 +10,20 @@ import logging
 import os
 from typing import Any, Dict, Optional, Union
 
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
 from app.services.attachment.parser import DocumentParseError, DocumentParser
 from app.services.attachment.storage_backend import StorageError, generate_storage_key
 from app.services.attachment.storage_factory import get_storage_backend
 
 logger = logging.getLogger(__name__)
+
+# Default MySQL max_allowed_packet limit (16MB is MySQL default)
+# This accounts for base64 encoding overhead (~33%) and MySQL protocol overhead
+DEFAULT_MYSQL_MAX_FILE_SIZE_MB = 10
 
 
 class AttachmentService:
@@ -34,6 +40,46 @@ class AttachmentService:
     # Placeholder subtask_id for attachments not yet linked to a subtask
     # Using 0 as a sentinel value since database requires non-null
     UNLINKED_SUBTASK_ID = 0
+
+    def _get_mysql_max_file_size(self) -> int:
+        """
+        Get the maximum file size for MySQL storage backend.
+
+        Uses MYSQL_MAX_FILE_SIZE_MB from settings if configured,
+        otherwise falls back to DEFAULT_MYSQL_MAX_FILE_SIZE_MB.
+
+        Returns:
+            Maximum file size in bytes
+        """
+        max_size_mb = getattr(
+            settings, "MYSQL_MAX_FILE_SIZE_MB", DEFAULT_MYSQL_MAX_FILE_SIZE_MB
+        )
+        return max_size_mb * 1024 * 1024
+
+    def _validate_mysql_file_size(self, file_size: int) -> None:
+        """
+        Validate file size for MySQL storage backend.
+
+        MySQL has a max_allowed_packet limit that restricts the size of data
+        that can be sent in a single query. This method checks if the file
+        size is within the configured limit.
+
+        Args:
+            file_size: File size in bytes
+
+        Raises:
+            ValueError: If file size exceeds MySQL limit
+        """
+        max_size = self._get_mysql_max_file_size()
+        if file_size > max_size:
+            max_size_mb = max_size / (1024 * 1024)
+            file_size_mb = file_size / (1024 * 1024)
+            raise ValueError(
+                f"File size ({file_size_mb:.1f} MB) exceeds MySQL storage limit "
+                f"({max_size_mb:.0f} MB). Please use S3/MinIO storage backend for "
+                f"larger files, or increase MySQL max_allowed_packet and "
+                f"MYSQL_MAX_FILE_SIZE_MB settings."
+            )
 
     def upload_attachment(
         self,
@@ -89,9 +135,13 @@ class AttachmentService:
         # Get the storage backend
         storage_backend = get_storage_backend(db)
 
+        # For MySQL storage backend, validate file size against max_allowed_packet
+        if storage_backend.backend_type == "mysql":
+            self._validate_mysql_file_size(file_size)
+
         # Create attachment record with UPLOADING status
-        # For MySQL backend, store binary_data directly
-        # For external backends, binary_data will be set to empty bytes (b'') after storage
+        # Use empty binary_data initially to avoid hitting max_allowed_packet on first flush
+        # Binary data will be saved via storage backend after getting the ID
         attachment = SubtaskAttachment(
             subtask_id=effective_subtask_id,
             user_id=user_id,
@@ -99,7 +149,7 @@ class AttachmentService:
             file_extension=extension,
             file_size=file_size,
             mime_type=mime_type,
-            binary_data=binary_data,  # Temporarily store here, will be cleared for external storage
+            binary_data=b"",  # Empty initially, will be saved via storage backend
             image_base64="",  # Empty string as placeholder, will be updated after parsing
             extracted_text="",  # Empty string as placeholder, will be updated after parsing
             text_length=0,  # Will be updated after parsing
@@ -128,6 +178,19 @@ class AttachmentService:
             logger.error(f"Failed to save attachment {attachment.id} to storage: {e}")
             db.rollback()
             raise
+        except OperationalError as e:
+            # Handle MySQL-specific errors like max_allowed_packet exceeded
+            error_str = str(e)
+            logger.error(f"Database error saving attachment {attachment.id}: {e}")
+            db.rollback()
+            if "max_allowed_packet" in error_str or "1153" in error_str:
+                raise StorageError(
+                    f"File size exceeds MySQL max_allowed_packet limit. "
+                    f"Please use S3/MinIO storage backend for larger files, "
+                    f"or increase MySQL max_allowed_packet configuration.",
+                    storage_key,
+                )
+            raise StorageError(f"Database error: {e}", storage_key)
 
         # Update status to PARSING
         attachment.status = AttachmentStatus.PARSING

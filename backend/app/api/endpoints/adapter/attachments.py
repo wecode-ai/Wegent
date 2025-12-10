@@ -21,6 +21,7 @@ from app.models.subtask_attachment import AttachmentStatus
 from app.models.user import User
 from app.services.attachment import attachment_service
 from app.services.attachment.parser import DocumentParseError, DocumentParser
+from app.services.attachment.storage_backend import StorageError
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +120,10 @@ async def upload_attachment(
         raise HTTPException(status_code=400, detail=str(e))
     except DocumentParseError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except StorageError as e:
+        # Handle storage-specific errors (e.g., MySQL max_allowed_packet)
+        logger.error(f"Storage error uploading attachment: {e}")
+        raise HTTPException(status_code=400, detail=str(e.message))
     except Exception as e:
         logger.error(f"Error uploading attachment: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to upload attachment")

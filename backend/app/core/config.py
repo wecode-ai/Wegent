@@ -121,6 +121,13 @@ class Settings(BaseSettings):
     # Supported backends: "mysql" (default), "s3", "minio"
     # If not configured or set to "mysql", binary data is stored in MySQL database
     ATTACHMENT_STORAGE_BACKEND: str = "mysql"
+
+    # MySQL storage backend file size limit (in MB)
+    # This should be less than MySQL max_allowed_packet (default 16MB)
+    # to account for base64 encoding overhead (~33%) and protocol overhead
+    # Set to 10MB by default to be safe with default MySQL configuration
+    MYSQL_MAX_FILE_SIZE_MB: int = 10
+
     # S3/MinIO configuration (only used when ATTACHMENT_STORAGE_BACKEND is "s3" or "minio")
     ATTACHMENT_S3_ENDPOINT: str = (
         ""  # e.g., "https://s3.amazonaws.com" or "http://minio:9000"
