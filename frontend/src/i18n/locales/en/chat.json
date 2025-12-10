@@ -182,6 +182,7 @@
   },
   "web_search": {
     "enable": "Enable web search",
-    "disable": "Disable web search"
+    "disable": "Disable web search",
+    "select_engine": "Select search engine"
   }
 }

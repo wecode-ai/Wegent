@@ -5,10 +5,11 @@
 'use client';
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { Send, CircleStop, Upload, Globe } from 'lucide-react';
+import { Send, CircleStop, Upload } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import TeamSelector from './TeamSelector';
+import SearchEngineSelector from './SearchEngineSelector';
 import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
@@ -31,7 +32,7 @@ import { saveLastTeam, getLastTeamId, saveLastRepo } from '@/utils/userPreferenc
 import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
-import { useTranslation } from '@/hooks/useTranslation';
+import { chatApis, SearchEngine } from '@/apis/chat';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 // Threshold for combined team name + model name length to trigger compact quota mode
@@ -55,7 +56,6 @@ export default function ChatArea({
   onShareButtonRender,
 }: ChatAreaProps) {
   const { toast } = useToast();
-  const { t } = useTranslation('chat');
 
   // Pre-load team preference from localStorage to use as initial value
   const initialTeamIdRef = useRef<number | null>(null);
@@ -79,9 +79,36 @@ export default function ChatArea({
 
   // Web search toggle state
   const [enableWebSearch, setEnableWebSearch] = useState(false);
+  const [selectedSearchEngine, setSelectedSearchEngine] = useState<string | null>(null);
+  const [isWebSearchFeatureEnabled, setIsWebSearchFeatureEnabled] = useState(false);
+  const [searchEngines, setSearchEngines] = useState<SearchEngine[]>([]);
 
-  // Check if web search is enabled via environment variable
-  const isWebSearchEnabled = process.env.NEXT_PUBLIC_WEB_SEARCH_ENABLED === 'true';
+  // Load search engine preference from localStorage and fetch available engines
+  useEffect(() => {
+    const fetchSearchEngines = async () => {
+      try {
+        const response = await chatApis.getSearchEngines();
+        setIsWebSearchFeatureEnabled(response.enabled);
+        setSearchEngines(response.engines);
+      } catch (error) {
+        console.error('Failed to fetch search engines:', error);
+      }
+    };
+
+    fetchSearchEngines();
+
+    if (typeof window !== 'undefined') {
+      const savedEngine = localStorage.getItem('last_search_engine');
+      if (savedEngine) {
+        setSelectedSearchEngine(savedEngine);
+      }
+    }
+  }, []);
+
+  const handleSearchEngineChange = (engine: string) => {
+    setSelectedSearchEngine(engine);
+    localStorage.setItem('last_search_engine', engine);
+  };
 
   // External API parameters state
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
@@ -481,6 +508,7 @@ export default function ChatArea({
             force_override_bot_model: forceOverride,
             attachment_id: attachmentState.attachment?.id,
             enable_web_search: enableWebSearch,
+            search_engine: selectedSearchEngine || undefined,
           },
           {
             pendingUserMessage: message,
@@ -935,20 +963,15 @@ export default function ChatArea({
                           />
                         )}
                       {/* Web Search Toggle Button - only show for chat shell and when enabled */}
-                      {isWebSearchEnabled && isChatShell(selectedTeam) && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => setEnableWebSearch(!enableWebSearch)}
-                          className={`h-8 w-8 rounded-lg flex-shrink-0 transition-colors ${
-                            enableWebSearch
-                              ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                              : 'text-text-muted hover:bg-surface hover:text-text-primary'
-                          }`}
-                          title={enableWebSearch ? t('web_search.disable') : t('web_search.enable')}
-                        >
-                          <Globe className="h-4 w-4" />
-                        </Button>
+                      {isWebSearchFeatureEnabled && isChatShell(selectedTeam) && (
+                        <SearchEngineSelector
+                          enabled={enableWebSearch}
+                          onToggle={setEnableWebSearch}
+                          selectedEngine={selectedSearchEngine}
+                          onSelectEngine={handleSearchEngineChange}
+                          disabled={isLoading || isStreaming}
+                          engines={searchEngines}
+                        />
                       )}
                       {teams.length > 0 && (
                         <TeamSelector
@@ -1164,20 +1187,15 @@ export default function ChatArea({
                         />
                       )}
                     {/* Web Search Toggle Button - only show for chat shell and when enabled */}
-                    {isWebSearchEnabled && isChatShell(selectedTeam) && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={() => setEnableWebSearch(!enableWebSearch)}
-                        className={`h-8 w-8 rounded-lg flex-shrink-0 transition-colors ${
-                          enableWebSearch
-                            ? 'bg-primary/10 text-primary hover:bg-primary/20'
-                            : 'text-text-muted hover:bg-surface hover:text-text-primary'
-                        }`}
-                        title={enableWebSearch ? t('web_search.disable') : t('web_search.enable')}
-                      >
-                        <Globe className="h-4 w-4" />
-                      </Button>
+                    {isWebSearchFeatureEnabled && isChatShell(selectedTeam) && (
+                      <SearchEngineSelector
+                        enabled={enableWebSearch}
+                        onToggle={setEnableWebSearch}
+                        selectedEngine={selectedSearchEngine}
+                        onSelectEngine={handleSearchEngineChange}
+                        disabled={isLoading || isStreaming}
+                        engines={searchEngines}
+                      />
                     )}
                     {teams.length > 0 && (
                       <TeamSelector

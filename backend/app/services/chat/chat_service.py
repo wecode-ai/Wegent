@@ -8,7 +8,9 @@ Chat Shell direct chat service.
 Provides streaming chat functionality by directly calling LLM APIs
 (OpenAI, Claude) without going through the Docker Executor.
 """
+
 import asyncio
+import inspect
 import json
 import logging
 import time
@@ -17,11 +19,11 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
-from fastapi.responses import StreamingResponse
-
 from app.core.config import settings
 from app.services.chat.base import ChatServiceBase, get_http_client
 from app.services.chat.session_manager import session_manager
+from fastapi.responses import StreamingResponse
+from fastmcp import FastMCP
 
 logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
@@ -55,10 +57,10 @@ class ChatService(ChatServiceBase):
         message: Union[str, Dict[str, Any]],
         model_config: Dict[str, Any],
         system_prompt: str = "",
-        tool_messages: Optional[List[Dict[str, Any]]] = None,
+        tools: Optional[List[FastMCP]] = None,
     ) -> StreamingResponse:
         """
-        Stream chat response from LLM API.
+        Stream chat response from LLM API with tool calling support.
 
         Args:
             subtask_id: Subtask ID for status updates
@@ -66,7 +68,7 @@ class ChatService(ChatServiceBase):
             message: User message (string or vision dict)
             model_config: Model configuration (api_key, base_url, model_id, model)
             system_prompt: Bot's system prompt
-            tool_messages: Optional list of tool call result messages to include in context
+            tools: Optional list of tool definitions
 
         Returns:
             StreamingResponse with SSE events
@@ -103,26 +105,51 @@ class ChatService(ChatServiceBase):
                 history = await session_manager.get_chat_history(task_id)
 
                 # Build messages list
-                messages = self._build_messages(history, message, system_prompt, tool_messages)
+                messages = self._build_messages(history, message, system_prompt)
 
-                # Call LLM API and stream response with cancellation support
-                cancelled = False
+                # Determine which streaming method to use
+                if tools:
+                    # Tool calling flow
+                    stream_generator = self._handle_tool_calling_flow(
+                        model_config,
+                        messages,
+                        tools,
+                        subtask_id,
+                        task_id,
+                        message,
+                        cancel_event,
+                    )
+                else:
+                    # Regular streaming
+                    stream_generator = self._call_llm_streaming_with_cancel(
+                        model_config, messages, subtask_id, cancel_event
+                    )
 
                 # Incremental save timing
                 last_redis_save = time.time()
                 last_db_save = time.time()
                 redis_interval = settings.STREAMING_REDIS_SAVE_INTERVAL
                 db_interval = settings.STREAMING_DB_SAVE_INTERVAL
+                cancelled = False
 
-                async for chunk in self._call_llm_streaming_with_cancel(
-                    model_config, messages, subtask_id, cancel_event
-                ):
+                async for chunk_data in stream_generator:
                     # Check if cancelled (local event or Redis flag)
                     if cancel_event.is_set() or await session_manager.is_cancelled(
                         subtask_id
                     ):
                         cancelled = True
                         break
+
+                    # Extract content from chunk (handle both str and dict)
+                    chunk = ""
+                    if isinstance(chunk_data, dict):
+                        if chunk_data.get("type") == "content":
+                            chunk = chunk_data.get("content", "")
+                    elif isinstance(chunk_data, str):
+                        chunk = chunk_data
+
+                    if not chunk:
+                        continue
 
                     full_response += chunk
 
@@ -261,7 +288,6 @@ class ChatService(ChatServiceBase):
         history: List[Dict[str, str]],
         current_message: Union[str, Dict[str, Any]],
         system_prompt: str,
-        tool_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> List[Dict[str, Any]]:
         """
         Build message list for LLM API.
@@ -270,16 +296,9 @@ class ChatService(ChatServiceBase):
             history: Previous conversation history
             current_message: Current user message (string or vision dict)
             system_prompt: System prompt
-            tool_messages: Optional list of tool call result messages (with role='tool')
 
         Returns:
             List of message dictionaries
-            
-        Note:
-            Tool messages are inserted before the current user message to provide context.
-            The 'tool' role will be converted to 'user' role in provider-specific methods
-            because most LLM providers don't support 'tool' role or expect tool results
-            to be presented as user messages for better context flow.
         """
         messages = []
 
@@ -289,12 +308,6 @@ class ChatService(ChatServiceBase):
 
         # Add history messages
         messages.extend(history)
-
-        # Add tool messages before the current user message
-        # Tool messages provide additional context (e.g., web search results) without modifying the user's message
-        # They will be converted to 'user' role in provider-specific methods for compatibility
-        if tool_messages:
-            messages.extend(tool_messages)
 
         # Add current message
         if (
@@ -323,6 +336,152 @@ class ChatService(ChatServiceBase):
 
         logger.info("messages: %s", json.dumps(messages, ensure_ascii=False, indent=4))
         return messages
+
+    async def _handle_tool_calling_flow(
+        self,
+        model_config: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
+        subtask_id: int,
+        task_id: int,
+        original_message: Union[str, Dict[str, Any]],
+        cancel_event: asyncio.Event,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Handle tool calling flow: send request with tools, detect tool calls, execute them, send results back.
+        """
+        # Step 0: Flatten tools (extract from FastMCP)
+        flat_tools = await self._flatten_tools(tools)
+
+        # Step 1: Adapt tools for the specific model
+        model_type = model_config.get("model", "openai")
+        adapted_tools = self._adapt_tools_for_model(flat_tools, model_type)
+
+        # Step 2: Send initial request with tools (streaming)
+        stream_generator = self._call_llm_streaming_with_cancel(
+            model_config, messages, subtask_id, cancel_event, tools=adapted_tools
+        )
+
+        # Accumulate tool calls and content
+        accumulated_content = ""
+        tool_calls_accumulator = {}  # index -> {id, name, arguments}
+
+        async for chunk_data in stream_generator:
+            if not isinstance(chunk_data, dict):
+                # Backward compatibility check
+                if chunk_data:
+                    yield {"type": "content", "content": chunk_data}
+                    accumulated_content += chunk_data
+                continue
+
+            if chunk_data.get("type") == "content":
+                content = chunk_data.get("content", "")
+                if content:
+                    accumulated_content += content
+                    yield chunk_data
+
+            elif chunk_data.get("type") == "tool_call_chunk":
+                tc = chunk_data.get("tool_call", {})
+                idx = tc.get("index", 0)
+
+                if idx not in tool_calls_accumulator:
+                    tool_calls_accumulator[idx] = {
+                        "id": "",
+                        "name": "",
+                        "arguments": "",
+                    }
+
+                if tc.get("id"):
+                    tool_calls_accumulator[idx]["id"] = tc["id"]
+                if tc.get("name"):
+                    tool_calls_accumulator[idx]["name"] = tc["name"]
+                if tc.get("arguments"):
+                    tool_calls_accumulator[idx]["arguments"] += tc["arguments"]
+
+        # Step 3: Check for tool calls
+        if not tool_calls_accumulator:
+            # No tool calls detected, we are done
+            return
+
+        # Reconstruct tool calls
+        tool_calls = []
+        for idx in sorted(tool_calls_accumulator.keys()):
+            tc = tool_calls_accumulator[idx]
+            tool_calls.append(
+                {
+                    "id": tc["id"],
+                    "type": "function",
+                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                }
+            )
+
+        # Construct assistant message
+        assistant_message = {
+            "role": "assistant",
+            "content": accumulated_content if accumulated_content else None,
+            "tool_calls": tool_calls,
+        }
+        messages.append(assistant_message)
+
+        # Step 4: Execute tool calls
+        for tool_call in tool_calls:
+            function_name = tool_call["function"]["name"]
+            try:
+                function_args = json.loads(tool_call["function"]["arguments"])
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse arguments for tool {function_name}: {e}")
+                function_args = {}
+
+            tool_call_id = tool_call["id"]
+
+            logger.info(f"Executing tool call: {function_name}")
+
+            # Execute tool
+            tool_result = ""
+            found_tool = next(
+                (t for t in flat_tools if getattr(t, "name", "") == function_name), None
+            )
+
+            if found_tool:
+                try:
+                    # Get the underlying function
+                    fn = getattr(found_tool, "fn", None)
+                    if fn:
+                        if inspect.iscoroutinefunction(fn):
+                            tool_result = await fn(**function_args)
+                        else:
+                            tool_result = fn(**function_args)
+                    elif callable(found_tool):
+                        # Fallback if tool itself is callable
+                        if inspect.iscoroutinefunction(found_tool):
+                            tool_result = await found_tool(**function_args)
+                        else:
+                            tool_result = found_tool(**function_args)
+                    else:
+                        tool_result = f"Tool {function_name} execution failed: Tool function not found"
+
+                except Exception as e:
+                    logger.error(f"Tool execution failed: {e}")
+                    tool_result = f"Error: {str(e)}"
+            else:
+                tool_result = f"Tool {function_name} not found"
+
+            messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": function_name,
+                    "content": str(tool_result),
+                }
+            )
+
+        # Step 5: Stream final response
+        # We don't pass tools here to avoid infinite loops (unless we want to support multi-step tool calls)
+        # For now, following original logic of one-step tool execution.
+        async for chunk_data in self._call_llm_streaming_with_cancel(
+            model_config, messages, subtask_id, cancel_event, tools=adapted_tools
+        ):
+            yield chunk_data
 
     async def _call_llm_streaming(
         self, model_config: Dict[str, Any], messages: List[Dict[str, str]]
@@ -369,6 +528,7 @@ class ChatService(ChatServiceBase):
         messages: List[Dict[str, str]],
         subtask_id: int,
         cancel_event: asyncio.Event,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Call LLM API with streaming and cancellation support.
@@ -398,6 +558,7 @@ class ChatService(ChatServiceBase):
                 default_headers,
                 subtask_id,
                 cancel_event,
+                tools=tools,
             ):
                 # Check cancellation before yielding each chunk
                 if cancel_event.is_set():
@@ -413,6 +574,7 @@ class ChatService(ChatServiceBase):
                 default_headers,
                 subtask_id,
                 cancel_event,
+                tools=tools,
             ):
                 # Check cancellation before yielding each chunk
                 if cancel_event.is_set():
@@ -428,6 +590,7 @@ class ChatService(ChatServiceBase):
                 default_headers,
                 subtask_id,
                 cancel_event,
+                tools=tools,
             ):
                 # Check cancellation before yielding each chunk
                 if cancel_event.is_set():
@@ -445,7 +608,7 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call OpenAI-compatible API with streaming.
-        
+
         Note: Tool messages (role='tool') are converted to 'user' role because:
         1. It maintains natural conversation flow (tool results augment user's question)
         2. Most models expect user/assistant alternation
@@ -479,10 +642,23 @@ class ChatService(ChatServiceBase):
         )
 
         for msg in messages:
-            # Convert 'tool' role to 'user' role (tool results are context for user's question)
-            msg_role = "user" if msg.get("role") == "tool" else msg.get("role", "user")
+            msg_role = msg.get("role", "user")
             content = msg.get("content", "")
-            if isinstance(content, list):
+
+            # Handle assistant messages with tool_calls (content may be null)
+            if msg_role == "assistant" and "tool_calls" in msg:
+                # Keep the assistant message with tool_calls as-is
+                processed_messages.append(msg)
+            # Keep tool messages as-is with tool role
+            elif msg_role == "tool":
+                processed_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.get("tool_call_id"),
+                        "content": content,
+                    }
+                )
+            elif isinstance(content, list):
                 # This is a multi-part content (vision message)
                 has_vision = True
 
@@ -554,7 +730,7 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call Claude API with streaming.
-        
+
         Note: Claude does not support 'tool' role. Tool messages are converted to 'user' role
         because tool results provide contextual information for answering the user's question.
         """
@@ -617,9 +793,7 @@ class ChatService(ChatServiceBase):
                 else:
                     formatted_content = [{"type": "text", "text": str(content)}]
 
-                chat_messages.append(
-                    {"role": msg_role, "content": formatted_content}
-                )
+                chat_messages.append({"role": msg_role, "content": formatted_content})
 
         payload = {
             "model": model_id,
@@ -663,14 +837,10 @@ class ChatService(ChatServiceBase):
         default_headers: Dict[str, Any],
         subtask_id: int,
         cancel_event: asyncio.Event,
-    ) -> AsyncGenerator[str, None]:
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Call OpenAI-compatible API with streaming and cancellation support.
-        
-        Note: Tool messages (role='tool') are converted to 'user' role because:
-        1. It maintains natural conversation flow (tool results augment user's question)
-        2. Most models expect user/assistant alternation
-        3. Tool results are contextual information for answering the user's question
         """
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
@@ -697,10 +867,23 @@ class ChatService(ChatServiceBase):
         )
 
         for msg in messages:
-            # Convert 'tool' role to 'user' role (tool results are context for user's question)
-            msg_role = "user" if msg.get("role") == "tool" else msg.get("role", "user")
+            msg_role = msg.get("role", "user")
             content = msg.get("content", "")
-            if isinstance(content, list):
+
+            # Handle assistant messages with tool_calls (content may be null)
+            if msg_role == "assistant" and "tool_calls" in msg:
+                # Keep the assistant message with tool_calls as-is
+                processed_messages.append(msg)
+            # Keep tool messages as-is with tool role
+            elif msg_role == "tool":
+                processed_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.get("tool_call_id"),
+                        "content": content,
+                    }
+                )
+            elif isinstance(content, list):
                 has_vision = True
                 if supports_vision:
                     processed_messages.append(msg)
@@ -728,6 +911,13 @@ class ChatService(ChatServiceBase):
             "stream": True,
         }
 
+        if tools:
+            payload["tools"] = tools
+        # Log the request for debugging
+        logger.info(
+            f"OpenAI streaming request payload: {json.dumps(payload, ensure_ascii=False, indent=2)}"
+        )
+
         async with client.stream(
             "POST", url, json=payload, headers=headers
         ) as response:
@@ -754,9 +944,35 @@ class ChatService(ChatServiceBase):
                         choices = chunk_data.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})
+
+                            # Handle content
                             content = delta.get("content", "")
                             if content:
-                                yield content
+                                yield {"type": "content", "content": content}
+
+                            # Handle tool calls
+                            tool_calls = delta.get("tool_calls")
+                            if tool_calls:
+                                for tc in tool_calls:
+                                    # Normalize OpenAI tool call format to flat format expected by handler
+                                    normalized_tc = {
+                                        "index": tc.get("index", 0),
+                                        "id": tc.get("id"),
+                                    }
+
+                                    if "function" in tc:
+                                        func = tc["function"]
+                                        if "name" in func:
+                                            normalized_tc["name"] = func["name"]
+                                        if "arguments" in func:
+                                            normalized_tc["arguments"] = func[
+                                                "arguments"
+                                            ]
+
+                                    yield {
+                                        "type": "tool_call_chunk",
+                                        "tool_call": normalized_tc,
+                                    }
                     except json.JSONDecodeError:
                         continue
 
@@ -777,7 +993,7 @@ class ChatService(ChatServiceBase):
         - API key is passed as query parameter
         - Messages use 'parts' array instead of 'content' string
         - Role mapping: assistant -> model, tool -> user
-        
+
         Note: Gemini does not support 'tool' role. Tool messages are converted to 'user' role
         because tool results provide contextual information for answering the user's question.
         """
@@ -911,12 +1127,10 @@ class ChatService(ChatServiceBase):
         default_headers: Dict[str, Any],
         subtask_id: int,
         cancel_event: asyncio.Event,
-    ) -> AsyncGenerator[str, None]:
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Call Gemini API with streaming and cancellation support.
-        
-        Note: Gemini does not support 'tool' role. Tool messages are converted to 'user' role
-        because tool results provide contextual information for answering the user's question.
         """
         # Build URL with API key as query parameter
         base_url_stripped = base_url.rstrip("/")
@@ -941,6 +1155,19 @@ class ChatService(ChatServiceBase):
         if default_headers:
             headers.update(default_headers)
 
+        # Convert tools to Gemini format
+        gemini_tools = []
+        if tools:
+            for tool in tools:
+                function = tool.get("function", {})
+                gemini_tools.append(
+                    {
+                        "name": function.get("name"),
+                        "description": function.get("description"),
+                        "parameters": function.get("parameters"),
+                    }
+                )
+
         # Convert messages to Gemini format
         system_instruction = None
         gemini_contents = []
@@ -954,11 +1181,39 @@ class ChatService(ChatServiceBase):
                     system_instruction = {"parts": [{"text": content}]}
                 continue
 
-            # Map roles: assistant -> model, tool -> user (Gemini doesn't support 'tool' role)
-            if role == "assistant":
-                gemini_role = "model"
-            else:
-                gemini_role = "user"  # Both 'user' and 'tool' map to 'user'
+            # Handle assistant message with tool calls
+            if role == "assistant" and "tool_calls" in msg:
+                parts = []
+                if content:
+                    parts.append({"text": content})
+
+                for tc in msg["tool_calls"]:
+                    parts.append(
+                        {
+                            "functionCall": {
+                                "name": tc["function"]["name"],
+                                "args": json.loads(tc["function"]["arguments"]),
+                            }
+                        }
+                    )
+                gemini_contents.append({"role": "model", "parts": parts})
+                continue
+
+            # Handle tool result message
+            if role == "tool":
+                parts = [
+                    {
+                        "functionResponse": {
+                            "name": msg.get("name"),
+                            "response": {"content": content},
+                        }
+                    }
+                ]
+                gemini_contents.append({"role": "user", "parts": parts})
+                continue
+
+            # Regular messages
+            gemini_role = "model" if role == "assistant" else "user"
 
             if isinstance(content, str):
                 parts = [{"text": content}]
@@ -997,6 +1252,14 @@ class ChatService(ChatServiceBase):
             "contents": gemini_contents,
         }
 
+        if gemini_tools:
+            payload["tools"] = [{"function_declarations": gemini_tools}]
+            # Gemini bug workaround: payload construction duplicated above in original code, fixing it here
+            # payload is already set, just adding tools
+            # Note: Original code had: payload = { "contents": ... } then if gemini_tools: payload["tools"] = ... then payload = { "contents": ... } (overwrite!).
+            # The overwrite at line 1381 in SEARCH block erased tools.
+            # Fixed here.
+
         if system_instruction:
             payload["systemInstruction"] = system_instruction
 
@@ -1009,6 +1272,9 @@ class ChatService(ChatServiceBase):
                     f"Gemini API error: status={response.status_code}, body={error_body.decode('utf-8', errors='replace')}"
                 )
             response.raise_for_status()
+
+            # For Gemini, we use UUID for generating IDs
+            import uuid
 
             async for line in response.aiter_lines():
                 # Check cancellation at each line
@@ -1028,9 +1294,24 @@ class ChatService(ChatServiceBase):
                             content_obj = candidates[0].get("content", {})
                             parts = content_obj.get("parts", [])
                             for part in parts:
+                                # Handle text
                                 text = part.get("text", "")
                                 if text:
-                                    yield text
+                                    yield {"type": "content", "content": text}
+
+                                # Handle function calls
+                                if "functionCall" in part:
+                                    fc = part["functionCall"]
+                                    call_id = f"call_{uuid.uuid4().hex[:8]}"
+                                    yield {
+                                        "type": "tool_call_chunk",
+                                        "tool_call": {
+                                            "index": 0,  # Gemini usually returns one
+                                            "id": call_id,
+                                            "name": fc.get("name"),
+                                            "arguments": json.dumps(fc.get("args")),
+                                        },
+                                    }
                     except json.JSONDecodeError:
                         continue
 
@@ -1044,12 +1325,10 @@ class ChatService(ChatServiceBase):
         default_headers: Dict[str, Any],
         subtask_id: int,
         cancel_event: asyncio.Event,
-    ) -> AsyncGenerator[str, None]:
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Call Claude API with streaming and cancellation support.
-        
-        Note: Claude does not support 'tool' role. Tool messages are converted to 'user' role
-        because tool results provide contextual information for answering the user's question.
         """
         base_url_stripped = base_url.rstrip("/")
         if base_url_stripped.endswith("/v1"):
@@ -1065,52 +1344,100 @@ class ChatService(ChatServiceBase):
         if default_headers:
             headers.update(default_headers)
 
-        # Convert 'tool' role to 'user' role (Claude doesn't support 'tool' role)
+        # Convert tools to Claude format
+        claude_tools = []
+        if tools:
+            for tool in tools:
+                function = tool.get("function", {})
+                claude_tools.append(
+                    {
+                        "name": function.get("name"),
+                        "description": function.get("description"),
+                        "input_schema": function.get("parameters"),
+                    }
+                )
+
+        # Convert messages to Claude format
         system_content = ""
         chat_messages = []
         for msg in messages:
-            if msg["role"] == "system":
-                system_content = msg["content"]
-            else:
-                # Convert 'tool' role to 'user' role for Claude
-                msg_role = "user" if msg["role"] == "tool" else msg["role"]
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    formatted_content = [{"type": "text", "text": content}]
-                elif isinstance(content, list):
-                    formatted_content = []
-                    for block in content:
-                        if block.get("type") == "text":
-                            formatted_content.append(block)
-                        elif block.get("type") == "image_url":
-                            image_url_data = block.get("image_url", {})
-                            if isinstance(image_url_data, dict):
-                                image_url = image_url_data.get("url", "")
-                            else:
-                                image_url = image_url_data
+            role = msg.get("role")
+            content = msg.get("content", "")
 
-                            if image_url.startswith("data:"):
-                                parts = image_url.split(",", 1)
-                                if len(parts) == 2:
-                                    header = parts[0]
-                                    base64_data = parts[1]
-                                    media_type = header.split(":")[1].split(";")[0]
-                                    formatted_content.append(
-                                        {
-                                            "type": "image",
-                                            "source": {
-                                                "type": "base64",
-                                                "media_type": media_type,
-                                                "data": base64_data,
-                                            },
-                                        }
-                                    )
-                else:
-                    formatted_content = [{"type": "text", "text": str(content)}]
+            if role == "system":
+                system_content = content
+                continue
 
+            # Handle assistant message with tool calls
+            if role == "assistant" and "tool_calls" in msg:
+                tool_calls = msg["tool_calls"]
+                formatted_content = []
+                # Add text content if present
+                if content:
+                    formatted_content.append({"type": "text", "text": content})
+
+                # Add tool use blocks
+                for tc in tool_calls:
+                    formatted_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": tc["function"]["name"],
+                            "input": json.loads(tc["function"]["arguments"]),
+                        }
+                    )
                 chat_messages.append(
-                    {"role": msg_role, "content": formatted_content}
+                    {"role": "assistant", "content": formatted_content}
                 )
+                continue
+
+            # Handle tool result message
+            if role == "tool":
+                formatted_content = [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": msg.get("tool_call_id"),
+                        "content": content,
+                    }
+                ]
+                chat_messages.append({"role": "user", "content": formatted_content})
+                continue
+
+            # Regular user/assistant message
+            if isinstance(content, str):
+                formatted_content = [{"type": "text", "text": content}]
+            elif isinstance(content, list):
+                formatted_content = []
+                for block in content:
+                    if block.get("type") == "text":
+                        formatted_content.append(block)
+                    elif block.get("type") == "image_url":
+                        image_url_data = block.get("image_url", {})
+                        if isinstance(image_url_data, dict):
+                            image_url = image_url_data.get("url", "")
+                        else:
+                            image_url = image_url_data
+
+                        if image_url.startswith("data:"):
+                            parts = image_url.split(",", 1)
+                            if len(parts) == 2:
+                                header = parts[0]
+                                base64_data = parts[1]
+                                media_type = header.split(":")[1].split(";")[0]
+                                formatted_content.append(
+                                    {
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": media_type,
+                                            "data": base64_data,
+                                        },
+                                    }
+                                )
+            else:
+                formatted_content = [{"type": "text", "text": str(content)}]
+
+            chat_messages.append({"role": role, "content": formatted_content})
 
         payload = {
             "model": model_id,
@@ -1118,7 +1445,12 @@ class ChatService(ChatServiceBase):
             "stream": True,
             "messages": chat_messages,
         }
-        if system_content:
+
+        if claude_tools:
+            payload["tools"] = claude_tools
+            if system_content:
+                payload["system"] = system_content
+        elif system_content:
             payload["system"] = system_content
 
         async with client.stream(
@@ -1139,12 +1471,43 @@ class ChatService(ChatServiceBase):
                         break
                     try:
                         chunk_data = json.loads(data)
-                        if chunk_data.get("type") == "content_block_delta":
+                        event_type = chunk_data.get("type")
+
+                        if event_type == "content_block_start":
+                            # Start of a block (could be text or tool_use)
+                            index = chunk_data.get("index", 0)
+                            content_block = chunk_data.get("content_block", {})
+                            if content_block.get("type") == "tool_use":
+                                yield {
+                                    "type": "tool_call_chunk",
+                                    "tool_call": {
+                                        "index": index,
+                                        "id": content_block.get("id"),
+                                        "name": content_block.get("name"),
+                                        "arguments": "",  # Arguments come in deltas
+                                    },
+                                }
+
+                        elif event_type == "content_block_delta":
+                            # Delta update
+                            index = chunk_data.get("index", 0)
                             delta = chunk_data.get("delta", {})
                             if delta.get("type") == "text_delta":
                                 text = delta.get("text", "")
                                 if text:
-                                    yield text
+                                    yield {"type": "content", "content": text}
+
+                            elif delta.get("type") == "input_json_delta":
+                                partial_json = delta.get("partial_json", "")
+                                if partial_json:
+                                    yield {
+                                        "type": "tool_call_chunk",
+                                        "tool_call": {
+                                            "index": index,
+                                            "arguments": partial_json,
+                                        },
+                                    }
+
                     except json.JSONDecodeError:
                         continue
 
@@ -1422,6 +1785,60 @@ class ChatService(ChatServiceBase):
 
         # 4. Clean up Redis streaming cache
         await session_manager.delete_streaming_content(subtask_id)
+
+    async def _flatten_tools(self, tools: List[Any]) -> List[Any]:
+        """Extract FunctionTool objects from FastMCP instances."""
+        flat_tools = []
+        for t in tools:
+            if isinstance(t, FastMCP):
+                if hasattr(t, "_tool_manager"):
+                    # get_tools() is async in newer versions
+                    if hasattr(t._tool_manager, "get_tools"):
+                        res = t._tool_manager.get_tools()
+                        if inspect.iscoroutine(res):
+                            tool_dict = await res
+                        else:
+                            tool_dict = res
+
+                        if isinstance(tool_dict, dict):
+                            flat_tools.extend(tool_dict.values())
+            else:
+                flat_tools.append(t)
+        return flat_tools
+
+    def _adapt_tools_for_model(
+        self, tools: List[Any], model_type: str
+    ) -> List[Dict[str, Any]]:
+        """Adapt tools to model-specific format."""
+        adapted = []
+        for tool in tools:
+            # Check if it's a FastMCP FunctionTool (it has name, description, parameters)
+            name = getattr(tool, "name", "")
+            description = getattr(tool, "description", "")
+            parameters = getattr(tool, "parameters", {})
+
+            if (
+                model_type == "openai" or model_type == "gemini"
+            ):  # Gemini adapter expects OpenAI format
+                adapted.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": description,
+                            "parameters": parameters,
+                        },
+                    }
+                )
+            elif model_type == "claude":
+                adapted.append(
+                    {
+                        "name": name,
+                        "description": description,
+                        "input_schema": parameters,
+                    }
+                )
+        return adapted
 
 
 # Global chat service instance
