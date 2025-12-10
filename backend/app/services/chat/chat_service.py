@@ -348,9 +348,7 @@ class ChatService(ChatServiceBase):
                 history = await session_manager.get_chat_history(task_id)
 
                 # Build messages list - need to make this available to consumer task
-                messages = self._build_messages(
-                    history, message, system_prompt
-                )
+                messages = self._build_messages(history, message, system_prompt)
 
                 # Start background task to consume LLM stream
                 # CRITICAL: Register in global registry so it continues even if client disconnects
@@ -504,131 +502,142 @@ class ChatService(ChatServiceBase):
         model_type = model_config.get("model", "openai")
         adapted_tools = self._adapt_tools_for_model(flat_tools, model_type)
 
-        # Step 2: Send initial request with tools (streaming)
-        stream_generator = self._call_llm_streaming_with_cancel(
-            model_config, messages, subtask_id, cancel_event, tools=adapted_tools
-        )
+        # Loop with recursion depth limiting
+        max_depth = 5  # Max tool recursion depth
+        current_depth = 0
 
-        # Accumulate tool calls and content
-        accumulated_content = ""
-        tool_calls_accumulator = {}  # index -> {id, name, arguments}
+        while current_depth < max_depth:
+            # Only send tools if we are not at the max depth
+            # This forces the model to generate a final answer on the last step
+            current_tools = adapted_tools if current_depth < max_depth - 1 else None
 
-        async for chunk_data in stream_generator:
-            if not isinstance(chunk_data, dict):
-                # Backward compatibility check
-                if chunk_data:
-                    yield {"type": "content", "content": chunk_data}
-                    accumulated_content += chunk_data
-                continue
+            # Call LLM streaming
+            stream_generator = self._call_llm_streaming_with_cancel(
+                model_config,
+                messages,
+                subtask_id,
+                cancel_event,
+                tools=current_tools,
+            )
 
-            if chunk_data.get("type") == "content":
-                content = chunk_data.get("content", "")
-                if content:
-                    accumulated_content += content
-                    yield chunk_data
+            # Accumulate tool calls and content for this step
+            accumulated_content = ""
+            tool_calls_accumulator = {}  # index -> {id, name, arguments}
 
-            elif chunk_data.get("type") == "tool_call_chunk":
-                tc = chunk_data.get("tool_call", {})
-                idx = tc.get("index", 0)
+            async for chunk_data in stream_generator:
+                if not isinstance(chunk_data, dict):
+                    # Backward compatibility check
+                    if chunk_data:
+                        yield {"type": "content", "content": chunk_data}
+                        accumulated_content += chunk_data
+                    continue
 
-                if idx not in tool_calls_accumulator:
-                    tool_calls_accumulator[idx] = {
-                        "id": "",
-                        "name": "",
-                        "arguments": "",
+                if chunk_data.get("type") == "content":
+                    content = chunk_data.get("content", "")
+                    if content:
+                        accumulated_content += content
+                        yield chunk_data
+
+                elif chunk_data.get("type") == "tool_call_chunk":
+                    tc = chunk_data.get("tool_call", {})
+                    idx = tc.get("index", 0)
+
+                    if idx not in tool_calls_accumulator:
+                        tool_calls_accumulator[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        }
+
+                    if tc.get("id"):
+                        tool_calls_accumulator[idx]["id"] = tc["id"]
+                    if tc.get("name"):
+                        tool_calls_accumulator[idx]["name"] = tc["name"]
+                    if tc.get("arguments"):
+                        tool_calls_accumulator[idx]["arguments"] += tc["arguments"]
+
+            # Check for tool calls
+            if not tool_calls_accumulator:
+                # No tool calls detected, we are done
+                return
+
+            # Reconstruct tool calls
+            tool_calls = []
+            for idx in sorted(tool_calls_accumulator.keys()):
+                tc = tool_calls_accumulator[idx]
+                tool_calls.append(
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
                     }
+                )
 
-                if tc.get("id"):
-                    tool_calls_accumulator[idx]["id"] = tc["id"]
-                if tc.get("name"):
-                    tool_calls_accumulator[idx]["name"] = tc["name"]
-                if tc.get("arguments"):
-                    tool_calls_accumulator[idx]["arguments"] += tc["arguments"]
+            # Construct assistant message
+            assistant_message = {
+                "role": "assistant",
+                "content": accumulated_content if accumulated_content else None,
+                "tool_calls": tool_calls,
+            }
+            messages.append(assistant_message)
 
-        # Step 3: Check for tool calls
-        if not tool_calls_accumulator:
-            # No tool calls detected, we are done
-            return
-
-        # Reconstruct tool calls
-        tool_calls = []
-        for idx in sorted(tool_calls_accumulator.keys()):
-            tc = tool_calls_accumulator[idx]
-            tool_calls.append(
-                {
-                    "id": tc["id"],
-                    "type": "function",
-                    "function": {"name": tc["name"], "arguments": tc["arguments"]},
-                }
-            )
-
-        # Construct assistant message
-        assistant_message = {
-            "role": "assistant",
-            "content": accumulated_content if accumulated_content else None,
-            "tool_calls": tool_calls,
-        }
-        messages.append(assistant_message)
-
-        # Step 4: Execute tool calls
-        for tool_call in tool_calls:
-            function_name = tool_call["function"]["name"]
-            try:
-                function_args = json.loads(tool_call["function"]["arguments"])
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse arguments for tool {function_name}: {e}")
-                function_args = {}
-
-            tool_call_id = tool_call["id"]
-
-            logger.info(f"Executing tool call: {function_name}")
-
-            # Execute tool
-            tool_result = ""
-            found_tool = next(
-                (t for t in flat_tools if getattr(t, "name", "") == function_name), None
-            )
-
-            if found_tool:
+            # Execute tool calls
+            for tool_call in tool_calls:
+                function_name = tool_call["function"]["name"]
                 try:
-                    # Get the underlying function
-                    fn = getattr(found_tool, "fn", None)
-                    if fn:
-                        if inspect.iscoroutinefunction(fn):
-                            tool_result = await fn(**function_args)
+                    function_args = json.loads(tool_call["function"]["arguments"])
+                except json.JSONDecodeError as e:
+                    logger.error(
+                        f"Failed to parse arguments for tool {function_name}: {e}"
+                    )
+                    function_args = {}
+
+                tool_call_id = tool_call["id"]
+
+                logger.info(f"Executing tool call: {function_name}")
+
+                # Execute tool
+                tool_result = ""
+                found_tool = next(
+                    (t for t in flat_tools if getattr(t, "name", "") == function_name),
+                    None,
+                )
+
+                if found_tool:
+                    try:
+                        # Get the underlying function
+                        fn = getattr(found_tool, "fn", None)
+                        if fn:
+                            if inspect.iscoroutinefunction(fn):
+                                tool_result = await fn(**function_args)
+                            else:
+                                tool_result = fn(**function_args)
+                        elif callable(found_tool):
+                            # Fallback if tool itself is callable
+                            if inspect.iscoroutinefunction(found_tool):
+                                tool_result = await found_tool(**function_args)
+                            else:
+                                tool_result = found_tool(**function_args)
                         else:
-                            tool_result = fn(**function_args)
-                    elif callable(found_tool):
-                        # Fallback if tool itself is callable
-                        if inspect.iscoroutinefunction(found_tool):
-                            tool_result = await found_tool(**function_args)
-                        else:
-                            tool_result = found_tool(**function_args)
-                    else:
-                        tool_result = f"Tool {function_name} execution failed: Tool function not found"
+                            tool_result = f"Tool {function_name} execution failed: Tool function not found"
 
-                except Exception as e:
-                    logger.error(f"Tool execution failed: {e}")
-                    tool_result = f"Error: {str(e)}"
-            else:
-                tool_result = f"Tool {function_name} not found"
+                    except Exception as e:
+                        logger.error(f"Tool execution failed: {e}")
+                        tool_result = f"Error: {str(e)}"
+                else:
+                    tool_result = f"Tool {function_name} not found"
 
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": function_name,
-                    "content": str(tool_result),
-                }
-            )
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": function_name,
+                        "content": str(tool_result),
+                    }
+                )
 
-        # Step 5: Stream final response
-        # We don't pass tools here to avoid infinite loops (unless we want to support multi-step tool calls)
-        # For now, following original logic of one-step tool execution.
-        async for chunk_data in self._call_llm_streaming_with_cancel(
-            model_config, messages, subtask_id, cancel_event, tools=adapted_tools
-        ):
-            yield chunk_data
+            # Increment depth and continue loop
+            current_depth += 1
 
     async def _call_llm_streaming(
         self, model_config: Dict[str, Any], messages: List[Dict[str, str]]
