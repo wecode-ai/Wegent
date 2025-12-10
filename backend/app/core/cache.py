@@ -56,7 +56,7 @@ class RedisCache:
                     # If value was stored as plain bytes/string
                     return data
             finally:
-                await client.close()
+                await client.aclose()
         except Exception as e:
             logger.error(f"Error getting cache key {key}: {str(e)}")
             return None
@@ -113,7 +113,7 @@ class RedisCache:
                 ok = await client.set(key, payload, ex=expire)
                 return bool(ok)
             finally:
-                await client.close()
+                await client.aclose()
         except Exception as e:
             logger.error(f"Error setting cache key {key}: {str(e)}")
             return False
@@ -129,7 +129,7 @@ class RedisCache:
                 ok = await client.set(key, payload, ex=expire, nx=True)
                 return bool(ok)
             finally:
-                await client.close()
+                await client.aclose()
         except Exception as e:
             logger.error(f"Error setting cache key {key} with SETNX: {str(e)}")
             return False
@@ -142,7 +142,7 @@ class RedisCache:
                 deleted = await client.delete(key)
                 return deleted > 0
             finally:
-                await client.close()
+                await client.aclose()
         except Exception as e:
             logger.error(f"Error deleting cache key {key}: {str(e)}")
             return False
@@ -158,7 +158,7 @@ class RedisCache:
             try:
                 return await client.dbsize()
             finally:
-                await client.close()
+                await client.aclose()
         except Exception as e:
             logger.error(f"Error getting cache size: {str(e)}")
             return 0

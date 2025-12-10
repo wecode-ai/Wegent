@@ -439,7 +439,7 @@ class SessionManager:
                 await redis_client.publish(channel, chunk)
                 return True
             finally:
-                await redis_client.close()
+                await redis_client.aclose()
         except Exception as e:
             logger.error(
                 f"Error publishing streaming chunk for subtask {subtask_id}: {e}"
@@ -472,7 +472,7 @@ class SessionManager:
                 await redis_client.publish(channel, done_message)
                 return True
             finally:
-                await redis_client.close()
+                await redis_client.aclose()
         except Exception as e:
             logger.error(f"Error publishing stream done for subtask {subtask_id}: {e}")
             return False

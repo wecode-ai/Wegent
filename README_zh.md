@@ -57,7 +57,7 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 3. **🔒 独立沙箱环境**：每个 Agent 团队运行在独立沙箱环境中，支持多个 Agent 团队同时运行
 4. **🤝 高级协作模式**：对话模式可以实现并行、Leader、Solo 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
 5. **💻 AI 编码集成**：编码模式可以与 GitHub/GitLab 等代码服务对接，实现代码开发、review 等 AI Coding 工作流
-6. **🔍 联网搜索集成**：Chat Shell 团队可选的联网搜索功能，通过通用 HTTP 适配器支持多种搜索引擎（SearXNG、Google Custom Search、Bing、Brave 等）
+6. **🔍 联网搜索集成**：Chat Shell 团队可选的联网搜索功能，通过通用 HTTP 适配器支持多种搜索引擎（SearXNG、Google Custom Search、Bing、Brave 等），支持用户自选搜索引擎。
 
 ```mermaid
 graph LR

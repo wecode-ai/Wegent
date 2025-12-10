@@ -46,6 +46,7 @@ class StreamChatRequest(BaseModel):
     attachment_id: Optional[int] = None  # Optional attachment ID for file upload
     # Web search toggle
     enable_web_search: bool = False  # Enable web search for this message
+    search_engine: Optional[str] = None  # Search engine to use
     # Git info (optional, for record keeping)
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -477,40 +478,20 @@ async def stream_chat(
             request.message, attachment
         )
 
-    # Handle web search if enabled
-    tool_messages = None
+    # Prepare web search tool definition if enabled
+    tools = None
     if request.enable_web_search:
         from app.core.config import settings
-        from app.services.search import get_global_search_service
+        from app.services.chat.tools import get_web_search_mcp
 
         # Check if web search is enabled globally
-        if not settings.WEB_SEARCH_ENABLED:
-            logger.warning("Web search requested but disabled in configuration")
+        if settings.WEB_SEARCH_ENABLED:
+            # Pass the FastMCP tool object directly
+            web_search_mcp = get_web_search_mcp(engine_name=request.search_engine)
+            if web_search_mcp:
+                tools = [web_search_mcp]
         else:
-            search_service = get_global_search_service()
-            if search_service:
-                try:
-                    # Perform search with configured max results
-                    max_results = getattr(settings, "WEB_SEARCH_MAX_RESULTS", 5)
-                    search_context = await search_service.search(
-                        request.message, limit=max_results
-                    )
-                    logger.info(
-                        f"Web search completed for query: {request.message[:50]}..."
-                    )
-
-                    # Build tool messages with search results
-                    if search_context:
-                        tool_messages = [
-                            {
-                                "role": "tool",
-                                "content": f"Web Search Results:\n{search_context}",
-                                "name": "web_search",
-                            }
-                        ]
-                except Exception as e:
-                    logger.error(f"Web search failed: {e}")
-                    # Continue without search results rather than failing the request
+            logger.warning("Web search requested but disabled in configuration")
 
     # Create task and subtasks (use original message for storage, final_message for LLM)
     task, assistant_subtask = await _create_task_and_subtasks(
@@ -641,7 +622,7 @@ async def stream_chat(
             message=final_message,
             model_config=model_config,
             system_prompt=system_prompt,
-            tool_messages=tool_messages,
+            tools=tools,
         )
 
         # Forward the stream
@@ -902,7 +883,7 @@ async def _handle_resume_stream(
                 await pubsub.unsubscribe()
                 await pubsub.close()
                 if redis_client:
-                    await redis_client.close()
+                    await redis_client.aclose()
 
         except Exception as e:
             logger.error(
@@ -1302,7 +1283,7 @@ async def resume_stream(
                 await pubsub.unsubscribe()
                 await pubsub.close()
                 if redis_client:
-                    await redis_client.close()
+                    await redis_client.aclose()
 
         except Exception as e:
             logger.error(
@@ -1320,3 +1301,31 @@ async def resume_stream(
             "Content-Encoding": "none",
         },
     )
+
+
+@router.get("/search-engines")
+async def get_search_engines(
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get available search engines from configuration.
+
+    Returns:
+        {
+            "enabled": bool,
+            "engines": [{"name": str, "display_name": str}]
+        }
+    """
+    from app.core.config import settings
+    from app.services.search.factory import get_available_engines
+
+    if not settings.WEB_SEARCH_ENABLED:
+        return {"enabled": False, "engines": []}
+
+    # Get available engines from factory
+    engines = get_available_engines()
+
+    return {
+        "enabled": True,
+        "engines": engines,
+    }

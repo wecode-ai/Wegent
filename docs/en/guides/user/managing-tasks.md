@@ -202,6 +202,13 @@ When creating a task through the Web interface, you can select a different model
 - Use a more powerful model for complex one-off tasks
 - Use a cheaper/faster model for simple queries
 
+### Web Search & Search Engine
+
+When using a Chat Shell and web search is enabled in the system:
+
+1. **Web Search Toggle**: Click the globe icon to enable or disable web search capability.
+2. **Search Engine Selector**: Select your preferred search engine (e.g., Google, Bing) from the dropdown menu.
+
 #### status Section
 
 | Field | Type | Description |
