@@ -688,7 +688,9 @@
       "base_image_required": "Base image is required",
       "base_image_and_shell_required": "Both base image and base shell are required for validation",
       "base_shell_not_found": "Selected base shell not found",
-      "image_not_compatible": "Image is not compatible with the selected shell type"
+      "image_not_compatible": "Image is not compatible with the selected shell type",
+      "group_required": "Group selection is required",
+      "group_required_hint": "You must select a group when creating a shell"
     },
     "software_requirements_title": "Software Requirements",
     "software_requirements_hint": "The following software must be pre-installed in your base image and meet minimum version requirements",

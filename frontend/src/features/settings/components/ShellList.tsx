@@ -123,7 +123,7 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
   };
 
   if (editingShell || isCreating) {
-    return <ShellEdit shell={editingShell} onClose={handleEditClose} toast={toast} />;
+    return <ShellEdit shell={editingShell} onClose={handleEditClose} toast={toast} groupName={groupName} />;
   }
 
   return (

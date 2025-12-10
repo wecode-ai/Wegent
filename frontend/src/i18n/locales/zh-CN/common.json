@@ -689,7 +689,9 @@
       "base_image_required": "Base Image 不能为空",
       "base_image_and_shell_required": "验证需要同时填写 Base Image 和基础 Shell",
       "base_shell_not_found": "未找到所选基础 Shell",
-      "image_not_compatible": "镜像与所选 Shell 类型不兼容"
+      "image_not_compatible": "镜像与所选 Shell 类型不兼容",
+      "group_required": "必须选择一个群组",
+      "group_required_hint": "创建执行器时必须选择一个群组"
     },
     "software_requirements_title": "软件版本要求",
     "software_requirements_hint": "以下软件需要在您的 Base Image 中预先安装并满足最低版本要求",

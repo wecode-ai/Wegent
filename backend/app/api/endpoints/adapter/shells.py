@@ -136,9 +136,13 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
     """Convert Kind (user shell) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(kind.json)
     labels = shell_crd.metadata.labels or {}
+    
+    # Determine resource type based on namespace
+    resource_type = "group" if kind.namespace != "default" else "user"
+    
     return UnifiedShell(
         name=kind.name,
-        type="user",
+        type=resource_type,
         displayName=shell_crd.metadata.displayName or kind.name,
         shellType=shell_crd.spec.shellType,
         baseImage=shell_crd.spec.baseImage,
