@@ -50,35 +50,6 @@ WEB_SEARCH_ENGINES='{
 }'
 ```
 
-### Legacy Single-Engine Configuration
-
-For backward compatibility, you can still use the single-engine configuration:
-
-```bash
-WEB_SEARCH_ENABLED=true
-WEB_SEARCH_ENGINES='{
-    "default": "google",
-    "engines": {
-        "google": {
-            "base_url": "https://api.example.com/search",
-            "max_results": 10,
-            "query_param": "q",
-            "limit_param": "limit",
-            "extra_params": {"format": "json"},
-            "response_path": "results",
-            "title_field": "title",
-            "url_field": "url",
-            "snippet_field": "snippet",
-            "content_field": "content"
-        },
-        "bing": {
-            "base_url": "https://api.bing.com/search",
-            ...
-        }
-    }
-}'
-```
-
 ## Configuration Fields
 
 - `base_url`: API endpoint URL (required)
