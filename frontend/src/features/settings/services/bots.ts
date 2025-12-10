@@ -9,9 +9,12 @@ import { CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
 /**
  * Get Bot list
  */
-export async function fetchBotsList(): Promise<Bot[]> {
+export async function fetchBotsList(
+  scope?: 'personal' | 'group' | 'all',
+  groupName?: string
+): Promise<Bot[]> {
   const params: PaginationParams = {};
-  const botsData = await botApis.getBots(params);
+  const botsData = await botApis.getBots(params, scope, groupName);
   console.log('[DEBUG] fetchBotsList response:', JSON.stringify(botsData, null, 2));
   const items = Array.isArray(botsData.items) ? botsData.items : [];
   // Log each bot's agent_config for debugging

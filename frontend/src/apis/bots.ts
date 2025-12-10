@@ -31,12 +31,24 @@ export interface BotListResponse {
 }
 
 // Bot Services
+// Bot Services
 export const botApis = {
-  async getBots(params?: PaginationParams): Promise<BotListResponse> {
-    const query = params ? `?page=${params.page || 1}&limit=${params.limit || 100}` : '';
-    return apiClient.get(`/bots${query}`);
+  async getBots(
+    params?: PaginationParams,
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string
+  ): Promise<BotListResponse> {
+    const queryParams = new URLSearchParams();
+    queryParams.append('page', String(params?.page || 1));
+    queryParams.append('limit', String(params?.limit || 100));
+    if (scope) {
+      queryParams.append('scope', scope);
+    }
+    if (groupName) {
+      queryParams.append('group_name', groupName);
+    }
+    return apiClient.get(`/bots?${queryParams.toString()}`);
   },
-
   async getBot(id: number): Promise<Bot> {
     return apiClient.get(`/bots/${id}`);
   },
