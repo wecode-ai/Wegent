@@ -20,12 +20,13 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
-from app.core.config import settings
-from app.services.chat.base import ChatServiceBase, get_http_client
-from app.services.chat.session_manager import session_manager
 from fastapi.responses import StreamingResponse
 from fastmcp import FastMCP
 from sqlalchemy.orm.attributes import flag_modified
+
+from app.core.config import settings
+from app.services.chat.base import ChatServiceBase, get_http_client
+from app.services.chat.session_manager import session_manager
 
 logger = logging.getLogger(__name__)
 

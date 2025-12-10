@@ -6,8 +6,9 @@
 Chat service tools definition using FastMCP pattern.
 """
 
-from app.services.search import get_search_service
 from fastmcp import FastMCP
+
+from app.services.search import get_search_service
 
 
 def get_web_search_mcp(engine_name: str | None = None) -> FastMCP | None:
