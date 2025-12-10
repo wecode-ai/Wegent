@@ -8,7 +8,7 @@ import '@/features/common/scrollbar.css';
 import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
+import { ResourceListItem } from '@/components/common/ResourceListItem';
 import {
   CpuChipIcon,
   PencilIcon,
@@ -263,40 +263,34 @@ const ModelList: React.FC = () => {
                     className={`p-4 bg-base hover:bg-hover transition-colors ${displayModel.isPublic ? 'border-l-2 border-l-primary' : ''}`}
                   >
                     <div className="flex items-center justify-between min-w-0">
-                      <div className="flex items-center space-x-3 min-w-0 flex-1">
-                        {displayModel.isPublic ? (
-                          <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                        ) : (
-                          <CpuChipIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                        )}
-                        <div className="flex flex-col justify-center min-w-0 flex-1">
-                          <div className="flex items-center space-x-2 min-w-0">
-                            <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                              {displayModel.displayName}
-                            </h3>
-                            {displayModel.isPublic && (
-                              <Tag variant="info" className="text-xs">
-                                {t('models.public')}
-                              </Tag>
-                            )}
-                          </div>
-                          {/* Show ID if different from display name */}
-                          {!displayModel.isPublic &&
-                            displayModel.displayName !== displayModel.name && (
-                              <p className="text-xs text-text-muted truncate">
-                                ID: {displayModel.name}
-                              </p>
-                            )}
-                          <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                            <Tag variant="default" className="capitalize">
-                              {getProviderLabel(displayModel.modelType)}
-                            </Tag>
-                            <Tag variant="info" className="hidden sm:inline-flex">
-                              {displayModel.modelId}
-                            </Tag>
-                          </div>
-                        </div>
-                      </div>
+                      <ResourceListItem
+                        name={displayModel.name}
+                        displayName={displayModel.displayName}
+                        isPublic={displayModel.isPublic}
+                        showId={!displayModel.isPublic}
+                        publicLabel={t('models.public')}
+                        icon={
+                          displayModel.isPublic ? (
+                            <GlobeAltIcon className="w-5 h-5 text-primary" />
+                          ) : (
+                            <CpuChipIcon className="w-5 h-5 text-primary" />
+                          )
+                        }
+                        tags={[
+                          {
+                            key: 'provider',
+                            label: getProviderLabel(displayModel.modelType),
+                            variant: 'default',
+                            className: 'capitalize',
+                          },
+                          {
+                            key: 'model-id',
+                            label: displayModel.modelId,
+                            variant: 'info',
+                            className: 'hidden sm:inline-flex',
+                          },
+                        ]}
+                      />
                       <div className="flex items-center gap-1 flex-shrink-0 ml-3">
                         {/* Only show action buttons for user's own models */}
                         {!displayModel.isPublic && (
