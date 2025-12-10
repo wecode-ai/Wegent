@@ -81,9 +81,11 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
     fetchModels();
   }, [fetchModels]);
 
-  // Convert unified models to display format
-  const displayModels: DisplayModel[] = React.useMemo(() => {
-    const result: DisplayModel[] = [];
+  // Convert unified models to display format and categorize
+  const { groupModels, publicModels, userModels } = React.useMemo(() => {
+    const group: DisplayModel[] = [];
+    const publicList: DisplayModel[] = [];
+    const user: DisplayModel[] = [];
 
     for (const model of unifiedModels) {
       const isPublic = model.type === 'public';
@@ -93,7 +95,7 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
       const config = (model.config as Record<string, unknown>) || {};
       const env = (config?.env as Record<string, unknown>) || {};
 
-      result.push({
+      const displayModel: DisplayModel = {
         name: model.name,
         displayName: model.displayName || model.name,
         modelType: model.provider || (env.model as string) || 'claude',
@@ -101,11 +103,25 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
         isPublic,
         isGroup,
         config,
-      });
+      };
+
+      if (isGroup) {
+        group.push(displayModel);
+      } else if (isPublic) {
+        publicList.push(displayModel);
+      } else {
+        user.push(displayModel);
+      }
     }
 
-    return result;
+    return {
+      groupModels: group,
+      publicModels: publicList,
+      userModels: user,
+    };
   }, [unifiedModels]);
+
+  const totalModels = groupModels.length + publicModels.length + userModels.length;
   // Convert DisplayModel to ModelCRD for editing
   const convertToModelCRD = (displayModel: DisplayModel): ModelCRD => {
     const env = (displayModel.config?.env as Record<string, unknown>) || {};
@@ -250,69 +266,57 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
             <Loader2 className="w-6 h-6 animate-spin text-text-muted" />
           </div>
         )}
+{/* Empty State */}
+{!loading && totalModels === 0 && (
+  <div className="flex flex-col items-center justify-center py-12 text-center">
+    <CpuChipIcon className="w-12 h-12 text-text-muted mb-4" />
+    <p className="text-text-muted">{t('models.no_models')}</p>
+    <p className="text-sm text-text-muted mt-1">{t('models.no_models_hint')}</p>
+  </div>
+)}
 
-        {/* Empty State */}
-        {!loading && displayModels.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-12 text-center">
-            <CpuChipIcon className="w-12 h-12 text-text-muted mb-4" />
-            <p className="text-text-muted">{t('models.no_models')}</p>
-            <p className="text-sm text-text-muted mt-1">{t('models.no_models_hint')}</p>
-          </div>
-        )}
-
-        {/* Model List */}
-        {!loading && displayModels.length > 0 && (
-          <>
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
-              {displayModels.map(displayModel => (
-                <Card
-                  key={`${displayModel.isPublic ? 'public' : displayModel.isGroup ? 'group' : 'user'}-${displayModel.name}`}
-                  className={`p-4 bg-base hover:bg-hover transition-colors ${displayModel.isPublic || displayModel.isGroup ? 'border-l-2 border-l-primary' : ''}`}
-                >
-                  <div className="flex items-center justify-between min-w-0">
-                    <div className="flex items-center space-x-3 min-w-0 flex-1">
-                      {displayModel.isPublic ? (
-                        <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                      ) : (
-                        <CpuChipIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                      )}
-                      <div className="flex flex-col justify-center min-w-0 flex-1">
-                        <div className="flex items-center space-x-2 min-w-0">
-                          <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                            {displayModel.displayName}
-                          </h3>
-                          {displayModel.isPublic && (
-                            <Tag variant="info" className="text-xs">
-                              {t('models.public')}
-                            </Tag>
-                          )}
-                          {displayModel.isGroup && (
-                            <Tag variant="success" className="text-xs">
-                              {t('models.group')}
-                            </Tag>
-                          )}
-                        </div>
-                        {/* Show ID if different from display name */}
-                        {!displayModel.isPublic && !displayModel.isGroup &&
-                          displayModel.displayName !== displayModel.name && (
-                            <p className="text-xs text-text-muted truncate">
-                              ID: {displayModel.name}
-                            </p>
-                          )}
-                        <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                          <Tag variant="default" className="capitalize">
-                            {getProviderLabel(displayModel.modelType)}
-                          </Tag>
-                          <Tag variant="info" className="hidden sm:inline-flex">
-                            {displayModel.modelId}
-                          </Tag>
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                        {/* Only show action buttons for user's own models (not public or group) */}
-                        {!displayModel.isPublic && !displayModel.isGroup && (
-                          <>
+{/* Model List - Categorized */}
+{!loading && totalModels > 0 && (
+  <>
+    <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 p-1">
+      {/* User Models Section - 我的模型放在最上面 */}
+      {userModels.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium text-text-secondary px-2">
+            {t('models.my_models')} ({userModels.length})
+          </h3>
+          <div className="space-y-3">
+            {userModels.map(displayModel => (
+              <Card
+                key={`user-${displayModel.name}`}
+                className="p-4 bg-base hover:bg-hover transition-colors"
+              >
+                        <div className="flex items-center justify-between min-w-0">
+                          <div className="flex items-center space-x-3 min-w-0 flex-1">
+                            <CpuChipIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                            <div className="flex flex-col justify-center min-w-0 flex-1">
+                              <div className="flex items-center space-x-2 min-w-0">
+                                <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                                  {displayModel.displayName}
+                                </h3>
+                              </div>
+                              {/* Show ID if different from display name */}
+                              {displayModel.displayName !== displayModel.name && (
+                                <p className="text-xs text-text-muted truncate">
+                                  ID: {displayModel.name}
+                                </p>
+                              )}
+                              <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                                <Tag variant="default" className="capitalize">
+                                  {getProviderLabel(displayModel.modelType)}
+                                </Tag>
+                                <Tag variant="info" className="hidden sm:inline-flex">
+                                  {displayModel.modelId}
+                                </Tag>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
                             <Button
                               variant="ghost"
                               size="icon"
@@ -350,15 +354,98 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
                             >
                               <TrashIcon className="w-4 h-4" />
                             </Button>
-                          </>
-                        )}
+                          </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Group Models Section */}
+      {groupModels.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium text-text-secondary px-2">
+            {t('models.group_models')} ({groupModels.length})
+          </h3>
+          <div className="space-y-3">
+            {groupModels.map(displayModel => (
+              <Card
+                key={`group-${displayModel.name}`}
+                className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
+              >
+                <div className="flex items-center justify-between min-w-0">
+                  <div className="flex items-center space-x-3 min-w-0 flex-1">
+                    <CpuChipIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                    <div className="flex flex-col justify-center min-w-0 flex-1">
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                          {displayModel.displayName}
+                        </h3>
+                        <Tag variant="success" className="text-xs">
+                          {t('models.group')}
+                        </Tag>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                        <Tag variant="default" className="capitalize">
+                          {getProviderLabel(displayModel.modelType)}
+                        </Tag>
+                        <Tag variant="info" className="hidden sm:inline-flex">
+                          {displayModel.modelId}
+                        </Tag>
+                      </div>
                     </div>
                   </div>
-                </Card>
-              ))}
-            </div>
-          </>
-        )}
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Public Models Section */}
+      {publicModels.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-sm font-medium text-text-secondary px-2">
+            {t('models.public_models')} ({publicModels.length})
+          </h3>
+          <div className="space-y-3">
+            {publicModels.map(displayModel => (
+              <Card
+                key={`public-${displayModel.name}`}
+                className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
+              >
+                <div className="flex items-center justify-between min-w-0">
+                  <div className="flex items-center space-x-3 min-w-0 flex-1">
+                    <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                    <div className="flex flex-col justify-center min-w-0 flex-1">
+                      <div className="flex items-center space-x-2 min-w-0">
+                        <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                          {displayModel.displayName}
+                        </h3>
+                        <Tag variant="info" className="text-xs">
+                          {t('models.public')}
+                        </Tag>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                        <Tag variant="default" className="capitalize">
+                          {getProviderLabel(displayModel.modelType)}
+                        </Tag>
+                        <Tag variant="info" className="hidden sm:inline-flex">
+                          {displayModel.modelId}
+                        </Tag>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  </>
+)}
 
         {/* Add Button */}
         {!loading && (

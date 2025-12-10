@@ -61,6 +61,31 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
     fetchShells();
   }, [fetchShells, scope, groupName]);
 
+  // Categorize shells by type
+  const { groupShells, publicShells, userShells } = React.useMemo(() => {
+    const group: UnifiedShell[] = [];
+    const publicList: UnifiedShell[] = [];
+    const user: UnifiedShell[] = [];
+
+    for (const shell of shells) {
+      if (shell.type === 'group') {
+        group.push(shell);
+      } else if (shell.type === 'public') {
+        publicList.push(shell);
+      } else {
+        user.push(shell);
+      }
+    }
+
+    return {
+      groupShells: group,
+      publicShells: publicList,
+      userShells: user,
+    };
+  }, [shells]);
+
+  const totalShells = groupShells.length + publicShells.length + userShells.length;
+
   const handleDelete = async () => {
     if (!deleteConfirmShell) return;
 
@@ -119,7 +144,7 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
         )}
 
         {/* Empty State */}
-        {!loading && shells.length === 0 && (
+        {!loading && totalShells === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <CommandLineIcon className="w-12 h-12 text-text-muted mb-4" />
             <p className="text-text-muted">{t('shells.no_shells')}</p>
@@ -127,61 +152,53 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
           </div>
         )}
 
-        {/* Shell List */}
-        {!loading && shells.length > 0 && (
+        {/* Shell List - Categorized */}
+        {!loading && totalShells > 0 && (
           <>
-            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
-              {shells.map(shell => {
-                const isPublic = shell.type === 'public';
-                return (
-                  <Card
-                    key={`${shell.type}-${shell.name}`}
-                    className={`p-4 bg-base hover:bg-hover transition-colors ${isPublic ? 'border-l-2 border-l-primary' : ''}`}
-                  >
-                    <div className="flex items-center justify-between min-w-0">
-                      <div className="flex items-center space-x-3 min-w-0 flex-1">
-                        {isPublic ? (
-                          <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                        ) : (
-                          <CommandLineIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                        )}
-                        <div className="flex flex-col justify-center min-w-0 flex-1">
-                          <div className="flex items-center space-x-2 min-w-0">
-                            <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                              {shell.displayName || shell.name}
-                            </h3>
-                            {isPublic && (
-                              <Tag variant="info" className="text-xs">
-                                {t('shells.public')}
-                              </Tag>
-                            )}
+            <div className="flex-1 overflow-y-auto custom-scrollbar space-y-4 p-1">
+              {/* User Shells Section - 我的执行器放在最上面 */}
+              {userShells.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-text-secondary px-2">
+                    {t('shells.my_shells')} ({userShells.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {userShells.map(shell => (
+                      <Card
+                        key={`user-${shell.name}`}
+                        className="p-4 bg-base hover:bg-hover transition-colors"
+                      >
+                        <div className="flex items-center justify-between min-w-0">
+                          <div className="flex items-center space-x-3 min-w-0 flex-1">
+                            <CommandLineIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                            <div className="flex flex-col justify-center min-w-0 flex-1">
+                              <div className="flex items-center space-x-2 min-w-0">
+                                <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                                  {shell.displayName || shell.name}
+                                </h3>
+                              </div>
+                              {shell.displayName && shell.displayName !== shell.name && (
+                                <p className="text-xs text-text-muted truncate">ID: {shell.name}</p>
+                              )}
+                              <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                                <Tag variant="default" className="capitalize">
+                                  {shell.shellType}
+                                </Tag>
+                                <Tag variant="info" className="hidden sm:inline-flex text-xs">
+                                  {getExecutionTypeLabel(shell.executionType)}
+                                </Tag>
+                                {shell.baseImage && (
+                                  <Tag
+                                    variant="default"
+                                    className="hidden md:inline-flex text-xs truncate max-w-[200px]"
+                                  >
+                                    {shell.baseImage}
+                                  </Tag>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                          {/* Show ID if different from display name */}
-                          {!isPublic && shell.displayName && shell.displayName !== shell.name && (
-                            <p className="text-xs text-text-muted truncate">ID: {shell.name}</p>
-                          )}
-                          <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                            <Tag variant="default" className="capitalize">
-                              {shell.shellType}
-                            </Tag>
-                            <Tag variant="info" className="hidden sm:inline-flex text-xs">
-                              {getExecutionTypeLabel(shell.executionType)}
-                            </Tag>
-                            {shell.baseImage && (
-                              <Tag
-                                variant="default"
-                                className="hidden md:inline-flex text-xs truncate max-w-[200px]"
-                              >
-                                {shell.baseImage}
-                              </Tag>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                        {/* Only show action buttons for user's own shells */}
-                        {!isPublic && (
-                          <>
+                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
                             <Button
                               variant="ghost"
                               size="icon"
@@ -200,13 +217,111 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
                             >
                               <TrashIcon className="w-4 h-4" />
                             </Button>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  </Card>
-                );
-              })}
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Group Shells Section */}
+              {groupShells.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-text-secondary px-2">
+                    {t('shells.group_shells')} ({groupShells.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {groupShells.map(shell => (
+                      <Card
+                        key={`group-${shell.name}`}
+                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
+                      >
+                        <div className="flex items-center justify-between min-w-0">
+                          <div className="flex items-center space-x-3 min-w-0 flex-1">
+                            <CommandLineIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                            <div className="flex flex-col justify-center min-w-0 flex-1">
+                              <div className="flex items-center space-x-2 min-w-0">
+                                <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                                  {shell.displayName || shell.name}
+                                </h3>
+                                <Tag variant="success" className="text-xs">
+                                  {t('shells.group')}
+                                </Tag>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                                <Tag variant="default" className="capitalize">
+                                  {shell.shellType}
+                                </Tag>
+                                <Tag variant="info" className="hidden sm:inline-flex text-xs">
+                                  {getExecutionTypeLabel(shell.executionType)}
+                                </Tag>
+                                {shell.baseImage && (
+                                  <Tag
+                                    variant="default"
+                                    className="hidden md:inline-flex text-xs truncate max-w-[200px]"
+                                  >
+                                    {shell.baseImage}
+                                  </Tag>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Public Shells Section */}
+              {publicShells.length > 0 && (
+                <div className="space-y-2">
+                  <h3 className="text-sm font-medium text-text-secondary px-2">
+                    {t('shells.public_shells')} ({publicShells.length})
+                  </h3>
+                  <div className="space-y-3">
+                    {publicShells.map(shell => (
+                      <Card
+                        key={`public-${shell.name}`}
+                        className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
+                      >
+                        <div className="flex items-center justify-between min-w-0">
+                          <div className="flex items-center space-x-3 min-w-0 flex-1">
+                            <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                            <div className="flex flex-col justify-center min-w-0 flex-1">
+                              <div className="flex items-center space-x-2 min-w-0">
+                                <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                                  {shell.displayName || shell.name}
+                                </h3>
+                                <Tag variant="info" className="text-xs">
+                                  {t('shells.public')}
+                                </Tag>
+                              </div>
+                              <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                                <Tag variant="default" className="capitalize">
+                                  {shell.shellType}
+                                </Tag>
+                                <Tag variant="info" className="hidden sm:inline-flex text-xs">
+                                  {getExecutionTypeLabel(shell.executionType)}
+                                </Tag>
+                                {shell.baseImage && (
+                                  <Tag
+                                    variant="default"
+                                    className="hidden md:inline-flex text-xs truncate max-w-[200px]"
+                                  >
+                                    {shell.baseImage}
+                                  </Tag>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           </>
         )}
