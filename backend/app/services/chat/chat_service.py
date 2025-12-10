@@ -405,6 +405,31 @@ class ChatService(ChatServiceBase):
             },
         )
 
+    def _safe_parse_json_args(
+        self, args: Union[str, Dict], tool_name: str, tool_id: str = "unknown"
+    ) -> Dict[str, Any]:
+        """
+        Safely parse tool arguments, handling both string JSON and existing dicts.
+        Returns empty dict on failure to prevent crashes.
+        """
+        if isinstance(args, dict):
+            return args
+
+        if not isinstance(args, str):
+            logger.warning(
+                f"Tool arguments for {tool_name} (id={tool_id}) are not string or dict: {type(args)}"
+            )
+            return {}
+
+        try:
+            return json.loads(args)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(
+                f"Failed to parse JSON arguments for tool '{tool_name}' (id={tool_id}): {e}. "
+                f"Raw args: {args[:500]}..."
+            )
+            return {}
+
     def _build_messages(
         self,
         history: List[Dict[str, str]],
@@ -560,15 +585,10 @@ class ChatService(ChatServiceBase):
             # Execute tool calls
             for tool_call in tool_calls:
                 function_name = tool_call["function"]["name"]
-                try:
-                    function_args = json.loads(tool_call["function"]["arguments"])
-                except json.JSONDecodeError as e:
-                    logger.exception(
-                        f"Failed to parse arguments for tool {function_name}"
-                    )
-                    function_args = {}
-
                 tool_call_id = tool_call["id"]
+                function_args = self._safe_parse_json_args(
+                    tool_call["function"]["arguments"], function_name, tool_call_id
+                )
 
                 logger.info(f"Executing tool call: {function_name}")
 
@@ -1317,11 +1337,15 @@ class ChatService(ChatServiceBase):
                     parts.append({"text": content})
 
                 for tc in msg["tool_calls"]:
+                    tool_name = tc["function"]["name"]
+                    tool_args = self._safe_parse_json_args(
+                        tc["function"]["arguments"], tool_name, tc.get("id", "unknown")
+                    )
                     parts.append(
                         {
                             "functionCall": {
-                                "name": tc["function"]["name"],
-                                "args": json.loads(tc["function"]["arguments"]),
+                                "name": tool_name,
+                                "args": tool_args,
                             }
                         }
                     )
@@ -1504,12 +1528,16 @@ class ChatService(ChatServiceBase):
 
                 # Add tool use blocks
                 for tc in tool_calls:
+                    tool_name = tc["function"]["name"]
+                    tool_args = self._safe_parse_json_args(
+                        tc["function"]["arguments"], tool_name, tc["id"]
+                    )
                     formatted_content.append(
                         {
                             "type": "tool_use",
                             "id": tc["id"],
-                            "name": tc["function"]["name"],
-                            "input": json.loads(tc["function"]["arguments"]),
+                            "name": tool_name,
+                            "input": tool_args,
                         }
                     )
                 chat_messages.append(
