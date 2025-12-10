@@ -73,10 +73,15 @@ def create_app():
             )
             logger.info("OpenTelemetry initialized successfully")
 
-            # Apply instrumentation
-            from app.core.telemetry import setup_opentelemetry_instrumentation
+            # Apply instrumentation with SQLAlchemy support
+            from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
 
-            setup_opentelemetry_instrumentation(app, logger)
+            setup_opentelemetry_instrumentation(
+                app=app,
+                logger=logger,
+                enable_sqlalchemy=True,
+                sqlalchemy_engine=engine,
+            )
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     else:
