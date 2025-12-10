@@ -26,7 +26,7 @@ def _get_engines_config() -> dict[str, Any] | None:
     """Parse and cache the engines configuration from settings."""
     global _engines_config
     if _engines_config is not None:
-        logger.info(_engines_config)
+        logger.debug("Using cached engines configuration")
         return _engines_config
 
     if not getattr(settings, "WEB_SEARCH_ENABLED", False):
@@ -39,7 +39,10 @@ def _get_engines_config() -> dict[str, Any] | None:
 
     try:
         _engines_config = json.loads(config_str)
-        logger.info(_engines_config)
+        logger.debug(
+            "Parsed engines configuration with %d engines",
+            len(_engines_config.get("engines", {})),
+        )
         return _engines_config
     except json.JSONDecodeError:
         logger.exception("Failed to parse WEB_SEARCH_ENGINES configuration")
