@@ -31,7 +31,6 @@ import { sortBotsByUpdatedAt } from '@/utils/bot';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +39,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ResourceListItem } from '@/components/common/ResourceListItem';
 
 export default function TeamList() {
   const { t } = useTranslation('common');
@@ -187,16 +187,6 @@ export default function TeamList() {
     setShareData(null);
   };
 
-  // Get team status label
-  const getTeamStatusLabel = (team: Team) => {
-    if (team.share_status === 1) {
-      return <Tag variant="info">{t('teams.sharing')}</Tag>;
-    } else if (team.share_status === 2 && team.user?.user_name) {
-      return <Tag variant="success">{t('teams.shared_by', { author: team.user.user_name })}</Tag>;
-    }
-    return null;
-  };
-
   // Check if edit and delete buttons should be shown
   const shouldShowEditDelete = (team: Team) => {
     return team.share_status !== 2; // Shared teams don't show edit and delete buttons
@@ -249,47 +239,67 @@ export default function TeamList() {
                           className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
                         >
                           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 min-w-0">
-                            <div className="flex items-center space-x-3 min-w-0 flex-1 overflow-hidden">
-                              <AiOutlineTeam className="w-5 h-5 text-primary flex-shrink-0" />
-                              <div className="flex flex-col justify-center min-w-0 flex-1 overflow-hidden">
-                                <div className="flex items-center gap-2 min-w-0 flex-wrap sm:flex-nowrap">
-                                  <h3 className="text-sm sm:text-base font-medium text-text-primary mb-0 truncate max-w-[150px] sm:max-w-none">
-                                    {team.name}
-                                  </h3>
-                                  <div className="flex items-center space-x-1 flex-shrink-0">
-                                    <div
-                                      className="w-2 h-2 rounded-full"
-                                      style={{
-                                        backgroundColor: team.is_active
-                                          ? 'rgb(var(--color-success))'
-                                          : 'rgb(var(--color-border))',
-                                      }}
-                                    ></div>
-                                    <span className="text-xs text-text-muted">
-                                      {team.is_active ? t('teams.active') : t('teams.inactive')}
-                                    </span>
-                                  </div>
-                                </div>
-                                {team.description && (
-                                  <p className="text-xs text-text-muted mt-1 truncate max-w-[200px] sm:max-w-md">
-                                    {team.description}
-                                  </p>
-                                )}
-                                <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                                  {team.workflow?.mode && (
-                                    <Tag variant="default" className="capitalize text-xs">
-                                      {t(`team_model.${String(team.workflow.mode)}`)}
-                                    </Tag>
-                                  )}
-                                  {getTeamStatusLabel(team)}
-                                  {team.bots.length > 0 && (
-                                    <Tag variant="info" className="hidden sm:inline-flex text-xs">
-                                      {team.bots.length} {team.bots.length === 1 ? 'Bot' : 'Bots'}
-                                    </Tag>
-                                  )}
-                                </div>
+                            <ResourceListItem
+                              name={team.name}
+                              description={team.description}
+                              icon={<AiOutlineTeam className="w-5 h-5 text-primary" />}
+                              tags={[
+                                ...(team.workflow?.mode
+                                  ? [
+                                      {
+                                        key: 'mode',
+                                        label: t(`team_model.${String(team.workflow.mode)}`),
+                                        variant: 'default' as const,
+                                        className: 'capitalize text-xs',
+                                      },
+                                    ]
+                                  : []),
+                                ...(team.share_status === 1
+                                  ? [
+                                      {
+                                        key: 'sharing',
+                                        label: t('teams.sharing'),
+                                        variant: 'info' as const,
+                                      },
+                                    ]
+                                  : []),
+                                ...(team.share_status === 2 && team.user?.user_name
+                                  ? [
+                                      {
+                                        key: 'shared',
+                                        label: t('teams.shared_by', {
+                                          author: team.user.user_name,
+                                        }),
+                                        variant: 'success' as const,
+                                      },
+                                    ]
+                                  : []),
+                                ...(team.bots.length > 0
+                                  ? [
+                                      {
+                                        key: 'bots',
+                                        label: `${team.bots.length} ${team.bots.length === 1 ? 'Bot' : 'Bots'}`,
+                                        variant: 'info' as const,
+                                        className: 'hidden sm:inline-flex text-xs',
+                                      },
+                                    ]
+                                  : []),
+                              ]}
+                            >
+                              <div className="flex items-center space-x-1 flex-shrink-0">
+                                <div
+                                  className="w-2 h-2 rounded-full"
+                                  style={{
+                                    backgroundColor: team.is_active
+                                      ? 'rgb(var(--color-success))'
+                                      : 'rgb(var(--color-border))',
+                                  }}
+                                ></div>
+                                <span className="text-xs text-text-muted">
+                                  {team.is_active ? t('teams.active') : t('teams.inactive')}
+                                </span>
                               </div>
-                            </div>
+                            </ResourceListItem>
                             <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0 sm:ml-3 self-end sm:self-auto">
                               <Button
                                 variant="ghost"
@@ -358,14 +368,13 @@ export default function TeamList() {
                       <UnifiedAddButton onClick={handleCreateTeam}>
                         {t('teams.new_team')}
                       </UnifiedAddButton>
-                      <Button
+                      <UnifiedAddButton
                         variant="outline"
                         onClick={() => setBotListVisible(true)}
-                        className="flex items-center gap-2"
+                        icon={<RiRobot2Line className="w-4 h-4" />}
                       >
-                        <RiRobot2Line className="w-4 h-4" />
                         {t('bots.manage_bots')}
-                      </Button>
+                      </UnifiedAddButton>
                     </div>
                   </div>
                 </>
