@@ -152,13 +152,31 @@ jobs:
 
       - name: Wait for services to be ready
         run: |
-          echo "Waiting for backend..."
+          echo "Waiting for backend to be ready..."
           for i in {1..60}; do
             if curl -s http://localhost:8000/api/health > /dev/null 2>&1 || curl -s http://localhost:8000/ > /dev/null 2>&1; then
-              echo "Backend is ready!"
+              echo "Backend HTTP server is responding!"
               break
             fi
-            echo "Waiting for backend... ($i/60)"
+            echo "Waiting for backend HTTP server... ($i/60)"
+            sleep 2
+          done
+
+          # Wait for backend initialization to complete (database migration + YAML init)
+          # by checking if the login API works with the default admin credentials
+          echo "Waiting for backend initialization (migration + user creation)..."
+          for i in {1..30}; do
+            # Try to login with admin credentials to verify the user exists
+            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8000/api/auth/login \
+              -H "Content-Type: application/json" \
+              -d '{"user_name": "admin", "password": "Wegent2025!"}' 2>/dev/null)
+            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Backend initialization complete - admin user exists and login works!"
+              break
+            fi
+            echo "Waiting for backend initialization... ($i/30) - HTTP code: $HTTP_CODE"
             sleep 2
           done
 
