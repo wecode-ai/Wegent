@@ -13,23 +13,21 @@ API routes module, defines FastAPI routes and models
 import os
 import time
 import uuid
-from executor_manager.config.config import (
-    EXECUTOR_DISPATCHER_MODE,
-    OTEL_ENABLED,
-    OTEL_CAPTURE_REQUEST_BODY,
-    OTEL_CAPTURE_RESPONSE_HEADERS,
-    OTEL_CAPTURE_RESPONSE_BODY,
-)
+from typing import Any, Dict, Optional
+
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
-from typing import Optional
-
 from shared.logger import setup_logger
-from executor_manager.tasks.task_processor import TaskProcessor
-from executor_manager.clients.task_api_client import TaskApiClient
 from shared.models.task import TasksRequest
+
+from executor_manager.clients.task_api_client import TaskApiClient
+from executor_manager.config.config import (EXECUTOR_DISPATCHER_MODE,
+                                            OTEL_CAPTURE_REQUEST_BODY,
+                                            OTEL_CAPTURE_RESPONSE_BODY,
+                                            OTEL_CAPTURE_RESPONSE_HEADERS,
+                                            OTEL_ENABLED)
 from executor_manager.executors.dispatcher import ExecutorDispatcher
-from typing import Optional, Dict, Any
+from executor_manager.tasks.task_processor import TaskProcessor
 
 # Setup logger
 logger = setup_logger(__name__)

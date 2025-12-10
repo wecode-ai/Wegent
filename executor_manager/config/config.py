@@ -14,7 +14,6 @@ Configuration module, stores application configuration parameters
 # API Configuration
 import os
 
-
 TASK_API_DOMAIN = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
 
 # Task fetch parameters

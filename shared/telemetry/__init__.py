@@ -24,10 +24,12 @@ Directory Structure:
         ├── __init__.py      # Metrics exports
         ├── business.py      # Business metrics (WegentMetrics)
         └── decorators.py    # Metric tracking decorators
+    ├── decorators.py        # Tracing decorators for functions/methods
 
 Usage:
     from shared.telemetry import init_telemetry, shutdown_telemetry, is_telemetry_enabled
     from shared.telemetry import get_tracer, get_meter
+    from shared.telemetry import trace_async, trace_sync, add_span_event, set_span_attribute
     from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
     from shared.telemetry.context import set_user_context, set_task_context
     from shared.telemetry.metrics import record_task_completed, record_model_call
@@ -48,6 +50,14 @@ from shared.telemetry.core import (
 # Instrumentation
 from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
 
+# Decorators for tracing
+from shared.telemetry.decorators import (
+    add_span_event,
+    set_span_attribute,
+    trace_async,
+    trace_sync,
+)
+
 __all__ = [
     # Core
     "init_telemetry",
@@ -60,4 +70,9 @@ __all__ = [
     "get_http_capture_settings",
     # Instrumentation
     "setup_opentelemetry_instrumentation",
+    # Decorators
+    "trace_async",
+    "trace_sync",
+    "add_span_event",
+    "set_span_attribute",
 ]

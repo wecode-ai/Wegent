@@ -20,6 +20,7 @@ from executor.config.config import EXECUTOR_ENV, DEBUG_RUN
 from shared.logger import setup_logger
 from shared.models.task import ExecutionResult, ThinkingStep
 from shared.status import TaskStatus
+from shared.telemetry.decorators import trace_async, add_span_event
 
 from .config_utils import ConfigManager
 from .member_builder import MemberBuilder
@@ -32,6 +33,17 @@ from executor.tasks.resource_manager import ResourceManager
 
 db = SqliteDb(db_file="/tmp/agno_data.db")
 logger = setup_logger("agno_agent")
+
+
+def _extract_agno_agent_attributes(self, *args, **kwargs) -> dict:
+    """Extract trace attributes from AgnoAgent instance."""
+    return {
+        "task.id": str(self.task_id),
+        "task.subtask_id": str(self.subtask_id),
+        "agent.type": "Agno",
+        "agent.session_id": str(self.session_id),
+        "agent.mode": self.mode or "default",
+    }
 
 
 class AgnoAgent(Agent):
@@ -303,6 +315,11 @@ class AgnoAgent(Agent):
         except Exception as e:
             return self._handle_execution_error(e, "Agno Agent execution")
 
+    @trace_async(
+        span_name="agno_execute_async",
+        tracer_name="executor.agents.agno",
+        extract_attributes=_extract_agno_agent_attributes
+    )
     async def execute_async(self) -> TaskStatus:
         """
         Execute Agno Agent task asynchronously
@@ -322,6 +339,10 @@ class AgnoAgent(Agent):
             self.report_progress(
                 60, TaskStatus.RUNNING.value, "${{thinking.starting_agent_async}}", result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
             )
+            
+            # Add trace event for async execution started
+            add_span_event("async_execution_started")
+            
             return await self._async_execute()
         except Exception as e:
             return self._handle_execution_error(e, "Agno Agent async execution")
