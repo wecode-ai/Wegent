@@ -26,6 +26,10 @@ from executor.config.config import (
     OTEL_EXPORTER_OTLP_ENDPOINT,
     OTEL_TRACES_SAMPLER_ARG,
     OTEL_METRICS_ENABLED,
+    OTEL_CAPTURE_REQUEST_HEADERS,
+    OTEL_CAPTURE_REQUEST_BODY,
+    OTEL_CAPTURE_RESPONSE_HEADERS,
+    OTEL_CAPTURE_RESPONSE_BODY,
 )
 
 # Use the shared logger setup function
@@ -61,6 +65,10 @@ async def lifespan(app: FastAPI):
                 sampler_ratio=OTEL_TRACES_SAMPLER_ARG,
                 service_version="1.0.0",
                 metrics_enabled=OTEL_METRICS_ENABLED,
+                capture_request_headers=OTEL_CAPTURE_REQUEST_HEADERS,
+                capture_request_body=OTEL_CAPTURE_REQUEST_BODY,
+                capture_response_headers=OTEL_CAPTURE_RESPONSE_HEADERS,
+                capture_response_body=OTEL_CAPTURE_RESPONSE_BODY,
             )
             logger.info("OpenTelemetry initialized successfully")
 

@@ -57,6 +57,25 @@ def get_otel_config_from_env() -> dict:
     }
 
 
+# Global HTTP capture settings
+_http_capture_settings = {
+    "capture_request_headers": False,
+    "capture_request_body": False,
+    "capture_response_headers": False,
+    "capture_response_body": False,
+}
+
+
+def get_http_capture_settings() -> dict:
+    """
+    Get the current HTTP capture settings.
+
+    Returns:
+        dict: HTTP capture settings dictionary
+    """
+    return _http_capture_settings.copy()
+
+
 def init_telemetry(
     service_name: str,
     enabled: bool = True,
@@ -65,6 +84,10 @@ def init_telemetry(
     service_version: str = "1.0.0",
     deployment_environment: Optional[str] = None,
     metrics_enabled: bool = False,
+    capture_request_headers: bool = False,
+    capture_request_body: bool = False,
+    capture_response_headers: bool = False,
+    capture_response_body: bool = False,
 ) -> bool:
     """
     Initialize OpenTelemetry with tracing and optional metrics support.
@@ -77,15 +100,25 @@ def init_telemetry(
         service_version: Version of the service (default: "1.0.0")
         deployment_environment: Deployment environment (e.g., "production", "development")
         metrics_enabled: Whether to enable metrics export (default: False)
+        capture_request_headers: Whether to capture HTTP request headers (default: False)
+        capture_request_body: Whether to capture HTTP request body (default: False)
+        capture_response_headers: Whether to capture HTTP response headers (default: False)
+        capture_response_body: Whether to capture HTTP response body (default: False)
 
     Returns:
         bool: True if initialization was successful, False otherwise
     """
-    global _telemetry_initialized, _telemetry_enabled
+    global _telemetry_initialized, _telemetry_enabled, _http_capture_settings
 
     if _telemetry_initialized:
         logger.warning("Telemetry already initialized, skipping re-initialization")
         return _telemetry_enabled
+
+    # Store HTTP capture settings globally
+    _http_capture_settings["capture_request_headers"] = capture_request_headers
+    _http_capture_settings["capture_request_body"] = capture_request_body
+    _http_capture_settings["capture_response_headers"] = capture_response_headers
+    _http_capture_settings["capture_response_body"] = capture_response_body
 
     if not enabled:
         logger.info("OpenTelemetry is disabled, skipping initialization")
@@ -122,9 +155,22 @@ def init_telemetry(
         _telemetry_initialized = True
         _telemetry_enabled = True
 
+        # Log HTTP capture settings
+        http_capture_info = []
+        if capture_request_headers:
+            http_capture_info.append("request_headers")
+        if capture_request_body:
+            http_capture_info.append("request_body")
+        if capture_response_headers:
+            http_capture_info.append("response_headers")
+        if capture_response_body:
+            http_capture_info.append("response_body")
+
+        capture_str = ", ".join(http_capture_info) if http_capture_info else "none"
         logger.info(
             f"OpenTelemetry initialized successfully for service '{service_name}' "
-            f"with endpoint '{otlp_endpoint}' and sampler ratio {sampler_ratio}"
+            f"with endpoint '{otlp_endpoint}', sampler ratio {sampler_ratio}, "
+            f"HTTP capture: [{capture_str}]"
         )
 
         return True

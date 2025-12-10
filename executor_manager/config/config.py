@@ -62,3 +62,8 @@ OTEL_SERVICE_NAME = os.getenv("OTEL_SERVICE_NAME", "wegent-executor-manager")
 OTEL_EXPORTER_OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317")
 OTEL_TRACES_SAMPLER_ARG = float(os.getenv("OTEL_TRACES_SAMPLER_ARG", "1.0"))
 OTEL_METRICS_ENABLED = os.getenv("OTEL_METRICS_ENABLED", "false").lower() == "true"
+# HTTP request tracing configuration
+OTEL_CAPTURE_REQUEST_HEADERS = os.getenv("OTEL_CAPTURE_REQUEST_HEADERS", "false").lower() == "true"
+OTEL_CAPTURE_REQUEST_BODY = os.getenv("OTEL_CAPTURE_REQUEST_BODY", "false").lower() == "true"
+OTEL_CAPTURE_RESPONSE_HEADERS = os.getenv("OTEL_CAPTURE_RESPONSE_HEADERS", "false").lower() == "true"
+OTEL_CAPTURE_RESPONSE_BODY = os.getenv("OTEL_CAPTURE_RESPONSE_BODY", "false").lower() == "true"

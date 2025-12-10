@@ -80,6 +80,10 @@ def create_app():
                 service_version=settings.VERSION,
                 deployment_environment=settings.ENVIRONMENT,
                 metrics_enabled=settings.OTEL_METRICS_ENABLED,
+                capture_request_headers=settings.OTEL_CAPTURE_REQUEST_HEADERS,
+                capture_request_body=settings.OTEL_CAPTURE_REQUEST_BODY,
+                capture_response_headers=settings.OTEL_CAPTURE_RESPONSE_HEADERS,
+                capture_response_body=settings.OTEL_CAPTURE_RESPONSE_BODY,
             )
             logger.info("OpenTelemetry initialized successfully")
 

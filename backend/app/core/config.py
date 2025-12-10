@@ -140,9 +140,18 @@ class Settings(BaseSettings):
     # OpenTelemetry configuration
     OTEL_ENABLED: bool = False  # Enable/disable OpenTelemetry
     OTEL_SERVICE_NAME: str = "wegent-backend"  # Service name for tracing
-    OTEL_EXPORTER_OTLP_ENDPOINT: str = "http://otel-collector:4317"  # OTLP gRPC endpoint
+    OTEL_EXPORTER_OTLP_ENDPOINT: str = (
+        "http://otel-collector:4317"  # OTLP gRPC endpoint
+    )
     OTEL_TRACES_SAMPLER_ARG: float = 1.0  # Sampling ratio (0.0-1.0)
-    OTEL_METRICS_ENABLED: bool = False  # Enable/disable metrics export (default: disabled)
+    OTEL_METRICS_ENABLED: bool = (
+        False  # Enable/disable metrics export (default: disabled)
+    )
+    # HTTP request tracing configuration
+    OTEL_CAPTURE_REQUEST_HEADERS: bool = False  # Capture HTTP request headers
+    OTEL_CAPTURE_REQUEST_BODY: bool = False  # Capture HTTP request body
+    OTEL_CAPTURE_RESPONSE_HEADERS: bool = False  # Capture HTTP response headers
+    OTEL_CAPTURE_RESPONSE_BODY: bool = False  # Capture HTTP response body
 
     class Config:
         env_file = ".env"
