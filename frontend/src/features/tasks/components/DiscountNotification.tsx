@@ -74,7 +74,7 @@ export default function DiscountNotification({ className = '' }: DiscountNotific
     <div className={`w-full ${className}`}>
       <Card
         className={`
-          relative overflow-hidden p-3
+          relative p-2.5 sm:p-3
           bg-gradient-to-r from-orange-50 to-red-50
           dark:from-orange-950/30 dark:to-red-950/30
           border border-orange-200 dark:border-orange-800
@@ -87,24 +87,24 @@ export default function DiscountNotification({ className = '' }: DiscountNotific
         <Button
           variant="ghost"
           size="icon"
-          className="absolute top-2 right-2 h-6 w-6 text-gray-400 hover:text-gray-600 z-50"
+          className="absolute top-1.5 right-1.5 sm:top-2 sm:right-2 h-5 w-5 sm:h-6 sm:w-6 text-gray-400 hover:text-gray-600 dark:text-gray-500 dark:hover:text-gray-300 z-10"
           onClick={handleClose}
+          aria-label="关闭通知"
         >
-          <XMarkIcon className="w-4 h-4" />
+          <XMarkIcon className="w-3 h-3 sm:w-4 sm:h-4" />
         </Button>
 
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 pr-6 sm:pr-8">
           {/* 内容区域 */}
-          <div className="flex-1 min-w-0">
-            {/* 标题和折扣 */}
-            <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-              <h3 className="text-base font-semibold leading-tight text-gray-900 dark:text-gray-100">
-                {discountInfo.title}
-              </h3>
-              <span className="inline-flex items-center whitespace-nowrap px-2 py-0.5 rounded-full text-xs font-medium leading-none bg-red-100 text-red-800">
-                {discountInfo.discountPercentage}%
-              </span>
-            </div>
+          <div className="flex-1 min-w-0 flex items-center gap-2">
+            {/* 标题 - 移动端单行截断 */}
+            <span className="text-xs sm:text-sm font-medium leading-tight text-gray-900 dark:text-gray-100 truncate">
+              {discountInfo.title}
+            </span>
+            {/* 徽章 */}
+            <span className="inline-flex items-center whitespace-nowrap px-1.5 sm:px-2 py-0.5 rounded-full text-xs font-bold bg-red-500 text-white flex-shrink-0">
+              {discountInfo.discountPercentage}%
+            </span>
           </div>
         </div>
       </Card>

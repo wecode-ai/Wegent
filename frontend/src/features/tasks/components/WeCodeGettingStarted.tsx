@@ -65,10 +65,10 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
       </div>
 
       {/* 标题区域 - 移动端紧凑布局 */}
-      <div className="text-center mb-4 sm:mb-6">
-        <p className="text-text-secondary text-xs sm:text-sm px-2 sm:px-4">
+      <div className="text-center mb-6 sm:mb-8">
+        <h2 className="text-base sm:text-lg font-medium text-text-primary">
           选择最适合您的方式继续编码之旅
-        </p>
+        </h2>
       </div>
 
       {/* 卡片容器 - 移动端横向滚动，桌面端网格布局 */}
@@ -88,7 +88,7 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
                 key={index}
                 className="
                   cursor-pointer transition-all duration-200
-                  hover:bg-hover
+                  hover:bg-hover hover:shadow-md
                   border border-border bg-base
                   flex-shrink-0 w-[calc(40vw-12px)] h-48 min-w-[140px] max-w-[180px]
                   snap-start
@@ -98,7 +98,7 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
               >
                 <div className="text-center flex flex-col justify-center h-full">
                   {/* 图标 */}
-                  <div className="inline-flex items-center justify-center w-10 h-10 rounded-lg mb-3 bg-muted">
+                  <div className="inline-flex items-center justify-center w-10 h-10 rounded-lg mb-3 bg-primary/10 mx-auto">
                     <div className="text-primary">{item.icon}</div>
                   </div>
 
@@ -118,20 +118,20 @@ export default function WeCodeGettingStarted({ className = '' }: WeCodeGettingSt
         </div>
 
         {/* 桌面端网格布局 */}
-        <div className="hidden sm:grid grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="hidden sm:grid grid-cols-1 lg:grid-cols-3 gap-6">
           {gettingStartedItems.map((item, index) => (
             <Card
               key={index}
               className="
                 cursor-pointer transition-all duration-200
-                hover:bg-hover
+                hover:bg-hover hover:shadow-md
                 border border-border bg-base
-                p-4
+                p-5
               "
               onClick={() => handleCardClick(item.link)}
             >
               <div className="text-center">
-                <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg mb-4 bg-muted">
+                <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg mb-4 bg-primary/10">
                   <div className="text-primary">{item.icon}</div>
                 </div>
 

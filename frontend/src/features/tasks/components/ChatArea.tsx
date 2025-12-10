@@ -939,7 +939,7 @@ export default function ChatArea({
         {!hasMessages && (
           <div
             className="flex-1 flex items-center justify-center w-full"
-            style={{ marginBottom: '20vh' }}
+            style={{ marginBottom: taskType === 'code' ? '-5vh' : '20vh' }}
           >
             {/* Floating Input Area */}
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
@@ -1423,7 +1423,7 @@ export default function ChatArea({
 
         {/* WeCode Getting Started Area - only show when no messages and it's code task type */}
         {!hasMessages && taskType === 'code' && (
-          <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 mt-8 sm:mt-12 mb-8">
+          <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 mb-8">
             <WeCodeGettingStarted />
           </div>
         )}
