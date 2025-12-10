@@ -108,20 +108,38 @@ export default function ChatArea({
         const response = await chatApis.getSearchEngines();
         setIsWebSearchFeatureEnabled(response.enabled);
         setSearchEngines(response.engines);
+
+        // Validate and restore saved search engine preference inside the fetch callback
+        // to ensure we validate against the latest available engines
+        if (typeof window !== 'undefined') {
+          const savedEngine = localStorage.getItem('last_search_engine');
+          if (savedEngine && response.engines.some(e => e.name === savedEngine)) {
+            setSelectedSearchEngine(savedEngine);
+          } else {
+            // Saved engine no longer exists or is invalid, clear it
+            localStorage.removeItem('last_search_engine');
+            // Default to the first engine if available
+            if (response.engines.length > 0) {
+              setSelectedSearchEngine(response.engines[0].name);
+            } else {
+              setSelectedSearchEngine(null);
+            }
+          }
+        }
       } catch (error) {
         console.error('Failed to fetch search engines:', error);
+        setIsWebSearchFeatureEnabled(false);
+        setSearchEngines([]);
+        toast({
+          variant: 'destructive',
+          title: 'Failed to load search engines',
+          description: error instanceof Error ? error.message : 'Unknown error',
+        });
       }
     };
 
     fetchSearchEngines();
-
-    if (typeof window !== 'undefined') {
-      const savedEngine = localStorage.getItem('last_search_engine');
-      if (savedEngine) {
-        setSelectedSearchEngine(savedEngine);
-      }
-    }
-  }, []);
+  }, [toast]);
 
   const handleSearchEngineChange = useCallback((engine: string) => {
     setSelectedSearchEngine(engine);
