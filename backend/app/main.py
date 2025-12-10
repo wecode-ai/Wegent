@@ -193,32 +193,14 @@ def create_app():
 
                             logger.info("Executing Alembic upgrade to head...")
 
-                            # Run Alembic as subprocess and capture output for logging
+                            # Run Alembic as subprocess to avoid output buffering issues
                             result = subprocess.run(
                                 ["alembic", "upgrade", "head"],
                                 cwd=backend_dir,
-                                capture_output=True,
+                                capture_output=False,  # Let output go directly to stdout/stderr
                                 text=True,
-                                check=False,  # Don't raise on non-zero return code
+                                check=True,
                             )
-
-                            # Log stdout if any
-                            if result.stdout:
-                                for line in result.stdout.strip().split('\n'):
-                                    if line:
-                                        logger.info(f"Alembic: {line}")
-
-                            # Log stderr if any
-                            if result.stderr:
-                                for line in result.stderr.strip().split('\n'):
-                                    if line:
-                                        logger.warning(f"Alembic stderr: {line}")
-
-                            # Check return code
-                            if result.returncode != 0:
-                                raise subprocess.CalledProcessError(
-                                    result.returncode, result.args, result.stdout, result.stderr
-                                )
 
                             logger.info("✓ Alembic migrations completed successfully")
                         except subprocess.CalledProcessError as e:
