@@ -38,23 +38,17 @@ from config.config import (
 # Setup logger
 logger = setup_logger(__name__)
 
-# OpenTelemetry imports
-TELEMETRY_AVAILABLE = False
-try:
-    from shared.telemetry import init_telemetry, shutdown_telemetry
-    TELEMETRY_AVAILABLE = True
-except ImportError:
-    logger.debug("OpenTelemetry not available (shared module not found)")
-
 @asynccontextmanager
 async def lifespan(app):
     """
     FastAPI application lifecycle manager
     Starts the task scheduler when the application starts, and performs cleanup operations when the application shuts down
     """
-    # Initialize OpenTelemetry if available and enabled
-    if TELEMETRY_AVAILABLE and OTEL_ENABLED:
+    # Initialize OpenTelemetry if enabled
+    if OTEL_ENABLED:
         try:
+            from shared.telemetry import init_telemetry
+
             init_telemetry(
                 service_name=OTEL_SERVICE_NAME,
                 enabled=OTEL_ENABLED,
@@ -106,12 +100,10 @@ async def lifespan(app):
         scheduler_instance.stop()
 
     # Shutdown OpenTelemetry
-    if TELEMETRY_AVAILABLE and OTEL_ENABLED:
-        try:
-            shutdown_telemetry()
-            logger.info("OpenTelemetry shutdown completed")
-        except Exception as e:
-            logger.warning(f"Error during OpenTelemetry shutdown: {e}")
+    if OTEL_ENABLED:
+        from shared.telemetry import shutdown_telemetry
+        shutdown_telemetry()
+        logger.info("OpenTelemetry shutdown completed")
 
 def start_scheduler(scheduler):
     """Start the task scheduler in a separate thread"""

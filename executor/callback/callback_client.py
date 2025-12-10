@@ -23,14 +23,7 @@ from shared.status import TaskStatus
 from shared.utils.http_util import build_payload
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
-# Import trace context utilities if available
-TRACE_PROPAGATION_AVAILABLE = False
-try:
-    from shared.telemetry_context import inject_trace_context_to_headers
-    from shared.telemetry import is_telemetry_enabled
-    TRACE_PROPAGATION_AVAILABLE = True
-except ImportError:
-    pass
+from executor.config.config import OTEL_ENABLED
 
 logger = setup_logger("callback_client")
 
@@ -178,12 +171,12 @@ class CallbackClient:
 
         # Prepare headers with trace context for distributed tracing
         headers = {"Content-Type": "application/json"}
-        if TRACE_PROPAGATION_AVAILABLE:
-            try:
-                if is_telemetry_enabled():
-                    headers = inject_trace_context_to_headers(headers)
-            except Exception as e:
-                logger.debug(f"Failed to inject trace context to callback headers: {e}")
+        if OTEL_ENABLED:
+            from shared.telemetry import is_telemetry_enabled
+            from shared.telemetry_context import inject_trace_context_to_headers
+
+            if is_telemetry_enabled():
+                headers = inject_trace_context_to_headers(headers)
 
         # Send original unmasked data
         response = requests.post(

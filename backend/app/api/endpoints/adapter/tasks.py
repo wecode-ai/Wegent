@@ -37,15 +37,6 @@ from app.services.adapters.task_kinds import task_kinds_service
 from app.services.export.docx_generator import generate_task_docx
 from app.services.shared_task import shared_task_service
 
-# OpenTelemetry imports for business metrics
-try:
-    from shared.telemetry_context import set_task_context, set_user_context
-    from shared.telemetry_metrics import record_task_created
-
-    TELEMETRY_AVAILABLE = True
-except ImportError:
-    TELEMETRY_AVAILABLE = False
-
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -110,15 +101,14 @@ def create_task_with_optional_id(
         db=db, obj_in=task_create, user=current_user, task_id=task_id
     )
 
-    # Record task creation metric
-    if TELEMETRY_AVAILABLE:
-        try:
-            record_task_created(
-                user_id=str(current_user.id),
-                team_id=str(task_create.team_id) if task_create.team_id else None,
-            )
-        except Exception:
-            pass  # Silently ignore telemetry errors
+    # Record task creation metric (only if telemetry is enabled)
+    if settings.OTEL_ENABLED:
+        from shared.telemetry_metrics import record_task_created
+
+        record_task_created(
+            user_id=str(current_user.id),
+            team_id=str(task_create.team_id) if task_create.team_id else None,
+        )
 
     return result
 

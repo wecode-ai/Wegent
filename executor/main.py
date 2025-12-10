@@ -35,29 +35,18 @@ from executor.config.config import (
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
 
-# OpenTelemetry imports
-TELEMETRY_AVAILABLE = False
-try:
-    from shared.telemetry import init_telemetry, shutdown_telemetry, is_telemetry_enabled
-    from shared.telemetry_metrics import record_task_completed, record_task_failed, record_model_call
-    from shared.telemetry_context import (
-        set_task_context,
-        set_agent_context,
-        restore_trace_context_from_env,
-    )
-    TELEMETRY_AVAILABLE = True
-except ImportError:
-    logger.debug("OpenTelemetry not available (shared module not found)")
-
 # Define lifespan context manager for startup and shutdown events
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
     Run task at startup if TASK_INFO is available
     """
-    # Initialize OpenTelemetry if available and enabled
-    if TELEMETRY_AVAILABLE and OTEL_ENABLED:
+    # Initialize OpenTelemetry if enabled
+    if OTEL_ENABLED:
         try:
+            from shared.telemetry import init_telemetry
+            from shared.telemetry_context import restore_trace_context_from_env
+
             init_telemetry(
                 service_name=OTEL_SERVICE_NAME,
                 enabled=OTEL_ENABLED,
@@ -98,12 +87,10 @@ async def lifespan(app: FastAPI):
     yield  # Application runs here
 
     # Shutdown OpenTelemetry
-    if TELEMETRY_AVAILABLE and OTEL_ENABLED:
-        try:
-            shutdown_telemetry()
-            logger.info("OpenTelemetry shutdown completed")
-        except Exception as e:
-            logger.warning(f"Error during OpenTelemetry shutdown: {e}")
+    if OTEL_ENABLED:
+        from shared.telemetry import shutdown_telemetry
+        shutdown_telemetry()
+        logger.info("OpenTelemetry shutdown completed")
 
 # Create FastAPI app
 app = FastAPI(

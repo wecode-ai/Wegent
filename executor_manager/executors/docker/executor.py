@@ -45,14 +45,6 @@ from executor_manager.executors.docker.constants import (
     DEFAULT_TASK_ID,
 )
 
-# Import trace context utilities if available
-TRACE_PROPAGATION_AVAILABLE = False
-try:
-    from shared.telemetry_context import get_trace_context_env_vars
-    TRACE_PROPAGATION_AVAILABLE = True
-except ImportError:
-    pass
-
 logger = setup_logger(__name__)
 
 
@@ -532,10 +524,12 @@ class DockerExecutor(Executor):
         This propagates the current trace context to the executor container,
         allowing it to continue the trace started by executor_manager.
         """
-        if not OTEL_ENABLED or not TRACE_PROPAGATION_AVAILABLE:
+        if not OTEL_ENABLED:
             return
 
         try:
+            from shared.telemetry_context import get_trace_context_env_vars
+
             trace_env_vars = get_trace_context_env_vars()
             for key, value in trace_env_vars.items():
                 cmd.extend(["-e", f"{key}={value}"])

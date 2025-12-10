@@ -27,22 +27,6 @@ from app.db.session import SessionLocal, engine
 from app.models import *  # noqa: F401,F403
 from app.services.jobs import start_background_jobs, stop_background_jobs
 
-# OpenTelemetry imports
-try:
-    import sys
-
-    sys.path.insert(0, "/app")
-    from shared.telemetry import (
-        init_telemetry,
-        is_telemetry_enabled,
-        shutdown_telemetry,
-    )
-    from shared.telemetry_context import set_request_context, set_user_context
-
-    TELEMETRY_AVAILABLE = True
-except ImportError:
-    TELEMETRY_AVAILABLE = False
-
 # Redis lock keys for startup operations (migrations + YAML init)
 STARTUP_LOCK_KEY = "wegent:startup_lock"
 STARTUP_DONE_KEY = "wegent:startup_done"
@@ -69,9 +53,11 @@ def create_app():
     setup_logging()
     logger = logging.getLogger(__name__)
 
-    # Initialize OpenTelemetry if available and enabled
-    if TELEMETRY_AVAILABLE and settings.OTEL_ENABLED:
+    # Initialize OpenTelemetry if enabled
+    if settings.OTEL_ENABLED:
         try:
+            from shared.telemetry import init_telemetry
+
             init_telemetry(
                 service_name=settings.OTEL_SERVICE_NAME,
                 enabled=settings.OTEL_ENABLED,
@@ -93,8 +79,6 @@ def create_app():
             setup_opentelemetry_instrumentation(app, logger)
         except Exception as e:
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
-    elif not TELEMETRY_AVAILABLE:
-        logger.debug("OpenTelemetry not available (shared module not found)")
     else:
         logger.debug("OpenTelemetry is disabled")
 
@@ -120,13 +104,14 @@ def create_app():
         client_ip = request.client.host if request.client else "Unknown"
 
         # Add OpenTelemetry span attributes if enabled
-        if TELEMETRY_AVAILABLE and is_telemetry_enabled():
-            try:
+        if settings.OTEL_ENABLED:
+            from shared.telemetry import is_telemetry_enabled
+            from shared.telemetry_context import set_request_context, set_user_context
+
+            if is_telemetry_enabled():
                 set_request_context(request_id)
                 if username:
                     set_user_context(user_name=username)
-            except Exception:
-                pass  # Silently ignore telemetry errors
 
         # Pre-request logging with request ID
         logger.info(
@@ -364,12 +349,12 @@ def create_app():
         logger.info("✓ Application shutdown completed")
 
         # Shutdown OpenTelemetry
-        if TELEMETRY_AVAILABLE and is_telemetry_enabled():
-            try:
+        if settings.OTEL_ENABLED:
+            from shared.telemetry import is_telemetry_enabled, shutdown_telemetry
+
+            if is_telemetry_enabled():
                 shutdown_telemetry()
                 logger.info("✓ OpenTelemetry shutdown completed")
-            except Exception as e:
-                logger.warning(f"Error during OpenTelemetry shutdown: {e}")
 
     return app
 
