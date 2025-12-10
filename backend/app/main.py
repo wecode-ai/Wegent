@@ -74,7 +74,9 @@ def create_app():
             logger.info("OpenTelemetry initialized successfully")
 
             # Apply instrumentation with SQLAlchemy support
-            from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
+            from shared.telemetry.instrumentation import (
+                setup_opentelemetry_instrumentation,
+            )
 
             setup_opentelemetry_instrumentation(
                 app=app,
