@@ -243,12 +243,12 @@ async def lifespan(app: FastAPI):
     logger.info("✓ Application shutdown completed")
 
     # Shutdown OpenTelemetry
-    if settings.OTEL_ENABLED:
-        from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
+    from shared.telemetry.config import get_otel_config
+    from shared.telemetry.core import is_telemetry_enabled, shutdown_telemetry
 
-        if is_telemetry_enabled():
-            shutdown_telemetry()
-            logger.info("✓ OpenTelemetry shutdown completed")
+    if get_otel_config().enabled and is_telemetry_enabled():
+        shutdown_telemetry()
+        logger.info("✓ OpenTelemetry shutdown completed")
 
 
 def create_app():
@@ -270,23 +270,26 @@ def create_app():
 
     logger = _logger
 
-    # Initialize OpenTelemetry if enabled
-    if settings.OTEL_ENABLED:
+    # Initialize OpenTelemetry if enabled (configuration from shared/telemetry/config.py)
+    from shared.telemetry.config import get_otel_config
+
+    otel_config = get_otel_config("wegent-backend")
+    if otel_config.enabled:
         try:
             from shared.telemetry.core import init_telemetry
 
             init_telemetry(
-                service_name=settings.OTEL_SERVICE_NAME,
-                enabled=settings.OTEL_ENABLED,
-                otlp_endpoint=settings.OTEL_EXPORTER_OTLP_ENDPOINT,
-                sampler_ratio=settings.OTEL_TRACES_SAMPLER_ARG,
+                service_name=otel_config.service_name,
+                enabled=otel_config.enabled,
+                otlp_endpoint=otel_config.otlp_endpoint,
+                sampler_ratio=otel_config.sampler_ratio,
                 service_version=settings.VERSION,
                 deployment_environment=settings.ENVIRONMENT,
-                metrics_enabled=settings.OTEL_METRICS_ENABLED,
-                capture_request_headers=settings.OTEL_CAPTURE_REQUEST_HEADERS,
-                capture_request_body=settings.OTEL_CAPTURE_REQUEST_BODY,
-                capture_response_headers=settings.OTEL_CAPTURE_RESPONSE_HEADERS,
-                capture_response_body=settings.OTEL_CAPTURE_RESPONSE_BODY,
+                metrics_enabled=otel_config.metrics_enabled,
+                capture_request_headers=otel_config.capture_request_headers,
+                capture_request_body=otel_config.capture_request_body,
+                capture_response_headers=otel_config.capture_response_headers,
+                capture_response_body=otel_config.capture_response_body,
             )
             logger.info("OpenTelemetry initialized successfully")
 
@@ -332,8 +335,8 @@ def create_app():
         # Capture request body if OTEL is enabled and body capture is configured
         request_body = None
         if (
-            settings.OTEL_ENABLED
-            and settings.OTEL_CAPTURE_REQUEST_BODY
+            otel_config.enabled
+            and otel_config.capture_request_body
             and request.method in ("POST", "PUT", "PATCH")
         ):
             try:
@@ -353,7 +356,7 @@ def create_app():
                 logger.debug(f"Failed to capture request body: {e}")
 
         # Add OpenTelemetry span attributes if enabled
-        if settings.OTEL_ENABLED:
+        if otel_config.enabled:
             from opentelemetry import trace
             from shared.telemetry.context import set_request_context, set_user_context
             from shared.telemetry.core import is_telemetry_enabled
@@ -379,7 +382,7 @@ def create_app():
         process_time = (time.time() - start_time) * 1000
 
         # Capture response headers and body if OTEL is enabled
-        if settings.OTEL_ENABLED:
+        if otel_config.enabled:
             from opentelemetry import trace
             from shared.telemetry.core import is_telemetry_enabled
 
@@ -387,7 +390,7 @@ def create_app():
                 current_span = trace.get_current_span()
                 if current_span and current_span.is_recording():
                     # Capture response headers
-                    if settings.OTEL_CAPTURE_RESPONSE_HEADERS:
+                    if otel_config.capture_response_headers:
                         for header_name, header_value in response.headers.items():
                             # Skip sensitive headers
                             if header_name.lower() in (
@@ -401,7 +404,7 @@ def create_app():
                             )
 
                     # Capture response body (only for non-streaming responses)
-                    if settings.OTEL_CAPTURE_RESPONSE_BODY:
+                    if otel_config.capture_response_body:
                         if not isinstance(response, StreamingResponse):
                             try:
                                 # For regular responses, we need to read and reconstruct the body
