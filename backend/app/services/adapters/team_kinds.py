@@ -287,6 +287,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 queries.append(group_teams_query)
 
+        # Handle empty queries case
+        if not queries:
+            # No namespaces to query, return empty list
+            return []
+
         # Combine queries using union all
         if len(queries) == 1:
             combined_query = queries[0].subquery()

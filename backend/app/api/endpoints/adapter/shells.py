@@ -210,7 +210,12 @@ def list_unified_shells(
     # Get public shells (always included)
     public_shells = (
         db.query(Kind)
-        .filter(Kind.is_active == True)  # noqa: E712
+        .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
+            Kind.namespace == "default",
+            Kind.is_active == True,  # noqa: E712
+        )
         .order_by(Kind.name.asc())
         .all()
     )
@@ -303,7 +308,10 @@ def get_unified_shell(
     public_shell = (
         db.query(Kind)
         .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
             Kind.name == shell_name,
+            Kind.namespace == "default",
             Kind.is_active == True,  # noqa: E712
         )
         .first()
@@ -371,7 +379,10 @@ def create_shell(
     base_shell = (
         db.query(Kind)
         .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
             Kind.name == request.baseShellRef,
+            Kind.namespace == "default",
             Kind.is_active == True,  # noqa: E712
         )
         .first()
