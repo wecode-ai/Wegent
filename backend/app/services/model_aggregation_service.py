@@ -61,14 +61,16 @@ class UnifiedModel:
         model_id: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
         is_active: bool = True,
+        namespace: str = "default",
     ):
         self.name = name
-        self.type = model_type  # 'public' or 'user' - identifies model source
+        self.type = model_type  # 'public' or 'user' or 'group' - identifies model source
         self.display_name = display_name
         self.provider = provider
         self.model_id = model_id
         self.config = config or {}
         self.is_active = is_active
+        self.namespace = namespace  # Resource namespace (group name or 'default')
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -80,6 +82,7 @@ class UnifiedModel:
         - displayName: Human-readable name
         - provider: Model provider (e.g., 'openai', 'claude')
         - modelId: Model ID
+        - namespace: Resource namespace (group name or 'default')
         """
         return {
             "name": self.name,
@@ -87,6 +90,7 @@ class UnifiedModel:
             "displayName": self.display_name,
             "provider": self.provider,
             "modelId": self.model_id,
+            "namespace": self.namespace,
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
@@ -353,6 +357,7 @@ class ModelAggregationService:
                     model_id=info["model_id"],
                     config=info["config"] if include_config else {},
                     is_active=resource.is_active,
+                    namespace=resource.namespace,
                 )
                 result.append(unified)
                 seen_names[resource.name] = resource_type
@@ -386,6 +391,7 @@ class ModelAggregationService:
                 provider=provider,
                 model_id=model_id,
                 is_active=model_dict.get("is_active", True),
+                namespace="default",
             )
 
             # If name already exists as user model, we still add public model

@@ -16,6 +16,7 @@ export interface UnifiedShell {
   baseShellRef?: string | null;
   supportModel?: string[] | null;
   executionType?: 'local_engine' | 'external_api' | null; // Shell execution type
+  namespace?: string; // Resource namespace (group name or 'default')
 }
 
 export interface UnifiedShellListResponse {

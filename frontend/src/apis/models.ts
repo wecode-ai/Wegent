@@ -72,10 +72,11 @@ export type ModelTypeEnum = 'public' | 'user' | 'group';
 
 export interface UnifiedModel {
   name: string;
-  type: ModelTypeEnum; // 'public' or 'user' - identifies model source
+  type: ModelTypeEnum; // 'public' or 'user' or 'group' - identifies model source
   displayName?: string | null;
   provider?: string | null; // 'openai' | 'claude'
   modelId?: string | null;
+  namespace?: string; // Resource namespace (group name or 'default')
   config?: Record<string, unknown>;
   isActive?: boolean;
 }

@@ -33,7 +33,7 @@ class UnifiedShell(BaseModel):
     """Unified shell representation for API responses"""
 
     name: str
-    type: str  # 'public' or 'user'
+    type: str  # 'public' or 'user' or 'group'
     displayName: Optional[str] = None
     shellType: str  # Agent type: 'ClaudeCode', 'Agno', 'Dify', etc.
     baseImage: Optional[str] = None
@@ -42,6 +42,7 @@ class UnifiedShell(BaseModel):
     executionType: Optional[str] = (
         None  # 'local_engine' or 'external_api' (from labels)
     )
+    namespace: Optional[str] = None  # Resource namespace (group name or 'default')
 
 
 class ShellCreateRequest(BaseModel):
@@ -129,6 +130,7 @@ def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
+        namespace=shell.namespace,
     )
 
 
@@ -149,6 +151,7 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
+        namespace=kind.namespace,
     )
 
 

@@ -41,15 +41,18 @@ interface DisplayModel {
   modelId: string;
   isPublic: boolean;
   isGroup: boolean; // Whether it's a group resource
+  namespace: string; // Resource namespace (group name or 'default')
   config: Record<string, unknown>; // Full config from unified API
 }
 
 interface ModelListProps {
   scope?: 'personal' | 'group' | 'all';
   groupName?: string;
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>;
+  onEditResource?: (namespace: string) => void;
 }
 
-const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
+const ModelList: React.FC<ModelListProps> = ({ scope, groupName, groupRoleMap, onEditResource }) => {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [unifiedModels, setUnifiedModels] = useState<UnifiedModel[]>([]);
@@ -102,6 +105,7 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
         modelId: model.modelId || (env.model_id as string) || '',
         isPublic,
         isGroup,
+        namespace: model.namespace || 'default',
         config,
       };
 
@@ -122,6 +126,23 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
   }, [unifiedModels]);
 
   const totalModels = groupModels.length + publicModels.length + userModels.length;
+
+  // Helper function to check permissions for a specific group resource
+  const canEditGroupResource = (namespace: string) => {
+    if (!groupRoleMap) return false;
+    const role = groupRoleMap.get(namespace);
+    return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
+  };
+
+  const canDeleteGroupResource = (namespace: string) => {
+    if (!groupRoleMap) return false;
+    const role = groupRoleMap.get(namespace);
+    return role === 'Owner' || role === 'Maintainer';
+  };
+
+  const canCreateInAnyGroup = groupRoleMap && Array.from(groupRoleMap.values()).some(
+    role => role === 'Owner' || role === 'Maintainer'
+  );
   // Convert DisplayModel to ModelCRD for editing
   const convertToModelCRD = (displayModel: DisplayModel): ModelCRD => {
     const env = (displayModel.config?.env as Record<string, unknown>) || {};
@@ -130,7 +151,7 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
       kind: 'Model',
       metadata: {
         name: displayModel.name,
-        namespace: 'default',
+        namespace: displayModel.namespace || 'default',
         displayName:
           displayModel.displayName !== displayModel.name ? displayModel.displayName : undefined,
       },
@@ -215,10 +236,15 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
   const handleEdit = async (displayModel: DisplayModel) => {
     if (displayModel.isPublic) return;
 
+    // Notify parent to update group selector if editing a group resource
+    if (onEditResource && displayModel.namespace && displayModel.namespace !== 'default') {
+      onEditResource(displayModel.namespace);
+    }
+
     setLoadingModelName(displayModel.name);
     try {
-      // Fetch the full CRD data for editing
-      const modelCRD = await modelApis.getModel(displayModel.name);
+      // Fetch the full CRD data for editing with correct namespace
+      const modelCRD = await modelApis.getModel(displayModel.name, displayModel.namespace);
       setEditingModel(modelCRD);
     } catch (error) {
       // If fetch fails, construct from unified data
@@ -396,6 +422,36 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
                       </div>
                     </div>
                   </div>
+                  {/* Action buttons for group resources */}
+                  <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                    {canEditGroupResource(displayModel.namespace) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => handleEdit(displayModel)}
+                        disabled={loadingModelName === displayModel.name}
+                        title={t('models.edit')}
+                      >
+                        {loadingModelName === displayModel.name ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <PencilIcon className="w-4 h-4" />
+                        )}
+                      </Button>
+                    )}
+                    {canDeleteGroupResource(displayModel.namespace) && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:text-error"
+                        onClick={() => setDeleteConfirmModel(displayModel)}
+                        title={t('models.delete')}
+                      >
+                        <TrashIcon className="w-4 h-4" />
+                      </Button>
+                    )}
+                  </div>
                 </div>
               </Card>
             ))}
@@ -448,7 +504,7 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName }) => {
 )}
 
         {/* Add Button */}
-        {!loading && (
+        {!loading && (scope === 'personal' || canCreateInAnyGroup) && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
               <UnifiedAddButton onClick={() => setIsCreating(true)}>

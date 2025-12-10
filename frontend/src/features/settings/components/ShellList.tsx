@@ -30,9 +30,11 @@ import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 interface ShellListProps {
   scope?: 'personal' | 'group' | 'all'
   groupName?: string
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
+  onEditResource?: (namespace: string) => void
 }
 
-const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) => {
+const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, groupRoleMap, onEditResource }) => {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [shells, setShells] = useState<UnifiedShell[]>([]);
@@ -86,6 +88,23 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
 
   const totalShells = groupShells.length + publicShells.length + userShells.length;
 
+  // Helper function to check permissions for a specific group resource
+  const canEditGroupResource = (namespace: string) => {
+    if (!groupRoleMap) return false;
+    const role = groupRoleMap.get(namespace);
+    return role === 'Owner' || role === 'Maintainer' || role === 'Developer';
+  };
+
+  const canDeleteGroupResource = (namespace: string) => {
+    if (!groupRoleMap) return false;
+    const role = groupRoleMap.get(namespace);
+    return role === 'Owner' || role === 'Maintainer';
+  };
+
+  const canCreateInAnyGroup = groupRoleMap && Array.from(groupRoleMap.values()).some(
+    role => role === 'Owner' || role === 'Maintainer'
+  );
+
   const handleDelete = async () => {
     if (!deleteConfirmShell) return;
 
@@ -107,6 +126,12 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
 
   const handleEdit = (shell: UnifiedShell) => {
     if (shell.type === 'public') return;
+
+    // Notify parent to update group selector if editing a group resource
+    if (onEditResource && shell.namespace && shell.namespace !== 'default') {
+      onEditResource(shell.namespace);
+    }
+
     setEditingShell(shell);
   };
 
@@ -238,37 +263,62 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
                         className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
                       >
                         <div className="flex items-center justify-between min-w-0">
-                          <div className="flex items-center space-x-3 min-w-0 flex-1">
-                            <CommandLineIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                            <div className="flex flex-col justify-center min-w-0 flex-1">
-                              <div className="flex items-center space-x-2 min-w-0">
-                                <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                                  {shell.displayName || shell.name}
-                                </h3>
-                                <Tag variant="success" className="text-xs">
-                                  {t('shells.group')}
+                        <div className="flex items-center space-x-3 min-w-0 flex-1">
+                          <CommandLineIcon className="w-5 h-5 text-primary flex-shrink-0" />
+                          <div className="flex flex-col justify-center min-w-0 flex-1">
+                            <div className="flex items-center space-x-2 min-w-0">
+                              <h3 className="text-base font-medium text-text-primary mb-0 truncate">
+                                {shell.displayName || shell.name}
+                              </h3>
+                              <Tag variant="success" className="text-xs">
+                                {t('shells.group')}
+                              </Tag>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
+                              <Tag variant="default" className="capitalize">
+                                {shell.shellType}
+                              </Tag>
+                              <Tag variant="info" className="hidden sm:inline-flex text-xs">
+                                {getExecutionTypeLabel(shell.executionType)}
+                              </Tag>
+                              {shell.baseImage && (
+                                <Tag
+                                  variant="default"
+                                  className="hidden md:inline-flex text-xs truncate max-w-[200px]"
+                                >
+                                  {shell.baseImage}
                                 </Tag>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                                <Tag variant="default" className="capitalize">
-                                  {shell.shellType}
-                                </Tag>
-                                <Tag variant="info" className="hidden sm:inline-flex text-xs">
-                                  {getExecutionTypeLabel(shell.executionType)}
-                                </Tag>
-                                {shell.baseImage && (
-                                  <Tag
-                                    variant="default"
-                                    className="hidden md:inline-flex text-xs truncate max-w-[200px]"
-                                  >
-                                    {shell.baseImage}
-                                  </Tag>
-                                )}
-                              </div>
+                              )}
                             </div>
                           </div>
                         </div>
-                      </Card>
+                        {/* Action buttons for group resources */}
+                        <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                          {canEditGroupResource(shell.namespace || 'default') && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => handleEdit(shell)}
+                              title={t('shells.edit')}
+                            >
+                              <PencilIcon className="w-4 h-4" />
+                            </Button>
+                          )}
+                          {canDeleteGroupResource(shell.namespace || 'default') && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 hover:text-error"
+                              onClick={() => setDeleteConfirmShell(shell)}
+                              title={t('shells.delete')}
+                            >
+                              <TrashIcon className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
                     ))}
                   </div>
                 </div>
@@ -327,7 +377,7 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName }) 
         )}
 
         {/* Add Button */}
-        {!loading && (
+        {!loading && (scope === 'personal' || canCreateInAnyGroup) && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
               <UnifiedAddButton onClick={() => setIsCreating(true)}>
