@@ -11,25 +11,27 @@ import { useTranslation } from '@/hooks/useTranslation';
 export function ThemeToggle({
   className = '',
   onToggle,
+  showLabel = false,
 }: {
   className?: string;
   onToggle?: () => void;
+  showLabel?: boolean;
 }) {
   const { theme, toggleTheme } = useTheme();
   const { t } = useTranslation('common');
   const isDark = theme === 'dark';
 
-  const mergedClassName = `
-    px-3 py-1 bg-muted border border-border rounded-full
-    flex items-center gap-1 text-sm font-medium text-text-primary
-    hover:bg-border/40 transition-colors duration-200
-    ${className}
-  `.trim();
+  const baseClassName = showLabel
+    ? 'flex items-center gap-3 text-sm text-text-primary hover:bg-muted transition-colors duration-150'
+    : 'px-3 py-1 bg-muted border border-border rounded-full flex items-center gap-1 text-sm font-medium text-text-primary hover:bg-border/40 transition-colors duration-200';
+
+  const mergedClassName = `${baseClassName} ${className}`.trim();
 
   const Icon = isDark ? Sun : Moon;
+  const label = isDark ? t('theme.light', 'Light Mode') : t('theme.dark', 'Dark Mode');
 
   const handleClick = () => {
-    // 先执行回调关闭菜单，再切换主题，避免闪烁
+    // Execute callback to close menu first, then toggle theme to avoid flicker
     onToggle?.();
     toggleTheme();
   };
@@ -41,7 +43,8 @@ export function ThemeToggle({
       className={mergedClassName}
       aria-label={t('actions.toggle_theme')}
     >
-      <Icon className="h-4 w-4" style={{ color: 'var(--text-primary)' }} />
+      <Icon className="h-4 w-4 text-text-muted" />
+      {showLabel && <span>{label}</span>}
     </button>
   );
 }
