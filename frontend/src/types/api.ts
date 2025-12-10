@@ -38,8 +38,8 @@ export interface GitInfo {
   id?: string;
   git_domain: string;
   git_token: string;
-  /** Type: "github" | "gitlab" | "gitee" | "gerrit" */
-  type: 'github' | 'gitlab' | 'gitee' | 'gerrit';
+  /** Type: "github" | "gitlab" | "gitee" | "gitea" | "gerrit" */
+  type: 'github' | 'gitlab' | 'gitee' | 'gitea' | 'gerrit';
   /** Username (required for Gerrit) */
   user_name?: string;
   /** Git user ID (from provider) */
