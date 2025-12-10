@@ -50,11 +50,11 @@ class ModelFactory:
     def _create_claude_model(env: Dict[str, Any], default_headers: Dict[str, Any]) -> Claude:
         """
         Create a Claude model instance
-        
+
         Args:
             env: Environment configuration
             default_headers: Default headers for API requests
-            
+
         Returns:
             Claude model instance
         """
@@ -65,18 +65,19 @@ class ModelFactory:
         return Claude(
             id=env.get("model_id", os.environ.get("ANTHROPIC_MODEL", "claude-3-5-sonnet-20241022")),
             api_key=env.get("api_key", os.environ.get("ANTHROPIC_API_KEY")),
-            default_headers=default_headers
+            default_headers=default_headers,
+            max_tokens=32768
         )
     
     @staticmethod
     def _create_openai_model(env: Dict[str, Any], default_headers: Dict[str, Any]) -> OpenAIChat:
         """
         Create an OpenAI model instance
-        
+
         Args:
             env: Environment configuration
             default_headers: Default headers for API requests
-            
+
         Returns:
             OpenAI model instance
         """
@@ -85,6 +86,7 @@ class ModelFactory:
             api_key=env.get("api_key", os.environ.get("OPENAI_API_KEY")),
             base_url=env.get("base_url", os.environ.get("OPENAI_BASE_URL")),
             default_headers=default_headers,
+            max_tokens=32768,
             role_map={
                 "system": "system",
                 "user": "user",

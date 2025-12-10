@@ -189,6 +189,64 @@ npm run format && npm run lint
 - Component names: PascalCase, files: kebab-case
 - Types in `src/types/`
 
+**Component Reusability Principles:**
+
+⚠️ **CRITICAL: Always check for existing components before creating new ones**
+
+Before implementing any new UI component:
+
+1. **Search existing components**: Check `src/components/ui/`, `src/components/common/`, and `src/features/*/components/`
+   ```bash
+   # Search for similar components
+   find frontend/src/components -name "*.tsx" | grep -i <keyword>
+   grep -r "export.*function.*Component" frontend/src/components/
+   ```
+
+2. **Extract reusable logic**: If implementing similar UI patterns multiple times, extract as common component
+   - Location: `src/components/common/` for shared business components
+   - Location: `src/components/ui/` for pure UI components (shadcn/ui)
+   - Example: Multiple modals with similar structure → extract `BaseModal` component
+   - Example: Repeated form patterns → extract reusable form field components
+
+3. **Component extraction checklist**:
+   - [ ] Used in 2+ different features/pages
+   - [ ] Self-contained logic (no tight coupling to parent)
+   - [ ] Clear props interface with TypeScript types
+   - [ ] Flexible enough for different use cases
+   - [ ] Follow single responsibility principle
+
+4. **Avoid duplication**:
+   - DO NOT copy-paste component code
+   - DO NOT create feature-specific versions of generic components
+   - DO extract common props and styling to shared components
+   - DO use composition over duplication
+
+**Example - Good Practice:**
+```tsx
+// ❌ BAD: Duplicated modal components in different features
+// features/tasks/components/task-modal.tsx
+// features/teams/components/team-modal.tsx
+
+// ✅ GOOD: Extract common modal, compose specific content
+// components/common/base-modal.tsx
+export function BaseModal({ title, children, onClose, ...props }) {
+  return <Dialog {...props}>...</Dialog>
+}
+
+// features/tasks/components/task-form-modal.tsx
+export function TaskFormModal() {
+  return <BaseModal title="Create Task"><TaskForm /></BaseModal>
+}
+```
+
+**Component organization**:
+```
+frontend/src/components/
+├── ui/              # shadcn/ui pure UI components (Button, Input, Dialog, etc.)
+├── common/          # Shared business components (EmptyState, LoadingSpinner, etc.)
+└── [feature]/       # Feature-specific components (only if not reusable)
+```
+
 ---
 
 ## 🎨 Frontend Design System
@@ -411,9 +469,7 @@ Task (Team + Workspace) → Subtasks (messages/steps)
   - `ATTACHMENT_S3_USE_SSL` - Use SSL for S3 connections (default: true)
 - `WEB_SEARCH_*` - Web search configuration (see `backend/app/services/search/README.md`)
   - `WEB_SEARCH_ENABLED` - Enable/disable web search feature (default: false)
-  - `WEB_SEARCH_BASE_URL` - Search API endpoint URL (required when enabled)
-  - `WEB_SEARCH_CONFIG` - JSON string containing adapter configuration
-  - `WEB_SEARCH_MAX_RESULTS` - Default maximum search results (default: 5)
+  - `WEB_SEARCH_ENGINES` - JSON string containing adapter configuration
 
 #### Database Migrations (Alembic)
 
@@ -485,7 +541,6 @@ git commit -m "chore: merge alembic heads"
 **Key environment variables:**
 - `NEXT_PUBLIC_API_URL` - Backend API URL
 - `NEXT_PUBLIC_LOGIN_MODE` - Authentication mode ('password', 'oidc', 'all')
-- `NEXT_PUBLIC_WEB_SEARCH_ENABLED` - Enable/disable web search feature (must match backend `WEB_SEARCH_ENABLED`)
 
 ### Executor
 

@@ -7,16 +7,23 @@ interface UnifiedAddButtonProps {
   children: ReactNode;
   className?: string;
   icon?: ReactNode;
+  variant?: 'default' | 'primary' | 'outline' | 'secondary';
 }
 
 export default function UnifiedAddButton({
   onClick,
   children,
-  className,
+  className = '',
   icon,
+  variant = 'default',
 }: UnifiedAddButtonProps) {
   return (
-    <Button onClick={onClick} variant="default" size="sm" className={className}>
+    <Button
+      onClick={onClick}
+      variant={variant}
+      size="sm"
+      className={`flex items-center gap-2 ${className}`}
+    >
       {icon || <PlusIcon className="h-4 w-4" />}
       {children}
     </Button>
