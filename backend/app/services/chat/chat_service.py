@@ -1039,8 +1039,10 @@ class ChatService(ChatServiceBase):
         if tools:
             payload["tools"] = tools
         # Log the request for debugging
-        logger.info(
-            f"OpenAI streaming request payload: {json.dumps(payload, ensure_ascii=False, indent=2)}"
+        logger.debug(
+            f"OpenAI streaming request: model={model_id}, "
+            f"messages={len(processed_messages)}, "
+            f"tools={len(tools) if tools else 0}"
         )
 
         async with client.stream(
