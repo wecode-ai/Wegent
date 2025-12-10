@@ -123,10 +123,10 @@ export default function ChatArea({
     }
   }, []);
 
-  const handleSearchEngineChange = (engine: string) => {
+  const handleSearchEngineChange = useCallback((engine: string) => {
     setSelectedSearchEngine(engine);
     localStorage.setItem('last_search_engine', engine);
-  };
+  }, []);
 
   // External API parameters state
   const [externalApiParams, setExternalApiParams] = useState<Record<string, string>>({});
