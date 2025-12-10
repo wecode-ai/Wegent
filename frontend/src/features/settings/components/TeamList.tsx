@@ -93,7 +93,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
       try {
         const [teamsData, botsData] = await Promise.all([
           fetchTeamsList(scope, groupName),
-          fetchBotsList()
+          fetchBotsList(scope, groupName)
         ]);
         setTeamsSorted(teamsData);
         setBotsSorted(botsData);
@@ -419,7 +419,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
             <DialogDescription>{t('bots.description')}</DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto">
-            <BotList />
+            <BotList scope={scope} groupName={groupName} />
           </div>
         </DialogContent>
       </Dialog>
