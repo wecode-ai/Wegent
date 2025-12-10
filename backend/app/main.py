@@ -30,9 +30,15 @@ from app.services.jobs import start_background_jobs, stop_background_jobs
 # OpenTelemetry imports
 try:
     import sys
+
     sys.path.insert(0, "/app")
-    from shared.telemetry import init_telemetry, shutdown_telemetry, is_telemetry_enabled
-    from shared.telemetry_context import set_user_context, set_request_context
+    from shared.telemetry import (
+        init_telemetry,
+        is_telemetry_enabled,
+        shutdown_telemetry,
+    )
+    from shared.telemetry_context import set_request_context, set_user_context
+
     TELEMETRY_AVAILABLE = True
 except ImportError:
     TELEMETRY_AVAILABLE = False
@@ -372,6 +378,7 @@ def _setup_opentelemetry_instrumentation(app: FastAPI, logger: logging.Logger) -
     try:
         # FastAPI instrumentation
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
         FastAPIInstrumentor.instrument_app(app)
         logger.info("✓ FastAPI instrumentation enabled")
     except Exception as e:
@@ -380,6 +387,7 @@ def _setup_opentelemetry_instrumentation(app: FastAPI, logger: logging.Logger) -
     try:
         # SQLAlchemy instrumentation
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+
         SQLAlchemyInstrumentor().instrument(engine=engine.sync_engine)
         logger.info("✓ SQLAlchemy instrumentation enabled")
     except Exception as e:
@@ -388,6 +396,7 @@ def _setup_opentelemetry_instrumentation(app: FastAPI, logger: logging.Logger) -
     try:
         # HTTPX instrumentation
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
         HTTPXClientInstrumentor().instrument()
         logger.info("✓ HTTPX instrumentation enabled")
     except Exception as e:
@@ -396,6 +405,7 @@ def _setup_opentelemetry_instrumentation(app: FastAPI, logger: logging.Logger) -
     try:
         # Requests instrumentation
         from opentelemetry.instrumentation.requests import RequestsInstrumentor
+
         RequestsInstrumentor().instrument()
         logger.info("✓ Requests instrumentation enabled")
     except Exception as e:
@@ -403,7 +413,10 @@ def _setup_opentelemetry_instrumentation(app: FastAPI, logger: logging.Logger) -
 
     try:
         # System metrics instrumentation
-        from opentelemetry.instrumentation.system_metrics import SystemMetricsInstrumentor
+        from opentelemetry.instrumentation.system_metrics import (
+            SystemMetricsInstrumentor,
+        )
+
         SystemMetricsInstrumentor().instrument()
         logger.info("✓ System metrics instrumentation enabled")
     except Exception as e:

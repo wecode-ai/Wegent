@@ -39,8 +39,9 @@ from app.services.shared_task import shared_task_service
 
 # OpenTelemetry imports for business metrics
 try:
+    from shared.telemetry_context import set_task_context, set_user_context
     from shared.telemetry_metrics import record_task_created
-    from shared.telemetry_context import set_user_context, set_task_context
+
     TELEMETRY_AVAILABLE = True
 except ImportError:
     TELEMETRY_AVAILABLE = False

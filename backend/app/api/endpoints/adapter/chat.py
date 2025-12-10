@@ -32,16 +32,17 @@ from app.services.chat.model_resolver import (
 
 # OpenTelemetry imports for business metrics
 try:
-    from shared.telemetry_metrics import (
-        record_message_sent,
-        record_session_opened,
-        record_session_active_change,
-    )
     from shared.telemetry_context import (
-        set_user_context,
         set_task_context,
         set_team_context,
+        set_user_context,
     )
+    from shared.telemetry_metrics import (
+        record_message_sent,
+        record_session_active_change,
+        record_session_opened,
+    )
+
     TELEMETRY_AVAILABLE = True
 except ImportError:
     TELEMETRY_AVAILABLE = False
