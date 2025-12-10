@@ -21,12 +21,9 @@ from shared.logger import setup_logger
 from shared.models.task import TasksRequest
 
 from executor_manager.clients.task_api_client import TaskApiClient
-from executor_manager.config.config import (EXECUTOR_DISPATCHER_MODE,
-                                            OTEL_CAPTURE_REQUEST_BODY,
-                                            OTEL_CAPTURE_RESPONSE_BODY,
-                                            OTEL_CAPTURE_RESPONSE_HEADERS,
-                                            OTEL_ENABLED)
+from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
 from executor_manager.executors.dispatcher import ExecutorDispatcher
+from shared.telemetry.config import get_otel_config
 from executor_manager.tasks.task_processor import TaskProcessor
 
 # Setup logger
@@ -59,11 +56,14 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
     client_ip = request.client.host if request.client else "unknown"
 
+    # Get OTEL config
+    otel_config = get_otel_config()
+    
     # Capture request body if OTEL is enabled and body capture is configured
     request_body = None
     if (
-        OTEL_ENABLED
-        and OTEL_CAPTURE_REQUEST_BODY
+        otel_config.enabled
+        and otel_config.capture_request_body
         and request.method in ("POST", "PUT", "PATCH")
     ):
         try:
@@ -81,7 +81,7 @@ async def log_requests(request: Request, call_next):
             logger.debug(f"Failed to capture request body: {e}")
 
     # Add OpenTelemetry span attributes if enabled
-    if OTEL_ENABLED:
+    if otel_config.enabled:
         try:
             from opentelemetry import trace
             from shared.telemetry.core import is_telemetry_enabled
@@ -109,7 +109,7 @@ async def log_requests(request: Request, call_next):
     process_time_ms = (time.time() - start_time) * 1000
 
     # Capture response headers and body if OTEL is enabled
-    if OTEL_ENABLED:
+    if otel_config.enabled:
         try:
             from opentelemetry import trace
             from shared.telemetry.core import is_telemetry_enabled
@@ -118,7 +118,7 @@ async def log_requests(request: Request, call_next):
                 current_span = trace.get_current_span()
                 if current_span and current_span.is_recording():
                     # Capture response headers
-                    if OTEL_CAPTURE_RESPONSE_HEADERS:
+                    if otel_config.capture_response_headers:
                         for header_name, header_value in response.headers.items():
                             if header_name.lower() in ("authorization", "cookie", "set-cookie"):
                                 header_value = "[REDACTED]"
@@ -127,7 +127,7 @@ async def log_requests(request: Request, call_next):
                             )
 
                     # Capture response body (only for non-streaming responses)
-                    if OTEL_CAPTURE_RESPONSE_BODY:
+                    if otel_config.capture_response_body:
                         if not isinstance(response, StreamingResponse):
                             try:
                                 response_body_chunks = []

@@ -20,10 +20,9 @@ from executor.config import config
 
 from shared.logger import setup_logger
 from shared.status import TaskStatus
+from shared.telemetry.config import get_otel_config
 from shared.utils.http_util import build_payload
 from shared.utils.sensitive_data_masker import mask_sensitive_data
-
-from executor.config.config import OTEL_ENABLED
 
 logger = setup_logger("callback_client")
 
@@ -171,7 +170,8 @@ class CallbackClient:
 
         # Prepare headers with trace context for distributed tracing
         headers = {"Content-Type": "application/json"}
-        if OTEL_ENABLED:
+        otel_config = get_otel_config()
+        if otel_config.enabled:
             from shared.telemetry.core import is_telemetry_enabled
             from shared.telemetry.context import inject_trace_context_to_headers
 

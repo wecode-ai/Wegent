@@ -22,16 +22,8 @@ import requests
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 
-from executor_manager.config.config import (EXECUTOR_ENV,
-                                            OTEL_CAPTURE_REQUEST_BODY,
-                                            OTEL_CAPTURE_REQUEST_HEADERS,
-                                            OTEL_CAPTURE_RESPONSE_BODY,
-                                            OTEL_CAPTURE_RESPONSE_HEADERS,
-                                            OTEL_ENABLED,
-                                            OTEL_EXPORTER_OTLP_ENDPOINT,
-                                            OTEL_METRICS_ENABLED,
-                                            OTEL_SERVICE_NAME,
-                                            OTEL_TRACES_SAMPLER_ARG)
+from executor_manager.config.config import EXECUTOR_ENV
+from shared.telemetry.config import get_otel_config
 from executor_manager.executors.base import Executor
 from executor_manager.executors.docker.constants import (
     CONTAINER_OWNER, DEFAULT_API_ENDPOINT, DEFAULT_DOCKER_HOST, DEFAULT_LOCALE,
@@ -526,7 +518,8 @@ class DockerExecutor(Executor):
         1. Initialize OpenTelemetry with the same configuration
         2. Continue the trace started by executor_manager
         """
-        if not OTEL_ENABLED:
+        otel_config = get_otel_config()
+        if not otel_config.enabled:
             return
 
         try:
@@ -535,13 +528,13 @@ class DockerExecutor(Executor):
             cmd.extend([
                 "-e", "OTEL_ENABLED=true",
                 "-e", f"OTEL_SERVICE_NAME=wegent-executor",  # Use executor-specific service name
-                "-e", f"OTEL_EXPORTER_OTLP_ENDPOINT={OTEL_EXPORTER_OTLP_ENDPOINT}",
-                "-e", f"OTEL_TRACES_SAMPLER_ARG={OTEL_TRACES_SAMPLER_ARG}",
-                "-e", f"OTEL_METRICS_ENABLED={'true' if OTEL_METRICS_ENABLED else 'false'}",
-                "-e", f"OTEL_CAPTURE_REQUEST_HEADERS={'true' if OTEL_CAPTURE_REQUEST_HEADERS else 'false'}",
-                "-e", f"OTEL_CAPTURE_REQUEST_BODY={'true' if OTEL_CAPTURE_REQUEST_BODY else 'false'}",
-                "-e", f"OTEL_CAPTURE_RESPONSE_HEADERS={'true' if OTEL_CAPTURE_RESPONSE_HEADERS else 'false'}",
-                "-e", f"OTEL_CAPTURE_RESPONSE_BODY={'true' if OTEL_CAPTURE_RESPONSE_BODY else 'false'}",
+                "-e", f"OTEL_EXPORTER_OTLP_ENDPOINT={otel_config.otlp_endpoint}",
+                "-e", f"OTEL_TRACES_SAMPLER_ARG={otel_config.sampler_ratio}",
+                "-e", f"OTEL_METRICS_ENABLED={'true' if otel_config.metrics_enabled else 'false'}",
+                "-e", f"OTEL_CAPTURE_REQUEST_HEADERS={'true' if otel_config.capture_request_headers else 'false'}",
+                "-e", f"OTEL_CAPTURE_REQUEST_BODY={'true' if otel_config.capture_request_body else 'false'}",
+                "-e", f"OTEL_CAPTURE_RESPONSE_HEADERS={'true' if otel_config.capture_response_headers else 'false'}",
+                "-e", f"OTEL_CAPTURE_RESPONSE_BODY={'true' if otel_config.capture_response_body else 'false'}",
             ])
             logger.debug("Added OTEL configuration env vars to container")
 
