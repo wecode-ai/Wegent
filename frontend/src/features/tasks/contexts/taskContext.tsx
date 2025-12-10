@@ -35,6 +35,8 @@ type TaskContextType = {
   getUnreadCount: (tasks: Task[]) => number;
   markAllTasksAsViewed: () => void;
   viewStatusVersion: number;
+  /** Whether there was a network error during the last fetch */
+  hasNetworkError: boolean;
 };
 
 const TaskContext = createContext<TaskContextType | undefined>(undefined);
@@ -51,6 +53,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const [isSearching, setIsSearching] = useState<boolean>(false);
   const [isSearchResult, setIsSearchResult] = useState<boolean>(false);
   const [viewStatusVersion, setViewStatusVersion] = useState<number>(0);
+  const [hasNetworkError, setHasNetworkError] = useState<boolean>(false);
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
@@ -62,8 +65,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const limit = 50;
 
   // Batch load specified pages (only responsible for data requests and responses, does not handle loading state)
+  // Returns { items, hasMore, pages, error } - error is true if network request failed
   const loadPages = async (pagesArr: number[], _append = false) => {
-    if (pagesArr.length === 0) return { items: [], hasMore: false };
+    if (pagesArr.length === 0) return { items: [], hasMore: false, error: false };
     const requests = pagesArr.map(p => taskApis.getTasksLite({ page: p, limit }));
     try {
       const results = await Promise.all(requests);
@@ -73,9 +77,12 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         items: allItems,
         hasMore: lastPageItems.length === limit,
         pages: pagesArr,
+        error: false,
       };
-    } catch {
-      return { items: [], hasMore: false, pages: [] };
+    } catch (err) {
+      console.error('[TaskContext] Failed to load pages:', err);
+      // Return error flag instead of empty data
+      return { items: [], hasMore: true, pages: pagesArr, error: true };
     }
   };
 
@@ -85,11 +92,19 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setLoadingMore(true);
     const nextPage = (loadedPages[loadedPages.length - 1] || 1) + 1;
     const result = await loadPages([nextPage], true);
-    setTasks(prev => [...prev, ...result.items]);
-    setLoadedPages(prev =>
-      Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
-    );
-    setHasMore(result.hasMore);
+
+    // Only update if no error occurred
+    if (!result.error) {
+      setHasNetworkError(false);
+      setTasks(prev => [...prev, ...result.items]);
+      setLoadedPages(prev =>
+        Array.from(new Set([...prev, ...(result.pages || [])])).sort((a, b) => a - b)
+      );
+      setHasMore(result.hasMore);
+    } else {
+      // On error, set network error flag but don't clear existing data
+      setHasNetworkError(true);
+    }
     setLoadingMore(false);
   };
 
@@ -97,17 +112,27 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const refreshTasks = async () => {
     setTaskLoading(true);
     const result = await loadPages(loadedPages, false);
-    setTasks(result.items);
-    setLoadedPages(result.pages || []);
-    setHasMore(result.hasMore);
-    setTaskLoading(false);
 
-    // Initialize task view status on first load (if not already initialized)
-    if (result.items.length > 0) {
-      initializeTaskViewStatus(result.items);
+    // Only update tasks if no error occurred - preserve existing data on network error
+    if (!result.error) {
+      setHasNetworkError(false);
+      setTasks(result.items);
+      setLoadedPages(result.pages || []);
+      setHasMore(result.hasMore);
+
+      // Initialize task view status on first load (if not already initialized)
+      if (result.items.length > 0) {
+        initializeTaskViewStatus(result.items);
+      }
+    } else {
+      // On error, set network error flag but don't clear existing data
+      // This ensures the list remains visible and polling continues
+      setHasNetworkError(true);
+      console.warn('[TaskContext] Network error during refresh, preserving existing task list');
     }
-  };
 
+    setTaskLoading(false);
+  };
   // Monitor task status changes and send notifications
   useEffect(() => {
     tasks.forEach(task => {
@@ -136,7 +161,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Only refresh periodically when there are unfinished tasks
+  // Only refresh periodically when there are unfinished tasks OR when there's a network error
+  // This ensures polling continues even after network errors to recover when connection is restored
   useEffect(() => {
     const hasIncompleteTasks = tasks.some(
       task =>
@@ -148,7 +174,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
     let interval: NodeJS.Timeout | null = null;
 
-    if (hasIncompleteTasks) {
+    // Continue polling if there are incomplete tasks OR if there was a network error
+    // This allows recovery when network connection is restored
+    if (hasIncompleteTasks || hasNetworkError) {
       interval = setInterval(() => {
         refreshTasks();
       }, 10000);
@@ -158,7 +186,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       if (interval) clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedPages, tasks]); // Removed refreshTasks from dependencies to avoid unnecessary re-renders
+  }, [loadedPages, tasks, hasNetworkError]); // Added hasNetworkError to dependencies
 
   const refreshSelectedTaskDetail = async (isAutoRefresh: boolean = false) => {
     if (!selectedTask) return;
@@ -308,6 +336,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         getUnreadCount,
         markAllTasksAsViewed: handleMarkAllTasksAsViewed,
         viewStatusVersion,
+        hasNetworkError,
       }}
     >
       {children}
