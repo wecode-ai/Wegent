@@ -139,7 +139,44 @@ jobs:
         run: |
           source $HOME/.cargo/env
           uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-          echo "Backend server starting (with auto migration and YAML init enabled)..."
+          BACKEND_PID=$!
+          echo "Backend server starting (PID: $BACKEND_PID)..."
+
+          # Wait for backend HTTP server to be ready
+          echo "Waiting for backend HTTP server..."
+          for i in {1..60}; do
+            if curl -s http://localhost:8000/ > /dev/null 2>&1; then
+              echo "Backend HTTP server is responding!"
+              break
+            fi
+            sleep 1
+          done
+
+          # Wait for backend initialization (migrations + YAML init) to complete
+          # by checking if login API returns non-500 status
+          echo "Waiting for backend initialization to complete..."
+          for i in {1..120}; do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -X POST http://localhost:8000/api/auth/login \
+              -H "Content-Type: application/json" \
+              -d '{"user_name": "admin", "password": "Wegent2025!"}' 2>/dev/null || echo "000")
+
+            if [ "$HTTP_CODE" = "200" ]; then
+              echo "Backend initialization complete! Login successful."
+              break
+            elif [ "$HTTP_CODE" = "400" ]; then
+              echo "Backend ready but login failed (credentials may be wrong)."
+              break
+            fi
+            echo "Waiting for backend initialization... ($i/120) - HTTP code: $HTTP_CODE"
+            sleep 1
+          done
+
+          # Show final status
+          if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "400" ]; then
+            echo "Backend is fully initialized and ready!"
+          else
+            echo "WARNING: Backend may not be fully initialized. Continuing anyway..."
+          fi
 
       - name: Start frontend server
         working-directory: frontend
@@ -150,50 +187,8 @@ jobs:
           npm start &
           echo "Frontend server starting..."
 
-      - name: Wait for services to be ready
+      - name: Wait for frontend to be ready
         run: |
-          echo "Waiting for backend to be ready..."
-          for i in {1..60}; do
-            if curl -s http://localhost:8000/api/health > /dev/null 2>&1 || curl -s http://localhost:8000/ > /dev/null 2>&1; then
-              echo "Backend HTTP server is responding!"
-              break
-            fi
-            echo "Waiting for backend HTTP server... ($i/60)"
-            sleep 2
-          done
-
-          # Wait for backend initialization to complete (database migration + YAML init)
-          # by checking if the login API works with the default admin credentials
-          # Increased timeout to 90 iterations (3 minutes) to allow for slow CI environments
-          echo "Waiting for backend initialization (migration + user creation)..."
-          for i in {1..90}; do
-            # Try to login with admin credentials to verify the user exists
-            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8000/api/auth/login \
-              -H "Content-Type: application/json" \
-              -d '{"user_name": "admin", "password": "Wegent2025!"}' 2>/dev/null)
-            HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-            BODY=$(echo "$RESPONSE" | head -n -1)
-
-            if [ "$HTTP_CODE" = "200" ]; then
-              echo "Backend initialization complete - admin user exists and login works!"
-              break
-            fi
-            # Show more details for debugging when initialization fails
-            if [ $((i % 10)) -eq 0 ]; then
-              echo "Login response body: $BODY"
-            fi
-            echo "Waiting for backend initialization... ($i/90) - HTTP code: $HTTP_CODE"
-            sleep 2
-          done
-
-          # Final check - if login still fails, show error and continue anyway
-          # to let the E2E tests provide better diagnostic information
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "WARNING: Backend initialization may not be complete. HTTP code: $HTTP_CODE"
-            echo "Login response body: $BODY"
-            echo "Continuing with E2E tests for better diagnostics..."
-          fi
-
           echo "Waiting for frontend..."
           for i in {1..30}; do
             if curl -s http://localhost:3000 > /dev/null 2>&1; then
