@@ -563,8 +563,8 @@ class ChatService(ChatServiceBase):
                 try:
                     function_args = json.loads(tool_call["function"]["arguments"])
                 except json.JSONDecodeError as e:
-                    logger.error(
-                        f"Failed to parse arguments for tool {function_name}: {e}"
+                    logger.exception(
+                        f"Failed to parse arguments for tool {function_name}"
                     )
                     function_args = {}
 
@@ -597,8 +597,8 @@ class ChatService(ChatServiceBase):
                         else:
                             tool_result = f"Tool {function_name} execution failed: Tool function not found"
 
-                    except Exception as e:
-                        logger.error(f"Tool execution failed: {e}")
+                    except (TypeError, AttributeError, ValueError) as e:
+                        logger.exception(f"Tool execution failed for {function_name}")
                         tool_result = f"Error: {str(e)}"
                 else:
                     tool_result = f"Tool {function_name} not found"
