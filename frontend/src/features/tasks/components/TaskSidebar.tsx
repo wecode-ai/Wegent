@@ -364,7 +364,7 @@ export default function TaskSidebar({
       </div>
 
       {/* User Menu */}
-      <div className="p-2 border-t border-border" data-tour="settings-link">
+      <div className="p-2 border-t border-border/50" data-tour="settings-link">
         <UserFloatingMenu />
       </div>
     </>
@@ -373,10 +373,7 @@ export default function TaskSidebar({
   return (
     <>
       {/* Desktop Sidebar - Hidden on mobile, width controlled by parent ResizableSidebar */}
-      <div
-        className="hidden lg:flex lg:flex-col lg:bg-surface w-full h-full"
-        data-tour="task-sidebar"
-      >
+      <div className="hidden lg:flex lg:flex-col w-full h-full" data-tour="task-sidebar">
         {sidebarContent}
       </div>
 

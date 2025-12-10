@@ -126,7 +126,7 @@ export default function ChatPage() {
         isLoading={isTeamsLoading}
         hasShareId={hasShareId}
       />
-      <div className="flex smart-h-screen bg-base text-text-primary box-border">
+      <div className="flex smart-h-screen text-text-primary box-border">
         {/* Responsive resizable sidebar */}
         <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
           <TaskSidebar

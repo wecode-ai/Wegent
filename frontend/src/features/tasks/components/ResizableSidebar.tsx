@@ -27,6 +27,8 @@ export default function ResizableSidebar({
 }: ResizableSidebarProps) {
   const COLLAPSED_WIDTH = 60;
   const AUTO_COLLAPSE_THRESHOLD = 80;
+  const SIDEBAR_MARGIN_X = 8; // Match CSS variable --sidebar-margin-x
+  const SIDEBAR_MARGIN_Y = 6; // Match CSS variable --sidebar-margin-y
 
   const [sidebarWidth, setSidebarWidth] = useState(defaultWidth);
   const [isResizing, setIsResizing] = useState(false);
@@ -120,27 +122,28 @@ export default function ResizableSidebar({
 
   return (
     <div
-      className="hidden lg:flex relative border-r border-border transition-all duration-200"
-      style={{ width: `${sidebarWidth}px` }}
+      className="hidden lg:flex relative transition-all duration-300 ease-out"
+      style={{
+        width: `${sidebarWidth + SIDEBAR_MARGIN_X}px`,
+        paddingTop: `${SIDEBAR_MARGIN_Y}px`,
+        paddingBottom: `${SIDEBAR_MARGIN_Y}px`,
+        paddingLeft: `${SIDEBAR_MARGIN_X}px`,
+        paddingRight: 0,
+      }}
     >
-      {/* Sidebar content container */}
-      <div ref={sidebarRef} className="flex flex-col w-full h-full">
-        {children}
-      </div>
-
-      {/* Resizer handle - disabled when collapsed */}
-      {!isCollapsed && (
-        <div
-          className="absolute top-0 right-0 bottom-0 w-1 cursor-col-resize hover:bg-primary/30 transition-colors group"
-          onMouseDown={handleMouseDown}
-          style={{
-            zIndex: 10,
-          }}
-        >
-          {/* Visual indicator on hover */}
-          <div className="absolute inset-y-0 -left-1 -right-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+      {/* Glass morphism sidebar container */}
+      <div
+        className={`glass-sidebar ${isCollapsed ? 'collapsed' : ''}`}
+        style={{ width: `${sidebarWidth}px` }}
+      >
+        {/* Sidebar content container */}
+        <div ref={sidebarRef} className="glass-sidebar-content">
+          {children}
         </div>
-      )}
+
+        {/* Resizer handle - disabled when collapsed */}
+        {!isCollapsed && <div className="glass-sidebar-resizer" onMouseDown={handleMouseDown} />}
+      </div>
 
       {/* Overlay while resizing to prevent interference */}
       {isResizing && (

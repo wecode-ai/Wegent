@@ -36,6 +36,14 @@
   --color-tooltip-foreground: 255 255 255;
   --shadow-popover: 0 12px 32px rgba(15, 23, 42, 0.12);
   --radius: 0.5rem;
+  /* macOS 26 Glassmorphism Sidebar */
+  --sidebar-glass-bg: rgba(255, 255, 255, 0.72);
+  --sidebar-glass-border: rgba(255, 255, 255, 0.5);
+  --sidebar-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.04), 0 1px 4px rgba(0, 0, 0, 0.02);
+  --sidebar-blur: 24px;
+  --sidebar-radius: 16px;
+  --sidebar-margin-x: 8px;
+  --sidebar-margin-y: 6px;
 }
 
 [data-theme='dark'] {
@@ -66,12 +74,22 @@
   --color-tooltip-foreground: 14 15 15;
   --shadow-popover: 0 8px 24px rgba(0, 0, 0, 0.5);
   --radius: 0.5rem;
+  /* macOS 26 Glassmorphism Sidebar - Dark Mode */
+  --sidebar-glass-bg: rgba(30, 32, 34, 0.75);
+  --sidebar-glass-border: rgba(255, 255, 255, 0.08);
+  --sidebar-glass-shadow: 0 4px 16px rgba(0, 0, 0, 0.16), 0 1px 4px rgba(0, 0, 0, 0.08);
+  --sidebar-blur: 24px;
+  --sidebar-radius: 16px;
+  --sidebar-margin-x: 8px;
+  --sidebar-margin-y: 6px;
 }
 
 body {
   color: rgb(var(--color-text-primary));
   background-color: rgb(var(--color-bg-base));
-  background-image: linear-gradient(to bottom, transparent, rgb(var(--color-bg-base)));
+  background-image:
+    radial-gradient(ellipse at 0% 0%, rgba(var(--color-primary), 0.03) 0%, transparent 50%),
+    radial-gradient(ellipse at 100% 100%, rgba(var(--color-primary), 0.02) 0%, transparent 50%);
   background-attachment: fixed;
   overflow-x: hidden;
   font-family:
@@ -504,4 +522,100 @@ button:focus-visible {
 /* Keep arrow visible when dropdown is open */
 .repository-selector.ant-select-open .ant-select-arrow {
   opacity: 1;
+}
+
+/* macOS 26 Glassmorphism Floating Sidebar */
+.glass-sidebar {
+  background: var(--sidebar-glass-bg);
+  backdrop-filter: blur(var(--sidebar-blur));
+  -webkit-backdrop-filter: blur(var(--sidebar-blur));
+  border: 1px solid var(--sidebar-glass-border);
+  border-radius: var(--sidebar-radius);
+  box-shadow: var(--sidebar-glass-shadow);
+  height: 100%;
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Inner glow effect for glass sidebar */
+.glass-sidebar::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.2) 0%,
+    rgba(255, 255, 255, 0.05) 50%,
+    transparent 100%
+  );
+  -webkit-mask:
+    linear-gradient(#fff 0 0) content-box,
+    linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
+/* Dark mode inner glow adjustment */
+[data-theme='dark'] .glass-sidebar::before {
+  background: linear-gradient(
+    135deg,
+    rgba(255, 255, 255, 0.08) 0%,
+    rgba(255, 255, 255, 0.02) 50%,
+    transparent 100%
+  );
+}
+
+/* Collapsed state for glass sidebar */
+.glass-sidebar.collapsed {
+  border-radius: 16px;
+}
+
+/* Hover effect for glass sidebar */
+.glass-sidebar:hover {
+  box-shadow:
+    var(--sidebar-glass-shadow),
+    0 0 0 1px var(--sidebar-glass-border);
+}
+
+/* Glass sidebar content wrapper */
+.glass-sidebar-content {
+  position: relative;
+  z-index: 1;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Resizer for glass sidebar */
+.glass-sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+  z-index: 10;
+  transition: background-color 0.2s ease;
+}
+
+.glass-sidebar-resizer:hover {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(var(--color-primary), 0.2) 50%,
+    transparent 100%
+  );
+}
+
+.glass-sidebar-resizer:active {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(var(--color-primary), 0.3) 50%,
+    transparent 100%
+  );
 }
