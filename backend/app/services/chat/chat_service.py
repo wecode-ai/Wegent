@@ -109,7 +109,10 @@ class ChatService(ChatServiceBase):
                     error_msg = (
                         "Too many concurrent chat requests, please try again later"
                     )
-                    yield f"data: {json.dumps({'error': error_msg})}\n\n"
+                    try:
+                        chunk_queue.put_nowait({"type": "error", "message": error_msg})
+                    except asyncio.QueueFull:
+                        pass
                     await self._update_subtask_status(
                         subtask_id, "FAILED", error=error_msg
                     )

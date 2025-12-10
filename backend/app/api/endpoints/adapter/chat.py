@@ -883,7 +883,7 @@ async def _handle_resume_stream(
                 await pubsub.unsubscribe()
                 await pubsub.close()
                 if redis_client:
-                    await redis_client.close()
+                    await redis_client.aclose()
 
         except Exception as e:
             logger.error(
@@ -1283,7 +1283,7 @@ async def resume_stream(
                 await pubsub.unsubscribe()
                 await pubsub.close()
                 if redis_client:
-                    await redis_client.close()
+                    await redis_client.aclose()
 
         except Exception as e:
             logger.error(
