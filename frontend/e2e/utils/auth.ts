@@ -34,9 +34,8 @@ export async function login(
   const usernameInput = page
     .locator('input[name="user_name"], input[name="username"], input[type="text"]')
     .first()
-  const passwordInput = page
-    .locator('input[name="password"], input[type="password"]')
-    .first()
+  // Use id selector for password field as it's more reliable
+  const passwordInput = page.locator('#password')
 
   // Clear and fill username
   await usernameInput.clear()
@@ -46,9 +45,41 @@ export async function login(
   await passwordInput.clear()
   await passwordInput.fill(password)
 
-  // Click login button
+  // Click login button and wait for API response
   const loginButton = page.locator('button[type="submit"]')
+
+  // Set up a promise to wait for the login API response
+  const responsePromise = page.waitForResponse(
+    (response) =>
+      response.url().includes('/api/auth/login') && response.request().method() === 'POST',
+    { timeout: 30000 }
+  )
+
   await loginButton.click()
+
+  // Wait for the login API response
+  let loginResponse
+  try {
+    loginResponse = await responsePromise
+  } catch {
+    // If no API response received, the request might not have been sent
+    throw new Error('Login API request was not sent or timed out')
+  }
+
+  // Check if login was successful
+  const status = loginResponse.status()
+  if (status !== 200) {
+    let errorMessage = `Login failed with status ${status}`
+    try {
+      const responseBody = await loginResponse.json()
+      if (responseBody.detail) {
+        errorMessage = `Login failed: ${responseBody.detail}`
+      }
+    } catch {
+      // Ignore JSON parse errors
+    }
+    throw new Error(errorMessage)
+  }
 
   // Wait for login to complete - redirect away from /login page
   // The app redirects to /chat after successful login
@@ -57,13 +88,14 @@ export async function login(
       timeout: 30000,
     })
   } catch (error) {
-    // Check if there's an error message on the page
-    const errorMessage = await page
-      .locator('.error, [data-error], [role="alert"]:not([data-sonner-toaster])')
-      .textContent()
+    // Check if there's an error message on the page (toast notification)
+    const toastMessage = await page
+      .locator('[data-sonner-toaster] [data-title], [role="alert"]')
+      .first()
+      .textContent({ timeout: 1000 })
       .catch(() => null)
-    if (errorMessage) {
-      throw new Error(`Login failed: ${errorMessage}`)
+    if (toastMessage) {
+      throw new Error(`Login failed with toast: ${toastMessage}`)
     }
     throw error
   }
