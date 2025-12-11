@@ -29,13 +29,18 @@ import { shellApis, UnifiedShell } from '@/apis/shells';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 
 interface ShellListProps {
-  scope?: 'personal' | 'group' | 'all'
-  groupName?: string
-  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>
-  onEditResource?: (namespace: string) => void
+  scope?: 'personal' | 'group' | 'all';
+  groupName?: string;
+  groupRoleMap?: Map<string, 'Owner' | 'Maintainer' | 'Developer' | 'Reporter'>;
+  onEditResource?: (namespace: string) => void;
 }
 
-const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, groupRoleMap, onEditResource }) => {
+const ShellList: React.FC<ShellListProps> = ({
+  scope = 'personal',
+  groupName,
+  groupRoleMap,
+  onEditResource,
+}) => {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [shells, setShells] = useState<UnifiedShell[]>([]);
@@ -102,9 +107,9 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, gr
     return role === 'Owner' || role === 'Maintainer';
   };
 
-  const canCreateInAnyGroup = groupRoleMap && Array.from(groupRoleMap.values()).some(
-    role => role === 'Owner' || role === 'Maintainer'
-  );
+  const canCreateInAnyGroup =
+    groupRoleMap &&
+    Array.from(groupRoleMap.values()).some(role => role === 'Owner' || role === 'Maintainer');
 
   const handleDelete = async () => {
     if (!deleteConfirmShell) return;
@@ -149,7 +154,15 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, gr
   };
 
   if (editingShell || isCreating) {
-    return <ShellEdit shell={editingShell} onClose={handleEditClose} toast={toast} groupName={groupName} />;
+    return (
+      <ShellEdit
+        shell={editingShell}
+        onClose={handleEditClose}
+        toast={toast}
+        scope={scope}
+        groupName={groupName}
+      />
+    );
   }
 
   return (
@@ -219,7 +232,8 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, gr
                                       key: 'base-image',
                                       label: shell.baseImage,
                                       variant: 'default' as const,
-                                      className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
+                                      className:
+                                        'hidden md:inline-flex text-xs truncate max-w-[200px]',
                                     },
                                   ]
                                 : []),
@@ -289,7 +303,8 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, gr
                                       key: 'base-image',
                                       label: shell.baseImage,
                                       variant: 'default' as const,
-                                      className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
+                                      className:
+                                        'hidden md:inline-flex text-xs truncate max-w-[200px]',
                                     },
                                   ]
                                 : []),
@@ -370,7 +385,8 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, gr
                                       key: 'base-image',
                                       label: shell.baseImage,
                                       variant: 'default' as const,
-                                      className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
+                                      className:
+                                        'hidden md:inline-flex text-xs truncate max-w-[200px]',
                                     },
                                   ]
                                 : []),
