@@ -32,6 +32,8 @@ export default function ChatInput({
   const { t } = useTranslation('chat');
   const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
   const [isComposing, setIsComposing] = useState(false);
+  // Track if composition just ended (for Safari where compositionend fires before keydown)
+  const compositionJustEndedRef = useRef(false);
   const isMobile = useIsMobile();
   const { user } = useUser();
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -68,14 +70,28 @@ export default function ChatInput({
 
   const handleCompositionStart = () => {
     setIsComposing(true);
+    compositionJustEndedRef.current = false;
   };
 
   const handleCompositionEnd = () => {
     setIsComposing(false);
+    // Set flag to indicate composition just ended
+    // This handles Safari where compositionend fires before keydown
+    compositionJustEndedRef.current = true;
+    // Clear the flag after a short delay to allow normal Enter key behavior
+    setTimeout(() => {
+      compositionJustEndedRef.current = false;
+    }, 100);
   };
 
   const handleKeyPress = (e: React.KeyboardEvent) => {
-    if (disabled || isComposing) return;
+    // Check multiple conditions for IME compatibility:
+    // 1. isComposing state - tracks composition via React state
+    // 2. nativeEvent.isComposing - native browser flag (more reliable in some browsers)
+    // 3. compositionJustEndedRef - handles Safari where compositionend fires before keydown
+    //    This prevents the Enter key that confirms IME selection from also sending the message
+    if (disabled || isComposing || e.nativeEvent.isComposing || compositionJustEndedRef.current)
+      return;
 
     // On mobile, Enter always creates new line (no easy Shift+Enter on mobile keyboards)
     // Users can tap the send button to send messages
