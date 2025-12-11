@@ -41,7 +41,12 @@ import {
 } from '@/components/ui/dialog';
 import { ResourceListItem } from '@/components/common/ResourceListItem';
 
-export default function TeamList() {
+interface TeamListProps {
+  scope?: 'personal' | 'group' | 'all'
+  groupName?: string
+}
+
+export default function TeamList({ scope = 'personal', groupName }: TeamListProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [teams, setTeams] = useState<Team[]>([]);
@@ -86,7 +91,10 @@ export default function TeamList() {
     async function loadData() {
       setIsLoading(true);
       try {
-        const [teamsData, botsData] = await Promise.all([fetchTeamsList(), fetchBotsList()]);
+        const [teamsData, botsData] = await Promise.all([
+          fetchTeamsList(scope, groupName),
+          fetchBotsList(scope, groupName)
+        ]);
         setTeamsSorted(teamsData);
         setBotsSorted(botsData);
       } catch {
@@ -99,7 +107,7 @@ export default function TeamList() {
       }
     }
     loadData();
-  }, [toast, setBotsSorted, setTeamsSorted, t]);
+  }, [toast, setBotsSorted, setTeamsSorted, t, scope, groupName]);
 
   useEffect(() => {
     if (editingTeamId === null) {
@@ -108,6 +116,16 @@ export default function TeamList() {
   }, [editingTeamId]);
 
   const handleCreateTeam = () => {
+    // Validation for group scope: must have groupName
+    if (scope === 'group' && !groupName) {
+      toast({
+        variant: 'destructive',
+        title: t('teams.group_required_title'),
+        description: t('teams.group_required_message'),
+      });
+      return;
+    }
+    
     setPrefillTeam(null);
     setEditingTeamId(0); // Use 0 to mark new creation
   };
@@ -228,6 +246,8 @@ export default function TeamList() {
                   bots={bots}
                   setBots={setBotsSorted}
                   toast={toast}
+                  scope={scope}
+                  groupName={groupName}
                 />
               ) : (
                 <>
@@ -420,7 +440,7 @@ export default function TeamList() {
             <DialogDescription>{t('bots.description')}</DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto">
-            <BotList />
+            <BotList scope={scope} groupName={groupName} />
           </div>
         </DialogContent>
       </Dialog>

@@ -12,7 +12,9 @@
     "saving": "Saving...",
     "cancel": "Cancel",
     "delete": "Delete",
+    "deleting": "Deleting...",
     "edit": "Edit",
+    "edit_group": "Edit Group",
     "start": "Get Start!",
     "create": "Create",
     "creating": "Creating...",
@@ -29,7 +31,8 @@
     "upload": "Upload"
   },
   "validation": {
-    "required": "This field is required"
+    "required": "This field is required",
+    "max_length": "Maximum length is {{max}} characters"
   },
   "login": {
     "username": "Username",
@@ -152,7 +155,9 @@
     "copy": "Copy Bot",
     "delete_confirm_title": "Confirm Delete",
     "delete_confirm_message": "Are you sure you want to delete this bot? This action cannot be undone.",
-    "manage_bots": "Manage Bots"
+    "manage_bots": "Manage Bots",
+    "group_required_title": "Please Select a Group First",
+    "group_required_message": "You must select a target group before creating a bot in group mode"
   },
   "messages": {
     "copy_markdown": "Copy markdown content",
@@ -169,6 +174,8 @@
     "loading": "Loading teams...",
     "active": "Active",
     "inactive": "Inactive",
+    "select_team": "Select a team",
+    "search_team": "Select a team",
     "no_bots": "No bots",
     "edit": "Edit Team",
     "chat": "Send Task",
@@ -176,7 +183,6 @@
     "copy": "Duplicate Team",
     "more": "More Actions",
     "no_teams": "No teams available",
-    "select_team": "Select a team",
     "new_team": "New Team",
     "search_placeholder": "Search team...",
     "no_match": "No matching teams",
@@ -193,6 +199,8 @@
     "share_link": "Share Link",
     "copy_link": "Copy Link",
     "copy_success": "Copied successfully",
+    "group_required_title": "Please select a group first",
+    "group_required_message": "When creating an agent in group mode, a group must be selected first",
     "share_instructions_content1": "Copy and send this link to others, they can use your shared team to complete tasks directly through the link.",
     "share_instructions_content2": "After sharing the team, you can still manage and edit this team, and others can apply the latest team configuration but cannot edit the team settings.",
     "share": {
@@ -339,6 +347,9 @@
     "team": "Team",
     "models": "Models",
     "shells": "Shells",
+    "personal": "Personal",
+    "groups": "Groups",
+    "groupManager": "Group Manager",
     "sections": {
       "general": "General"
     }
@@ -392,7 +403,9 @@
     "close_sidebar": "Close sidebar",
     "previous": "Previous",
     "next": "Next",
-    "page_info": "Page {{current}} of {{total}}"
+    "page_info": "Page {{current}} of {{total}}",
+    "warning": "Warning",
+    "cannotUndo": "This action cannot be undone"
   },
   "quota": {
     "load_failed": "Failed to fetch quota info",
@@ -514,6 +527,10 @@
     "title": "Model Management",
     "description": "Manage your AI model configurations",
     "public": "Public",
+    "group": "Group",
+    "group_models": "Group Models",
+    "public_models": "Public Models",
+    "my_models": "My Models",
     "manage": "Model settings",
     "create": "Create Model",
     "edit": "Edit Model",
@@ -623,6 +640,10 @@
     "title": "Shell Management",
     "description": "Manage custom shells with your own base images",
     "public": "Public",
+    "group": "Group",
+    "group_shells": "Group Shells",
+    "public_shells": "Public Shells",
+    "my_shells": "My Shells",
     "create": "Create Shell",
     "edit": "Edit Shell",
     "delete": "Delete Shell",
@@ -672,7 +693,9 @@
       "base_image_required": "Base image is required",
       "base_image_and_shell_required": "Both base image and base shell are required for validation",
       "base_shell_not_found": "Selected base shell not found",
-      "image_not_compatible": "Image is not compatible with the selected shell type"
+      "image_not_compatible": "Image is not compatible with the selected shell type",
+      "group_required": "Group selection is required",
+      "group_required_hint": "You must select a group when creating a shell"
     },
     "software_requirements_title": "Software Requirements",
     "software_requirements_hint": "The following software must be pre-installed in your base image and meet minimum version requirements",
@@ -774,5 +797,135 @@
     "switch_to_chat_message": "This agent is recommended for Chat mode. Would you like to switch?",
     "switch_mode": "Switch Mode",
     "stay_current": "Stay Here"
+  },
+  "groups": {
+    "title": "Groups",
+    "create": "Create Group",
+    "name": "Name",
+    "displayName": "Display Name",
+    "visibility": "Visibility",
+    "description": "Description",
+    "owner": "Owner",
+    "role": "Role",
+    "members": "Members",
+    "resources": "Resources",
+    "myRole": "My Role",
+    "createdAt": "Created At",
+    "private": "Private",
+    "internal": "Internal",
+    "public": "Public",
+    "roles": {
+      "Owner": "Owner",
+      "Maintainer": "Maintainer",
+      "Developer": "Developer",
+      "Reporter": "Reporter"
+    },
+    "actions": {
+      "addMember": "Add Member",
+      "removeMember": "Remove Member",
+      "updateRole": "Update Role",
+      "inviteAll": "Sync All Users",
+      "leave": "Leave Group",
+      "transferOwnership": "Transfer Ownership",
+      "delete": "Delete Group",
+      "manageMembers": "Manage Members"
+    },
+    "messages": {
+      "createSuccess": "Group created successfully",
+      "updateSuccess": "Group updated successfully",
+      "deleteSuccess": "Group deleted successfully",
+      "memberAdded": "Member added successfully",
+      "memberRemoved": "Member removed successfully",
+      "roleUpdated": "Role updated successfully",
+      "cannotDeleteWithResources": "Cannot delete group with resources",
+      "deleteFailed": "Failed to delete group",
+      "confirmDelete": "Confirm Delete Group",
+      "cannotDelete": "Cannot Delete",
+      "hasResources": "This group contains {{count}} resources",
+      "removeResourcesFirst": "Please delete or transfer all resources before deleting the group"
+    }
+  },
+  "resourceScope": {
+    "personal": "Personal",
+    "group": "Group",
+    "all": "All",
+    "selectGroup": "Select Group",
+    "allGroups": "All Groups"
+  },
+  "resourceSource": {
+    "personal": "[Personal]",
+    "shared": "[Shared]",
+    "public": "[Public]"
+  },
+  "groupManager": {
+    "subtitle": "Manage your groups and memberships",
+    "noGroups": "No groups yet",
+    "editGroup": "Edit group",
+    "manageMembers": "Manage members",
+    "deleteGroup": "Delete group"
+  },
+  "groupCreate": {
+    "nameImmutable": "Immutable after creation. Use letters, numbers, dashes, and underscores only.",
+    "namePlaceholder": "my-group",
+    "displayNamePlaceholder": "My Group",
+    "descriptionPlaceholder": "Enter group description...",
+    "nameValidation": "Name must contain only letters, numbers, dashes, and underscores",
+    "nameCannotStartWithDefault": "Group name cannot start with 'default'",
+    "parentGroup": "Parent Group",
+    "noParentGroup": "No Parent Group",
+    "parentGroupHint": "Select a parent group to create a subgroup (max 5 levels of nesting)",
+    "finalNameWillBe": "Final group name will be: {{name}}"
+  },
+  "groupMembers": {
+    "selectUser": "Select user...",
+    "selectMaintainer": "Select maintainer...",
+    "username": "Username",
+    "invitedBy": "Invited By",
+    "joinDate": "Join Date",
+    "actions": "Actions",
+    "you": "You",
+    "remove": "Remove",
+    "add": "Add",
+    "transfer": "Transfer",
+    "confirmRemove": "Are you sure you want to remove this member?",
+    "confirmInviteAll": "Add all system users (including new users) as Reporters? Existing members will be skipped.",
+    "confirmLeave": "Are you sure you want to leave this group? Your resources will be transferred to the group owner.",
+    "confirmTransfer": "Are you sure you want to transfer ownership? You will become a Maintainer.",
+    "inviteAllSuccess": "Users synced successfully",
+    "leaveSuccess": "You have left the group",
+    "transferSuccess": "Ownership transferred successfully",
+    "transferDescription": "Select a Maintainer to transfer ownership. You will become a Maintainer.",
+    "loadMembersFailed": "Failed to load members",
+    "addMemberFailed": "Failed to add member",
+    "removeMemberFailed": "Failed to remove member",
+    "updateRoleFailed": "Failed to update role",
+    "inviteAllFailed": "Failed to sync users",
+    "leaveFailed": "Failed to leave group",
+    "transferFailed": "Failed to transfer ownership",
+    "enterUsername": "Enter username",
+    "addMemberByUsername": "Enter the username to add. Note: This feature requires backend support for adding members by username.",
+    "userAlreadyMember": "This user is already a member of the group",
+    "addByUsernameNotSupported": "Adding members by username is not yet supported. Please contact admin to use 'Invite All Users' feature",
+    "rolePermissions": "Role Permissions",
+    "roleDescriptions": {
+      "Reporter": "Can only view group resources, cannot make any modifications, can leave group",
+      "Developer": "Can view, create, and edit group resources, can leave group, but cannot delete resources or manage members",
+      "Maintainer": "Has all permissions except deleting group and transferring ownership",
+      "MaintainerDetails": {
+        "title": "Including:",
+        "manageResources": "Manage all resources (view, create, edit, delete)",
+        "manageMembers": "Invite and remove members",
+        "updateRoles": "Modify member roles (except Owner)",
+        "canLeave": "Can leave group"
+      },
+      "Owner": "Has full control of the group",
+      "OwnerDetails": {
+        "title": "Including:",
+        "fullControl": "Manage all resources and members",
+        "deleteGroup": "Delete group",
+        "transferOwnership": "Transfer ownership",
+        "cannotLeave": "Cannot leave group directly (must transfer ownership first)"
+      }
+    }
   }
 }

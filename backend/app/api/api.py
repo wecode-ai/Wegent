@@ -2,7 +2,7 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.api.endpoints import admin, auth, health, oidc, quota, repository, users, wiki
+from app.api.endpoints import admin, auth, groups, health, oidc, quota, repository, users, wiki
 from app.api.endpoints.adapter import (
     agents,
     attachments,
@@ -24,6 +24,7 @@ api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"])
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
+api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["public-models"])
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])

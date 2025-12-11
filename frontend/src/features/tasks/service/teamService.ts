@@ -16,7 +16,7 @@ export const teamService = {
    * Get team list
    */
   async getTeams(): Promise<TeamListResponse> {
-    return teamApis.getTeams()
+    return teamApis.getTeams({ page: 1, limit: 100 }, 'all')
   },
 
   /**
@@ -29,7 +29,7 @@ export const teamService = {
     const refreshTeams = async () => {
       setIsTeamsLoading(true)
       try {
-        const res = await teamApis.getTeams()
+        const res = await teamApis.getTeams({ page: 1, limit: 100 }, 'all')
         const items = Array.isArray(res.items) ? res.items : []
         setTeams(sortTeamsByUpdatedAt(items))
         return items

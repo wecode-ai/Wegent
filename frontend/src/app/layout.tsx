@@ -13,6 +13,7 @@ import { ThemeScript } from '@/features/theme/ThemeScript';
 import ErrorBoundary from '@/features/common/ErrorBoundary';
 import ServiceWorkerRegistration from '@/components/ServiceWorkerRegistration';
 import { Toaster } from '@/components/ui/toaster';
+import { Toaster as SonnerToaster } from 'sonner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 
 export const metadata: Metadata = {
@@ -52,6 +53,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </ThemeProvider>
         </ErrorBoundary>
         <Toaster />
+        <SonnerToaster position="top-center" />
       </body>
     </html>
   );

@@ -6,6 +6,8 @@
 Models package
 """
 from app.models.kind import Kind
+from app.models.namespace import Namespace
+from app.models.namespace_member import NamespaceMember
 from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
 from app.models.subtask import Subtask
@@ -15,4 +17,13 @@ from app.models.system_config import SystemConfig
 # All models should import Base directly from app.db.base
 from app.models.user import User
 
-__all__ = ["User", "Kind", "Subtask", "SharedTeam", "SkillBinary", "SystemConfig"]
+__all__ = [
+    "User",
+    "Kind",
+    "Subtask",
+    "SharedTeam",
+    "SkillBinary",
+    "SystemConfig",
+    "Namespace",
+    "NamespaceMember",
+]

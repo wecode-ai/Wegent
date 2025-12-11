@@ -68,14 +68,15 @@ export interface ModelNamesResponse {
 }
 
 // Unified Model Types (new API with type differentiation)
-export type ModelTypeEnum = 'public' | 'user';
+export type ModelTypeEnum = 'public' | 'user' | 'group';
 
 export interface UnifiedModel {
   name: string;
-  type: ModelTypeEnum; // 'public' or 'user' - identifies model source
+  type: ModelTypeEnum; // 'public' or 'user' or 'group' - identifies model source
   displayName?: string | null;
   provider?: string | null; // 'openai' | 'claude'
   modelId?: string | null;
+  namespace?: string; // Resource namespace (group name or 'default')
   config?: Record<string, unknown>;
   isActive?: boolean;
 }
@@ -124,10 +125,14 @@ export const modelApis = {
    *
    * @param shellType - Optional shell type to filter compatible models
    * @param includeConfig - Whether to include full model config in response
+   * @param scope - Resource scope: 'personal', 'group', or 'all'
+   * @param groupName - Group name (required when scope is 'group')
    */
   async getUnifiedModels(
     shellType?: string,
-    includeConfig: boolean = false
+    includeConfig: boolean = false,
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string
   ): Promise<UnifiedModelListResponse> {
     const params = new URLSearchParams();
     if (shellType) {
@@ -135,6 +140,12 @@ export const modelApis = {
     }
     if (includeConfig) {
       params.append('include_config', 'true');
+    }
+    if (scope) {
+      params.append('scope', scope);
+    }
+    if (groupName) {
+      params.append('group_name', groupName);
     }
     const queryString = params.toString();
     return apiClient.get(`/models/unified${queryString ? `?${queryString}` : ''}`);
@@ -158,9 +169,24 @@ export const modelApis = {
   },
   /**
    * Get all models as CRD resources (user's own models)
+   * @param scope - Resource scope: 'personal', 'group', or 'all'
+   * @param groupName - Group name (also used as namespace when scope is 'group')
    */
-  async getAllModels(): Promise<ModelListResponse> {
-    return apiClient.get('/v1/namespaces/default/models');
+  async getAllModels(
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string
+  ): Promise<ModelListResponse> {
+    const params = new URLSearchParams();
+    if (scope) {
+      params.append('scope', scope);
+    }
+    if (groupName) {
+      params.append('group_name', groupName);
+    }
+    const queryString = params.toString();
+    // Use groupName as namespace when provided, otherwise use 'default'
+    const namespace = groupName || 'default';
+    return apiClient.get(`/v1/namespaces/${encodeURIComponent(namespace)}/models${queryString ? `?${queryString}` : ''}`);
   },
 
   /**
@@ -172,30 +198,39 @@ export const modelApis = {
 
   /**
    * Get a single model by name
+   * @param name - Model name
+   * @param namespace - Namespace (default: 'default')
    */
-  async getModel(name: string): Promise<ModelCRD> {
-    return apiClient.get(`/v1/namespaces/default/models/${encodeURIComponent(name)}`);
+  async getModel(name: string, namespace: string = 'default'): Promise<ModelCRD> {
+    return apiClient.get(`/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`);
   },
 
   /**
    * Create a new model
+   * @param model - Model CRD data (namespace is taken from model.metadata.namespace)
    */
   async createModel(model: ModelCRD): Promise<ModelCRD> {
-    return apiClient.post('/v1/namespaces/default/models', model);
+    const namespace = model.metadata.namespace || 'default';
+    return apiClient.post(`/v1/namespaces/${encodeURIComponent(namespace)}/models`, model);
   },
 
   /**
    * Update an existing model
+   * @param name - Model name
+   * @param model - Model CRD data (namespace is taken from model.metadata.namespace)
    */
   async updateModel(name: string, model: ModelCRD): Promise<ModelCRD> {
-    return apiClient.put(`/v1/namespaces/default/models/${encodeURIComponent(name)}`, model);
+    const namespace = model.metadata.namespace || 'default';
+    return apiClient.put(`/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`, model);
   },
 
   /**
    * Delete a model
+   * @param name - Model name
+   * @param namespace - Namespace (default: 'default')
    */
-  async deleteModel(name: string): Promise<void> {
-    return apiClient.delete(`/v1/namespaces/default/models/${encodeURIComponent(name)}`);
+  async deleteModel(name: string, namespace: string = 'default'): Promise<void> {
+    return apiClient.delete(`/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`);
   },
 
   /**

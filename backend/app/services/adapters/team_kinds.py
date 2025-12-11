@@ -63,19 +63,35 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         return decrypted_config
 
     def create_with_user(
-        self, db: Session, *, obj_in: TeamCreate, user_id: int
+        self, db: Session, *, obj_in: TeamCreate, user_id: int, group_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Create user Team using kinds table
+        Create user Team using kinds table.
+
+        If group_name is provided, creates the team in that group's namespace.
+        User must have Developer+ permission in the group.
         """
-        # Check duplicate team name under the same user (only active teams)
+        from app.services.group_permission import check_group_permission
+        from app.schemas.namespace import GroupRole
+
+        namespace = "default"
+
+        if group_name:
+            # Validate user has Developer+ permission in group
+            if not check_group_permission(db, user_id, group_name, GroupRole.Developer):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"You need at least Developer role in group '{group_name}' to create teams"
+                )
+            namespace = group_name
+
+        # Check duplicate team name under the same namespace (only active teams)
         existing = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id,
                 Kind.kind == "Team",
                 Kind.name == obj_in.name,
-                Kind.namespace == "default",
+                Kind.namespace == namespace,
                 Kind.is_active == True,
             )
             .first()
@@ -151,7 +167,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "kind": "Team",
             "spec": spec,
             "status": {"state": "Available"},
-            "metadata": {"name": obj_in.name, "namespace": "default"},
+            "metadata": {"name": obj_in.name, "namespace": namespace},
             "apiVersion": "agent.wecode.io/v1",
         }
 
@@ -159,7 +175,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             user_id=user_id,
             kind="Team",
             name=obj_in.name,
-            namespace="default",
+            namespace=namespace,
             json=team_json,
             is_active=True,
         )
@@ -171,55 +187,116 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         return self._convert_to_team_dict(team, db, user_id)
 
     def get_user_teams(
-        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
+        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100, scope: str = "personal", group_name: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
-        Get user's Team list (only active teams) including shared teams
-        Uses database union query for better performance and pagination
-        """
-        # Query for user's own teams
-        own_teams_query = db.query(
-            Kind.id.label("team_id"),
-            Kind.user_id.label("team_user_id"),
-            Kind.name.label("team_name"),
-            Kind.namespace.label("team_namespace"),
-            Kind.json.label("team_json"),
-            Kind.created_at.label("team_created_at"),
-            Kind.updated_at.label("team_updated_at"),
-            literal_column("0").label("share_status"),  # Default 0 for own teams
-            literal_column(str(user_id)).label(
-                "context_user_id"
-            ),  # Use current user for context
-        ).filter(Kind.user_id == user_id, Kind.kind == "Team", Kind.is_active == True)
+        Get user's Team list (only active teams) including shared teams.
+        Uses database union query for better performance and pagination.
 
-        # Query for shared teams
-        shared_teams_query = (
-            db.query(
-                Kind.id.label("team_id"),
-                Kind.user_id.label("team_user_id"),
-                Kind.name.label("team_name"),
-                Kind.namespace.label("team_namespace"),
-                Kind.json.label("team_json"),
-                Kind.created_at.label("team_created_at"),
-                Kind.updated_at.label("team_updated_at"),
-                literal_column("2").label("share_status"),  # 2 for shared teams
-                SharedTeam.original_user_id.label(
-                    "context_user_id"
-                ),  # Use original user for context
-            )
-            .join(SharedTeam, SharedTeam.team_id == Kind.id)
-            .filter(
-                SharedTeam.user_id == user_id,
-                SharedTeam.is_active == True,
-                Kind.is_active == True,
-                Kind.kind == "Team",
-            )
-        )
+        Scope behavior:
+        - scope='personal' (default): personal teams + public teams + shared teams
+        - scope='group': group teams + public teams (requires group_name)
+        - scope='all': personal + public + shared + all user's groups
+        """
+        from app.services.group_permission import get_user_groups
+
+        # Determine which namespaces to query based on scope
+        namespaces_to_query = []
+
+        if scope == "personal":
+            # Personal teams only (default namespace)
+            namespaces_to_query = ["default"]
+        elif scope == "group":
+            # Group teams - if group_name not provided, query all user's groups
+            if group_name:
+                namespaces_to_query = [group_name]
+            else:
+                # Query all user's groups (excluding default)
+                user_groups = get_user_groups(db, user_id)
+                namespaces_to_query = user_groups if user_groups else []
+        elif scope == "all":
+            # Personal + all user's groups
+            namespaces_to_query = ["default"] + get_user_groups(db, user_id)
+        else:
+            raise ValueError(f"Invalid scope: {scope}")
+
+        # Build queries for each namespace
+        queries = []
+
+        for namespace in namespaces_to_query:
+            if namespace == "default":
+                # Query for user's own teams in default namespace
+                own_teams_query = db.query(
+                    Kind.id.label("team_id"),
+                    Kind.user_id.label("team_user_id"),
+                    Kind.name.label("team_name"),
+                    Kind.namespace.label("team_namespace"),
+                    Kind.json.label("team_json"),
+                    Kind.created_at.label("team_created_at"),
+                    Kind.updated_at.label("team_updated_at"),
+                    literal_column("0").label("share_status"),  # Default 0 for own teams
+                    literal_column(str(user_id)).label("context_user_id"),
+                ).filter(
+                    Kind.user_id == user_id,
+                    Kind.kind == "Team",
+                    Kind.namespace == "default",
+                    Kind.is_active == True
+                )
+                queries.append(own_teams_query)
+
+                # Add shared teams for personal and all scopes
+                if scope in ("personal", "all"):
+                    # Query for shared teams
+                    shared_teams_query = (
+                        db.query(
+                            Kind.id.label("team_id"),
+                            Kind.user_id.label("team_user_id"),
+                            Kind.name.label("team_name"),
+                            Kind.namespace.label("team_namespace"),
+                            Kind.json.label("team_json"),
+                            Kind.created_at.label("team_created_at"),
+                            Kind.updated_at.label("team_updated_at"),
+                            literal_column("2").label("share_status"),  # 2 for shared teams
+                            SharedTeam.original_user_id.label("context_user_id"),
+                        )
+                        .join(SharedTeam, SharedTeam.team_id == Kind.id)
+                        .filter(
+                            SharedTeam.user_id == user_id,
+                            SharedTeam.is_active == True,
+                            Kind.is_active == True,
+                            Kind.kind == "Team",
+                        )
+                    )
+                    queries.append(shared_teams_query)
+            else:
+                # Query for group teams
+                group_teams_query = db.query(
+                    Kind.id.label("team_id"),
+                    Kind.user_id.label("team_user_id"),
+                    Kind.name.label("team_name"),
+                    Kind.namespace.label("team_namespace"),
+                    Kind.json.label("team_json"),
+                    Kind.created_at.label("team_created_at"),
+                    Kind.updated_at.label("team_updated_at"),
+                    literal_column("0").label("share_status"),
+                    Kind.user_id.label("context_user_id"),
+                ).filter(
+                    Kind.kind == "Team",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True
+                )
+                queries.append(group_teams_query)
+
+        # Handle empty queries case
+        if not queries:
+            # No namespaces to query, return empty list
+            return []
 
         # Combine queries using union all
-        combined_query = union_all(own_teams_query, shared_teams_query).alias(
-            "combined_teams"
-        )
+        if len(queries) == 1:
+            combined_query = queries[0].subquery()
+        else:
+            combined_query = union_all(*queries).alias("combined_teams")
 
         # Create final query with pagination
         final_query = (
@@ -413,13 +490,16 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         self, db: Session, *, team_id: int, obj_in: TeamUpdate, user_id: int
     ) -> Dict[str, Any]:
         """
-        Update user Team
+        Update user Team.
+        For group teams, user must have Developer+ permission.
         """
+        from app.services.group_permission import check_group_permission
+        from app.schemas.namespace import GroupRole
+
         team = (
             db.query(Kind)
             .filter(
                 Kind.id == team_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Team",
                 Kind.is_active == True,
             )
@@ -429,19 +509,33 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if not team:
             raise HTTPException(status_code=404, detail="Team not found")
 
+        # Check permissions
+        if team.namespace != "default":
+            # Group team - check permission
+            if not check_group_permission(
+                db, user_id, team.namespace, GroupRole.Developer
+            ):
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"You need at least Developer role in group '{team.namespace}' to update this team"
+                )
+        else:
+            # Personal team - check ownership
+            if team.user_id != user_id:
+                raise HTTPException(status_code=403, detail="Access denied")
+
         update_data = obj_in.model_dump(exclude_unset=True)
 
-        # If updating name, ensure uniqueness under the same user (only active teams), excluding current team
+        # If updating name, ensure uniqueness under the same namespace (only active teams), excluding current team
         if "name" in update_data:
             new_name = update_data["name"]
             if new_name != team.name:
                 conflict = (
                     db.query(Kind)
                     .filter(
-                        Kind.user_id == user_id,
                         Kind.kind == "Team",
                         Kind.name == new_name,
-                        Kind.namespace == "default",
+                        Kind.namespace == team.namespace,
                         Kind.is_active == True,
                         Kind.id != team.id,
                     )
@@ -464,7 +558,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
             # Update all references to this team in tasks
             self._update_team_references_in_tasks(
-                db, old_name, "default", new_name, "default", user_id
+                db, old_name, team.namespace, new_name, team.namespace, user_id
             )
 
         if "bots" in update_data:
@@ -546,8 +640,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
     def delete_with_user(self, db: Session, *, team_id: int, user_id: int) -> None:
         """
-        Delete user Team
+        Delete user Team.
+        For group teams, user must have Developer+ permission.
         """
+        from app.services.group_permission import check_group_permission
+        from app.schemas.namespace import GroupRole
+
         team = (
             db.query(Kind)
             .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
@@ -559,19 +657,42 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         # delete join shared team entry if any
         if team.user_id != user_id:
-            db.query(SharedTeam).filter(
+            # Check if this is a shared team deletion
+            shared_entry = db.query(SharedTeam).filter(
                 SharedTeam.team_id == team_id,
                 SharedTeam.user_id == user_id,
                 SharedTeam.is_active == True,
-            ).delete()
-            db.commit()
-            return
+            ).first()
+
+            if shared_entry:
+                # User is deleting their shared team access
+                db.query(SharedTeam).filter(
+                    SharedTeam.team_id == team_id,
+                    SharedTeam.user_id == user_id,
+                    SharedTeam.is_active == True,
+                ).delete()
+                db.commit()
+                return
+
+            # Not a shared team, check if it's a group team
+            if team.namespace != "default":
+                # Group team - check permission
+                if not check_group_permission(
+                    db, user_id, team.namespace, GroupRole.Developer
+                ):
+                    raise HTTPException(
+                        status_code=403,
+                        detail=f"You need at least Developer role in group '{team.namespace}' to delete this team"
+                    )
+            else:
+                # Personal team but wrong owner
+                raise HTTPException(status_code=403, detail="Access denied")
 
         # Check if team is referenced in any PENDING or RUNNING task
         tasks = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id, Kind.kind == "Task", Kind.is_active == True
+                Kind.kind == "Task", Kind.is_active == True
             )
             .all()
         )
@@ -600,33 +721,80 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         db.delete(team)
         db.commit()
 
-    def count_user_teams(self, db: Session, *, user_id: int) -> int:
+    def count_user_teams(self, db: Session, *, user_id: int, scope: str = "personal", group_name: Optional[str] = None) -> int:
         """
-        Count user's active teams including shared teams
+        Count user's active teams based on scope.
+
+        Scope behavior:
+        - scope='personal' (default): personal teams + shared teams
+        - scope='group': group teams (requires group_name)
+        - scope='all': personal + shared + all user's groups
         """
-        # Count user's own teams
-        own_teams_count = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id, Kind.kind == "Team", Kind.is_active == True
-            )
-            .count()
-        )
+        from app.services.group_permission import get_user_groups
 
-        # Count shared teams
-        shared_teams_count = (
-            db.query(SharedTeam)
-            .join(Kind, SharedTeam.team_id == Kind.id)
-            .filter(
-                SharedTeam.user_id == user_id,
-                SharedTeam.is_active == True,
-                Kind.is_active == True,
-                Kind.kind == "Team",
-            )
-            .count()
-        )
+        # Determine which namespaces to count based on scope
+        namespaces_to_count = []
 
-        return own_teams_count + shared_teams_count
+        if scope == "personal":
+            namespaces_to_count = ["default"]
+        elif scope == "group":
+            # Group teams - if group_name not provided, count all user's groups
+            if group_name:
+                namespaces_to_count = [group_name]
+            else:
+                # Count all user's groups (excluding default)
+                user_groups = get_user_groups(db, user_id)
+                namespaces_to_count = user_groups if user_groups else []
+        elif scope == "all":
+            namespaces_to_count = ["default"] + get_user_groups(db, user_id)
+        else:
+            raise ValueError(f"Invalid scope: {scope}")
+
+        total_count = 0
+
+        for namespace in namespaces_to_count:
+            if namespace == "default":
+                # Count user's own teams
+                own_teams_count = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == user_id,
+                        Kind.kind == "Team",
+                        Kind.namespace == "default",
+                        Kind.is_active == True
+                    )
+                    .count()
+                )
+                total_count += own_teams_count
+
+                # Count shared teams (for personal and all scopes)
+                if scope in ("personal", "all"):
+                    shared_teams_count = (
+                        db.query(SharedTeam)
+                        .join(Kind, SharedTeam.team_id == Kind.id)
+                        .filter(
+                            SharedTeam.user_id == user_id,
+                            SharedTeam.is_active == True,
+                            Kind.is_active == True,
+                            Kind.kind == "Team",
+                        )
+                        .count()
+                    )
+                    total_count += shared_teams_count
+            else:
+                # Count group teams
+                group_teams_count = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.kind == "Team",
+                        Kind.namespace == namespace,
+                        Kind.is_active == True
+                    )
+                    .count()
+                )
+                total_count += group_teams_count
+
+        return total_count
 
     def _validate_bots(self, db: Session, bots: List[BotInfo], user_id: int) -> None:
         """
@@ -711,7 +879,6 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             db.query(Kind)
             .filter(
                 Kind.id == team_id,
-                Kind.user_id == user_id,
                 Kind.kind == "Team",
                 Kind.is_active == True,
             )
@@ -815,8 +982,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         """
         Convert kinds Team to team-like dictionary
         """
-        from app.models.public_model import PublicModel
-
+        
         team_crd = Team.model_validate(team.json)
 
         # Convert members to bots format and collect shell_types for is_mix_team calculation
@@ -891,13 +1057,12 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                     shell_type = shell_crd.spec.shellType
                 else:
                     # If not found, check public shells
-                    from app.models.public_shell import PublicShell
-
+                    
                     public_shell = (
-                        db.query(PublicShell)
+                        db.query(Kind)
                         .filter(
-                            PublicShell.name == bot_crd.spec.shellRef.name,
-                            PublicShell.is_active == True,
+                            Kind.name == bot_crd.spec.shellRef.name,
+                            Kind.is_active == True,
                         )
                         .first()
                     )
@@ -929,6 +1094,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": team.id,
             "user_id": team.user_id,
             "name": team.name,
+            "namespace": team.namespace,  # Add namespace field
             "description": description,
             "bots": bots,
             "workflow": workflow,
@@ -949,8 +1115,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         logger = logging.getLogger(__name__)
 
-        from app.models.public_model import PublicModel
-
+        
         bot_crd = Bot.model_validate(bot.json)
 
         # modelRef is optional, handle None case
@@ -1031,11 +1196,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             else:
                 # Try to find in public_models table
                 public_model = (
-                    db.query(PublicModel)
+                    db.query(Kind)
                     .filter(
-                        PublicModel.name == model_ref_name,
-                        PublicModel.namespace == model_ref_namespace,
-                        PublicModel.is_active.is_(True),
+                        Kind.name == model_ref_name,
+                        Kind.namespace == model_ref_namespace,
+                        Kind.is_active.is_(True),
                     )
                     .first()
                 )

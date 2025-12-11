@@ -72,6 +72,11 @@ class APIClient {
         throw new Error(errorMsg);
       }
 
+      // Handle 204 No Content responses
+      if (response.status === 204) {
+        return null as T;
+      }
+
       const result = await response.json();
       return result;
     } catch (error) {

@@ -112,6 +112,7 @@ export interface Shell {
 export interface Team {
   id: number;
   name: string;
+  namespace?: string; // Namespace for group teams (default: 'default')
   description: string;
   bots: TeamBot[];
   workflow: Record<string, string>;

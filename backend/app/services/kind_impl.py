@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundException
 from app.models.kind import Kind
-from app.models.public_shell import PublicShell
 from app.models.subtask import Subtask
 from app.schemas.kind import Bot, Model, Task, Team
 from app.services.adapters.task_kinds import task_kinds_service
@@ -181,7 +180,7 @@ class BotKindService(KindBaseService):
                 f"Ghost '{ghost_name}' not found in namespace '{ghost_namespace}'"
             )
 
-        # Check if referenced shell exists (check user's Shell first, then PublicShell)
+        # Check if referenced shell exists (check user's Shell first, then public shells)
         shell_name = bot_crd.spec.shellRef.name
         shell_namespace = bot_crd.spec.shellRef.namespace or "default"
 
@@ -197,13 +196,16 @@ class BotKindService(KindBaseService):
             .first()
         )
 
-        # If not found in user's shells, try to find in public shells
+        # If not found in user's shells, try to find in public shells (user_id=0)
         if not shell:
             public_shell = (
-                db.query(PublicShell)
+                db.query(Kind)
                 .filter(
-                    PublicShell.name == shell_name,
-                    PublicShell.is_active == True,
+                    Kind.user_id == 0,
+                    Kind.kind == "Shell",
+                    Kind.name == shell_name,
+                    Kind.namespace == shell_namespace,
+                    Kind.is_active == True,
                 )
                 .first()
             )
@@ -233,7 +235,7 @@ class BotKindService(KindBaseService):
     def _get_shell_data(
         self, db: Session, user_id: int, name: str, namespace: str
     ) -> Dict[str, Any]:
-        """Get shell data from Kind table, fallback to PublicShell if not found"""
+        """Get shell data from Kind table, fallback to public shells if not found"""
         # First try to find in user's shells
         shell = (
             db.query(Kind)
@@ -250,12 +252,15 @@ class BotKindService(KindBaseService):
         if shell:
             return shell.json
 
-        # If not found in user's shells, try to find in public shells
+        # If not found in user's shells, try to find in public shells (user_id=0)
         public_shell = (
-            db.query(PublicShell)
+            db.query(Kind)
             .filter(
-                PublicShell.name == name,
-                PublicShell.is_active == True,
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.name == name,
+                Kind.namespace == namespace,
+                Kind.is_active == True,
             )
             .first()
         )

@@ -19,7 +19,6 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.public_model import PublicModel
 from app.schemas.kind import Bot, Model
 
 logger = logging.getLogger(__name__)
@@ -304,7 +303,7 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
 
     Search order:
     1. User's private models (kinds table)
-    2. Public models (public_models table)
+    2. Public models (kinds table with user_id=0)
 
     Args:
         db: Database session
@@ -332,10 +331,13 @@ def _find_model(db: Session, model_name: str, user_id: int) -> Optional[Dict[str
 
     # Search public models
     public_model = (
-        db.query(PublicModel)
+        db.query(Kind)
         .filter(
-            PublicModel.name == model_name,
-            PublicModel.is_active == True,
+            Kind.user_id == 0,
+            Kind.kind == "Model",
+            Kind.name == model_name,
+            Kind.namespace == "default",
+            Kind.is_active == True,
         )
         .first()
     )
