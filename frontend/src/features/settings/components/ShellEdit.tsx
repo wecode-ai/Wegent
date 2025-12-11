@@ -285,9 +285,6 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast, groupName 
     // In edit mode, if baseImage hasn't changed, no re-validation needed
     if (isEditing && baseImage === originalBaseImage) return false;
 
-    // SKIP VALIDATION for test image: if baseImage is 'testtest', skip validation
-    if (baseImage === 'testtest') return false;
-
     // If there's a baseImage, validation must pass
     if (!validationStatus) return true;
     if (validationStatus.status !== 'success' || validationStatus.valid !== true) return true;
