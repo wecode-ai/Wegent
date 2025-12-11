@@ -32,7 +32,7 @@ class GroupBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     display_name: Optional[str] = Field(None, max_length=100)
     visibility: GroupVisibility = GroupVisibility.private
-    description: Optional[str] = None
+    description: str = Field(default="", description="Group description")
 
     @field_validator("name")
     @classmethod

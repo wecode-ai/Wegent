@@ -31,7 +31,7 @@ class Namespace(Base):
     # Visibility: private, internal, public
     visibility = Column(String(20), nullable=False, default="private")
     # Group description
-    description = Column(Text, nullable=True)
+    description = Column(Text, nullable=False, default="")
     # Is group active
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
