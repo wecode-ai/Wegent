@@ -152,15 +152,24 @@ jobs:
 
       - name: Wait for services to be ready
         run: |
-          echo "Waiting for backend..."
+          echo "Waiting for backend to be ready..."
           for i in {1..60}; do
-            if curl -s http://localhost:8000/api/health > /dev/null 2>&1 || curl -s http://localhost:8000/ > /dev/null 2>&1; then
-              echo "Backend is ready!"
+            # Use the /api/ready endpoint which checks database initialization
+            if curl -sf http://localhost:8000/api/ready > /dev/null 2>&1; then
+              echo "Backend is ready and database is initialized!"
               break
             fi
             echo "Waiting for backend... ($i/60)"
             sleep 2
           done
+
+          # Verify backend is actually ready
+          if ! curl -sf http://localhost:8000/api/ready > /dev/null 2>&1; then
+            echo "Backend failed to become ready after 120 seconds"
+            echo "Checking backend health status:"
+            curl -s http://localhost:8000/api/health || echo "Health endpoint not responding"
+            exit 1
+          fi
 
           echo "Waiting for frontend..."
           for i in {1..30}; do

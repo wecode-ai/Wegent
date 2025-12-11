@@ -8,7 +8,7 @@ import '@/features/common/scrollbar.css';
 import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
+import { ResourceListItem } from '@/components/common/ResourceListItem';
 import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';

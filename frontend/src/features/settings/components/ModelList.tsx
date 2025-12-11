@@ -271,7 +271,7 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName, groupRoleMap, o
         return 'Anthropic';
     }
   };
-  
+
   if (editingModel || isCreating) {
     return <ModelEdit model={editingModel} onClose={handleEditClose} toast={toast} groupName={groupName} scope={scope === 'all' ? 'personal' : scope} />;
   }
