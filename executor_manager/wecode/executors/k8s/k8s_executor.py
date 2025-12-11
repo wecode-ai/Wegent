@@ -4,62 +4,115 @@
 
 import json
 import os
+import threading
 from typing import Any, Dict, Optional
 
 import requests
-
-from executor_manager.executors.docker.constants import (
-    DEFAULT_API_ENDPOINT,
-    DEFAULT_PROGRESS_COMPLETE,
-)
-from executor_manager.utils.executor_name import generate_executor_name
-from executor_manager.wecode.config.config import (
-    EXECUTOR_DEFAULT_MAGE,
-    K8S_NAMESPACE,
-    MAX_USER_TASKS,
-    USER_WHITELIST_TASK_LIMIT_MAP,
-)
-from executor_manager.wecode.executors.k8s.build_pod import build_pod_configuration
 from kubernetes import client, config
 from kubernetes.client.rest import ApiException
 
+from executor_manager.executors.base import Executor
+from executor_manager.executors.docker.constants import (
+    DEFAULT_API_ENDPOINT, DEFAULT_PROGRESS_COMPLETE)
+from executor_manager.utils.executor_name import generate_executor_name
+from executor_manager.wecode.config.config import (
+    EXECUTOR_DEFAULT_MAGE, K8S_NAMESPACE, MAX_USER_TASKS,
+    USER_WHITELIST_TASK_LIMIT_MAP)
+from executor_manager.wecode.executors.k8s.build_pod import \
+    build_pod_configuration
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 
-from executor_manager.executors.base import Executor
-
 logger = setup_logger(__name__)
 
+# Thread-local storage for API clients
+_thread_local = threading.local()
 
-# Load Kubernetes configuration
-def _load_k8s_config() -> client.ApiClient:
-    try:
-        config.load_incluster_config()
-        logger.info("Loaded in-cluster Kubernetes configuration")
+# Global lock for configuration loading
+_config_lock = threading.Lock()
+_config_loaded = False
 
-        configuration = client.Configuration.get_default_copy()
-        configuration.verify_ssl = False  # ❗Only recommended for debugging or internal environments
-        return client.ApiClient(configuration)
 
-    except config.ConfigException:
+def _ensure_k8s_config_loaded() -> bool:
+    """
+    Ensure Kubernetes configuration is loaded (only once).
+    This is thread-safe and will only load the configuration once.
+
+    Returns:
+        bool: True if configuration was loaded successfully, False otherwise
+    """
+    global _config_loaded
+
+    if _config_loaded:
+        return True
+
+    with _config_lock:
+        # Double-check after acquiring lock
+        if _config_loaded:
+            return True
+
         try:
-            config.load_kube_config()
-            logger.info("Loaded kubeconfig file")
+            config.load_incluster_config()
+            logger.info("Loaded in-cluster Kubernetes configuration")
+            _config_loaded = True
+            return True
+        except config.ConfigException:
+            try:
+                config.load_kube_config()
+                logger.info("Loaded kubeconfig file")
+                _config_loaded = True
+                return True
+            except config.ConfigException as e:
+                logger.error(f"Could not configure Kubernetes client: {e}")
+                return False
 
+
+def _get_api_client() -> Optional[client.ApiClient]:
+    """
+    Get a thread-local API client instance.
+    Creates a new client for each thread to ensure thread safety.
+
+    Returns:
+        Optional[client.ApiClient]: API client instance or None if configuration failed
+    """
+    if not _ensure_k8s_config_loaded():
+        return None
+
+    # Check if this thread already has an API client
+    if not hasattr(_thread_local, "api_client") or _thread_local.api_client is None:
+        try:
             configuration = client.Configuration.get_default_copy()
-            configuration.verify_ssl = False
-            return client.ApiClient(configuration)
-
-        except config.ConfigException as e:
-            logger.error(f"Could not configure Kubernetes client: {e}")
+            configuration.verify_ssl = (
+                False  # ❗Only recommended for debugging or internal environments
+            )
+            _thread_local.api_client = client.ApiClient(configuration)
+            logger.debug(
+                f"Created new API client for thread {threading.current_thread().name}"
+            )
+        except Exception as e:
+            logger.error(f"Failed to create API client: {e}")
             return None
+
+    return _thread_local.api_client
 
 
 class K8sExecutor(Executor):
     def __init__(self):
-        self.api_client = _load_k8s_config()
-        if self.api_client is None:
+        # Ensure configuration is loaded during initialization
+        if not _ensure_k8s_config_loaded():
             raise RuntimeError("Failed to configure Kubernetes client")
+
+    def _get_core_v1_api(self) -> Optional[client.CoreV1Api]:
+        """
+        Get a CoreV1Api instance using thread-local API client.
+
+        Returns:
+            Optional[client.CoreV1Api]: CoreV1Api instance or None if client creation failed
+        """
+        api_client = _get_api_client()
+        if api_client is None:
+            return None
+        return client.CoreV1Api(api_client)
 
     def submit_executor(
         self, task: Dict[str, Any], callback: Optional[callable] = None
@@ -109,6 +162,7 @@ class K8sExecutor(Executor):
                 callback_status = TaskStatus.FAILED.value
         else:
             # Check if pod exists by executor_name, if exists, send task directly via HTTP interface
+            executor_name = None
             try:
                 executor_name = generate_executor_name(task_id, subtask_id, user_name)
 
@@ -128,7 +182,9 @@ class K8sExecutor(Executor):
 
                     # Log base_image usage
                     if base_image:
-                        logger.info(f"Using custom base image: {base_image} with InitContainer pattern")
+                        logger.info(
+                            f"Using custom base image: {base_image} with InitContainer pattern"
+                        )
 
                     # Need to mount the internal git_token to the pod via secret
                     pod = build_pod_configuration(
@@ -156,7 +212,9 @@ class K8sExecutor(Executor):
 
                         # For validation tasks, report failure
                         if is_validation_task:
-                            self._report_validation_failure(task, "starting_container", error_msg)
+                            self._report_validation_failure(
+                                task, "starting_container", error_msg
+                            )
             except ApiException as e:
                 logger.error(
                     f"Kubernetes API error creating pod for task {task_id}: {e}"
@@ -168,7 +226,9 @@ class K8sExecutor(Executor):
 
                 # For validation tasks, report failure
                 if is_validation_task:
-                    self._report_validation_failure(task, "starting_container", error_msg)
+                    self._report_validation_failure(
+                        task, "starting_container", error_msg
+                    )
             except Exception as e:
                 logger.error(f"Error creating Kubernetes pod for task {task_id}: {e}")
                 status = "failed"
@@ -178,10 +238,12 @@ class K8sExecutor(Executor):
 
                 # For validation tasks, report failure
                 if is_validation_task:
-                    self._report_validation_failure(task, "starting_container", error_msg)
+                    self._report_validation_failure(
+                        task, "starting_container", error_msg
+                    )
 
         # Call callback function only for regular tasks (not validation tasks)
-        if not is_validation_task and callback:
+        if not is_validation_task and callback and executor_name:
             try:
                 callback(
                     task_id=task_id,
@@ -196,12 +258,17 @@ class K8sExecutor(Executor):
                 logger.error(f"Error in callback for task {task_id}: {e}")
 
         if status == "success":
-            return {"status": "success", "pod_name": executor_name}
+            return {
+                "status": "success",
+                "pod_name": executor_name,
+                "executor_name": executor_name,
+            }
         else:
             return {
                 "status": "failed",
                 "error_msg": error_msg,
                 "pod_name": executor_name,
+                "executor_name": executor_name,
             }
 
     def _send_task_to_container(
@@ -230,7 +297,14 @@ class K8sExecutor(Executor):
                 "error_msg": error message (if failed)
             }
         """
-        core_v1 = client.CoreV1Api(self.api_client)
+        core_v1 = self._get_core_v1_api()
+        if core_v1 is None:
+            return {
+                "status": "failed",
+                "pod_name": pod_name,
+                "error_msg": "Failed to get Kubernetes API client",
+            }
+
         try:
             result = core_v1.create_namespaced_pod(namespace, body=pod)
             k8s_pod_name = getattr(result.metadata, "name", None)
@@ -249,7 +323,13 @@ class K8sExecutor(Executor):
 
     def delete_executor(self, pod_name: str) -> Dict[str, Any]:
         try:
-            core_v1 = client.CoreV1Api(self.api_client)
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return {
+                    "status": "failed",
+                    "error_msg": "Failed to get Kubernetes API client",
+                }
+
             delete_options = client.V1DeleteOptions(propagation_policy="Background")
             core_v1.delete_namespaced_pod(
                 name=pod_name, namespace=K8S_NAMESPACE, body=delete_options
@@ -282,7 +362,14 @@ class K8sExecutor(Executor):
             else:
                 label_selector = f"{label_selector},aigc.weibo.com/executor=wegent"
 
-            core_v1 = client.CoreV1Api(self.api_client)
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return {
+                    "status": "failed",
+                    "error_msg": "Failed to get Kubernetes API client",
+                    "task_ids": [],
+                }
+
             pods = core_v1.list_namespaced_pod(
                 namespace=K8S_NAMESPACE, label_selector=label_selector
             )
@@ -294,13 +381,11 @@ class K8sExecutor(Executor):
                     pod.metadata.labels
                     and "aigc.weibo.com/executor-task-id" in pod.metadata.labels
                 ):
-                    task_ids.add(
-                        pod.metadata.labels["aigc.weibo.com/executor-task-id"]
-                    )
+                    task_ids.add(pod.metadata.labels["aigc.weibo.com/executor-task-id"])
                 # If no explicit task ID label exists, try to extract from pod name
                 else:
                     logger.warning(f"Pod {pod.metadata.name} has no task ID label.")
-  
+
             task_ids = list(task_ids)
 
             logger.info(
@@ -325,7 +410,14 @@ class K8sExecutor(Executor):
         self, label_selector: Optional[str] = None
     ) -> Dict[str, Any]:
         try:
-            core_v1 = client.CoreV1Api(self.api_client)
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return {
+                    "status": "failed",
+                    "error_msg": "Failed to get Kubernetes API client",
+                    "count": 0,
+                }
+
             pods = core_v1.list_namespaced_pod(
                 namespace=K8S_NAMESPACE, label_selector=label_selector
             )
@@ -344,7 +436,11 @@ class K8sExecutor(Executor):
 
     def get_user_pods(self, user_name: str) -> int:
         try:
-            core_v1 = client.CoreV1Api(self.api_client)
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                logger.error("Failed to get Kubernetes API client for get_user_pods")
+                return 0
+
             label_selector = (
                 f"aigc.weibo.com/executor=wegent,aigc.weibo.com/proxy-user={user_name}"
             )
@@ -358,7 +454,14 @@ class K8sExecutor(Executor):
 
     def get_pods_by_executor_name(self, executor_name: str) -> Dict[str, Any]:
         try:
-            core_v1 = client.CoreV1Api(self.api_client)
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return {
+                    "status": "failed",
+                    "error_msg": "Failed to get Kubernetes API client",
+                    "pods": [],
+                }
+
             # Query related pods directly using executor name
             label_selector = f"aigc.weibo.com/executor=wegent,app={executor_name}"
             pods = core_v1.list_namespaced_pod(
@@ -390,23 +493,25 @@ class K8sExecutor(Executor):
         except Exception as e:
             logger.error(f"Error listing pods for executor '{executor_name}': {e}")
             return {"status": "failed", "error_msg": f"Error: {e}", "pods": []}
-    
+
     @staticmethod
     def get_user_max_tasks(user_name: str) -> int:
-        if not hasattr(K8sExecutor, '_user_task_limit_cache'):
+        if not hasattr(K8sExecutor, "_user_task_limit_cache"):
             K8sExecutor._user_task_limit_cache = {}
-        
+
         if not K8sExecutor._user_task_limit_cache:
             if USER_WHITELIST_TASK_LIMIT_MAP:
                 try:
-                    K8sExecutor._user_task_limit_cache = json.loads(USER_WHITELIST_TASK_LIMIT_MAP)
+                    K8sExecutor._user_task_limit_cache = json.loads(
+                        USER_WHITELIST_TASK_LIMIT_MAP
+                    )
                     logger.info("Successfully parsed user whitelist task limit map")
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.error(f"Error parsing user whitelist task limit map: {e}")
                     K8sExecutor._user_task_limit_cache = {}
-        
+
         return K8sExecutor._user_task_limit_cache.get(user_name, MAX_USER_TASKS)
-    
+
     def cancel_task(self, task_id: int) -> Dict[str, Any]:
         """
         Cancel a running task by calling the executor's cancel API.
@@ -419,67 +524,65 @@ class K8sExecutor(Executor):
         """
         try:
             # Find the pod running this task
-            core_v1 = client.CoreV1Api(self.api_client)
-            
+            core_v1 = self._get_core_v1_api()
+            if core_v1 is None:
+                return {
+                    "status": "failed",
+                    "error_msg": "Failed to get Kubernetes API client",
+                }
+
             # Search for pods with the specific task_id label
             label_selector = f"aigc.weibo.com/executor=wegent,aigc.weibo.com/executor-task-id={task_id}"
             pods = core_v1.list_namespaced_pod(
-                namespace=K8S_NAMESPACE,
-                label_selector=label_selector
+                namespace=K8S_NAMESPACE, label_selector=label_selector
             )
-            
+
             if not pods.items:
                 logger.warning(f"No pod found for task {task_id}")
                 return {
                     "status": "failed",
-                    "error_msg": f"Task {task_id} is not currently running"
+                    "error_msg": f"Task {task_id} is not currently running",
                 }
-            
+
             # Get the first matching pod (there should only be one)
             pod = pods.items[0]
             pod_name = pod.metadata.name
             pod_ip = pod.status.pod_ip
-            
+
             if not pod_ip:
                 logger.error(f"Pod {pod_name} has no IP address")
                 return {
                     "status": "failed",
-                    "error_msg": f"Pod for task {task_id} has no IP address"
+                    "error_msg": f"Pod for task {task_id} has no IP address",
                 }
-            
+
             # Call the executor's cancel API
             cancel_url = f"http://{pod_ip}:8080/api/tasks/cancel?task_id={task_id}"
             logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
-            
+
             try:
                 response = requests.post(cancel_url, timeout=10)
                 response.raise_for_status()
-                
+
                 logger.info(f"Successfully cancelled task {task_id}")
                 return {
                     "status": "success",
                     "pod_name": pod_name,
-                    "message": f"Task {task_id} cancellation requested successfully"
+                    "message": f"Task {task_id} cancellation requested successfully",
                 }
             except requests.exceptions.RequestException as e:
                 logger.error(f"Failed to call cancel API for task {task_id}: {e}")
                 return {
                     "status": "failed",
-                    "error_msg": f"Failed to communicate with executor: {str(e)}"
+                    "error_msg": f"Failed to communicate with executor: {str(e)}",
                 }
-                
+
         except ApiException as e:
             logger.error(f"Kubernetes API error while cancelling task {task_id}: {e}")
-            return {
-                "status": "failed",
-                "error_msg": f"Kubernetes API error: {str(e)}"
-            }
+            return {"status": "failed", "error_msg": f"Kubernetes API error: {str(e)}"}
         except Exception as e:
             logger.error(f"Error cancelling task {task_id}: {e}")
-            return {
-                "status": "failed",
-                "error_msg": f"Error cancelling task: {str(e)}"
-            }
+            return {"status": "failed", "error_msg": f"Error cancelling task: {str(e)}"}
 
     def _get_base_image_from_task(self, task: Dict[str, Any]) -> Optional[str]:
         """
@@ -500,10 +603,7 @@ class K8sExecutor(Executor):
         return None
 
     def _report_validation_failure(
-        self,
-        task: Dict[str, Any],
-        stage: str,
-        error_message: str
+        self, task: Dict[str, Any], stage: str, error_message: str
     ) -> None:
         """
         Report validation failure to backend.
@@ -537,8 +637,12 @@ class K8sExecutor(Executor):
             with httpx.Client(timeout=10.0) as client:
                 response = client.post(update_url, json=update_payload)
                 if response.status_code == 200:
-                    logger.info(f"Reported validation failure: {validation_id} -> {stage}")
+                    logger.info(
+                        f"Reported validation failure: {validation_id} -> {stage}"
+                    )
                 else:
-                    logger.warning(f"Failed to report validation failure: {response.status_code} {response.text}")
+                    logger.warning(
+                        f"Failed to report validation failure: {response.status_code} {response.text}"
+                    )
         except Exception as e:
             logger.error(f"Error reporting validation failure: {e}")
