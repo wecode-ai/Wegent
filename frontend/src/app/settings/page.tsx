@@ -44,9 +44,34 @@ function DashboardContent() {
   const searchParams = useSearchParams();
   const { t } = useTranslation('common');
 
-  // Get initial values from URL
-  const getInitialSection = () => searchParams.get('section') || 'personal';
-  const getInitialTab = () => searchParams.get('tab') || 'models';
+  // Get initial values from URL with backward compatibility
+  const getInitialSection = () => {
+    const section = searchParams.get('section');
+    const tab = searchParams.get('tab');
+
+    // Backward compatibility: map old tab values to new sections
+    if (!section && tab) {
+      if (tab === 'team') return 'personal';
+      if (tab === 'models') return 'personal';
+      if (tab === 'shells') return 'personal';
+    }
+
+    return section || 'personal';
+  };
+
+  const getInitialTab = () => {
+    const section = searchParams.get('section');
+    const tab = searchParams.get('tab');
+
+    // Backward compatibility: map old tab values to new tab IDs
+    if (!section && tab) {
+      if (tab === 'team') return 'personal-team';
+      if (tab === 'models') return 'personal-models';
+      if (tab === 'shells') return 'personal-shells';
+    }
+
+    return tab || 'personal-models';
+  };
 
   const [selectedSection, setSelectedSection] = useState(getInitialSection);
   const [selectedTab, setSelectedTab] = useState(getInitialTab);
