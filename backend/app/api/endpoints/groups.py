@@ -443,7 +443,7 @@ def delete_group_endpoint(
     db: Session = Depends(get_db),
 ):
     """
-    Delete a group (soft delete).
+    Delete a group (hard delete).
     Only the group Owner can delete the group.
     Group must not have subgroups or resources.
     """

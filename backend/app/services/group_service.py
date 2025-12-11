@@ -279,7 +279,7 @@ def update_group(
 
 def delete_group(db: Session, group_name: str, user_id: int) -> None:
     """
-    Delete a group (soft delete).
+    Delete a group (hard delete).
 
     Validates:
     - No subgroups exist
@@ -346,13 +346,13 @@ def delete_group(db: Session, group_name: str, user_id: int) -> None:
             detail="Cannot delete group with existing resources. Move or delete resources first.",
         )
 
-    # Soft delete group
-    group.is_active = False
-
     # Hard delete all members
     db.query(NamespaceMember).filter(
         NamespaceMember.group_name == group_name
     ).delete()
+
+    # Hard delete group
+    db.delete(group)
 
     db.commit()
 

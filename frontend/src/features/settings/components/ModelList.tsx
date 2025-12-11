@@ -219,7 +219,8 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName, groupRoleMap, o
     if (!deleteConfirmModel) return;
 
     try {
-      await modelApis.deleteModel(deleteConfirmModel.name);
+      // Use the model's actual namespace for deletion
+      await modelApis.deleteModel(deleteConfirmModel.name, deleteConfirmModel.namespace);
       toast({
         title: t('models.delete_success'),
       });
