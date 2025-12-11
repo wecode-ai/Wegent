@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
 
@@ -32,18 +34,32 @@ router = APIRouter()
 def list_teams(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    scope: str = Query(
+        "personal",
+        description="Query scope: 'personal' (default), 'group', or 'all'",
+    ),
+    group_name: Optional[str] = Query(
+        None, description="Group name (required when scope='group')"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Get current user's Team list (paginated)"""
+    """
+    Get current user's Team list (paginated) with scope support.
+
+    Scope behavior:
+    - scope='personal' (default): personal teams + shared teams
+    - scope='group': group teams (requires group_name)
+    - scope='all': personal + shared + all user's groups
+    """
     skip = (page - 1) * limit
     items = team_kinds_service.get_user_teams(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
+        db=db, user_id=current_user.id, skip=skip, limit=limit, scope=scope, group_name=group_name
     )
     if page == 1 and len(items) < limit:
         total = len(items)
     else:
-        total = team_kinds_service.count_user_teams(db=db, user_id=current_user.id)
+        total = team_kinds_service.count_user_teams(db=db, user_id=current_user.id, scope=scope, group_name=group_name)
     return {"total": total, "items": items}
 
 
@@ -53,9 +69,16 @@ def create_team(
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
-    """Create new Team"""
+    """
+    Create new Team.
+
+    If namespace is provided in the request body, creates the team in that group's namespace.
+    User must have Developer+ permission in the group.
+    """
+    # Use namespace from request body
+    group_name = team_create.namespace if team_create.namespace != "default" else None
     return team_kinds_service.create_with_user(
-        db=db, obj_in=team_create, user_id=current_user.id
+        db=db, obj_in=team_create, user_id=current_user.id, group_name=group_name
     )
 
 

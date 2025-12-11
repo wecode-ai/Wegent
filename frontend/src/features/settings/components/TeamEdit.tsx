@@ -44,6 +44,8 @@ interface TeamEditProps {
   bots: Bot[];
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>; // Add setBots property
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  scope?: 'personal' | 'group' | 'all';
+  groupName?: string;
 }
 
 export default function TeamEdit(props: TeamEditProps) {
@@ -56,6 +58,8 @@ export default function TeamEdit(props: TeamEditProps) {
     bots,
     setBots,
     toast,
+    scope = 'personal',
+    groupName,
   } = props;
 
   const { t } = useTranslation('common');
@@ -101,14 +105,14 @@ export default function TeamEdit(props: TeamEditProps) {
   useEffect(() => {
     const fetchShells = async () => {
       try {
-        const response = await shellApis.getUnifiedShells();
+        const response = await shellApis.getUnifiedShells(scope, groupName);
         setShells(response.data || []);
       } catch (error) {
         console.error('Failed to fetch shells:', error);
       }
     };
     fetchShells();
-  }, []);
+  }, [scope, groupName]);
 
   // Filter bots based on current mode, using shells to resolve custom shell runtime types
   const filteredBots = useMemo(() => {
@@ -422,6 +426,7 @@ export default function TeamEdit(props: TeamEditProps) {
               workflow,
               bind_mode: bindMode,
               bots: botsData,
+              namespace: scope === 'group' && groupName ? groupName : undefined,
             });
             setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
           } else {
@@ -431,6 +436,7 @@ export default function TeamEdit(props: TeamEditProps) {
               workflow,
               bind_mode: bindMode,
               bots: botsData,
+              namespace: scope === 'group' && groupName ? groupName : undefined,
             });
             setTeams(prev => [created, ...prev]);
           }
@@ -511,6 +517,7 @@ export default function TeamEdit(props: TeamEditProps) {
           workflow,
           bind_mode: bindMode,
           bots: botsData,
+          namespace: scope === 'group' && groupName ? groupName : undefined,
         });
         setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
       } else {
@@ -520,6 +527,7 @@ export default function TeamEdit(props: TeamEditProps) {
           workflow,
           bind_mode: bindMode,
           bots: botsData,
+          namespace: scope === 'group' && groupName ? groupName : undefined,
         });
         setTeams(prev => [created, ...prev]);
       }
@@ -744,6 +752,8 @@ export default function TeamEdit(props: TeamEditProps) {
               allowedAgents={allowedAgentsForMode}
               editingTeamId={editingTeamId}
               botEditRef={botEditRef}
+              scope={scope}
+              groupName={groupName}
             />
           )}
 
@@ -809,6 +819,8 @@ export default function TeamEdit(props: TeamEditProps) {
         unsavedPrompts={unsavedPrompts}
         setUnsavedPrompts={setUnsavedPrompts}
         allowedAgents={allowedAgentsForMode}
+        scope={scope}
+        groupName={groupName}
       />
 
       {/* Mode change confirmation dialog */}

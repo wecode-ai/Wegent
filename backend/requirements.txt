@@ -93,3 +93,7 @@ python-pptx>=0.6.23
 openpyxl>=3.1.2
 chardet>=5.2.0
 pillow>=10.0.0
+
+# Document generation (DOCX export)
+emoji>=2.8.0
+beautifulsoup4>=4.12.0
