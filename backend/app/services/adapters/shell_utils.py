@@ -38,7 +38,7 @@ def get_shell_by_name(
         or None if not found.
     """
     from app.services.group_permission import get_user_groups
-    
+
     # First, try to find in user's custom shells (namespace='default')
     user_shell = (
         db.query(Kind)
@@ -71,7 +71,9 @@ def get_shell_by_name(
                 .first()
             )
             if group_shell:
-                logger.debug(f"Found group shell '{shell_name}' in namespace '{namespace}'")
+                logger.debug(
+                    f"Found group shell '{shell_name}' in namespace '{namespace}'"
+                )
                 return group_shell
 
     # Finally, try to find in public shells (user_id=0, namespace='default')
@@ -91,7 +93,9 @@ def get_shell_by_name(
         logger.debug(f"Found public shell '{shell_name}'")
         return public_shell
 
-    logger.warning(f"Shell '{shell_name}' not found in user shells, group shells, or public shells")
+    logger.warning(
+        f"Shell '{shell_name}' not found in user shells, group shells, or public shells"
+    )
     return None
 
 
@@ -122,7 +126,7 @@ def get_shell_info_by_name(
         ValueError: If shell is not found
     """
     from app.services.group_permission import get_user_groups
-    
+
     # First, try to find in user's custom shells (namespace='default')
     user_shell = (
         db.query(Kind)
@@ -159,7 +163,7 @@ def get_shell_info_by_name(
     # If namespace is 'default', search all user's groups
     user_groups = get_user_groups(db, user_id)
     namespaces_to_search = [namespace] if namespace != "default" else user_groups
-    
+
     for ns in namespaces_to_search:
         if ns == "default":
             continue  # Already searched above
@@ -223,7 +227,9 @@ def get_shell_info_by_name(
         return result
 
     # Shell not found - raise error
-    raise ValueError(f"Shell '{shell_name}' not found in user shells, group shells, or public shells")
+    raise ValueError(
+        f"Shell '{shell_name}' not found in user shells, group shells, or public shells"
+    )
 
 
 def get_shell_type(
@@ -345,12 +351,7 @@ def get_shells_by_names_batch(
 
         def build_public_shell_or_filters(keys: Set[Tuple[str, str]]):
             return (
-                or_(
-                    *[
-                        and_(Kind.name == n, Kind.namespace == ns)
-                        for (n, ns) in keys
-                    ]
-                )
+                or_(*[and_(Kind.name == n, Kind.namespace == ns) for (n, ns) in keys])
                 if keys
                 else None
             )

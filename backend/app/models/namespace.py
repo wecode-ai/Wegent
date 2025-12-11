@@ -18,6 +18,7 @@ class Namespace(Base):
     Supports hierarchical structure with parent/child groups using name prefixes.
     Example: 'aaa/bbb' represents group 'bbb' under parent group 'aaa'.
     """
+
     __tablename__ = "namespace"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -42,7 +43,7 @@ class Namespace(Base):
         "NamespaceMember",
         back_populates="namespace",
         cascade="all, delete-orphan",
-        primaryjoin="Namespace.name == foreign(NamespaceMember.group_name)"
+        primaryjoin="Namespace.name == foreign(NamespaceMember.group_name)",
     )
 
     __table_args__ = (

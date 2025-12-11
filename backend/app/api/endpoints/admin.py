@@ -391,9 +391,7 @@ async def list_public_models(
     Get list of all public models with pagination
     """
     query = db.query(Kind).filter(
-        Kind.user_id == 0,
-        Kind.kind == "Model",
-        Kind.namespace == "default"
+        Kind.user_id == 0, Kind.kind == "Model", Kind.namespace == "default"
     )
     total = query.count()
     models = query.offset((page - 1) * limit).limit(limit).all()
@@ -478,11 +476,11 @@ async def update_public_model(
     """
     Update a public model (admin only)
     """
-    model = db.query(Kind).filter(
-        Kind.id == model_id,
-        Kind.user_id == 0,
-        Kind.kind == "Model"
-    ).first()
+    model = (
+        db.query(Kind)
+        .filter(Kind.id == model_id, Kind.user_id == 0, Kind.kind == "Model")
+        .first()
+    )
     if not model:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -498,7 +496,7 @@ async def update_public_model(
                 Kind.user_id == 0,
                 Kind.kind == "Model",
                 Kind.name == model_data.name,
-                Kind.namespace == namespace
+                Kind.namespace == namespace,
             )
             .first()
         )
@@ -541,11 +539,11 @@ async def delete_public_model(
     """
     Delete a public model (admin only)
     """
-    model = db.query(Kind).filter(
-        Kind.id == model_id,
-        Kind.user_id == 0,
-        Kind.kind == "Model"
-    ).first()
+    model = (
+        db.query(Kind)
+        .filter(Kind.id == model_id, Kind.user_id == 0, Kind.kind == "Model")
+        .first()
+    )
     if not model:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -577,11 +575,11 @@ async def get_system_stats(
         db.query(User).filter(User.role == "admin", User.is_active == True).count()
     )
     total_tasks = db.query(Task).count()
-    total_public_models = db.query(Kind).filter(
-        Kind.user_id == 0,
-        Kind.kind == "Model",
-        Kind.namespace == "default"
-    ).count()
+    total_public_models = (
+        db.query(Kind)
+        .filter(Kind.user_id == 0, Kind.kind == "Model", Kind.namespace == "default")
+        .count()
+    )
 
     return SystemStats(
         total_users=total_users,

@@ -159,6 +159,7 @@ const ShellList: React.FC<ShellListProps> = ({
         shell={editingShell}
         onClose={handleEditClose}
         toast={toast}
+        scope={scope}
         groupName={groupName}
       />
     );

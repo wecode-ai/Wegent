@@ -3,7 +3,17 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import wecode.api  # noqa: F401  side-effect import to load wecode patches and auto-mount internal routers
-from app.api.endpoints import admin, auth, groups, health, oidc, quota, repository, users, wiki
+from app.api.endpoints import (
+    admin,
+    auth,
+    groups,
+    health,
+    oidc,
+    quota,
+    repository,
+    users,
+    wiki,
+)
 from app.api.endpoints.adapter import (
     agents,
     attachments,
