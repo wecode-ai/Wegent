@@ -10,6 +10,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useUser } from '@/features/common/UserContext';
+import type { ChatTipItem } from '@/types/api';
 
 interface ChatInputProps {
   message: string;
@@ -19,6 +20,7 @@ interface ChatInputProps {
   disabled?: boolean;
   taskType?: 'chat' | 'code';
   autoFocus?: boolean;
+  tipText?: ChatTipItem | null;
 }
 
 export default function ChatInput({
@@ -26,11 +28,22 @@ export default function ChatInput({
   setMessage,
   handleSendMessage,
   disabled = false,
-  taskType = 'code',
+  taskType: _taskType = 'code',
   autoFocus = false,
+  tipText,
 }: ChatInputProps) {
-  const { t } = useTranslation('chat');
-  const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
+  const { t, i18n } = useTranslation('chat');
+
+  // Get current language for tip text
+  const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
+
+  // Use tip text as placeholder if available, otherwise use default
+  const placeholder = useMemo(() => {
+    if (tipText) {
+      return tipText[currentLang] || tipText.en || t('placeholder.input');
+    }
+    return t('placeholder.input');
+  }, [tipText, currentLang, t]);
   const [isComposing, setIsComposing] = useState(false);
   // Track if composition just ended (for Safari where compositionend fires before keydown)
   const compositionJustEndedRef = useRef(false);
@@ -128,7 +141,7 @@ export default function ChatInput({
               onKeyDown={handleKeyPress}
               onCompositionStart={handleCompositionStart}
               onCompositionEnd={handleCompositionEnd}
-              placeholder={t(placeholderKey)}
+              placeholder={placeholder}
               className={`w-full px-3 py-2 bg-transparent custom-scrollbar text-text-primary text-base placeholder:text-text-muted placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
               disabled={disabled}
               minRows={isMobile ? 2 : 1}

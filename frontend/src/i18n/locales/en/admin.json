@@ -3,7 +3,8 @@
   "description": "Manage users, roles, and public models",
   "tabs": {
     "users": "Users",
-    "public_models": "Public Models"
+    "public_models": "Public Models",
+    "system_config": "System Config"
   },
   "stats": {
     "total_users": "Total Users",
@@ -159,5 +160,39 @@
     "title": "Access Denied",
     "message": "You do not have permission to access this page. Only administrators can view this content.",
     "go_home": "Go to Home"
+  },
+  "system_config": {
+    "title": "Slogan & Tips Management",
+    "description": "Configure the chat page welcome slogan and tips",
+    "loading": "Loading configuration...",
+    "slogan_title": "Slogan Configuration",
+    "slogan_zh": "Chinese Slogan",
+    "slogan_en": "English Slogan",
+    "slogan_zh_placeholder": "Enter Chinese slogan",
+    "slogan_en_placeholder": "Enter English slogan",
+    "tips_title": "Tips Configuration",
+    "add_tip": "Add Tip",
+    "edit_tip": "Edit Tip",
+    "no_tips": "No tips configured yet",
+    "tip_zh": "Chinese Tip",
+    "tip_en": "English Tip",
+    "tip_mode": "Applicable Mode",
+    "tip_zh_placeholder": "Enter Chinese tip text",
+    "tip_en_placeholder": "Enter English tip text",
+    "tip_dialog_description": "Enter the tip content in both Chinese and English, and select the applicable mode",
+    "tip_mode_chat": "Chat Mode",
+    "tip_mode_code": "Code Mode",
+    "tip_mode_both": "Both",
+    "delete_tip_title": "Delete Tip",
+    "delete_tip_message": "Are you sure you want to delete this tip? This action cannot be undone.",
+    "version": "Version",
+    "success": {
+      "updated": "Configuration updated successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load configuration",
+      "save_failed": "Failed to save configuration",
+      "tip_required": "Both Chinese and English tip text are required"
+    }
   }
 }

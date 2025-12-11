@@ -10,9 +10,10 @@ import Link from 'next/link';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import { Tab } from '@headlessui/react';
-import { UsersIcon, CpuChipIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline';
+import { UsersIcon, CpuChipIcon, ShieldExclamationIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
 import UserList from '@/features/admin/components/UserList';
 import PublicModelList from '@/features/admin/components/PublicModelList';
+import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel';
 import { UserProvider, useUser } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
@@ -47,6 +48,7 @@ function AdminContent() {
     (): Record<number, string> => ({
       0: 'users',
       1: 'public-models',
+      2: 'system-config',
     }),
     []
   );
@@ -56,6 +58,7 @@ function AdminContent() {
     (): Record<string, number> => ({
       users: 0,
       'public-models': 1,
+      'system-config': 2,
     }),
     []
   );
@@ -170,6 +173,19 @@ function AdminContent() {
                       <CpuChipIcon className="w-4 h-4" />
                       <span>{t('tabs.public_models')}</span>
                     </Tab>
+
+                    <Tab
+                      className={({ selected }) =>
+                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
+                          selected
+                            ? 'bg-muted text-text-primary'
+                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                        }`
+                      }
+                    >
+                      <Cog6ToothIcon className="w-4 h-4" />
+                      <span>{t('tabs.system_config')}</span>
+                    </Tab>
                   </Tab.List>
 
                   <div className="flex-1 min-h-0 px-8 py-4 overflow-y-auto min-w-0">
@@ -179,6 +195,9 @@ function AdminContent() {
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <PublicModelList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <SystemConfigPanel />
                       </Tab.Panel>
                     </Tab.Panels>
                   </div>
@@ -216,6 +235,19 @@ function AdminContent() {
                         <CpuChipIcon className="w-3 h-3" />
                         <span className="hidden xs:inline">{t('tabs.public_models')}</span>
                       </Tab>
+
+                      <Tab
+                        className={({ selected }) =>
+                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
+                            selected
+                              ? 'bg-muted text-text-primary'
+                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
+                          }`
+                        }
+                      >
+                        <Cog6ToothIcon className="w-3 h-3" />
+                        <span className="hidden xs:inline">{t('tabs.system_config')}</span>
+                      </Tab>
                     </Tab.List>
                   </div>
 
@@ -226,6 +258,9 @@ function AdminContent() {
                       </Tab.Panel>
                       <Tab.Panel className="focus:outline-none">
                         <PublicModelList />
+                      </Tab.Panel>
+                      <Tab.Panel className="focus:outline-none">
+                        <SystemConfigPanel />
                       </Tab.Panel>
                     </Tab.Panels>
                   </div>

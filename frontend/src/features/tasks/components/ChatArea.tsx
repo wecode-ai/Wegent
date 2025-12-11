@@ -21,7 +21,9 @@ import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
 import FileUpload from './FileUpload';
 import { QuickAccessCards } from './QuickAccessCards';
-import type { Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
+import type { Team, GitRepoInfo, GitBranch, Attachment, ChatTipItem } from '@/types/api';
+import type { WelcomeConfigResponse } from '@/types/api';
+import { userApis } from '@/apis/user';
 import { sendMessage, isChatShell } from '../service/messageService';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
@@ -101,6 +103,8 @@ export default function ChatArea({
   const [isWebSearchFeatureEnabled, setIsWebSearchFeatureEnabled] = useState(false);
   const [searchEngines, setSearchEngines] = useState<SearchEngine[]>([]);
 
+  // Welcome config state for dynamic placeholder
+  const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
   // Load search engine preference from localStorage and fetch available engines
   useEffect(() => {
     const fetchSearchEngines = async () => {
@@ -140,6 +144,40 @@ export default function ChatArea({
 
     fetchSearchEngines();
   }, [toast]);
+
+  // Fetch welcome config for dynamic placeholder
+  useEffect(() => {
+    const fetchWelcomeConfig = async () => {
+      try {
+        const response = await userApis.getWelcomeConfig();
+        setWelcomeConfig(response);
+      } catch (error) {
+        console.error('Failed to fetch welcome config:', error);
+      }
+    };
+
+    fetchWelcomeConfig();
+  }, []);
+
+  // Get random tip for placeholder - memoized to prevent re-randomization on re-renders
+  // Filter tips by taskType: show tips that match the current mode or are for 'both' modes
+  const randomTip = useMemo<ChatTipItem | null>(() => {
+    if (!welcomeConfig?.tips || welcomeConfig.tips.length === 0) {
+      return null;
+    }
+    // Filter tips by mode: include tips that match current taskType or are for 'both'
+    const filteredTips = welcomeConfig.tips.filter(tip => {
+      const tipMode = tip.mode || 'both'; // Default to 'both' if mode is not specified
+      return tipMode === taskType || tipMode === 'both';
+    });
+
+    if (filteredTips.length === 0) {
+      return null;
+    }
+
+    const randomIndex = Math.floor(Math.random() * filteredTips.length);
+    return filteredTips[randomIndex];
+  }, [welcomeConfig?.tips, taskType]);
 
   const handleSearchEngineChange = useCallback((engine: string) => {
     setSelectedSearchEngine(engine);
@@ -1044,6 +1082,7 @@ export default function ChatArea({
                       isLoading={isLoading}
                       taskType={taskType}
                       autoFocus={!hasMessages}
+                      tipText={randomTip}
                     />
                   )}
                   {/* Team Selector and Send Button - always show */}
@@ -1281,6 +1320,7 @@ export default function ChatArea({
                     handleSendMessage={handleSendMessage}
                     isLoading={isLoading}
                     taskType={taskType}
+                    tipText={randomTip}
                   />
                 )}
                 {/* Team Selector and Send Button - always show */}

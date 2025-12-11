@@ -7,7 +7,7 @@
  * All types and logic are self-contained for cohesion.
  */
 
-import type { GitInfo, User, UserPreferences, QuickAccessResponse } from '@/types/api';
+import type { GitInfo, User, UserPreferences, QuickAccessResponse, WelcomeConfigResponse } from '@/types/api';
 
 // Type definitions
 export interface LoginRequest {
@@ -118,6 +118,10 @@ export const userApis = {
 
   async getQuickAccess(): Promise<QuickAccessResponse> {
     return apiClient.get('/users/quick-access');
+  },
+
+  async getWelcomeConfig(): Promise<WelcomeConfigResponse> {
+    return apiClient.get('/users/welcome-config');
   },
 
   isAuthenticated(): boolean {
