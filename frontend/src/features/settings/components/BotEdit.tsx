@@ -86,6 +86,10 @@ interface BotEditProps {
   allowedAgents?: AgentType[];
   /** Whether to hide action buttons (save/edit/cancel) - useful when parent handles saving */
   hideActions?: boolean;
+  /** Scope for filtering shells */
+  scope?: 'personal' | 'group' | 'all';
+  /** Group name when scope is 'group' */
+  groupName?: string;
 }
 const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   {
@@ -101,6 +105,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
     onCancelEdit,
     allowedAgents,
     hideActions = false,
+    scope,
+    groupName,
   },
   ref
 ) => {
@@ -296,33 +302,54 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   }, [i18n.language]);
 
   // Get shells list (including both public and user-defined shells)
+  // Get shells list (including both public and user-defined shells)
   useEffect(() => {
+    console.log('[BotEdit] useEffect triggered', { scope, groupName, allowedAgents });
+    
+    // Wait for scope to be defined before fetching
+    // This prevents the initial fetch with undefined scope
+    if (scope === undefined) {
+      console.log('[BotEdit] Skipping shells fetch - waiting for scope prop');
+      return;
+    }
+
     const fetchShells = async () => {
+      console.log('[BotEdit] Starting fetchShells', { scope, groupName });
       setLoadingShells(true);
       try {
-        const response = await shellApis.getUnifiedShells();
+        const response = await shellApis.getUnifiedShells(scope, groupName);
+        console.log('[BotEdit] Shells API response:', response);
+        console.log('[BotEdit] Response data length:', response.data?.length);
+        
         // Filter shells based on allowedAgents prop (using shellType as agent type)
         let filteredShells = response.data || [];
+        console.log('[BotEdit] Before filter - filteredShells count:', filteredShells.length);
+        console.log('[BotEdit] allowedAgents:', allowedAgents);
+        
         if (allowedAgents && allowedAgents.length > 0) {
           filteredShells = filteredShells.filter(shell =>
             allowedAgents.includes(shell.shellType as AgentType)
           );
+          console.log('[BotEdit] After filter - filteredShells count:', filteredShells.length);
         }
+        
+        console.log('[BotEdit] Setting shells state with:', filteredShells);
         setShells(filteredShells);
+        console.log('[BotEdit] Shells state updated successfully');
       } catch (error) {
-        console.error('Failed to fetch shells:', error);
+        console.error('[BotEdit] Failed to fetch shells:', error);
         toast({
           variant: 'destructive',
           title: t('bot.errors.fetch_agents_failed'),
         });
       } finally {
         setLoadingShells(false);
+        console.log('[BotEdit] fetchShells completed');
       }
     };
 
     fetchShells();
-  }, [toast, t, allowedAgents]);
-  // Get skills list - only for ClaudeCode agent
+  }, [toast, t, allowedAgents, scope, groupName]);
   useEffect(() => {
     // Only fetch skills when agent is ClaudeCode
     if (agentName !== 'ClaudeCode') {
@@ -951,16 +978,21 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 <SelectValue placeholder={t('bot.agent_select')} />
               </SelectTrigger>
               <SelectContent>
-                {shells.map(shell => (
-                  <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
-                    {shell.displayName || shell.name}
-                    {shell.type === 'user' && (
-                      <span className="ml-1 text-xs text-text-muted">
-                        [{t('bot.custom_shell', '自定义')}]
-                      </span>
-                    )}
-                  </SelectItem>
-                ))}
+                {(() => {
+                  console.log('[BotEdit] Rendering SelectContent, shells:', shells);
+                  console.log('[BotEdit] Shells count:', shells.length);
+                  console.log('[BotEdit] loadingShells:', loadingShells);
+                  return shells.map(shell => (
+                    <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
+                      {shell.displayName || shell.name}
+                      {shell.type === 'user' && (
+                        <span className="ml-1 text-xs text-text-muted">
+                          [{t('bot.custom_shell', '自定义')}]
+                        </span>
+                      )}
+                    </SelectItem>
+                  ));
+                })()}
               </SelectContent>
             </Select>
           </div>

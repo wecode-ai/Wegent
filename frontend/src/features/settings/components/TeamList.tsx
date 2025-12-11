@@ -116,6 +116,16 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
   }, [editingTeamId]);
 
   const handleCreateTeam = () => {
+    // Validation for group scope: must have groupName
+    if (scope === 'group' && !groupName) {
+      toast({
+        variant: 'destructive',
+        title: t('teams.group_required_title'),
+        description: t('teams.group_required_message'),
+      });
+      return;
+    }
+    
     setPrefillTeam(null);
     setEditingTeamId(0); // Use 0 to mark new creation
   };
@@ -246,6 +256,8 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                   bots={bots}
                   setBots={setBotsSorted}
                   toast={toast}
+                  scope={scope}
+                  groupName={groupName}
                 />
               ) : (
                 <>

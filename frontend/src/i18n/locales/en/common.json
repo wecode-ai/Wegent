@@ -155,7 +155,9 @@
     "copy": "Copy Bot",
     "delete_confirm_title": "Confirm Delete",
     "delete_confirm_message": "Are you sure you want to delete this bot? This action cannot be undone.",
-    "manage_bots": "Manage Bots"
+    "manage_bots": "Manage Bots",
+    "group_required_title": "Please Select a Group First",
+    "group_required_message": "You must select a target group before creating a bot in group mode"
   },
   "messages": {
     "copy_markdown": "Copy markdown content",

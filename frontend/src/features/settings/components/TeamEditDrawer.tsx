@@ -37,6 +37,10 @@ interface TeamEditDrawerProps {
   setUnsavedPrompts?: React.Dispatch<React.SetStateAction<Record<string, string>>>;
   /** List of allowed agent types for filtering when creating/editing bots */
   allowedAgents?: AgentType[];
+  /** Scope for filtering shells */
+  scope?: 'personal' | 'group' | 'all';
+  /** Group name when scope is 'group' */
+  groupName?: string;
 }
 
 function PromptEdit({
@@ -337,6 +341,12 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
     setCloningBot(null);
   };
 
+  // Ensure scope and groupName have default values
+  const scope = props.scope || 'personal';
+  const groupName = props.groupName;
+
+  console.log('[TeamEditDrawer] Rendering with props:', { scope, groupName, allowedAgents: props.allowedAgents });
+
   return (
     <Drawer open={visible} onOpenChange={open => !open && handleClose()}>
       <DrawerContent className="h-[100vh] max-w-[860px] ml-auto" data-team-edit-drawer="true">
@@ -344,7 +354,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
           {mode === 'edit' ? 'Edit Bot' : 'Edit Prompts'}
         </DrawerTitle>
         <div className="h-full overflow-y-auto">
-          {mode === 'edit' && editingBotId !== null && (
+          {mode === 'edit' && editingBotId !== null && scope && (
             <BotEdit
               bots={bots}
               setBots={setBots}
@@ -357,6 +367,8 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
               }}
               toast={toast}
               allowedAgents={props.allowedAgents}
+              scope={scope}
+              groupName={groupName}
             />
           )}
           {mode === 'prompt' && (

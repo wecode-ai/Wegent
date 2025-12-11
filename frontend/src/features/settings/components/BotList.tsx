@@ -73,6 +73,16 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
   }, [toast, setBotsSorted, t, scope, groupName]);
 
   const handleCreateBot = () => {
+    // Validation for group scope: must have groupName
+    if (scope === 'group' && !groupName) {
+      toast({
+        variant: 'destructive',
+        title: t('bots.group_required_title'),
+        description: t('bots.group_required_message'),
+      });
+      return;
+    }
+    
     setCloningBot(null);
     setEditingBotId(0); // Use 0 to mark new creation
   };
