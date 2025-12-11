@@ -366,8 +366,9 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         # Bot's shellRef directly points to the user-selected Shell
         # No need to create a dedicated shell for each bot
+        # Use the shell's actual namespace (public shells are in 'default' namespace)
         shell_ref_name = obj_in.shell_name
-        shell_ref_namespace = namespace
+        shell_ref_namespace = shell_info.get("namespace", "default")
 
         # Create Bot with shellRef pointing to the user-selected Shell
         bot_json = {
@@ -599,7 +600,6 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             # Update bot
             bot.name = new_name
             flag_modified(bot, "json")  # Mark JSON field as modified
-
         if "shell_name" in update_data:
             # Update Bot's shellRef to point directly to the user-selected Shell
             new_shell_name = update_data["shell_name"]
@@ -613,13 +613,15 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 f"resolved shell_type={shell_info['shell_type']}, "
                 f"execution_type={shell_info['execution_type']}, "
                 f"base_image={shell_info['base_image']}, "
-                f"is_custom={shell_info['is_custom']}"
+                f"is_custom={shell_info['is_custom']}, "
+                f"namespace={shell_info.get('namespace', 'default')}"
             )
 
             # Update Bot's shellRef to point to the user-selected Shell
+            # Use the shell's actual namespace (public shells are in 'default' namespace)
             bot_crd = Bot.model_validate(bot.json)
             bot_crd.spec.shellRef.name = new_shell_name
-            bot_crd.spec.shellRef.namespace = "default"
+            bot_crd.spec.shellRef.namespace = shell_info.get("namespace", "default")
             bot.json = bot_crd.model_dump()
             flag_modified(bot, "json")
 
