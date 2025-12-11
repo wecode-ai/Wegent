@@ -5,7 +5,7 @@
 """Add namespace and namespace_members tables
 
 Revision ID: g7h8i9j0k1l2
-Revises: f6a7b8c9d0e1
+Revises: 3e3f7f525e2d
 Create Date: 2025-12-09 22:00:00.000000+08:00
 
 This migration adds two new tables for Group (Namespace) functionality:
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "g7h8i9j0k1l2"
-down_revision: Union[str, None] = "f6a7b8c9d0e1"
+down_revision: Union[str, None] = "3e3f7f525e2d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
