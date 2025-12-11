@@ -148,8 +148,8 @@ export default function ModelSelector({
     setIsLoading(true);
     setError(null);
     try {
-      // Use unified API to get both public and user models
-      const response = await modelApis.getUnifiedModels();
+      // Use unified API to get public, user, and group models
+      const response = await modelApis.getUnifiedModels(undefined, false, 'all');
       const modelList = (response.data || []).map(unifiedToModel);
       setModels(modelList);
     } catch (err) {
@@ -412,6 +412,7 @@ export default function ModelSelector({
               type="button"
               role="combobox"
               aria-expanded={isOpen}
+              aria-controls="model-selector-popover"
               disabled={isDisabled}
               className={cn(
                 'flex w-full min-w-0 items-center justify-between text-left',

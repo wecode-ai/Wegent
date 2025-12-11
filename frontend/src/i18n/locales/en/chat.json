@@ -43,7 +43,12 @@
     "status_completed": "Completed",
     "status_failed": "Failed",
     "status_cancelled": "Cancelled",
-    "status_cancelling": "Cancelling"
+    "status_cancelling": "Cancelling",
+    "recovered": "Recovered",
+    "content_recovered": "Content Recovered",
+    "content_recovered_desc": "Content has been recovered after page refresh",
+    "content_incomplete": "Response Incomplete",
+    "content_incomplete_desc": "Connection was lost, this is the partial content generated"
   },
   "shared_task": {
     "share_task": "Share",
