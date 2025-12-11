@@ -412,6 +412,7 @@ export default function ModelSelector({
               type="button"
               role="combobox"
               aria-expanded={isOpen}
+              aria-controls="model-selector-popover"
               disabled={isDisabled}
               className={cn(
                 'flex w-full min-w-0 items-center justify-between text-left',
