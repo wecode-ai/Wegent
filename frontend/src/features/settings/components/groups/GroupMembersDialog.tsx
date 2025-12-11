@@ -237,7 +237,8 @@ export function GroupMembersDialog({
               {t('groups.actions.addMember')}
             </Button>
           )}
-          {canInviteAll && (
+          {/* Temporarily hidden: Invite All Users button */}
+          {false && canInviteAll && (
             <Button
               variant="outline"
               size="sm"
