@@ -42,7 +42,23 @@ class GroupBase(BaseModel):
             raise ValueError("Group name cannot be empty")
 
         # Check for invalid characters
-        invalid_chars = [" ", "\t", "\n", "\r", "\\", ":", ";", ",", "<", ">", "?", "*", "|", "\"", "'"]
+        invalid_chars = [
+            " ",
+            "\t",
+            "\n",
+            "\r",
+            "\\",
+            ":",
+            ";",
+            ",",
+            "<",
+            ">",
+            "?",
+            "*",
+            "|",
+            '"',
+            "'",
+        ]
         for char in invalid_chars:
             if char in v:
                 raise ValueError(f"Group name cannot contain '{char}'")

@@ -118,7 +118,6 @@ def create_wiki_generation(
     wiki_db: Session = Depends(get_wiki_db),
     main_db: Session = Depends(get_db),
 ):
-
     """Create wiki document generation task.
 
     Verifies that the current user has access to the repository before creating

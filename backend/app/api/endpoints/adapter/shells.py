@@ -138,10 +138,10 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
     """Convert Kind (user shell) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(kind.json)
     labels = shell_crd.metadata.labels or {}
-    
+
     # Determine resource type based on namespace
     resource_type = "group" if kind.namespace != "default" else "user"
-    
+
     return UnifiedShell(
         name=kind.name,
         type=resource_type,
@@ -343,17 +343,19 @@ def create_shell(
     If group_name is provided, creates the shell in that group's namespace.
     User must have Developer+ permission in the group.
     """
-    from app.services.group_permission import check_group_permission
     from app.schemas.namespace import GroupRole
+    from app.services.group_permission import check_group_permission
 
     namespace = "default"
 
     if group_name:
         # Validate user has Developer+ permission in group
-        if not check_group_permission(db, current_user.id, group_name, GroupRole.Developer):
+        if not check_group_permission(
+            db, current_user.id, group_name, GroupRole.Developer
+        ):
             raise HTTPException(
                 status_code=403,
-                detail=f"You need at least Developer role in group '{group_name}' to create shells"
+                detail=f"You need at least Developer role in group '{group_name}' to create shells",
             )
         namespace = group_name
 
@@ -379,7 +381,7 @@ def create_shell(
     if existing:
         raise HTTPException(
             status_code=400,
-            detail=f"Shell '{request.name}' already exists in namespace '{namespace}'"
+            detail=f"Shell '{request.name}' already exists in namespace '{namespace}'",
         )
 
     # Validate baseShellRef - must be a public shell with local_engine type
@@ -474,11 +476,14 @@ def update_shell(
     Only user-defined shells can be updated. Public shells are read-only.
     For group shells, user must have Developer+ permission.
     """
-    from app.services.group_permission import check_group_permission, get_effective_role_in_group
     from app.schemas.namespace import GroupRole
 
     # Get user shell (try all accessible namespaces)
-    from app.services.group_permission import get_user_groups
+    from app.services.group_permission import (
+        check_group_permission,
+        get_effective_role_in_group,
+        get_user_groups,
+    )
 
     # Try personal namespace first
     shell = (
@@ -521,7 +526,7 @@ def update_shell(
         ):
             raise HTTPException(
                 status_code=403,
-                detail=f"You need at least Developer role in group '{shell.namespace}' to update this shell"
+                detail=f"You need at least Developer role in group '{shell.namespace}' to update this shell",
             )
     else:
         # Personal shell - check ownership
@@ -575,8 +580,8 @@ def delete_shell(
     Only user-defined shells can be deleted. Public shells cannot be deleted.
     For group shells, user must have Developer+ permission.
     """
-    from app.services.group_permission import check_group_permission, get_user_groups
     from app.schemas.namespace import GroupRole
+    from app.services.group_permission import check_group_permission, get_user_groups
 
     # Try personal namespace first
     shell = (
@@ -619,7 +624,7 @@ def delete_shell(
         ):
             raise HTTPException(
                 status_code=403,
-                detail=f"You need at least Developer role in group '{shell.namespace}' to delete this shell"
+                detail=f"You need at least Developer role in group '{shell.namespace}' to delete this shell",
             )
     else:
         # Personal shell - check ownership

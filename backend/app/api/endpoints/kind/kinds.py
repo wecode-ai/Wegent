@@ -27,7 +27,10 @@ router = APIRouter()
 # to avoid path parameter conflicts when using {namespace:path}
 @router.get("/namespaces/{namespace:path}/{kinds}/{name}")
 async def get_resource(
-    namespace: str = Path(..., description="Resource namespace (supports nested groups like 'parent/child')"),
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
@@ -58,7 +61,10 @@ async def get_resource(
 
 @router.get("/namespaces/{namespace:path}/{kinds}")
 async def list_resources(
-    namespace: str = Path(..., description="Resource namespace (supports nested groups like 'parent/child')"),
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
@@ -83,7 +89,10 @@ async def list_resources(
 
 @router.put("/namespaces/{namespace:path}/{kinds}/{name}")
 async def update_resource(
-    namespace: str = Path(..., description="Resource namespace (supports nested groups like 'parent/child')"),
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
@@ -118,7 +127,10 @@ async def update_resource(
 
 @router.delete("/namespaces/{namespace:path}/{kinds}/{name}")
 async def delete_resource(
-    namespace: str = Path(..., description="Resource namespace (supports nested groups like 'parent/child')"),
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
@@ -141,9 +153,14 @@ async def delete_resource(
     return {"message": f"Successfully deleted resource '{name}'"}
 
 
-@router.post("/namespaces/{namespace:path}/{kinds}", status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/namespaces/{namespace:path}/{kinds}", status_code=status.HTTP_201_CREATED
+)
 async def create_resource(
-    namespace: str = Path(..., description="Resource namespace (supports nested groups like 'parent/child')"),
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",

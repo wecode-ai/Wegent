@@ -9,7 +9,6 @@ from app.api.dependencies import get_db
 from app.core.security import get_current_user
 from app.models.namespace_member import NamespaceMember
 from app.models.user import User
-from app.services.group_permission import get_effective_role_in_group
 from app.schemas.namespace import (
     GroupCreate,
     GroupListResponse,
@@ -24,6 +23,7 @@ from app.schemas.namespace_member import (
     GroupMemberUpdate,
 )
 from app.services import group_service
+from app.services.group_permission import get_effective_role_in_group
 
 router = APIRouter()
 
@@ -84,9 +84,12 @@ def create_group_endpoint(
 # Member management routes - MUST come before generic {group_name:path} routes
 # ============================================================================
 
+
 @router.get("/{group_name:path}/members", response_model=list[GroupMemberResponse])
 def list_members(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -96,7 +99,7 @@ def list_members(
     """
     # Check if user has access (direct or inherited)
     user_role = get_effective_role_in_group(db, current_user.id, group_name)
-    
+
     if user_role is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -126,18 +129,20 @@ def list_members(
             "created_at": m.created_at,
             "updated_at": m.updated_at,
         }
-        
+
         # Get user name
         user = db.query(User).filter(User.id == m.user_id).first()
         if user:
             member_dict["user_name"] = user.user_name
-        
+
         # Get invited_by user name
         if m.invited_by_user_id:
-            invited_by_user = db.query(User).filter(User.id == m.invited_by_user_id).first()
+            invited_by_user = (
+                db.query(User).filter(User.id == m.invited_by_user_id).first()
+            )
             if invited_by_user:
                 member_dict["invited_by_user_name"] = invited_by_user.user_name
-        
+
         result.append(GroupMemberResponse(**member_dict))
 
     return result
@@ -149,7 +154,9 @@ def list_members(
     status_code=status.HTTP_201_CREATED,
 )
 def add_member_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     member_create: GroupMemberCreate = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -181,7 +188,9 @@ def add_member_endpoint(
     status_code=status.HTTP_200_OK,
 )
 def add_member_by_username_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     username: str = Query(..., description="Username of the user to add"),
     role: GroupRole = Query(GroupRole.Reporter, description="Role to assign"),
     current_user: User = Depends(get_current_user),
@@ -193,15 +202,17 @@ def add_member_by_username_endpoint(
     Returns a result object with success status and message.
     """
     # Find user by username
-    user = db.query(User).filter(User.user_name == username, User.is_active == True).first()
-    
+    user = (
+        db.query(User)
+        .filter(User.user_name == username, User.is_active == True)
+        .first()
+    )
+
     if not user:
         return AddMemberResult(
-            success=False,
-            message=f"User '{username}' not found",
-            data=None
+            success=False, message=f"User '{username}' not found", data=None
         )
-    
+
     try:
         member = group_service.add_member(
             db=db,
@@ -211,29 +222,21 @@ def add_member_by_username_endpoint(
             invited_by_user_id=current_user.id,
         )
         return AddMemberResult(
-            success=True,
-            message="Member added successfully",
-            data=member
+            success=True, message="Member added successfully", data=member
         )
     except HTTPException as e:
-        return AddMemberResult(
-            success=False,
-            message=e.detail,
-            data=None
-        )
+        return AddMemberResult(success=False, message=e.detail, data=None)
     except Exception as e:
         return AddMemberResult(
-            success=False,
-            message=f"Failed to add member: {str(e)}",
-            data=None
+            success=False, message=f"Failed to add member: {str(e)}", data=None
         )
 
 
-@router.put(
-    "/{group_name:path}/members/{user_id}", response_model=GroupMemberResponse
-)
+@router.put("/{group_name:path}/members/{user_id}", response_model=GroupMemberResponse)
 def update_member_role_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     user_id: int = Path(..., description="User ID"),
     member_update: GroupMemberUpdate = None,
     current_user: User = Depends(get_current_user),
@@ -264,7 +267,9 @@ def update_member_role_endpoint(
     "/{group_name:path}/members/{user_id}", status_code=status.HTTP_204_NO_CONTENT
 )
 def remove_member_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     user_id: int = Path(..., description="User ID"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -297,7 +302,9 @@ def remove_member_endpoint(
     status_code=status.HTTP_201_CREATED,
 )
 def invite_all_users_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -320,7 +327,9 @@ def invite_all_users_endpoint(
 
 @router.post("/{group_name:path}/leave", status_code=status.HTTP_204_NO_CONTENT)
 def leave_group_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -348,7 +357,9 @@ def leave_group_endpoint(
 
 @router.post("/{group_name:path}/transfer-ownership", response_model=GroupResponse)
 def transfer_ownership_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     new_owner_user_id: int = Query(..., description="User ID of the new owner"),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -379,9 +390,12 @@ def transfer_ownership_endpoint(
 # Generic group routes - MUST come after specific sub-routes
 # ============================================================================
 
+
 @router.get("/{group_name:path}", response_model=GroupResponse)
 def get_group_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -391,7 +405,7 @@ def get_group_endpoint(
     """
     # Check if user has access (direct or inherited)
     user_role = get_effective_role_in_group(db, current_user.id, group_name)
-    
+
     if user_role is None:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -411,7 +425,9 @@ def get_group_endpoint(
 
 @router.put("/{group_name:path}", response_model=GroupResponse)
 def update_group_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     group_update: GroupUpdate = None,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -438,7 +454,9 @@ def update_group_endpoint(
 
 @router.delete("/{group_name:path}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_group_endpoint(
-    group_name: str = Path(..., description="Group name (may contain slashes for subgroups)"),
+    group_name: str = Path(
+        ..., description="Group name (may contain slashes for subgroups)"
+    ),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):

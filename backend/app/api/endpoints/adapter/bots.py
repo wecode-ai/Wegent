@@ -18,20 +18,31 @@ router = APIRouter()
 def list_bots(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
-    scope: str = Query("personal", description="Resource scope: personal, group, or all"),
-    group_name: str = Query(None, description="Group name (required when scope is 'group')"),
+    scope: str = Query(
+        "personal", description="Resource scope: personal, group, or all"
+    ),
+    group_name: str = Query(
+        None, description="Group name (required when scope is 'group')"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """Get current user's Bot list (paginated) with scope support"""
     skip = (page - 1) * limit
     bot_dicts = bot_kinds_service.get_user_bots(
-        db=db, user_id=current_user.id, skip=skip, limit=limit, scope=scope, group_name=group_name
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        scope=scope,
+        group_name=group_name,
     )
     if page == 1 and len(bot_dicts) < limit:
         total = len(bot_dicts)
     else:
-        total = bot_kinds_service.count_user_bots(db=db, user_id=current_user.id, scope=scope, group_name=group_name)
+        total = bot_kinds_service.count_user_bots(
+            db=db, user_id=current_user.id, scope=scope, group_name=group_name
+        )
 
     # bot_dicts are already in the correct format
     return {"total": total, "items": bot_dicts}
