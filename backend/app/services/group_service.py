@@ -117,7 +117,7 @@ def create_group(
         group_name=group_data.name,
         user_id=owner_user_id,
         role=GroupRole.Owner.value,
-        invited_by_user_id=None,  # Self-created
+        invited_by_user_id=owner_user_id,  # Self-invited
         is_active=True,
     )
 

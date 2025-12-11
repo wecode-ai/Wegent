@@ -27,8 +27,8 @@ class NamespaceMember(Base):
     user_id = Column(Integer, nullable=False, index=True)
     # Member role: Owner, Maintainer, Developer, Reporter
     role = Column(String(20), nullable=False)
-    # User ID who invited this member
-    invited_by_user_id = Column(Integer, nullable=True)
+    # User ID who invited this member (0 for self-created/owner)
+    invited_by_user_id = Column(Integer, nullable=False, default=0)
     # Is membership active
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=func.now())
