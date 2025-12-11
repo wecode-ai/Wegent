@@ -77,6 +77,8 @@ class GroupResponse(GroupBase):
     is_active: bool
     created_at: datetime
     updated_at: datetime
+    my_role: Optional[str] = None
+    member_count: Optional[int] = None
 
     class Config:
         from_attributes = True

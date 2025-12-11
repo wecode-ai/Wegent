@@ -24,6 +24,7 @@ from app.schemas.namespace_member import (
 from app.services.group_permission import (
     check_group_permission,
     get_user_role_in_group,
+    get_effective_role_in_group,
 )
 from app.schemas.namespace import GroupRole
 
@@ -83,7 +84,16 @@ def create_group(
             )
 
         # Check if user has permission to create subgroups (must be at least Maintainer)
-        if not check_group_permission(db, owner_user_id, parent_name, GroupRole.Maintainer):
+        # Use effective role to support inheritance
+        user_role = get_effective_role_in_group(db, owner_user_id, parent_name)
+        role_hierarchy = {
+            GroupRole.Owner: 0,
+            GroupRole.Maintainer: 1,
+            GroupRole.Developer: 2,
+            GroupRole.Reporter: 3,
+        }
+
+        if user_role is None or role_hierarchy.get(user_role, 999) > role_hierarchy[GroupRole.Maintainer]:
             raise HTTPException(
                 status_code=403,
                 detail=f"Insufficient permissions to create subgroup under '{parent_name}'",
@@ -149,6 +159,7 @@ def list_user_groups(
 ) -> list[GroupResponse]:
     """
     List groups where user is a member (created or joined).
+    Includes my_role and member_count for each group.
 
     Args:
         db: Database session
@@ -157,11 +168,11 @@ def list_user_groups(
         limit: Maximum number of records to return
 
     Returns:
-        List of group responses
+        List of GroupResponse objects with additional fields
     """
-    # Get all groups where user is an active member
-    member_group_names = (
-        db.query(NamespaceMember.group_name)
+    # Get all groups where user is an active member with their role
+    member_data = (
+        db.query(NamespaceMember.group_name, NamespaceMember.role)
         .filter(
             NamespaceMember.user_id == user_id,
             NamespaceMember.is_active == True,
@@ -169,10 +180,12 @@ def list_user_groups(
         .all()
     )
 
-    group_names = [name for (name,) in member_group_names]
-
-    if not group_names:
+    if not member_data:
         return []
+
+    # Create a mapping of group_name -> role
+    group_roles = {name: role for name, role in member_data}
+    group_names = list(group_roles.keys())
 
     groups = (
         db.query(Namespace)
@@ -186,7 +199,28 @@ def list_user_groups(
         .all()
     )
 
-    return [GroupResponse.model_validate(group) for group in groups]
+    # Get member counts for all groups
+    member_counts = {}
+    for group_name in group_names:
+        count = (
+            db.query(NamespaceMember)
+            .filter(
+                NamespaceMember.group_name == group_name,
+                NamespaceMember.is_active == True,
+            )
+            .count()
+        )
+        member_counts[group_name] = count
+
+    # Build response with additional fields
+    result = []
+    for group in groups:
+        group_response = GroupResponse.model_validate(group)
+        group_response.my_role = group_roles.get(group.name)
+        group_response.member_count = member_counts.get(group.name, 0)
+        result.append(group_response)
+
+    return result
 
 
 def update_group(
@@ -315,11 +349,10 @@ def delete_group(db: Session, group_name: str, user_id: int) -> None:
     # Soft delete group
     group.is_active = False
 
-    # Deactivate all members
+    # Hard delete all members
     db.query(NamespaceMember).filter(
-        NamespaceMember.group_name == group_name,
-        NamespaceMember.is_active == True,
-    ).update({"is_active": False})
+        NamespaceMember.group_name == group_name
+    ).delete()
 
     db.commit()
 
@@ -492,8 +525,8 @@ def remove_member(
     # Transfer resources to owner
     _transfer_resources_to_owner(db, group_name, user_id, group.owner_user_id)
 
-    # Remove member (soft delete)
-    member.is_active = False
+    # Remove member (hard delete)
+    db.delete(member)
     db.commit()
 
 
@@ -534,16 +567,30 @@ def update_member_role(
     if not member:
         raise HTTPException(status_code=404, detail="Member not found")
 
-    # Check permission (must be Owner to change roles)
+    # Check permission (must be at least Maintainer to change roles)
     updater_role = get_user_role_in_group(db, updated_by_user_id, group_name)
-    if updater_role != GroupRole.Owner:
+    if updater_role not in [GroupRole.Owner, GroupRole.Maintainer]:
         raise HTTPException(
             status_code=403,
-            detail="Only group Owner can update member roles",
+            detail="Only Maintainers and Owners can update member roles",
         )
+    
+    current_role = GroupRole(member.role)
+    
+    # Maintainers cannot modify Owner roles or promote to Owner
+    if updater_role == GroupRole.Maintainer:
+        if current_role == GroupRole.Owner:
+            raise HTTPException(
+                status_code=403,
+                detail="Maintainers cannot modify Owner roles",
+            )
+        if new_role == GroupRole.Owner:
+            raise HTTPException(
+                status_code=403,
+                detail="Only Owners can promote members to Owner role",
+            )
 
     # Prevent downgrading the last owner
-    current_role = GroupRole(member.role)
     if current_role == GroupRole.Owner and new_role != GroupRole.Owner:
         owner_count = (
             db.query(NamespaceMember)

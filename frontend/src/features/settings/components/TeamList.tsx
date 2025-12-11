@@ -93,7 +93,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
       try {
         const [teamsData, botsData] = await Promise.all([
           fetchTeamsList(scope, groupName),
-          fetchBotsList()
+          fetchBotsList(scope, groupName)
         ]);
         setTeamsSorted(teamsData);
         setBotsSorted(botsData);
@@ -116,6 +116,16 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
   }, [editingTeamId]);
 
   const handleCreateTeam = () => {
+    // Validation for group scope: must have groupName
+    if (scope === 'group' && !groupName) {
+      toast({
+        variant: 'destructive',
+        title: t('teams.group_required_title'),
+        description: t('teams.group_required_message'),
+      });
+      return;
+    }
+    
     setPrefillTeam(null);
     setEditingTeamId(0); // Use 0 to mark new creation
   };
@@ -246,6 +256,8 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                   bots={bots}
                   setBots={setBotsSorted}
                   toast={toast}
+                  scope={scope}
+                  groupName={groupName}
                 />
               ) : (
                 <>
@@ -419,7 +431,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
             <DialogDescription>{t('bots.description')}</DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-y-auto">
-            <BotList />
+            <BotList scope={scope} groupName={groupName} />
           </div>
         </DialogContent>
       </Dialog>

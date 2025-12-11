@@ -16,6 +16,7 @@ import type {
   GroupMemberCreate,
   GroupMemberUpdate,
   GroupMemberListResponse,
+  AddMemberResult,
 } from '@/types/group'
 
 /**
@@ -83,6 +84,19 @@ export const addGroupMember = async (
   return await apiClient.post<GroupMember>(
     `/groups/${encodeURIComponent(groupName)}/members`,
     data
+  )
+}
+
+/**
+ * Add a member to the group by username
+ */
+export const addGroupMemberByUsername = async (
+  groupName: string,
+  username: string,
+  role: string
+): Promise<AddMemberResult> => {
+  return await apiClient.post<AddMemberResult>(
+    `/groups/${encodeURIComponent(groupName)}/members/by-username?username=${encodeURIComponent(username)}&role=${role}`
   )
 }
 

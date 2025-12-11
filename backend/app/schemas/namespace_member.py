@@ -34,10 +34,20 @@ class GroupMemberResponse(GroupMemberBase):
 
     id: int
     group_name: str
+    user_name: Optional[str] = None
     invited_by_user_id: Optional[int] = None
+    invited_by_user_name: Optional[str] = None
     is_active: bool
     created_at: datetime
     updated_at: datetime
 
     class Config:
         from_attributes = True
+
+
+class AddMemberResult(BaseModel):
+    """Result of adding a member operation"""
+    
+    success: bool
+    message: str
+    data: Optional[GroupMemberResponse] = None

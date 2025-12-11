@@ -251,14 +251,17 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         logger = logging.getLogger(__name__)
 
-        # Check duplicate bot name under the same user (only active bots)
+        # Use namespace from request, default to 'default'
+        namespace = obj_in.namespace or "default"
+
+        # Check duplicate bot name under the same user and namespace (only active bots)
         existing = (
             db.query(Kind)
             .filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Bot",
                 Kind.name == obj_in.name,
-                Kind.namespace == "default",
+                Kind.namespace == namespace,
                 Kind.is_active == True,
             )
             .first()
@@ -288,7 +291,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             "kind": "Ghost",
             "spec": ghost_spec,
             "status": {"state": "Available"},
-            "metadata": {"name": f"{obj_in.name}-ghost", "namespace": "default"},
+            "metadata": {"name": f"{obj_in.name}-ghost", "namespace": namespace},
             "apiVersion": "agent.wecode.io/v1",
         }
 
@@ -296,7 +299,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             user_id=user_id,
             kind="Ghost",
             name=f"{obj_in.name}-ghost",
-            namespace="default",
+            namespace=namespace,
             json=ghost_json,
             is_active=True,
         )
@@ -307,12 +310,12 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Otherwise, create a private model for this bot
         model = None
         model_ref_name = f"{obj_in.name}-model"
-        model_ref_namespace = "default"
+        model_ref_namespace = namespace
 
         if self._is_predefined_model(obj_in.agent_config):
             # Reference existing model by bind_model name
             model_ref_name = self._get_model_name_from_config(obj_in.agent_config)
-            model_ref_namespace = "default"
+            model_ref_namespace = namespace
             # Don't create a new model, just reference the existing one
         else:
             # Create private Model for custom config
@@ -332,7 +335,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                     "protocol": protocol,  # Store protocol at spec level
                 },
                 "status": {"state": "Available"},
-                "metadata": {"name": f"{obj_in.name}-model", "namespace": "default"},
+                "metadata": {"name": f"{obj_in.name}-model", "namespace": namespace},
                 "apiVersion": "agent.wecode.io/v1",
             }
 
@@ -340,7 +343,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 user_id=user_id,
                 kind="Model",
                 name=f"{obj_in.name}-model",
-                namespace="default",
+                namespace=namespace,
                 json=model_json,
                 is_active=True,
             )
@@ -364,18 +367,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         # Bot's shellRef directly points to the user-selected Shell
         # No need to create a dedicated shell for each bot
         shell_ref_name = obj_in.shell_name
-        shell_ref_namespace = "default"
+        shell_ref_namespace = namespace
 
         # Create Bot with shellRef pointing to the user-selected Shell
         bot_json = {
             "kind": "Bot",
             "spec": {
-                "ghostRef": {"name": f"{obj_in.name}-ghost", "namespace": "default"},
+                "ghostRef": {"name": f"{obj_in.name}-ghost", "namespace": namespace},
                 "shellRef": {"name": shell_ref_name, "namespace": shell_ref_namespace},
                 "modelRef": {"name": model_ref_name, "namespace": model_ref_namespace},
             },
             "status": {"state": "Available"},
-            "metadata": {"name": obj_in.name, "namespace": "default"},
+            "metadata": {"name": obj_in.name, "namespace": namespace},
             "apiVersion": "agent.wecode.io/v1",
         }
 
@@ -383,7 +386,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             user_id=user_id,
             kind="Bot",
             name=obj_in.name,
-            namespace="default",
+            namespace=namespace,
             json=bot_json,
             is_active=True,
         )
@@ -408,15 +411,52 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         return self._convert_to_bot_dict(bot, ghost, shell, model, obj_in.agent_config)
 
     def get_user_bots(
-        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100
+        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100, scope: str = "personal", group_name: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Get user's Bot list (only active bots)
         Optimization: avoid N+1 queries by batch-fetching Ghost/Shell/Model components to significantly reduce database round trips.
+        
+        Scope behavior:
+        - scope='personal' (default): personal bots only (namespace='default')
+        - scope='group': group bots (requires group_name or queries all user's groups)
+        - scope='all': personal + all user's groups
         """
+        from app.services.group_permission import get_user_groups
+        
+        # Determine which namespaces to query based on scope
+        namespaces_to_query = []
+        
+        if scope == "personal":
+            # Personal bots only (default namespace)
+            namespaces_to_query = ["default"]
+        elif scope == "group":
+            # Group bots - if group_name not provided, query all user's groups
+            if group_name:
+                namespaces_to_query = [group_name]
+            else:
+                # Query all user's groups (excluding default)
+                user_groups = get_user_groups(db, user_id)
+                namespaces_to_query = user_groups if user_groups else []
+        elif scope == "all":
+            # Personal + all user's groups
+            namespaces_to_query = ["default"] + get_user_groups(db, user_id)
+        else:
+            raise ValueError(f"Invalid scope: {scope}")
+        
+        # Handle empty namespaces case
+        if not namespaces_to_query:
+            return []
+        
+        # Query bots from all target namespaces
         bots = (
             db.query(Kind)
-            .filter(Kind.user_id == user_id, Kind.kind == "Bot", Kind.is_active == True)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Bot",
+                Kind.namespace.in_(namespaces_to_query),
+                Kind.is_active == True
+            )
             .order_by(Kind.created_at.desc())
             .offset(skip)
             .limit(limit)
@@ -856,13 +896,47 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         db.commit()
 
-    def count_user_bots(self, db: Session, *, user_id: int) -> int:
+    def count_user_bots(self, db: Session, *, user_id: int, scope: str = "personal", group_name: Optional[str] = None) -> int:
         """
-        Count user's active bots
+        Count user's active bots based on scope.
+        
+        Scope behavior:
+        - scope='personal' (default): personal bots only
+        - scope='group': group bots (requires group_name or counts all user's groups)
+        - scope='all': personal + all user's groups
         """
+        from app.services.group_permission import get_user_groups
+        
+        # Determine which namespaces to count based on scope
+        namespaces_to_count = []
+        
+        if scope == "personal":
+            namespaces_to_count = ["default"]
+        elif scope == "group":
+            # Group bots - if group_name not provided, count all user's groups
+            if group_name:
+                namespaces_to_count = [group_name]
+            else:
+                # Count all user's groups (excluding default)
+                user_groups = get_user_groups(db, user_id)
+                namespaces_to_count = user_groups if user_groups else []
+        elif scope == "all":
+            namespaces_to_count = ["default"] + get_user_groups(db, user_id)
+        else:
+            raise ValueError(f"Invalid scope: {scope}")
+        
+        # Handle empty namespaces case
+        if not namespaces_to_count:
+            return 0
+        
         return (
             db.query(Kind)
-            .filter(Kind.user_id == user_id, Kind.kind == "Bot", Kind.is_active == True)
+            .filter(
+                Kind.user_id == user_id,
+                Kind.kind == "Bot",
+                Kind.namespace.in_(namespaces_to_count),
+                Kind.is_active == True
+            )
             .count()
         )
 

@@ -128,7 +128,7 @@ function DashboardContent() {
         icon: PuzzlePieceIcon,
         children: [
           {
-            id: 'integrations-main',
+            id: 'integrations',
             label: t('settings.integrations'),
             component: <GitHubIntegration />,
           },
@@ -140,7 +140,7 @@ function DashboardContent() {
         icon: BellIcon,
         children: [
           {
-            id: 'general-notifications',
+            id: 'general',
             label: t('settings.sections.general'),
             component: <NotificationSettings />,
           },
@@ -184,13 +184,18 @@ function DashboardContent() {
   const renderDesktopMenuItem = (item: MenuItem) => {
     const isExpanded = expandedSections.has(item.id);
     const hasChildren = item.children && item.children.length > 0;
+    // Check if this is a single-child item (Integrations or General)
+    const isSingleChild = hasChildren && item.children.length === 1 && item.children[0].id === item.id;
 
     return (
       <div key={item.id} className="space-y-1">
         {/* Parent item */}
         <button
           onClick={() => {
-            if (hasChildren) {
+            if (isSingleChild && item.children) {
+              // For single-child items, directly select the child without expanding
+              handleTabSelect(item.id, item.children[0].id);
+            } else if (hasChildren) {
               handleSectionToggle(item.id);
               // Auto-select first child when expanding
               if (!isExpanded && item.children) {
@@ -210,7 +215,7 @@ function DashboardContent() {
             <item.icon className="w-4 h-4" />
             <span>{item.label}</span>
           </div>
-          {hasChildren && (
+          {hasChildren && !isSingleChild && (
             <div className="ml-auto">
               {isExpanded ? (
                 <ChevronDownIcon className="w-4 h-4" />
@@ -221,8 +226,8 @@ function DashboardContent() {
           )}
         </button>
 
-        {/* Children items */}
-        {hasChildren && isExpanded && (
+        {/* Children items - only show for multi-child items */}
+        {hasChildren && !isSingleChild && isExpanded && (
           <div className="ml-7 space-y-1">
             {item.children?.map((child) => (
               <button

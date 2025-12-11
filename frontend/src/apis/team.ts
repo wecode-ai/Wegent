@@ -13,6 +13,7 @@ export interface CreateTeamRequest {
   workflow?: Record<string, unknown>;
   bind_mode?: ('chat' | 'code')[];
   is_active?: boolean;
+  namespace?: string; // Group namespace, defaults to 'default' for personal teams
 }
 
 export interface TeamListResponse {
@@ -82,16 +83,10 @@ export const teamApis = {
   },
   /**
    * Create a new team
-   * @param data - Team creation data
-   * @param groupName - Optional group name to create team in group scope
+   * @param data - Team creation data (includes namespace field)
    */
-  async createTeam(data: CreateTeamRequest, groupName?: string): Promise<Team> {
-    const params = new URLSearchParams();
-    if (groupName) {
-      params.append('group_name', groupName);
-    }
-    const queryString = params.toString();
-    return apiClient.post(`/teams${queryString ? `?${queryString}` : ''}`, data);
+  async createTeam(data: CreateTeamRequest): Promise<Team> {
+    return apiClient.post('/teams', data);
   },
   async deleteTeam(id: number): Promise<void> {
     await apiClient.delete(`/teams/${id}`);

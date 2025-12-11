@@ -27,8 +27,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useToast } from '@/hooks/use-toast';
+interface BotListProps {
+  scope?: 'personal' | 'group' | 'all';
+  groupName?: string;
+}
 
-export default function BotList() {
+export default function BotList({ scope = 'personal', groupName }: BotListProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const [bots, setBots] = useState<Bot[]>([]);
@@ -54,7 +58,7 @@ export default function BotList() {
     async function loadBots() {
       setIsLoading(true);
       try {
-        const botsData = await fetchBotsList();
+        const botsData = await fetchBotsList(scope, groupName);
         setBotsSorted(botsData);
       } catch {
         toast({
@@ -66,9 +70,19 @@ export default function BotList() {
       }
     }
     loadBots();
-  }, [toast, setBotsSorted, t]);
+  }, [toast, setBotsSorted, t, scope, groupName]);
 
   const handleCreateBot = () => {
+    // Validation for group scope: must have groupName
+    if (scope === 'group' && !groupName) {
+      toast({
+        variant: 'destructive',
+        title: t('bots.group_required_title'),
+        description: t('bots.group_required_message'),
+      });
+      return;
+    }
+    
     setCloningBot(null);
     setEditingBotId(0); // Use 0 to mark new creation
   };
@@ -142,6 +156,8 @@ export default function BotList() {
                   cloningBot={cloningBot}
                   onClose={handleCloseEditor}
                   toast={toast}
+                  scope={scope}
+                  groupName={groupName}
                 />
               ) : (
                 <>

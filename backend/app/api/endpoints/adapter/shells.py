@@ -33,7 +33,7 @@ class UnifiedShell(BaseModel):
     """Unified shell representation for API responses"""
 
     name: str
-    type: str  # 'public' or 'user'
+    type: str  # 'public' or 'user' or 'group'
     displayName: Optional[str] = None
     shellType: str  # Agent type: 'ClaudeCode', 'Agno', 'Dify', etc.
     baseImage: Optional[str] = None
@@ -42,6 +42,7 @@ class UnifiedShell(BaseModel):
     executionType: Optional[str] = (
         None  # 'local_engine' or 'external_api' (from labels)
     )
+    namespace: Optional[str] = None  # Resource namespace (group name or 'default')
 
 
 class ShellCreateRequest(BaseModel):
@@ -129,6 +130,7 @@ def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
+        namespace=shell.namespace,
     )
 
 
@@ -136,15 +138,20 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
     """Convert Kind (user shell) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(kind.json)
     labels = shell_crd.metadata.labels or {}
+    
+    # Determine resource type based on namespace
+    resource_type = "group" if kind.namespace != "default" else "user"
+    
     return UnifiedShell(
         name=kind.name,
-        type="user",
+        type=resource_type,
         displayName=shell_crd.metadata.displayName or kind.name,
         shellType=shell_crd.spec.shellType,
         baseImage=shell_crd.spec.baseImage,
         baseShellRef=shell_crd.spec.baseShellRef,
         supportModel=shell_crd.spec.supportModel,
         executionType=labels.get("type"),
+        namespace=kind.namespace,
     )
 
 
@@ -210,7 +217,12 @@ def list_unified_shells(
     # Get public shells (always included)
     public_shells = (
         db.query(Kind)
-        .filter(Kind.is_active == True)  # noqa: E712
+        .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
+            Kind.namespace == "default",
+            Kind.is_active == True,  # noqa: E712
+        )
         .order_by(Kind.name.asc())
         .all()
     )
@@ -303,7 +315,10 @@ def get_unified_shell(
     public_shell = (
         db.query(Kind)
         .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
             Kind.name == shell_name,
+            Kind.namespace == "default",
             Kind.is_active == True,  # noqa: E712
         )
         .first()
@@ -371,7 +386,10 @@ def create_shell(
     base_shell = (
         db.query(Kind)
         .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
             Kind.name == request.baseShellRef,
+            Kind.namespace == "default",
             Kind.is_active == True,  # noqa: E712
         )
         .first()

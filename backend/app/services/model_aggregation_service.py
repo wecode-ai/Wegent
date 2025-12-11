@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Model, Shell
+from app.services.adapters.public_model import public_model_service
 from app.services.kind import kind_service
 
 logger = logging.getLogger(__name__)
@@ -32,19 +33,21 @@ class ModelType(str, Enum):
 
     - PUBLIC: Models from kinds table with user_id=0, shared across all users
     - USER: User-defined models from kinds table, private to each user
+    - GROUP: Models from kinds table in group namespace, shared within group
     """
 
     PUBLIC = "public"
     USER = "user"
+    GROUP = "group"
 
 
 class UnifiedModel:
     """
     Unified model representation that includes type information
-    to distinguish between public and user-defined models.
+    to distinguish between public, user-defined, and group models.
 
     The 'type' field is critical for:
-    1. Avoiding naming conflicts between public and user models
+    1. Avoiding naming conflicts between public, user, and group models
     2. Determining which table to query when resolving a model
     3. Frontend display differentiation
     """
@@ -58,14 +61,16 @@ class UnifiedModel:
         model_id: Optional[str] = None,
         config: Optional[Dict[str, Any]] = None,
         is_active: bool = True,
+        namespace: str = "default",
     ):
         self.name = name
-        self.type = model_type  # 'public' or 'user' - identifies model source
+        self.type = model_type  # 'public' or 'user' or 'group' - identifies model source
         self.display_name = display_name
         self.provider = provider
         self.model_id = model_id
         self.config = config or {}
         self.is_active = is_active
+        self.namespace = namespace  # Resource namespace (group name or 'default')
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -73,17 +78,19 @@ class UnifiedModel:
 
         Returns dict with:
         - name: Model name
-        - type: 'public' or 'user' - IMPORTANT for identifying model source
+        - type: 'public', 'user', or 'group' - IMPORTANT for identifying model source
         - displayName: Human-readable name
         - provider: Model provider (e.g., 'openai', 'claude')
         - modelId: Model ID
+        - namespace: Resource namespace (group name or 'default')
         """
         return {
             "name": self.name,
-            "type": self.type.value,  # 'public' or 'user'
+            "type": self.type.value,  # 'public', 'user', or 'group'
             "displayName": self.display_name,
             "provider": self.provider,
             "modelId": self.model_id,
+            "namespace": self.namespace,
         }
 
     def to_full_dict(self) -> Dict[str, Any]:
@@ -103,7 +110,7 @@ class ModelAggregationService:
     2. Model lookup by name and type
     3. Agent-compatible model filtering
 
-    All returned models include a 'type' field ('public' or 'user')
+    All returned models include a 'type' field ('public', 'user', or 'group')
     to distinguish their source and avoid naming conflicts.
     """
 
@@ -223,11 +230,10 @@ class ModelAggregationService:
 
         try:
             model_crd = Model.model_validate(model_data)
+            return model_crd.spec.isCustomConfig or False
         except (ValueError, KeyError, AttributeError) as e:
             logger.warning("Failed to check if model is custom: %s", e)
             return False
-        else:
-            return model_crd.spec.isCustomConfig is True
 
     def list_available_models(
         self,
@@ -244,7 +250,7 @@ class ModelAggregationService:
         This method aggregates models from:
         1. User's own models (via kind_service) - marked with type='user'
         2. Public models (user_id=0 in kinds table) - marked with type='public'
-        3. Group models (when scope includes groups)
+        3. Group models (when scope includes groups) - marked with type='group'
 
         Scope behavior:
         - scope='personal' (default): personal models + public models
@@ -264,7 +270,7 @@ class ModelAggregationService:
         Returns:
             List of unified model dictionaries, each containing:
             - name: Model name
-            - type: 'public' or 'user' (identifies model source)
+            - type: 'public', 'user', or 'group' (identifies model source)
             - displayName: Human-readable name
             - provider: Model provider
             - modelId: Model ID
@@ -308,6 +314,7 @@ class ModelAggregationService:
                 user_model_resources = kind_service.list_resources(
                     user_id=current_user.id, kind="Model", namespace="default"
                 )
+                resource_type = ModelType.USER  # Personal models
             else:
                 # Query group models (namespace = group_name, user_id can be any member)
                 group_model_resources = (
@@ -320,6 +327,7 @@ class ModelAggregationService:
                     .all()
                 )
                 user_model_resources = group_model_resources
+                resource_type = ModelType.GROUP  # Group models
 
             for resource in user_model_resources:
                 # Format the resource to get the full CRD data
@@ -343,68 +351,60 @@ class ModelAggregationService:
 
                 unified = UnifiedModel(
                     name=resource.name,
-                    model_type=ModelType.USER,  # Mark as user-defined model
+                    model_type=resource_type,  # Use determined type (USER or GROUP)
                     display_name=info["display_name"],
                     provider=info["provider"],
                     model_id=info["model_id"],
                     config=info["config"] if include_config else {},
                     is_active=resource.is_active,
+                    namespace=resource.namespace,
                 )
                 result.append(unified)
-                seen_names[resource.name] = ModelType.USER
+                seen_names[resource.name] = resource_type
 
-        # 2. Get public models (user_id=0, kind='Model', namespace='default')
-        # Always include public models regardless of scope
-        public_model_kinds = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == 0,
-                Kind.kind == "Model",
-                Kind.namespace == "default",
-                Kind.is_active == True,
-            )
-            .limit(1000)
-            .all()
+        # 2. Get public models via public_model_service (type='public')
+        public_models = public_model_service.get_models(
+            db=db,
+            skip=0,
+            limit=1000,  # Get all public models
+            current_user=current_user,
         )
 
-        for model_kind in public_model_kinds:
-            try:
-                if not model_kind.json:
-                    continue
+        for model_dict in public_models:
+            # public_model_service.get_models returns dict with 'config' key
+            config = model_dict.get("config", {})
+            env = config.get("env", {}) if isinstance(config, dict) else {}
 
-                model_crd = Model.model_validate(model_kind.json)
-                config = model_crd.spec.modelConfig
-                env = config.get("env", {}) if isinstance(config, dict) else {}
+            provider = env.get("model") if isinstance(env, dict) else None
+            model_id = env.get("model_id") if isinstance(env, dict) else None
 
-                provider = env.get("model") if isinstance(env, dict) else None
-                model_id = env.get("model_id") if isinstance(env, dict) else None
+            # Filter by shell compatibility if shell_type is provided
+            if shell_type and not self._is_model_compatible_with_shell(
+                provider, shell_type, support_model
+            ):
+                continue
 
-                # Filter by shell compatibility if shell_type is provided
-                if shell_type and not self._is_model_compatible_with_shell(
-                    provider, shell_type, support_model
-                ):
-                    continue
+            unified = UnifiedModel(
+                name=model_dict.get("name", ""),
+                model_type=ModelType.PUBLIC,  # Mark as public model
+                display_name=None,  # Public models don't have displayName in current schema
+                provider=provider,
+                model_id=model_id,
+                is_active=model_dict.get("is_active", True),
+                namespace="default",
+            )
 
-                # Deduplicate by name
-                model_name = model_kind.name
-                if model_name in seen_names:
-                    continue
-
-                unified = UnifiedModel(
-                    name=model_name,
-                    model_type=ModelType.PUBLIC,  # Mark as public model
-                    display_name=model_crd.metadata.displayName,
-                    provider=provider,
-                    model_id=model_id,
-                    config=config if include_config else {},
-                    is_active=model_kind.is_active,
+            # If name already exists as user model, we still add public model
+            # The type field will differentiate them
+            model_name = model_dict.get("name", "")
+            if model_name in seen_names:
+                logger.debug(
+                    f"Model name '{model_name}' exists in both user and public models"
                 )
 
-                result.append(unified)
+            result.append(unified)
+            if model_name not in seen_names:
                 seen_names[model_name] = ModelType.PUBLIC
-            except Exception as e:
-                logger.warning(f"Failed to parse public model {model_kind.name}: {e}")
-                continue
 
         # Sort by name
         result.sort(key=lambda x: x.name)
@@ -452,36 +452,24 @@ class ModelAggregationService:
                 ).to_full_dict()
 
         elif model_type == ModelType.PUBLIC:
-            # Get public model from kinds table (user_id=0)
-            public_model = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == 0,
-                    Kind.kind == "Model",
-                    Kind.name == name,
-                    Kind.namespace == "default",
-                    Kind.is_active == True,
-                )
-                .first()
+            # Get all public models and find by name
+            public_models = public_model_service.get_models(
+                db=db, skip=0, limit=1000, current_user=current_user
             )
 
-            if public_model and public_model.json:
-                try:
-                    model_crd = Model.model_validate(public_model.json)
-                    config = model_crd.spec.modelConfig
+            for model_dict in public_models:
+                if model_dict.get("name") == name:
+                    config = model_dict.get("config", {})
                     env = config.get("env", {}) if isinstance(config, dict) else {}
 
                     return UnifiedModel(
-                        name=public_model.name,
+                        name=model_dict.get("name", ""),
                         model_type=ModelType.PUBLIC,
-                        display_name=model_crd.metadata.displayName,
+                        display_name=None,
                         provider=env.get("model") if isinstance(env, dict) else None,
                         model_id=env.get("model_id") if isinstance(env, dict) else None,
-                        config=config,
-                        is_active=public_model.is_active,
+                        is_active=model_dict.get("is_active", True),
                     ).to_full_dict()
-                except Exception as e:
-                    logger.warning(f"Failed to parse public model {name}: {e}")
 
         return None
 

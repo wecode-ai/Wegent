@@ -148,8 +148,8 @@ export default function ModelSelector({
     setIsLoading(true);
     setError(null);
     try {
-      // Use unified API to get both public and user models
-      const response = await modelApis.getUnifiedModels();
+      // Use unified API to get public, user, and group models
+      const response = await modelApis.getUnifiedModels(undefined, false, 'all');
       const modelList = (response.data || []).map(unifiedToModel);
       setModels(modelList);
     } catch (err) {

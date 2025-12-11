@@ -20,6 +20,7 @@ from app.schemas.model import (
     ModelListResponse,
     ModelUpdate,
 )
+from app.services.adapters import public_model_service
 from app.services.model_aggregation_service import ModelType, model_aggregation_service
 
 router = APIRouter()
@@ -34,35 +35,13 @@ def list_models(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get Model list (paginated, active only) - User's personal models only
+    Get Model list (paginated, active only)
     """
     skip = (page - 1) * limit
-
-    # Query user's personal models from kinds table
-    query = db.query(Kind).filter(
-        Kind.user_id == current_user.id,
-        Kind.kind == "Model",
-        Kind.namespace == "default",
-        Kind.is_active == True,
+    items = public_model_service.get_models(
+        db=db, skip=skip, limit=limit, current_user=current_user
     )
-
-    total = query.count()
-    models = query.offset(skip).limit(limit).all()
-
-    # Convert to ModelInDB format
-    items = []
-    for model in models:
-        config = model.json.get("spec", {}).get("modelConfig", {})
-        items.append(
-            ModelInDB(
-                id=model.id,
-                name=model.name,
-                config=config,
-                is_active=model.is_active,
-                created_at=model.created_at,
-                updated_at=model.updated_at,
-            )
-        )
+    total = public_model_service.count_active_models(db=db, current_user=current_user)
 
     return {"total": total, "items": items}
 
@@ -83,52 +62,9 @@ def list_model_names(
       ]
     }
     """
-    # Query user's personal models from kinds table
-    models = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == current_user.id,
-            Kind.kind == "Model",
-            Kind.namespace == "default",
-            Kind.is_active == True,
-        )
-        .all()
+    data = public_model_service.list_model_names(
+        db=db, current_user=current_user, shell_type=shell_type
     )
-
-    # Filter by shell_type if needed
-    data = []
-    for model_kind in models:
-        try:
-            from app.schemas.kind import Model as ModelCRD
-
-            if not model_kind.json:
-                continue
-
-            model_crd = ModelCRD.model_validate(model_kind.json)
-            model_config = model_crd.spec.modelConfig
-            if isinstance(model_config, dict):
-                env = model_config.get("env", {})
-                model_type = env.get("model", "")
-
-                # Filter compatible models
-                if shell_type == "Agno" and model_type in ["openai", "claude"]:
-                    data.append(
-                        {
-                            "name": model_kind.name,
-                            "displayName": model_crd.metadata.displayName or model_kind.name,
-                        }
-                    )
-                elif shell_type == "ClaudeCode" and model_type == "claude":
-                    data.append(
-                        {
-                            "name": model_kind.name,
-                            "displayName": model_crd.metadata.displayName or model_kind.name,
-                        }
-                    )
-        except Exception as e:
-            logger.warning(f"Failed to parse model {model_kind.name}: {e}")
-            continue
-
     return {"data": data}
 
 
@@ -253,73 +189,8 @@ def create_model(
     User must have Developer+ permission in the group.
     Otherwise, creates a personal model in 'default' namespace.
     """
-    from app.services.group_permission import check_group_permission
-    from app.schemas.namespace import GroupRole
-
-    namespace = "default"
-
-    if group_name:
-        # Validate user has Developer+ permission in group
-        if not check_group_permission(db, current_user.id, group_name, GroupRole.Developer):
-            raise HTTPException(
-                status_code=403,
-                detail=f"You need at least Developer role in group '{group_name}' to create models"
-            )
-        namespace = group_name
-
-    # Check if model already exists in this namespace
-    existing = (
-        db.query(Kind)
-        .filter(
-            Kind.kind == "Model",
-            Kind.name == model_create.name,
-            Kind.namespace == namespace,
-            Kind.is_active == True,
-        )
-        .first()
-    )
-
-    if existing:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Model '{model_create.name}' already exists in namespace '{namespace}'"
-        )
-
-    # Create model in Kind table
-    model_json = {
-        "kind": "Model",
-        "apiVersion": "agent.wecode.io/v1",
-        "metadata": {
-            "name": model_create.name,
-            "namespace": namespace,
-        },
-        "spec": {
-            "modelConfig": model_create.config,
-            "isCustomConfig": False,  # New models are not custom configs
-        },
-        "status": {"state": "Available"},
-    }
-
-    db_obj = Kind(
-        user_id=current_user.id,
-        kind="Model",
-        name=model_create.name,
-        namespace=namespace,
-        json=model_json,
-        is_active=model_create.is_active,
-    )
-    db.add(db_obj)
-    db.commit()
-    db.refresh(db_obj)
-
-    # Return in ModelInDB format
-    return ModelInDB(
-        id=db_obj.id,
-        name=db_obj.name,
-        config=model_create.config,
-        is_active=db_obj.is_active,
-        created_at=db_obj.created_at,
-        updated_at=db_obj.updated_at,
+    return public_model_service.create_model(
+        db=db, obj_in=model_create, current_user=current_user
     )
 
 
@@ -352,94 +223,39 @@ def bulk_create_models(
       "skipped": [{"name": "...", "reason": "..."}]
     }
     """
-    from fastapi import HTTPException
+    result = public_model_service.bulk_create_models(
+        db=db, items=items, current_user=current_user
+    )
 
+    # Convert PublicModel objects to Model-like objects
     created = []
+    for pm in result.get("created", []):
+        model_data = {
+            "id": pm.id,
+            "name": pm.name,
+            "config": pm.json.get("spec", {}).get("modelConfig", {}),
+            "is_active": pm.is_active,
+            "created_at": pm.created_at,
+            "updated_at": pm.updated_at,
+        }
+        created.append(ModelInDB.model_validate(model_data))
+
     updated = []
-    skipped = []
-
-    for item in items:
-        try:
-            # Check if model already exists
-            existing = (
-                db.query(Kind)
-                .filter(
-                    Kind.user_id == current_user.id,
-                    Kind.kind == "Model",
-                    Kind.name == item.name,
-                    Kind.namespace == "default",
-                    Kind.is_active == True,
-                )
-                .first()
-            )
-
-            model_json = {
-                "kind": "Model",
-                "apiVersion": "agent.wecode.io/v1",
-                "metadata": {
-                    "name": item.name,
-                    "namespace": "default",
-                },
-                "spec": {
-                    "modelConfig": {"env": item.env},
-                    "isCustomConfig": False,
-                },
-                "status": {"state": "Available"},
-            }
-
-            if existing:
-                # Update existing model
-                existing.json = model_json
-                from sqlalchemy.orm.attributes import flag_modified
-                from datetime import datetime
-
-                flag_modified(existing, "json")
-                existing.updated_at = datetime.now()
-                db.commit()
-                db.refresh(existing)
-
-                updated.append(
-                    ModelInDB(
-                        id=existing.id,
-                        name=existing.name,
-                        config={"env": item.env},
-                        is_active=existing.is_active,
-                        created_at=existing.created_at,
-                        updated_at=existing.updated_at,
-                    )
-                )
-            else:
-                # Create new model
-                db_obj = Kind(
-                    user_id=current_user.id,
-                    kind="Model",
-                    name=item.name,
-                    namespace="default",
-                    json=model_json,
-                    is_active=True,
-                )
-                db.add(db_obj)
-                db.commit()
-                db.refresh(db_obj)
-
-                created.append(
-                    ModelInDB(
-                        id=db_obj.id,
-                        name=db_obj.name,
-                        config={"env": item.env},
-                        is_active=db_obj.is_active,
-                        created_at=db_obj.created_at,
-                        updated_at=db_obj.updated_at,
-                    )
-                )
-        except Exception as e:
-            logger.error(f"Failed to upsert model {item.name}: {e}")
-            skipped.append({"name": item.name, "reason": str(e)})
+    for pm in result.get("updated", []):
+        model_data = {
+            "id": pm.id,
+            "name": pm.name,
+            "config": pm.json.get("spec", {}).get("modelConfig", {}),
+            "is_active": pm.is_active,
+            "created_at": pm.created_at,
+            "updated_at": pm.updated_at,
+        }
+        updated.append(ModelInDB.model_validate(model_data))
 
     return {
         "created": created,
         "updated": updated,
-        "skipped": skipped,
+        "skipped": result.get("skipped", []),
     }
 
 
@@ -452,30 +268,8 @@ def get_model(
     """
     Get specified Model details
     """
-    from fastapi import HTTPException
-
-    model = (
-        db.query(Kind)
-        .filter(
-            Kind.id == model_id,
-            Kind.user_id == current_user.id,
-            Kind.kind == "Model",
-            Kind.is_active == True,
-        )
-        .first()
-    )
-
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
-
-    config = model.json.get("spec", {}).get("modelConfig", {})
-    return ModelDetail(
-        id=model.id,
-        name=model.name,
-        config=config,
-        is_active=model.is_active,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
+    return public_model_service.get_by_id(
+        db=db, model_id=model_id, current_user=current_user
     )
 
 
@@ -487,81 +281,10 @@ def update_model(
     db: Session = Depends(get_db),
 ):
     """
-    Update Model information.
-    For group models, user must have Developer+ permission.
+    Update Model information
     """
-    from app.services.group_permission import check_group_permission
-    from app.schemas.namespace import GroupRole
-
-    # Get the model
-    model = (
-        db.query(Kind)
-        .filter(Kind.id == model_id, Kind.kind == "Model", Kind.is_active == True)
-        .first()
-    )
-
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
-
-    # Check permissions
-    if model.namespace != "default":
-        # Group model - check permission
-        if not check_group_permission(
-            db, current_user.id, model.namespace, GroupRole.Developer
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail=f"You need at least Developer role in group '{model.namespace}' to update this model"
-            )
-    else:
-        # Personal model - check ownership
-        if model.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
-
-    # Update model
-    if model_update.name is not None:
-        # Check name uniqueness in the same namespace
-        existing = (
-            db.query(Kind)
-            .filter(
-                Kind.kind == "Model",
-                Kind.name == model_update.name,
-                Kind.namespace == model.namespace,
-                Kind.is_active == True,
-                Kind.id != model_id,
-            )
-            .first()
-        )
-        if existing:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Model '{model_update.name}' already exists in namespace '{model.namespace}'"
-            )
-
-        model.name = model_update.name
-        model.json["metadata"]["name"] = model_update.name
-
-    if model_update.config is not None:
-        model.json["spec"]["modelConfig"] = model_update.config
-
-    if model_update.is_active is not None:
-        model.is_active = model_update.is_active
-
-    from sqlalchemy.orm.attributes import flag_modified
-    from datetime import datetime
-
-    flag_modified(model, "json")
-    model.updated_at = datetime.now()
-    db.commit()
-    db.refresh(model)
-
-    return ModelInDB(
-        id=model.id,
-        name=model.name,
-        config=model.json["spec"]["modelConfig"],
-        is_active=model.is_active,
-        created_at=model.created_at,
-        updated_at=model.updated_at,
+    return public_model_service.update_model(
+        db=db, model_id=model_id, obj_in=model_update, current_user=current_user
     )
 
 
@@ -572,44 +295,11 @@ def delete_model(
     db: Session = Depends(get_db),
 ):
     """
-    Soft delete Model (set is_active to False).
-    For group models, user must have Developer+ permission.
+    Soft delete Model (set is_active to False)
     """
-    from app.services.group_permission import check_group_permission
-    from app.schemas.namespace import GroupRole
-
-    # Get the model
-    model = (
-        db.query(Kind)
-        .filter(Kind.id == model_id, Kind.kind == "Model", Kind.is_active == True)
-        .first()
+    public_model_service.delete_model(
+        db=db, model_id=model_id, current_user=current_user
     )
-
-    if not model:
-        raise HTTPException(status_code=404, detail="Model not found")
-
-    # Check permissions
-    if model.namespace != "default":
-        # Group model - check permission
-        if not check_group_permission(
-            db, current_user.id, model.namespace, GroupRole.Developer
-        ):
-            raise HTTPException(
-                status_code=403,
-                detail=f"You need at least Developer role in group '{model.namespace}' to delete this model"
-            )
-    else:
-        # Personal model - check ownership
-        if model.user_id != current_user.id:
-            raise HTTPException(status_code=403, detail="Access denied")
-
-    # Soft delete
-    model.is_active = False
-    from datetime import datetime
-
-    model.updated_at = datetime.now()
-    db.commit()
-
     return {"message": "Model deleted successfully"}
 
 

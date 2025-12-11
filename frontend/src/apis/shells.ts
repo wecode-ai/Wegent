@@ -5,17 +5,18 @@
 import { apiClient } from './client';
 
 // Shell Types
-export type ShellTypeEnum = 'public' | 'user';
+export type ShellTypeEnum = 'public' | 'user' | 'group';
 
 export interface UnifiedShell {
   name: string;
-  type: ShellTypeEnum; // 'public' or 'user' - identifies shell source
+  type: ShellTypeEnum; // 'public', 'user', or 'group' - identifies shell source
   displayName?: string | null;
   shellType: string; // Agent type: 'ClaudeCode' | 'Agno' | 'Dify'
   baseImage?: string | null;
   baseShellRef?: string | null;
   supportModel?: string[] | null;
   executionType?: 'local_engine' | 'external_api' | null; // Shell execution type
+  namespace?: string; // Resource namespace (group name or 'default')
 }
 
 export interface UnifiedShellListResponse {
@@ -81,9 +82,9 @@ export interface ValidationStatusResponse {
 // Shell Services
 export const shellApis = {
   /**
-   * Get unified list of all available shells (both public and user-defined)
+   * Get unified list of all available shells (public, user-defined, and group shells)
    *
-   * Each shell includes a 'type' field ('public' or 'user') to identify its source.
+   * Each shell includes a 'type' field ('public', 'user', or 'group') to identify its source.
    * @param scope - Resource scope: 'personal', 'group', or 'all'
    * @param groupName - Group name (required when scope is 'group')
    */

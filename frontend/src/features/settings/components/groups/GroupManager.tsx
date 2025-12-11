@@ -120,7 +120,7 @@ export function GroupManager() {
         <div className="border border-border rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-muted border-b border-border">
+              <thead className="bg-muted">
                 <tr>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.name')}
@@ -129,16 +129,10 @@ export function GroupManager() {
                     {t('groups.displayName')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.visibility')}
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.myRole')}
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
                     {t('groups.members')}
-                  </th>
-                  <th className="px-4 py-3 text-left text-sm font-medium text-text-primary">
-                    {t('groups.resources')}
                   </th>
                   <th className="px-4 py-3 text-right text-sm font-medium text-text-primary">
                     {t('actions.edit')}
@@ -154,7 +148,6 @@ export function GroupManager() {
                     <td className="px-4 py-3 text-sm text-text-secondary">
                       {group.display_name || '-'}
                     </td>
-                    <td className="px-4 py-3 text-sm">{getVisibilityBadge(group.visibility)}</td>
                     <td className="px-4 py-3 text-sm">
                       {group.my_role ? (
                         <Badge variant="secondary">{t(`groups.roles.${group.my_role}`)}</Badge>
@@ -165,27 +158,28 @@ export function GroupManager() {
                     <td className="px-4 py-3 text-sm text-text-secondary">
                       {group.member_count || 0}
                     </td>
-                    <td className="px-4 py-3 text-sm text-text-secondary">
-                      {group.resource_count || 0}
-                    </td>
                     <td className="px-4 py-3 text-sm text-right">
                       <div className="flex items-center justify-end gap-2">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleEditClick(group)}
-                          title={t('groupManager.editGroup')}
-                        >
-                          <PencilIcon className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => handleMembersClick(group)}
-                          title={t('groupManager.manageMembers')}
-                        >
-                          <UsersIcon className="w-4 h-4" />
-                        </Button>
+                        {group.my_role === 'Owner' && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleEditClick(group)}
+                            title={t('groupManager.editGroup')}
+                          >
+                            <PencilIcon className="w-4 h-4" />
+                          </Button>
+                        )}
+                        {(group.my_role === 'Owner' || group.my_role === 'Maintainer') && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleMembersClick(group)}
+                            title={t('groupManager.manageMembers')}
+                          >
+                            <UsersIcon className="w-4 h-4" />
+                          </Button>
+                        )}
                         {group.my_role === 'Owner' && (
                           <Button
                             variant="ghost"
