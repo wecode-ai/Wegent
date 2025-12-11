@@ -9,6 +9,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Tag } from '@/components/ui/tag';
+import { ResourceListItem } from '@/components/common/ResourceListItem';
 import {
   CpuChipIcon,
   PencilIcon,
@@ -317,70 +318,66 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName, groupRoleMap, o
                 key={`user-${displayModel.name}`}
                 className="p-4 bg-base hover:bg-hover transition-colors"
               >
-                        <div className="flex items-center justify-between min-w-0">
-                          <div className="flex items-center space-x-3 min-w-0 flex-1">
-                            <CpuChipIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                            <div className="flex flex-col justify-center min-w-0 flex-1">
-                              <div className="flex items-center space-x-2 min-w-0">
-                                <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                                  {displayModel.displayName}
-                                </h3>
-                              </div>
-                              {/* Show ID if different from display name */}
-                              {displayModel.displayName !== displayModel.name && (
-                                <p className="text-xs text-text-muted truncate">
-                                  ID: {displayModel.name}
-                                </p>
-                              )}
-                              <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                                <Tag variant="default" className="capitalize">
-                                  {getProviderLabel(displayModel.modelType)}
-                                </Tag>
-                                <Tag variant="info" className="hidden sm:inline-flex">
-                                  {displayModel.modelId}
-                                </Tag>
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleTestConnection(displayModel)}
-                              disabled={testingModelName === displayModel.name}
-                              title={t('models.test_connection')}
-                            >
-                              {testingModelName === displayModel.name ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <BeakerIcon className="w-4 h-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleEdit(displayModel)}
-                              disabled={loadingModelName === displayModel.name}
-                              title={t('models.edit')}
-                            >
-                              {loadingModelName === displayModel.name ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                <PencilIcon className="w-4 h-4" />
-                              )}
-                            </Button>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 hover:text-error"
-                              onClick={() => setDeleteConfirmModel(displayModel)}
-                              title={t('models.delete')}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </Button>
-                          </div>
+                <div className="flex items-center justify-between min-w-0">
+                  <ResourceListItem
+                    name={displayModel.name}
+                    displayName={displayModel.displayName}
+                    showId={true}
+                    icon={<CpuChipIcon className="w-5 h-5 text-primary" />}
+                    tags={[
+                      {
+                        key: 'provider',
+                        label: getProviderLabel(displayModel.modelType),
+                        variant: 'default',
+                        className: 'capitalize',
+                      },
+                      {
+                        key: 'model-id',
+                        label: displayModel.modelId,
+                        variant: 'info',
+                        className: 'hidden sm:inline-flex',
+                      },
+                    ]}
+                  />
+                  <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handleTestConnection(displayModel)}
+                      disabled={testingModelName === displayModel.name}
+                      title={t('models.test_connection')}
+                    >
+                      {testingModelName === displayModel.name ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <BeakerIcon className="w-4 h-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => handleEdit(displayModel)}
+                      disabled={loadingModelName === displayModel.name}
+                      title={t('models.edit')}
+                    >
+                      {loadingModelName === displayModel.name ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <PencilIcon className="w-4 h-4" />
+                      )}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 hover:text-error"
+                      onClick={() => setDeleteConfirmModel(displayModel)}
+                      title={t('models.delete')}
+                    >
+                      <TrashIcon className="w-4 h-4" />
+                    </Button>
+                  </div>
                 </div>
               </Card>
             ))}
@@ -401,27 +398,30 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName, groupRoleMap, o
                 className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
               >
                 <div className="flex items-center justify-between min-w-0">
-                  <div className="flex items-center space-x-3 min-w-0 flex-1">
-                    <CpuChipIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                    <div className="flex flex-col justify-center min-w-0 flex-1">
-                      <div className="flex items-center space-x-2 min-w-0">
-                        <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                          {displayModel.displayName}
-                        </h3>
-                        <Tag variant="success" className="text-xs">
-                          {t('models.group')}
-                        </Tag>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                        <Tag variant="default" className="capitalize">
-                          {getProviderLabel(displayModel.modelType)}
-                        </Tag>
-                        <Tag variant="info" className="hidden sm:inline-flex">
-                          {displayModel.modelId}
-                        </Tag>
-                      </div>
-                    </div>
-                  </div>
+                  <ResourceListItem
+                    name={displayModel.name}
+                    displayName={displayModel.displayName}
+                    showId={true}
+                    icon={<CpuChipIcon className="w-5 h-5 text-primary" />}
+                    tags={[
+                      {
+                        key: 'provider',
+                        label: getProviderLabel(displayModel.modelType),
+                        variant: 'default',
+                        className: 'capitalize',
+                      },
+                      {
+                        key: 'model-id',
+                        label: displayModel.modelId,
+                        variant: 'info',
+                        className: 'hidden sm:inline-flex',
+                      },
+                    ]}
+                  >
+                    <Tag variant="success" className="text-xs">
+                      {t('models.group')}
+                    </Tag>
+                  </ResourceListItem>
                   {/* Action buttons for group resources */}
                   <div className="flex items-center gap-1 flex-shrink-0 ml-3">
                     {canEditGroupResource(displayModel.namespace) && (
@@ -472,27 +472,28 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName, groupRoleMap, o
                 className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
               >
                 <div className="flex items-center justify-between min-w-0">
-                  <div className="flex items-center space-x-3 min-w-0 flex-1">
-                    <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                    <div className="flex flex-col justify-center min-w-0 flex-1">
-                      <div className="flex items-center space-x-2 min-w-0">
-                        <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                          {displayModel.displayName}
-                        </h3>
-                        <Tag variant="info" className="text-xs">
-                          {t('models.public')}
-                        </Tag>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                        <Tag variant="default" className="capitalize">
-                          {getProviderLabel(displayModel.modelType)}
-                        </Tag>
-                        <Tag variant="info" className="hidden sm:inline-flex">
-                          {displayModel.modelId}
-                        </Tag>
-                      </div>
-                    </div>
-                  </div>
+                  <ResourceListItem
+                    name={displayModel.name}
+                    displayName={displayModel.displayName}
+                    showId={true}
+                    isPublic={true}
+                    publicLabel={t('models.public')}
+                    icon={<GlobeAltIcon className="w-5 h-5 text-primary" />}
+                    tags={[
+                      {
+                        key: 'provider',
+                        label: getProviderLabel(displayModel.modelType),
+                        variant: 'default',
+                        className: 'capitalize',
+                      },
+                      {
+                        key: 'model-id',
+                        label: displayModel.modelId,
+                        variant: 'info',
+                        className: 'hidden sm:inline-flex',
+                      },
+                    ]}
+                  />
                 </div>
               </Card>
             ))}

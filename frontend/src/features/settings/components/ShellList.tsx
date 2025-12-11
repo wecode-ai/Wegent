@@ -9,6 +9,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { ResourceListItem } from '@/components/common/ResourceListItem';
+import { Tag } from '@/components/ui/tag';
 import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons/react/24/outline';
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
@@ -194,35 +195,36 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, gr
                         className="p-4 bg-base hover:bg-hover transition-colors"
                       >
                         <div className="flex items-center justify-between min-w-0">
-                          <div className="flex items-center space-x-3 min-w-0 flex-1">
-                            <CommandLineIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                            <div className="flex flex-col justify-center min-w-0 flex-1">
-                              <div className="flex items-center space-x-2 min-w-0">
-                                <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                                  {shell.displayName || shell.name}
-                                </h3>
-                              </div>
-                              {shell.displayName && shell.displayName !== shell.name && (
-                                <p className="text-xs text-text-muted truncate">ID: {shell.name}</p>
-                              )}
-                              <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                                <Tag variant="default" className="capitalize">
-                                  {shell.shellType}
-                                </Tag>
-                                <Tag variant="info" className="hidden sm:inline-flex text-xs">
-                                  {getExecutionTypeLabel(shell.executionType)}
-                                </Tag>
-                                {shell.baseImage && (
-                                  <Tag
-                                    variant="default"
-                                    className="hidden md:inline-flex text-xs truncate max-w-[200px]"
-                                  >
-                                    {shell.baseImage}
-                                  </Tag>
-                                )}
-                              </div>
-                            </div>
-                          </div>
+                          <ResourceListItem
+                            name={shell.name}
+                            displayName={shell.displayName || undefined}
+                            showId={true}
+                            icon={<CommandLineIcon className="w-5 h-5 text-primary" />}
+                            tags={[
+                              {
+                                key: 'shell-type',
+                                label: shell.shellType,
+                                variant: 'default',
+                                className: 'capitalize',
+                              },
+                              {
+                                key: 'execution-type',
+                                label: getExecutionTypeLabel(shell.executionType),
+                                variant: 'info',
+                                className: 'hidden sm:inline-flex text-xs',
+                              },
+                              ...(shell.baseImage
+                                ? [
+                                    {
+                                      key: 'base-image',
+                                      label: shell.baseImage,
+                                      variant: 'default' as const,
+                                      className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
+                                    },
+                                  ]
+                                : []),
+                            ]}
+                          />
                           <div className="flex items-center gap-1 flex-shrink-0 ml-3">
                             <Button
                               variant="ghost"
@@ -263,62 +265,67 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, gr
                         className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
                       >
                         <div className="flex items-center justify-between min-w-0">
-                        <div className="flex items-center space-x-3 min-w-0 flex-1">
-                          <CommandLineIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                          <div className="flex flex-col justify-center min-w-0 flex-1">
-                            <div className="flex items-center space-x-2 min-w-0">
-                              <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                                {shell.displayName || shell.name}
-                              </h3>
-                              <Tag variant="success" className="text-xs">
-                                {t('shells.group')}
-                              </Tag>
-                            </div>
-                            <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                              <Tag variant="default" className="capitalize">
-                                {shell.shellType}
-                              </Tag>
-                              <Tag variant="info" className="hidden sm:inline-flex text-xs">
-                                {getExecutionTypeLabel(shell.executionType)}
-                              </Tag>
-                              {shell.baseImage && (
-                                <Tag
-                                  variant="default"
-                                  className="hidden md:inline-flex text-xs truncate max-w-[200px]"
-                                >
-                                  {shell.baseImage}
-                                </Tag>
-                              )}
-                            </div>
+                          <ResourceListItem
+                            name={shell.name}
+                            displayName={shell.displayName || undefined}
+                            showId={true}
+                            icon={<CommandLineIcon className="w-5 h-5 text-primary" />}
+                            tags={[
+                              {
+                                key: 'shell-type',
+                                label: shell.shellType,
+                                variant: 'default',
+                                className: 'capitalize',
+                              },
+                              {
+                                key: 'execution-type',
+                                label: getExecutionTypeLabel(shell.executionType),
+                                variant: 'info',
+                                className: 'hidden sm:inline-flex text-xs',
+                              },
+                              ...(shell.baseImage
+                                ? [
+                                    {
+                                      key: 'base-image',
+                                      label: shell.baseImage,
+                                      variant: 'default' as const,
+                                      className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
+                                    },
+                                  ]
+                                : []),
+                            ]}
+                          >
+                            <Tag variant="success" className="text-xs">
+                              {t('shells.group')}
+                            </Tag>
+                          </ResourceListItem>
+                          {/* Action buttons for group resources */}
+                          <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                            {canEditGroupResource(shell.namespace || 'default') && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8"
+                                onClick={() => handleEdit(shell)}
+                                title={t('shells.edit')}
+                              >
+                                <PencilIcon className="w-4 h-4" />
+                              </Button>
+                            )}
+                            {canDeleteGroupResource(shell.namespace || 'default') && (
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-8 w-8 hover:text-error"
+                                onClick={() => setDeleteConfirmShell(shell)}
+                                title={t('shells.delete')}
+                              >
+                                <TrashIcon className="w-4 h-4" />
+                              </Button>
+                            )}
                           </div>
                         </div>
-                        {/* Action buttons for group resources */}
-                        <div className="flex items-center gap-1 flex-shrink-0 ml-3">
-                          {canEditGroupResource(shell.namespace || 'default') && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8"
-                              onClick={() => handleEdit(shell)}
-                              title={t('shells.edit')}
-                            >
-                              <PencilIcon className="w-4 h-4" />
-                            </Button>
-                          )}
-                          {canDeleteGroupResource(shell.namespace || 'default') && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 hover:text-error"
-                              onClick={() => setDeleteConfirmShell(shell)}
-                              title={t('shells.delete')}
-                            >
-                              <TrashIcon className="w-4 h-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-                    </Card>
+                      </Card>
                     ))}
                   </div>
                 </div>
@@ -337,35 +344,38 @@ const ShellList: React.FC<ShellListProps> = ({ scope = 'personal', groupName, gr
                         className="p-4 bg-base hover:bg-hover transition-colors border-l-2 border-l-primary"
                       >
                         <div className="flex items-center justify-between min-w-0">
-                          <div className="flex items-center space-x-3 min-w-0 flex-1">
-                            <GlobeAltIcon className="w-5 h-5 text-primary flex-shrink-0" />
-                            <div className="flex flex-col justify-center min-w-0 flex-1">
-                              <div className="flex items-center space-x-2 min-w-0">
-                                <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                                  {shell.displayName || shell.name}
-                                </h3>
-                                <Tag variant="info" className="text-xs">
-                                  {t('shells.public')}
-                                </Tag>
-                              </div>
-                              <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                                <Tag variant="default" className="capitalize">
-                                  {shell.shellType}
-                                </Tag>
-                                <Tag variant="info" className="hidden sm:inline-flex text-xs">
-                                  {getExecutionTypeLabel(shell.executionType)}
-                                </Tag>
-                                {shell.baseImage && (
-                                  <Tag
-                                    variant="default"
-                                    className="hidden md:inline-flex text-xs truncate max-w-[200px]"
-                                  >
-                                    {shell.baseImage}
-                                  </Tag>
-                                )}
-                              </div>
-                            </div>
-                          </div>
+                          <ResourceListItem
+                            name={shell.name}
+                            displayName={shell.displayName || undefined}
+                            showId={true}
+                            isPublic={true}
+                            publicLabel={t('shells.public')}
+                            icon={<GlobeAltIcon className="w-5 h-5 text-primary" />}
+                            tags={[
+                              {
+                                key: 'shell-type',
+                                label: shell.shellType,
+                                variant: 'default',
+                                className: 'capitalize',
+                              },
+                              {
+                                key: 'execution-type',
+                                label: getExecutionTypeLabel(shell.executionType),
+                                variant: 'info',
+                                className: 'hidden sm:inline-flex text-xs',
+                              },
+                              ...(shell.baseImage
+                                ? [
+                                    {
+                                      key: 'base-image',
+                                      label: shell.baseImage,
+                                      variant: 'default' as const,
+                                      className: 'hidden md:inline-flex text-xs truncate max-w-[200px]',
+                                    },
+                                  ]
+                                : []),
+                            ]}
+                          />
                         </div>
                       </Card>
                     ))}
