@@ -411,22 +411,29 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         return self._convert_to_bot_dict(bot, ghost, shell, model, obj_in.agent_config)
 
     def get_user_bots(
-        self, db: Session, *, user_id: int, skip: int = 0, limit: int = 100, scope: str = "personal", group_name: Optional[str] = None
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        skip: int = 0,
+        limit: int = 100,
+        scope: str = "personal",
+        group_name: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
         Get user's Bot list (only active bots)
         Optimization: avoid N+1 queries by batch-fetching Ghost/Shell/Model components to significantly reduce database round trips.
-        
+
         Scope behavior:
         - scope='personal' (default): personal bots only (namespace='default')
         - scope='group': group bots (requires group_name or queries all user's groups)
         - scope='all': personal + all user's groups
         """
         from app.services.group_permission import get_user_groups
-        
+
         # Determine which namespaces to query based on scope
         namespaces_to_query = []
-        
+
         if scope == "personal":
             # Personal bots only (default namespace)
             namespaces_to_query = ["default"]
@@ -443,11 +450,11 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             namespaces_to_query = ["default"] + get_user_groups(db, user_id)
         else:
             raise ValueError(f"Invalid scope: {scope}")
-        
+
         # Handle empty namespaces case
         if not namespaces_to_query:
             return []
-        
+
         # Query bots from all target namespaces
         bots = (
             db.query(Kind)
@@ -455,7 +462,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                 Kind.user_id == user_id,
                 Kind.kind == "Bot",
                 Kind.namespace.in_(namespaces_to_query),
-                Kind.is_active == True
+                Kind.is_active == True,
             )
             .order_by(Kind.created_at.desc())
             .offset(skip)
@@ -832,9 +839,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             try:
                 db.refresh(model)
             except (AttributeError, TypeError) as e:
-                logger.debug(
-                    "Model refresh skipped: %s", e
-                )
+                logger.debug("Model refresh skipped: %s", e)
 
         return self._convert_to_bot_dict(bot, ghost, shell, model, return_agent_config)
 
@@ -896,20 +901,27 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         db.commit()
 
-    def count_user_bots(self, db: Session, *, user_id: int, scope: str = "personal", group_name: Optional[str] = None) -> int:
+    def count_user_bots(
+        self,
+        db: Session,
+        *,
+        user_id: int,
+        scope: str = "personal",
+        group_name: Optional[str] = None,
+    ) -> int:
         """
         Count user's active bots based on scope.
-        
+
         Scope behavior:
         - scope='personal' (default): personal bots only
         - scope='group': group bots (requires group_name or counts all user's groups)
         - scope='all': personal + all user's groups
         """
         from app.services.group_permission import get_user_groups
-        
+
         # Determine which namespaces to count based on scope
         namespaces_to_count = []
-        
+
         if scope == "personal":
             namespaces_to_count = ["default"]
         elif scope == "group":
@@ -924,18 +936,18 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
             namespaces_to_count = ["default"] + get_user_groups(db, user_id)
         else:
             raise ValueError(f"Invalid scope: {scope}")
-        
+
         # Handle empty namespaces case
         if not namespaces_to_count:
             return 0
-        
+
         return (
             db.query(Kind)
             .filter(
                 Kind.user_id == user_id,
                 Kind.kind == "Bot",
                 Kind.namespace.in_(namespaces_to_count),
-                Kind.is_active == True
+                Kind.is_active == True,
             )
             .count()
         )
@@ -1078,7 +1090,7 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
                                 Kind.user_id == 0,
                                 Kind.kind == "Model",
                                 Kind.name == n,
-                                Kind.namespace == ns
+                                Kind.namespace == ns,
                             )
                             for (n, ns) in keys
                         ]

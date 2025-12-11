@@ -2,7 +2,17 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-from app.api.endpoints import admin, auth, groups, health, oidc, quota, repository, users, wiki
+from app.api.endpoints import (
+    admin,
+    auth,
+    groups,
+    health,
+    oidc,
+    quota,
+    repository,
+    users,
+    wiki,
+)
 from app.api.endpoints.adapter import (
     agents,
     attachments,

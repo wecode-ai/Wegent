@@ -64,7 +64,9 @@ class UnifiedModel:
         namespace: str = "default",
     ):
         self.name = name
-        self.type = model_type  # 'public' or 'user' or 'group' - identifies model source
+        self.type = (
+            model_type  # 'public' or 'user' or 'group' - identifies model source
+        )
         self.display_name = display_name
         self.provider = provider
         self.model_id = model_id
@@ -168,7 +170,10 @@ class ModelAggregationService:
         """
         # Shell type to model provider mapping
         # Agno supports OpenAI, Claude and Gemini models
-        shell_provider_map = {"Agno": ["openai", "claude", "gemini"], "ClaudeCode": ["claude"]}
+        shell_provider_map = {
+            "Agno": ["openai", "claude", "gemini"],
+            "ClaudeCode": ["claude"],
+        }
 
         # If supportModel is specified in shell, use it
         if support_model:
@@ -196,9 +201,11 @@ class ModelAggregationService:
         Returns:
             List of supported model providers
         """
-        
+
         shell_row = (
-            db.query(Kind.json).filter(Kind.user_id == 0, Kind.kind == "Shell", Kind.name == shell_type).first()
+            db.query(Kind.json)
+            .filter(Kind.user_id == 0, Kind.kind == "Shell", Kind.name == shell_type)
+            .first()
         )
 
         if shell_row and isinstance(shell_row[0], dict):

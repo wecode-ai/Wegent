@@ -49,7 +49,9 @@ class TeamBase(BaseModel):
 class TeamCreate(TeamBase):
     """Team creation model"""
 
-    namespace: str = "default"  # Group namespace, defaults to 'default' for personal teams
+    namespace: str = (
+        "default"  # Group namespace, defaults to 'default' for personal teams
+    )
 
 
 class TeamUpdate(BaseModel):

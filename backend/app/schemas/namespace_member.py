@@ -47,7 +47,7 @@ class GroupMemberResponse(GroupMemberBase):
 
 class AddMemberResult(BaseModel):
     """Result of adding a member operation"""
-    
+
     success: bool
     message: str
     data: Optional[GroupMemberResponse] = None

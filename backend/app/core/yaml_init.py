@@ -255,7 +255,7 @@ def apply_public_shells(
                     Kind.user_id == 0,
                     Kind.kind == "Shell",
                     Kind.name == name,
-                    Kind.namespace == namespace
+                    Kind.namespace == namespace,
                 )
                 .first()
             )
@@ -271,7 +271,7 @@ def apply_public_shells(
                         name=name,
                         namespace=namespace,
                         json=resource,
-                        is_active=True
+                        is_active=True,
                     )
                     db.add(new_shell)
                     db.commit()
@@ -313,7 +313,7 @@ def apply_public_shells(
                     name=name,
                     namespace=namespace,
                     json=resource,
-                    is_active=True
+                    is_active=True,
                 )
                 db.add(new_shell)
                 db.commit()
