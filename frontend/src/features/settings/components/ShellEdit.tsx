@@ -45,9 +45,17 @@ interface ShellEditProps {
   shell: UnifiedShell | null;
   onClose: () => void;
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  scope?: 'personal' | 'group' | 'all';
+  groupName?: string;
 }
 
-const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
+const ShellEdit: React.FC<ShellEditProps> = ({
+  shell,
+  onClose,
+  toast,
+  scope = 'personal',
+  groupName,
+}) => {
   const { t } = useTranslation('common');
   const isEditing = !!shell;
 
@@ -276,6 +284,7 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
   };
 
   // Check if save button should be disabled
+  // Check if save button should be disabled
   const isSaveDisabled = useCallback(() => {
     // If there's no baseImage, no validation needed
     if (!baseImage) return false;
@@ -289,7 +298,6 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
 
     return false;
   }, [baseImage, isEditing, originalBaseImage, validationStatus]);
-
   const getSaveButtonTooltip = useCallback(() => {
     if (isSaveDisabled()) {
       return t('shells.validation_required');
@@ -333,6 +341,16 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
         });
         return;
       }
+
+      // Validation for group scope: must have groupName
+      if (scope === 'group' && !groupName) {
+        toast({
+          variant: 'destructive',
+          title: t('shells.errors.group_required'),
+          description: t('shells.errors.group_required_hint'),
+        });
+        return;
+      }
     }
 
     setSaving(true);
@@ -346,12 +364,15 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
           title: t('shells.update_success'),
         });
       } else {
-        await shellApis.createShell({
-          name: name.trim(),
-          displayName: displayName.trim() || undefined,
-          baseShellRef,
-          baseImage: baseImage.trim(),
-        });
+        await shellApis.createShell(
+          {
+            name: name.trim(),
+            displayName: displayName.trim() || undefined,
+            baseShellRef,
+            baseImage: baseImage.trim(),
+          },
+          groupName
+        );
         toast({
           title: t('shells.create_success'),
         });
@@ -504,12 +525,13 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast }) => {
           <p className="text-xs text-text-muted">{t('shells.base_shell_hint')}</p>
 
           {/* Software Requirements Display */}
-          {baseShellRef && (() => {
-            const selectedShell = baseShells.find(s => s.name === baseShellRef);
-            return selectedShell ? (
-              <SoftwareRequirements shellType={selectedShell.shellType} />
-            ) : null;
-          })()}
+          {baseShellRef &&
+            (() => {
+              const selectedShell = baseShells.find(s => s.name === baseShellRef);
+              return selectedShell ? (
+                <SoftwareRequirements shellType={selectedShell.shellType} />
+              ) : null;
+            })()}
         </div>
 
         {/* Base Image */}

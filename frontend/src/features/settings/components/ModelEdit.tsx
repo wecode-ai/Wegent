@@ -25,6 +25,8 @@ interface ModelEditProps {
   model: ModelCRD | null;
   onClose: () => void;
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  groupName?: string; // Required when creating in group scope
+  scope?: 'personal' | 'group';
 }
 
 const OPENAI_MODEL_OPTIONS = [
@@ -49,9 +51,10 @@ const GEMINI_MODEL_OPTIONS = [
   { value: 'custom', label: 'Custom...' },
 ];
 
-const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
+const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast, groupName, scope }) => {
   const { t } = useTranslation('common');
   const isEditing = !!model;
+  const isGroupScope = scope === 'group';
 
   // Form state
   const [modelIdName, setModelIdName] = useState(model?.metadata.name || ''); // Unique identifier (ID)
@@ -190,6 +193,16 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
   };
 
   const handleSave = async () => {
+    // Validation for group scope: must have groupName
+    if (isGroupScope && !isEditing && !groupName) {
+      toast({
+        variant: 'destructive',
+        title: '请先选择一个群组',
+        description: '在群组模式下创建模型时必须选择目标群组',
+      });
+      return;
+    }
+
     // Validation
     if (!modelIdName.trim()) {
       toast({
@@ -243,7 +256,7 @@ const ModelEdit: React.FC<ModelEditProps> = ({ model, onClose, toast }) => {
         kind: 'Model',
         metadata: {
           name: modelIdName.trim(),
-          namespace: 'default',
+          namespace: isGroupScope && groupName ? groupName : 'default',
           displayName: displayName.trim() || undefined,
         },
         spec: {

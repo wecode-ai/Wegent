@@ -17,7 +17,7 @@ from app.services.k_batch import batch_service
 router = APIRouter()
 
 
-@router.post("/namespaces/{namespace}/apply", response_model=BatchResponse)
+@router.post("/namespaces/{namespace:path}/apply", response_model=BatchResponse)
 async def apply_resources(
     namespace: str,
     resources: List[Dict[str, Any]],
@@ -40,7 +40,7 @@ async def apply_resources(
     )
 
 
-@router.post("/namespaces/{namespace}/delete", response_model=BatchResponse)
+@router.post("/namespaces/{namespace:path}/delete", response_model=BatchResponse)
 async def delete_resources(
     namespace: str,
     resources: List[Dict[str, Any]],

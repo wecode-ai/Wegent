@@ -111,6 +111,7 @@ export default function TeamSelector({
   const selectItems: SearchableSelectItem[] = useMemo(() => {
     return filteredTeams.map(team => {
       const isSharedTeam = team.share_status === 2 && team.user?.user_name;
+      const isGroupTeam = team.namespace && team.namespace !== 'default';
       return {
         value: team.id.toString(),
         label: team.name,
@@ -124,6 +125,14 @@ export default function TeamSelector({
             >
               {team.name}
             </span>
+            {isGroupTeam && (
+              <Tag
+                className="ml-2 text-xs !m-0 flex-shrink-0"
+                variant="info"
+              >
+                {team.namespace}
+              </Tag>
+            )}
             {isSharedTeam && (
               <Tag
                 className="ml-2 text-xs !m-0 flex-shrink-0"
@@ -167,11 +176,20 @@ export default function TeamSelector({
             if (!item) return null;
             const team = filteredTeams.find(t => t.id.toString() === item.value);
             const isSharedTeam = team?.share_status === 2 && team?.user?.user_name;
+            const isGroupTeam = team?.namespace && team.namespace !== 'default';
             return (
               <div className="flex items-center gap-2 min-w-0">
                 <span className="truncate max-w-full flex-1 min-w-0" title={item.label}>
                   {item.label}
                 </span>
+                {isGroupTeam && (
+                  <Tag
+                    className="text-xs !m-0 flex-shrink-0 ml-2"
+                    variant="info"
+                  >
+                    {team.namespace}
+                  </Tag>
+                )}
                 {isSharedTeam && (
                   <Tag
                     className="text-xs !m-0 flex-shrink-0 ml-2"

@@ -179,12 +179,30 @@ async def download_attachment(
     if attachment is None:
         raise HTTPException(status_code=404, detail="Attachment not found")
 
+    # Get binary data from the appropriate storage backend
+    # For MySQL storage, this returns attachment.binary_data
+    # For external storage (MinIO/S3), this retrieves from the storage backend
+    binary_data = attachment_service.get_attachment_binary_data(
+        db=db,
+        attachment=attachment,
+    )
+
+    if binary_data is None:
+        logger.error(
+            f"Failed to retrieve binary data for attachment {attachment_id}, "
+            f"storage_backend={attachment.storage_backend}, "
+            f"storage_key={attachment.storage_key}"
+        )
+        raise HTTPException(
+            status_code=500, detail="Failed to retrieve attachment data"
+        )
+
     # Encode filename for Content-Disposition header to support non-ASCII characters
     # Use RFC 5987 encoding: filename*=UTF-8''encoded_filename
     encoded_filename = quote(attachment.original_filename)
 
     return Response(
-        content=attachment.binary_data,
+        content=binary_data,
         media_type=attachment.mime_type,
         headers={
             "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"

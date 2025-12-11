@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
-from app.models.public_shell import PublicShell
+from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.agent import AgentCreate, AgentUpdate
 from app.schemas.kind import Shell
@@ -16,28 +16,28 @@ from app.services.base import BaseService
 
 class AgentAdapter:
     """
-    Adapter to convert PublicShell to Agent-like object for API compatibility
+    Adapter to convert Kind (Shell) to Agent-like object for API compatibility
     """
 
     @staticmethod
-    def to_agent_dict(public_shell: PublicShell) -> Dict[str, Any]:
+    def to_agent_dict(kind: Kind) -> Dict[str, Any]:
         """
-        Convert PublicShell to Agent-like dictionary
+        Convert Kind (Shell) to Agent-like dictionary
         """
         # Extract supportModel from json.spec.supportModel and convert to mode_filter
         mode_filter = []
-        if isinstance(public_shell.json, dict):
-            shell_crd = Shell.model_validate(public_shell.json)
+        if isinstance(kind.json, dict):
+            shell_crd = Shell.model_validate(kind.json)
             mode_filter = shell_crd.spec.supportModel or []
 
         config = {"mode_filter": mode_filter}
 
         return {
-            "id": public_shell.id,
-            "name": public_shell.name,
+            "id": kind.id,
+            "name": kind.name,
             "config": config,
-            "created_at": public_shell.created_at,
-            "updated_at": public_shell.updated_at,
+            "created_at": kind.created_at,
+            "updated_at": kind.updated_at,
         }
 
 
@@ -51,21 +51,26 @@ class MockAgent:
             setattr(self, key, value)
 
 
-class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
+class PublicShellService(BaseService[Kind, AgentCreate, AgentUpdate]):
     """
-    Public Shell service class - adapter for public_shells table
+    Public Shell service class - queries kinds table with user_id=0
     """
 
     def create_agent(
         self, db: Session, *, obj_in: AgentCreate, current_user: User
     ) -> Dict[str, Any]:
         """
-        Create a Public Shell entry
+        Create a Public Shell entry in kinds table
         """
         # Ensure unique name in default namespace
         existed = (
-            db.query(PublicShell)
-            .filter(PublicShell.name == obj_in.name, PublicShell.namespace == "default")
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.name == obj_in.name,
+                Kind.namespace == "default",
+            )
             .first()
         )
         if existed:
@@ -87,7 +92,9 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        db_obj = PublicShell(
+        db_obj = Kind(
+            user_id=0,
+            kind="Shell",
             name=obj_in.name,
             namespace="default",
             json=json_data,
@@ -102,12 +109,17 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         self, db: Session, *, skip: int = 0, limit: int = 100, current_user: User
     ) -> List[Dict[str, Any]]:
         """
-        Get public shells (paginated)
+        Get public shells from kinds table (paginated)
         """
         public_shells = (
-            db.query(PublicShell)
-            .filter(PublicShell.is_active == True)  # noqa: E712
-            .order_by(PublicShell.created_at.desc())
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.namespace == "default",
+                Kind.is_active == True,  # noqa: E712
+            )
+            .order_by(Kind.created_at.desc())
             .offset(skip)
             .limit(limit)
             .all()
@@ -116,22 +128,33 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
 
     def count_agents(self, db: Session, *, current_user: User) -> int:
         """
-        Count all active public shells
+        Count all active public shells in kinds table
         """
         return (
-            db.query(PublicShell).filter(PublicShell.is_active == True).count()
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .count()
         )  # noqa: E712
 
     def get_by_id(
         self, db: Session, *, agent_id: int, current_user: User
     ) -> Dict[str, Any]:
         """
-        Get public shell by ID
+        Get public shell by ID from kinds table
         """
         shell = (
-            db.query(PublicShell)
+            db.query(Kind)
             .filter(
-                PublicShell.id == agent_id, PublicShell.is_active == True  # noqa: E712
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.id == agent_id,
+                Kind.namespace == "default",
+                Kind.is_active == True,  # noqa: E712
             )
             .first()
         )
@@ -143,13 +166,17 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         self, db: Session, *, agent_id: int, obj_in: AgentUpdate, current_user: User
     ) -> Dict[str, Any]:
         """
-        Update public shell by ID
+        Update public shell by ID in kinds table
         """
-        # Get the actual PublicShell object for update
+        # Get the actual Kind object for update
         shell = (
-            db.query(PublicShell)
+            db.query(Kind)
             .filter(
-                PublicShell.id == agent_id, PublicShell.is_active == True  # noqa: E712
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.id == agent_id,
+                Kind.namespace == "default",
+                Kind.is_active == True,  # noqa: E712
             )
             .first()
         )
@@ -161,10 +188,12 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         # If updating name, ensure uniqueness
         if "name" in update_data and update_data["name"] != shell.name:
             existed = (
-                db.query(PublicShell)
+                db.query(Kind)
                 .filter(
-                    PublicShell.name == update_data["name"],
-                    PublicShell.namespace == "default",
+                    Kind.user_id == 0,
+                    Kind.kind == "Shell",
+                    Kind.name == update_data["name"],
+                    Kind.namespace == "default",
                 )
                 .first()
             )
@@ -203,13 +232,17 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
 
     def delete_agent(self, db: Session, *, agent_id: int, current_user: User) -> None:
         """
-        Delete public shell
+        Delete public shell from kinds table
         """
-        # Get the actual PublicShell object for deletion
+        # Get the actual Kind object for deletion
         shell = (
-            db.query(PublicShell)
+            db.query(Kind)
             .filter(
-                PublicShell.id == agent_id, PublicShell.is_active == True  # noqa: E712
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.id == agent_id,
+                Kind.namespace == "default",
+                Kind.is_active == True,  # noqa: E712
             )
             .first()
         )
@@ -219,4 +252,4 @@ class PublicShellService(BaseService[PublicShell, AgentCreate, AgentUpdate]):
         db.commit()
 
 
-public_shell_service = PublicShellService(PublicShell)
+public_shell_service = PublicShellService(Kind)
