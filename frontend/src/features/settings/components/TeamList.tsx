@@ -31,7 +31,6 @@ import { sortBotsByUpdatedAt } from '@/utils/bot';
 import { useRouter } from 'next/navigation';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +39,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { ResourceListItem } from '@/components/common/ResourceListItem';
 
 export default function TeamList() {
   const { t } = useTranslation('common');
@@ -187,16 +187,6 @@ export default function TeamList() {
     setShareData(null);
   };
 
-  // Get team status label
-  const getTeamStatusLabel = (team: Team) => {
-    if (team.share_status === 1) {
-      return <Tag variant="info">{t('teams.sharing')}</Tag>;
-    } else if (team.share_status === 2 && team.user?.user_name) {
-      return <Tag variant="success">{t('teams.shared_by', { author: team.user.user_name })}</Tag>;
-    }
-    return null;
-  };
-
   // Check if edit and delete buttons should be shown
   const shouldShowEditDelete = (team: Team) => {
     return team.share_status !== 2; // Shared teams don't show edit and delete buttons
@@ -209,15 +199,15 @@ export default function TeamList() {
 
   return (
     <>
-      <div className="space-y-3">
-        <div>
+      <div className="flex flex-col h-full min-h-0 overflow-hidden w-full max-w-full">
+        <div className="flex-shrink-0 mb-3">
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
           <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
         <div
-          className={`bg-base border border-border rounded-md p-2 w-full ${
+          className={`bg-base border border-border rounded-md p-2 w-full max-w-full overflow-hidden ${
             isEditing
-              ? 'md:min-h-[70vh] flex items-center justify-center overflow-y-auto custom-scrollbar'
+              ? 'flex-1 flex flex-col min-h-0'
               : isMobile
                 ? 'max-h-[calc(100vh-200px)] flex flex-col overflow-y-auto custom-scrollbar'
                 : 'max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'
@@ -241,59 +231,84 @@ export default function TeamList() {
                 />
               ) : (
                 <>
-                  <div className="flex-1 overflow-y-auto custom-scrollbar space-y-3 p-1">
+                  <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 p-1">
                     {teams.length > 0 ? (
                       teams.map(team => (
                         <Card
                           key={team.id}
-                          className="p-4 bg-base hover:bg-hover transition-colors"
+                          className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
                         >
-                          <div className="flex items-center justify-between min-w-0">
-                            <div className="flex items-center space-x-3 min-w-0 flex-1">
-                              <AiOutlineTeam className="w-5 h-5 text-primary flex-shrink-0" />
-                              <div className="flex flex-col justify-center min-w-0 flex-1">
-                                <div className="flex items-center space-x-2 min-w-0">
-                                  <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                                    {team.name}
-                                  </h3>
-                                  <div className="flex items-center space-x-1 flex-shrink-0">
-                                    <div
-                                      className="w-2 h-2 rounded-full"
-                                      style={{
-                                        backgroundColor: team.is_active
-                                          ? 'rgb(var(--color-success))'
-                                          : 'rgb(var(--color-border))',
-                                      }}
-                                    ></div>
-                                    <span className="text-xs text-text-muted">
-                                      {team.is_active ? t('teams.active') : t('teams.inactive')}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                                  {team.workflow?.mode && (
-                                    <Tag variant="default" className="capitalize">
-                                      {t(`team_model.${String(team.workflow.mode)}`)}
-                                    </Tag>
-                                  )}
-                                  {getTeamStatusLabel(team)}
-                                  {team.bots.length > 0 && (
-                                    <Tag variant="info" className="hidden sm:inline-flex">
-                                      {team.bots.length} {team.bots.length === 1 ? 'Bot' : 'Bots'}
-                                    </Tag>
-                                  )}
-                                </div>
+                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 min-w-0">
+                            <ResourceListItem
+                              name={team.name}
+                              description={team.description}
+                              icon={<AiOutlineTeam className="w-5 h-5 text-primary" />}
+                              tags={[
+                                ...(team.workflow?.mode
+                                  ? [
+                                      {
+                                        key: 'mode',
+                                        label: t(`team_model.${String(team.workflow.mode)}`),
+                                        variant: 'default' as const,
+                                        className: 'capitalize text-xs',
+                                      },
+                                    ]
+                                  : []),
+                                ...(team.share_status === 1
+                                  ? [
+                                      {
+                                        key: 'sharing',
+                                        label: t('teams.sharing'),
+                                        variant: 'info' as const,
+                                      },
+                                    ]
+                                  : []),
+                                ...(team.share_status === 2 && team.user?.user_name
+                                  ? [
+                                      {
+                                        key: 'shared',
+                                        label: t('teams.shared_by', {
+                                          author: team.user.user_name,
+                                        }),
+                                        variant: 'success' as const,
+                                      },
+                                    ]
+                                  : []),
+                                ...(team.bots.length > 0
+                                  ? [
+                                      {
+                                        key: 'bots',
+                                        label: `${team.bots.length} ${team.bots.length === 1 ? 'Bot' : 'Bots'}`,
+                                        variant: 'info' as const,
+                                        className: 'hidden sm:inline-flex text-xs',
+                                      },
+                                    ]
+                                  : []),
+                              ]}
+                            >
+                              <div className="flex items-center space-x-1 flex-shrink-0">
+                                <div
+                                  className="w-2 h-2 rounded-full"
+                                  style={{
+                                    backgroundColor: team.is_active
+                                      ? 'rgb(var(--color-success))'
+                                      : 'rgb(var(--color-border))',
+                                  }}
+                                ></div>
+                                <span className="text-xs text-text-muted">
+                                  {team.is_active ? t('teams.active') : t('teams.inactive')}
+                                </span>
                               </div>
-                            </div>
-                            <div className="flex items-center gap-1 flex-shrink-0 ml-3">
+                            </ResourceListItem>
+                            <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0 sm:ml-3 self-end sm:self-auto">
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleChatTeam(team)}
                                 title={t('teams.chat')}
-                                className="h-8 w-8"
+                                className="h-7 w-7 sm:h-8 sm:w-8"
                               >
-                                <ChatBubbleLeftEllipsisIcon className="w-4 h-4" />
+                                <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                               </Button>
                               {shouldShowEditDelete(team) && (
                                 <Button
@@ -301,9 +316,9 @@ export default function TeamList() {
                                   size="icon"
                                   onClick={() => handleEditTeam(team)}
                                   title={t('teams.edit')}
-                                  className="h-8 w-8"
+                                  className="h-7 w-7 sm:h-8 sm:w-8"
                                 >
-                                  <PencilIcon className="w-4 h-4" />
+                                  <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                                 </Button>
                               )}
                               <Button
@@ -311,9 +326,9 @@ export default function TeamList() {
                                 size="icon"
                                 onClick={() => handleCopyTeam(team)}
                                 title={t('teams.copy')}
-                                className="h-8 w-8"
+                                className="h-7 w-7 sm:h-8 sm:w-8"
                               >
-                                <DocumentDuplicateIcon className="w-4 h-4" />
+                                <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                               </Button>
                               {shouldShowShare(team) && (
                                 <Button
@@ -321,10 +336,10 @@ export default function TeamList() {
                                   size="icon"
                                   onClick={() => handleShareTeam(team)}
                                   title={t('teams.share')}
-                                  className="h-8 w-8"
+                                  className="h-7 w-7 sm:h-8 sm:w-8"
                                   disabled={sharingId === team.id}
                                 >
-                                  <ShareIcon className="w-4 h-4" />
+                                  <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                                 </Button>
                               )}
                               {shouldShowEditDelete(team) && (
@@ -333,9 +348,9 @@ export default function TeamList() {
                                   size="icon"
                                   onClick={() => handleDelete(team.id)}
                                   title={t('teams.delete')}
-                                  className="h-8 w-8 hover:text-error"
+                                  className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
                                 >
-                                  <TrashIcon className="w-4 h-4" />
+                                  <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                                 </Button>
                               )}
                             </div>
@@ -353,14 +368,13 @@ export default function TeamList() {
                       <UnifiedAddButton onClick={handleCreateTeam}>
                         {t('teams.new_team')}
                       </UnifiedAddButton>
-                      <Button
+                      <UnifiedAddButton
                         variant="outline"
                         onClick={() => setBotListVisible(true)}
-                        className="flex items-center gap-2"
+                        icon={<RiRobot2Line className="w-4 h-4" />}
                       >
-                        <RiRobot2Line className="w-4 h-4" />
                         {t('bots.manage_bots')}
-                      </Button>
+                      </UnifiedAddButton>
                     </div>
                   </div>
                 </>

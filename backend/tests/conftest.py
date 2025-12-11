@@ -98,7 +98,8 @@ def test_admin_user(test_db: Session) -> User:
         password_hash=get_password_hash("adminpassword123"),
         email="admin@example.com",
         is_active=True,
-        git_info=None
+        git_info=None,
+        role="admin"
     )
     test_db.add(admin)
     test_db.commit()

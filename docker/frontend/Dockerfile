@@ -13,7 +13,7 @@ COPY frontend/package.json frontend/package-lock.json ./
 COPY frontend/scripts ./scripts
 RUN npm ci && npm cache clean --force
 
-# 复制源码并构建
+# 复制其余源码
 COPY frontend .
 # 修改 API URL 为 Docker 内部服务名
 RUN sed -i 's|NEXT_PUBLIC_API_URL=http://127.0.0.1:8000|NEXT_PUBLIC_API_URL=http://backend:8000|g' .env.local && npm run build
@@ -31,6 +31,9 @@ RUN adduser --system --uid 1001 nextjs
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# 创建 cache 目录并设置权限
+RUN mkdir -p .next/cache && chown -R nextjs:nodejs .next
 
 # 设置用户权限
 USER nextjs

@@ -7,7 +7,7 @@
  * All types and logic are self-contained for cohesion.
  */
 
-import type { GitInfo, User } from '@/types/api';
+import type { GitInfo, User, UserPreferences, QuickAccessResponse } from '@/types/api';
 
 // Type definitions
 export interface LoginRequest {
@@ -25,6 +25,7 @@ export interface UpdateUserRequest {
   email?: string;
   is_active?: boolean;
   git_info?: GitInfo[];
+  preferences?: UserPreferences;
 }
 
 const TOKEN_KEY = 'auth_token';
@@ -113,6 +114,10 @@ export const userApis = {
   async deleteGitToken(gitDomain: string, gitInfoId?: string): Promise<User> {
     const params = gitInfoId ? `?git_info_id=${encodeURIComponent(gitInfoId)}` : '';
     return apiClient.delete(`/users/me/git-token/${encodeURIComponent(gitDomain)}${params}`);
+  },
+
+  async getQuickAccess(): Promise<QuickAccessResponse> {
+    return apiClient.get('/users/quick-access');
   },
 
   isAuthenticated(): boolean {

@@ -6,7 +6,18 @@
 
 import React, { memo, useState } from 'react';
 import type { TaskDetail, Team, GitRepoInfo, GitBranch, Attachment } from '@/types/api';
-import { Bot, Copy, Check, Download, AlertCircle } from 'lucide-react';
+import {
+  Bot,
+  Copy,
+  Check,
+  Download,
+  AlertCircle,
+  Loader2,
+  Clock,
+  CheckCircle2,
+  XCircle,
+  Ban,
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import ThinkingComponent from './ThinkingComponent';
@@ -14,8 +25,8 @@ import ClarificationForm from './ClarificationForm';
 import FinalPromptMessage from './FinalPromptMessage';
 import ClarificationAnswerSummary from './ClarificationAnswerSummary';
 import AttachmentPreview from './AttachmentPreview';
+import StreamingWaitIndicator from './StreamingWaitIndicator';
 import type { ClarificationData, FinalPromptData, ClarificationAnswer } from '@/types/api';
-
 export interface Message {
   type: 'user' | 'ai';
   content: string;
@@ -40,6 +51,8 @@ export interface Message {
   isRecovered?: boolean;
   /** Flag indicating the content is incomplete (client disconnected) */
   isIncomplete?: boolean;
+  /** Flag indicating this message is waiting for first character (streaming but no content yet) */
+  isWaiting?: boolean;
 }
 
 // CopyButton component for copying markdown content
@@ -129,7 +142,6 @@ const BubbleTools = ({
     </div>
   );
 };
-
 export interface MessageBubbleProps {
   msg: Message;
   index: number;
@@ -139,6 +151,8 @@ export interface MessageBubbleProps {
   selectedBranch?: GitBranch | null;
   theme: 'light' | 'dark';
   t: (key: string) => string;
+  /** Whether to show waiting indicator (streaming but no content yet) */
+  isWaiting?: boolean;
 }
 
 const MessageBubble = memo(
@@ -151,6 +165,7 @@ const MessageBubble = memo(
     selectedBranch,
     theme,
     t,
+    isWaiting,
   }: MessageBubbleProps) {
     const bubbleBaseClasses = 'relative w-full p-5 pb-10 text-text-primary';
     const bubbleTypeClasses =
@@ -177,23 +192,103 @@ const MessageBubble = memo(
       const isActiveStatus = ['RUNNING', 'PENDING', 'PROCESSING'].includes(normalizedStatus);
       const safeProgress = Number.isFinite(progress) ? Math.min(Math.max(progress, 0), 100) : 0;
 
+      // Get status configuration (icon, label key, colors)
+      const getStatusConfig = (statusKey: string) => {
+        switch (statusKey) {
+          case 'RUNNING':
+            return {
+              icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />,
+              labelKey: 'messages.status_running',
+              bgClass: 'bg-primary/10',
+              textClass: 'text-primary',
+              dotClass: 'bg-primary',
+            };
+          case 'PENDING':
+            return {
+              icon: <Clock className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_pending',
+              bgClass: 'bg-amber-500/10',
+              textClass: 'text-amber-600 dark:text-amber-400',
+              dotClass: 'bg-amber-500',
+            };
+          case 'PROCESSING':
+            return {
+              icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />,
+              labelKey: 'messages.status_processing',
+              bgClass: 'bg-blue-500/10',
+              textClass: 'text-blue-600 dark:text-blue-400',
+              dotClass: 'bg-blue-500',
+            };
+          case 'COMPLETED':
+            return {
+              icon: <CheckCircle2 className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_completed',
+              bgClass: 'bg-green-500/10',
+              textClass: 'text-green-600 dark:text-green-400',
+              dotClass: 'bg-green-500',
+            };
+          case 'FAILED':
+            return {
+              icon: <XCircle className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_failed',
+              bgClass: 'bg-red-500/10',
+              textClass: 'text-red-600 dark:text-red-400',
+              dotClass: 'bg-red-500',
+            };
+          case 'CANCELLED':
+            return {
+              icon: <Ban className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_cancelled',
+              bgClass: 'bg-gray-500/10',
+              textClass: 'text-gray-600 dark:text-gray-400',
+              dotClass: 'bg-gray-500',
+            };
+          case 'CANCELLING':
+            return {
+              icon: <Loader2 className="h-3.5 w-3.5 animate-spin" />,
+              labelKey: 'messages.status_cancelling',
+              bgClass: 'bg-orange-500/10',
+              textClass: 'text-orange-600 dark:text-orange-400',
+              dotClass: 'bg-orange-500',
+            };
+          default:
+            return {
+              icon: <Loader2 className="h-3.5 w-3.5" />,
+              labelKey: 'messages.status_running',
+              bgClass: 'bg-primary/10',
+              textClass: 'text-primary',
+              dotClass: 'bg-primary',
+            };
+        }
+      };
+
+      const config = getStatusConfig(normalizedStatus);
+
       return (
-        <div className="mt-2">
-          <div className="flex justify-between items-center mb-1">
-            <span className="text-sm">
-              {t('messages.task_status')} {status}
+        <div className="mt-3 space-y-2">
+          {/* Status Badge */}
+          <div className="flex items-center gap-2">
+            <span
+              className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${config.bgClass} ${config.textClass}`}
+            >
+              {config.icon}
+              <span>{t(config.labelKey) || status}</span>
             </span>
           </div>
-          <div className="w-full bg-border/60 rounded-full h-2">
-            <div
-              className={`bg-primary h-2 rounded-full transition-all duration-300 ease-in-out ${isActiveStatus ? 'progress-bar-animated' : ''}`}
-              style={{ width: `${safeProgress}%` }}
-              aria-valuemin={0}
-              aria-valuemax={100}
-              aria-valuenow={safeProgress}
-              role="progressbar"
-            ></div>
-          </div>
+
+          {/* Minimal Progress Bar - only show for active statuses */}
+          {isActiveStatus && (
+            <div className="w-full bg-border/40 rounded-full h-1 overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ease-out ${config.dotClass} ${isActiveStatus ? 'progress-bar-shimmer' : ''}`}
+                style={{ width: `${Math.max(safeProgress, 3)}%` }}
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={safeProgress}
+                role="progressbar"
+              />
+            </div>
+          )}
         </div>
       );
     };
@@ -384,22 +479,34 @@ const MessageBubble = memo(
 
     // Helper function to parse Markdown clarification questions
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
+    // Extracts content between the header and the last ``` (or end of content if no valid closing ```)
     const parseMarkdownClarification = (content: string): ClarificationData | null => {
-      let actualContent = content;
-
-      // Try to extract content from code block (optional)
-      const codeBlockRegex = /```(?:markdown)?\s*\n([\s\S]+?)\n```/;
-      const codeBlockMatch = content.match(codeBlockRegex);
-      if (codeBlockMatch) {
-        actualContent = codeBlockMatch[1];
-      }
-
       // Flexible header detection for clarification questions
       // Matches: ## 🤔 需求澄清问题, ## Clarification Questions, ### 澄清问题, # 需求澄清, etc.
       const clarificationHeaderRegex =
-        /^#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
-      if (!clarificationHeaderRegex.test(actualContent)) {
+        /#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
+      const headerMatch = content.match(clarificationHeaderRegex);
+      if (!headerMatch) {
         return null;
+      }
+
+      // Find the position of the header and extract everything from the header onwards
+      const headerIndex = headerMatch.index!;
+      let actualContent = content.substring(headerIndex);
+
+      // Find the last ``` in the content
+      const lastCodeBlockMarkerIndex = actualContent.lastIndexOf('\n```');
+
+      if (lastCodeBlockMarkerIndex !== -1) {
+        // Check if the last ``` is within 2 lines of the actual end
+        const contentAfterMarker = actualContent.substring(lastCodeBlockMarkerIndex + 4); // +4 for '\n```'
+        const linesAfterMarker = contentAfterMarker.split('\n').filter(line => line.trim() !== '');
+
+        if (linesAfterMarker.length <= 2) {
+          // Valid closing ```, extract content before it
+          actualContent = actualContent.substring(0, lastCodeBlockMarkerIndex).trim();
+        }
+        // If the ``` is too far from the end, keep the full content
       }
 
       const questions: ClarificationData['questions'] = [];
@@ -532,35 +639,61 @@ const MessageBubble = memo(
 
     // Helper function to parse Markdown final prompt
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
+    // Extracts content between the header and the last ``` (or end of content if no valid closing ```)
     const parseMarkdownFinalPrompt = (content: string): FinalPromptData | null => {
-      let actualContent = content;
-
-      // Try to extract content from code block (optional)
-      const codeBlockRegex = /```(?:markdown)?\s*\n([\s\S]+?)\n```/;
-      const codeBlockMatch = content.match(codeBlockRegex);
-      if (codeBlockMatch) {
-        actualContent = codeBlockMatch[1];
-      }
-
       // Flexible header detection for final prompt
       // Matches: ## ✅ 最终需求提示词, ## Final Requirement Prompt, ### 最终提示词, # final prompt, etc.
       const finalPromptHeaderRegex =
-        /^#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im;
-      if (!finalPromptHeaderRegex.test(actualContent)) {
+        /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)/im;
+      const headerMatch = content.match(finalPromptHeaderRegex);
+      if (!headerMatch) {
         return null;
       }
 
-      // Extract content after the header
-      // Matches various header formats and captures everything after
-      const headingRegex =
-        /#{1,6}\s*(?:✅\s*)?(?:最终(?:需求)?提示词|final\s*(?:requirement\s*)?prompt)[^\n]*\n+([\s\S]+)/i;
-      const headingMatch = actualContent.match(headingRegex);
+      // Find the position of the header and extract everything from the header line onwards
+      const headerIndex = headerMatch.index!;
+      const contentFromHeader = content.substring(headerIndex);
 
-      if (!headingMatch) return null;
+      // Find the end of the header line
+      const headerLineEndIndex = contentFromHeader.indexOf('\n');
+      if (headerLineEndIndex === -1) {
+        // Header is the only line, no content after it
+        return null;
+      }
+
+      // Get content after the header line
+      const afterHeader = contentFromHeader.substring(headerLineEndIndex + 1);
+
+      // Find the last ``` in the content
+      const lastCodeBlockMarkerIndex = afterHeader.lastIndexOf('\n```');
+
+      let promptContent: string;
+
+      if (lastCodeBlockMarkerIndex !== -1) {
+        // Check if the last ``` is within 2 lines of the actual end
+        const contentAfterMarker = afterHeader.substring(lastCodeBlockMarkerIndex + 4); // +4 for '\n```'
+        const linesAfterMarker = contentAfterMarker.split('\n').filter(line => line.trim() !== '');
+
+        if (linesAfterMarker.length <= 2) {
+          // Valid closing ```, extract content before it
+          promptContent = afterHeader.substring(0, lastCodeBlockMarkerIndex).trim();
+        } else {
+          // The ``` is too far from the end, model probably didn't output proper closing
+          // Take everything to the end
+          promptContent = afterHeader.trim();
+        }
+      } else {
+        // No closing ``` found, take everything to the end
+        promptContent = afterHeader.trim();
+      }
+
+      if (!promptContent) {
+        return null;
+      }
 
       return {
         type: 'final_prompt',
-        final_prompt: headingMatch[1].trim(),
+        final_prompt: promptContent,
       };
     };
 
@@ -736,10 +869,17 @@ const MessageBubble = memo(
               </div>
             )}
             {isUserMessage && renderAttachments(msg.attachments)}
-            {/* Show recovered content if available, otherwise show normal content */}
-            {msg.recoveredContent && msg.subtaskStatus === 'RUNNING'
-              ? renderRecoveredContent()
-              : renderMessageBody(msg, index)}
+            {/* Show waiting indicator when streaming but no content yet */}
+            {isWaiting || msg.isWaiting ? (
+              <StreamingWaitIndicator isWaiting={true} />
+            ) : (
+              <>
+                {/* Show recovered content if available, otherwise show normal content */}
+                {msg.recoveredContent && msg.subtaskStatus === 'RUNNING'
+                  ? renderRecoveredContent()
+                  : renderMessageBody(msg, index)}
+              </>
+            )}
             {/* Show incomplete notice for completed but incomplete messages */}
             {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
             {/* Show copy button for user messages - always visible */}
@@ -764,6 +904,8 @@ const MessageBubble = memo(
       prevProps.msg.recoveredContent === nextProps.msg.recoveredContent &&
       prevProps.msg.isRecovered === nextProps.msg.isRecovered &&
       prevProps.msg.isIncomplete === nextProps.msg.isIncomplete &&
+      prevProps.msg.isWaiting === nextProps.msg.isWaiting &&
+      prevProps.isWaiting === nextProps.isWaiting &&
       prevProps.theme === nextProps.theme
     );
   }

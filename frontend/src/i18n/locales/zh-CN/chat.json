@@ -36,7 +36,14 @@
     "subtask_failed": "子任务失败",
     "unknown_error": "未知错误",
     "bot": "机器人",
-    "application_parameters": "应用参数"
+    "application_parameters": "应用参数",
+    "status_running": "执行中",
+    "status_pending": "等待中",
+    "status_processing": "处理中",
+    "status_completed": "已完成",
+    "status_failed": "已失败",
+    "status_cancelled": "已取消",
+    "status_cancelling": "取消中"
   },
   "shared_task": {
     "share_task": "分享",
@@ -73,7 +80,7 @@
     "pre_execution_failed": "预执行失败",
     "sync_execution": "同步执行",
     "async_execution_started": "异步执行已开始",
-    "reuse_existing_team": "重用现有团队",
+    "reuse_existing_team": "重用现有智能体",
     "agent_streaming_execution": "代理流式执行",
     "failed_no_content": "失败 - 未收到内容",
     "unknown_block_type": "未知块类型",
@@ -118,6 +125,8 @@
     "mcp_init_fail": "❌ MCP 初始化失败。"
   },
   "send_shortcut": "回车发送，Shift+回车换行",
+  "send_shortcut_cmd_enter_mac": "⌘+回车发送，回车换行",
+  "send_shortcut_cmd_enter_win": "Ctrl+回车发送，回车换行",
   "errors": {
     "payload_too_large": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小"
   },
@@ -137,7 +146,7 @@
     "final_prompt_title": "最终需求提示词",
     "prompt_copied": "提示词已复制到剪贴板",
     "copy_failed": "复制提示词失败",
-    "select_context": "请先选择团队、仓库和分支",
+    "select_context": "请先选择智能体、仓库和分支",
     "task_created": "新任务创建成功",
     "task_creation_failed": "创建新任务失败",
     "copied": "已复制",
@@ -154,6 +163,7 @@
   },
   "export": {
     "export_pdf": "导出 PDF",
+    "export_docx": "导出 DOCX",
     "no_messages": "暂无可导出的消息",
     "select_at_least_one": "请至少选择一条消息",
     "selected_count": "已选择: {{count}} 条消息",
@@ -162,9 +172,23 @@
     "cancel": "取消",
     "confirm": "确认导出",
     "exporting": "导出中...",
+    "exporting_docx": "正在导出 DOCX...",
     "success": "PDF 导出成功",
+    "docx_success": "DOCX 导出成功",
     "failed": "PDF 导出失败",
+    "docx_failed": "DOCX 导出失败",
     "select_from_here": "从此处开始选择",
     "select_below": "选择以下所有"
+  },
+  "web_search": {
+    "enable": "启用联网搜索",
+    "disable": "禁用联网搜索",
+    "select_engine": "选择搜索引擎"
+  },
+  "streaming_wait": {
+    "thinking": "正在思考",
+    "analyzing": "正在深入分析",
+    "generating_response": "请稍候，正在生成回复",
+    "longer_than_usual": "响应时间较长，请耐心等待"
   }
 }

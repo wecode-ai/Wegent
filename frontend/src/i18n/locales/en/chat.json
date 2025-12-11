@@ -36,7 +36,14 @@
     "subtask_failed": "Subtask failed",
     "unknown_error": "Unknown error",
     "bot": "Bot",
-    "application_parameters": "Application Parameters"
+    "application_parameters": "Application Parameters",
+    "status_running": "Running",
+    "status_pending": "Pending",
+    "status_processing": "Processing",
+    "status_completed": "Completed",
+    "status_failed": "Failed",
+    "status_cancelled": "Cancelled",
+    "status_cancelling": "Cancelling"
   },
   "shared_task": {
     "share_task": "Share",
@@ -118,6 +125,8 @@
     "mcp_init_fail": "❌ MCP initialization failed. "
   },
   "send_shortcut": "Enter to send, Shift+Enter for new line",
+  "send_shortcut_cmd_enter_mac": "⌘+Enter to send, Enter for new line",
+  "send_shortcut_cmd_enter_win": "Ctrl+Enter to send, Enter for new line",
   "errors": {
     "payload_too_large": "Content too large: conversation history or attachment exceeds limit, please start a new conversation or reduce attachment size"
   },
@@ -154,6 +163,7 @@
   },
   "export": {
     "export_pdf": "Export PDF",
+    "export_docx": "Export DOCX",
     "no_messages": "No messages to export",
     "select_at_least_one": "Please select at least one message",
     "selected_count": "Selected: {{count}} message(s)",
@@ -162,9 +172,23 @@
     "cancel": "Cancel",
     "confirm": "Export PDF",
     "exporting": "Exporting...",
+    "exporting_docx": "Exporting DOCX...",
     "success": "PDF exported successfully",
+    "docx_success": "DOCX exported successfully",
     "failed": "Failed to export PDF",
+    "docx_failed": "Failed to export DOCX",
     "select_from_here": "Select from here",
     "select_below": "Select below"
+  },
+  "web_search": {
+    "enable": "Enable web search",
+    "disable": "Disable web search",
+    "select_engine": "Select search engine"
+  },
+  "streaming_wait": {
+    "thinking": "Thinking",
+    "analyzing": "Analyzing in depth",
+    "generating_response": "Please wait, generating response",
+    "longer_than_usual": "Response is taking longer than usual"
   }
 }

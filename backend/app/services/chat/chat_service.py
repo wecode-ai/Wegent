@@ -8,22 +8,26 @@ Chat Shell direct chat service.
 Provides streaming chat functionality by directly calling LLM APIs
 (OpenAI, Claude) without going through the Docker Executor.
 """
+
 import asyncio
+import inspect
 import json
 import logging
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 
 import httpx
 from fastapi.responses import StreamingResponse
+from fastmcp import FastMCP
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.services.chat.base import ChatServiceBase, get_http_client
 from app.services.chat.session_manager import session_manager
 
-logger = logging.getLogger(__name__)
 logger = logging.getLogger(__name__)
 
 # Thread pool for database operations
@@ -31,6 +35,10 @@ _db_executor = ThreadPoolExecutor(max_workers=10)
 
 # Semaphore for concurrent chat limit
 _chat_semaphore: Optional[asyncio.Semaphore] = None
+
+# Registry for background consumer tasks (keyed by subtask_id)
+# This allows consumer tasks to continue running even after client disconnects
+_background_consumer_tasks: Dict[int, asyncio.Task] = {}
 
 
 def _get_chat_semaphore() -> asyncio.Semaphore:
@@ -55,9 +63,10 @@ class ChatService(ChatServiceBase):
         message: Union[str, Dict[str, Any]],
         model_config: Dict[str, Any],
         system_prompt: str = "",
+        tools: Optional[List[FastMCP]] = None,
     ) -> StreamingResponse:
         """
-        Stream chat response from LLM API.
+        Stream chat response from LLM API with tool calling support.
 
         Args:
             subtask_id: Subtask ID for status updates
@@ -65,56 +74,63 @@ class ChatService(ChatServiceBase):
             message: User message (string or vision dict)
             model_config: Model configuration (api_key, base_url, model_id, model)
             system_prompt: Bot's system prompt
+            tools: Optional list of tool definitions
 
         Returns:
             StreamingResponse with SSE events
         """
         semaphore = _get_chat_semaphore()
 
-        async def generate() -> AsyncGenerator[str, None]:
-            acquired = False
-            # Register this stream for cancellation support (async for Redis)
-            cancel_event = await session_manager.register_stream(subtask_id)
+        # Use a queue to decouple LLM streaming from client output
+        # This ensures data is saved to Redis/DB even if client (nginx) stops reading
+        chunk_queue: asyncio.Queue = asyncio.Queue()
 
-            # Track accumulated response for incremental saving
+        # These will be set by generate() before starting consumer task
+        cancel_event: Optional[asyncio.Event] = None
+        messages: List[Dict[str, Any]] = []
+
+        async def llm_consumer_task():
+            """
+            Background task that consumes LLM stream and saves to Redis/DB.
+            This runs independently of client connection state.
+
+            CRITICAL: This task continues running even after client disconnects.
+            It will complete the LLM stream and save all data to Redis/DB,
+            allowing users to resume the stream when they switch back.
+            """
             full_response = ""
-            client_disconnected = False
+            cancelled = False
+            error_info = None
+            chunk_count = 0
 
             try:
-                # Try to acquire semaphore with timeout
-                try:
-                    acquired = await asyncio.wait_for(semaphore.acquire(), timeout=5.0)
-                except asyncio.TimeoutError:
-                    error_msg = (
-                        "Too many concurrent chat requests, please try again later"
+                # Determine which streaming method to use
+                if tools:
+                    # Tool calling flow
+                    stream_generator = self._handle_tool_calling_flow(
+                        model_config,
+                        messages,
+                        tools,
+                        subtask_id,
+                        task_id,
+                        message,
+                        cancel_event,
                     )
-                    yield f"data: {json.dumps({'error': error_msg})}\n\n"
-                    await self._update_subtask_status(
-                        subtask_id, "FAILED", error=error_msg
+                else:
+                    # Regular streaming
+                    stream_generator = self._call_llm_streaming_with_cancel(
+                        model_config, messages, subtask_id, cancel_event
                     )
-                    return
-
-                # Update status to RUNNING
-                await self._update_subtask_status(subtask_id, "RUNNING")
-
-                # Get chat history
-                history = await session_manager.get_chat_history(task_id)
-
-                # Build messages list
-                messages = self._build_messages(history, message, system_prompt)
-
-                # Call LLM API and stream response with cancellation support
-                cancelled = False
 
                 # Incremental save timing
                 last_redis_save = time.time()
                 last_db_save = time.time()
                 redis_interval = settings.STREAMING_REDIS_SAVE_INTERVAL
                 db_interval = settings.STREAMING_DB_SAVE_INTERVAL
+                cancelled = False
 
-                async for chunk in self._call_llm_streaming_with_cancel(
-                    model_config, messages, subtask_id, cancel_event
-                ):
+                async for chunk_data in stream_generator:
+                    chunk_count += 1
                     # Check if cancelled (local event or Redis flag)
                     if cancel_event.is_set() or await session_manager.is_cancelled(
                         subtask_id
@@ -122,23 +138,24 @@ class ChatService(ChatServiceBase):
                         cancelled = True
                         break
 
+                    # Extract content from chunk (handle both str and dict)
+                    chunk = ""
+                    if isinstance(chunk_data, dict):
+                        if chunk_data.get("type") == "content":
+                            chunk = chunk_data.get("content", "")
+                    elif isinstance(chunk_data, str):
+                        chunk = chunk_data
+
+                    if not chunk:
+                        continue
+
                     full_response += chunk
 
-                    try:
-                        yield f"data: {json.dumps({'content': chunk, 'done': False})}\n\n"
-                    except (GeneratorExit, Exception) as e:
-                        # Client disconnected - but continue streaming in background
-                        logger.info(
-                            f"Client disconnected for subtask {subtask_id}: {type(e).__name__}, continuing in background"
-                        )
-                        client_disconnected = True
-                        # Don't break - continue accumulating content
-
-                    # Publish chunk to Redis Pub/Sub for real-time updates
-                    await session_manager.publish_streaming_chunk(subtask_id, chunk)
+                    # CRITICAL: Save to Redis/DB BEFORE putting to queue
+                    # This ensures data is persisted even if yield blocks
+                    current_time = time.time()
 
                     # Incremental save to Redis (high frequency)
-                    current_time = time.time()
                     if current_time - last_redis_save >= redis_interval:
                         await session_manager.save_streaming_content(
                             subtask_id, full_response
@@ -152,20 +169,42 @@ class ChatService(ChatServiceBase):
                         )
                         last_db_save = current_time
 
-                # Handle different completion scenarios
+                    # Publish chunk to Redis Pub/Sub for real-time updates
+                    try:
+                        await session_manager.publish_streaming_chunk(subtask_id, chunk)
+                    except Exception as pub_err:
+                        logger.warning(
+                            f"[STREAM] subtask={subtask_id} failed to publish chunk: {pub_err}"
+                        )
+
+                    # Put chunk to queue for client output (non-blocking with timeout)
+                    try:
+                        # Use put_nowait to avoid blocking if queue is full
+                        # If queue is full, client is not consuming, but we continue anyway
+                        chunk_queue.put_nowait({"type": "chunk", "content": chunk})
+                    except asyncio.QueueFull:
+                        logger.warning(
+                            f"[STREAM] subtask={subtask_id} queue full at chunk {chunk_count}, client may be slow/disconnected"
+                        )
+
+                # LLM stream finished - save final state
                 if cancelled:
-                    # User explicitly cancelled - the cancel endpoint handles saving
-                    if not client_disconnected:
-                        yield f"data: {json.dumps({'content': '', 'done': True, 'cancelled': True})}\n\n"
+                    logger.info(
+                        f"[STREAM] subtask={subtask_id} handling cancellation, putting cancelled signal to queue"
+                    )
+                    # Put cancelled signal to queue
+                    try:
+                        chunk_queue.put_nowait({"type": "cancelled"})
+                    except asyncio.QueueFull:
+                        logger.warning(
+                            f"[STREAM] subtask={subtask_id} queue full, cannot put cancelled signal"
+                        )
                 else:
-                    # Normal completion (or client disconnected but stream finished)
-                    # Save chat history
+                    # Normal completion - save everything to DB
                     await session_manager.append_user_and_assistant_messages(
                         task_id, message, full_response
                     )
 
-                    # Update status to COMPLETED and wait for it to complete
-                    # This ensures the database is updated before we publish the done signal
                     result = {"value": full_response}
                     await self._update_subtask_status_sync(
                         subtask_id, "COMPLETED", result=result
@@ -174,19 +213,24 @@ class ChatService(ChatServiceBase):
                     # Clean up Redis streaming cache
                     await session_manager.delete_streaming_content(subtask_id)
 
-                    # Publish stream done signal with result data (no need to read from DB)
-                    await session_manager.publish_streaming_done(
-                        subtask_id, result=result
-                    )
+                    # Publish stream done signal
+                    try:
+                        await session_manager.publish_streaming_done(
+                            subtask_id, result=result
+                        )
+                    except Exception as pub_err:
+                        logger.warning(
+                            f"[STREAM] subtask={subtask_id} failed to publish done signal: {pub_err}"
+                        )
 
-                    # Only yield if client is still connected
-                    if not client_disconnected:
-                        yield f"data: {json.dumps({'content': '', 'done': True, 'result': result})}\n\n"
+                    # Put done signal to queue
+                    try:
+                        chunk_queue.put_nowait({"type": "done", "result": result})
+                    except asyncio.QueueFull:
+                        pass  # Data is already saved
 
             except asyncio.CancelledError:
-                # Handle asyncio cancellation (e.g., server shutdown)
-                logger.info(f"Stream cancelled (asyncio) for subtask {subtask_id}")
-                # Save what we have so far
+                # Task was cancelled (e.g., server shutdown)
                 if full_response:
                     await session_manager.append_user_and_assistant_messages(
                         task_id, message, full_response
@@ -200,46 +244,154 @@ class ChatService(ChatServiceBase):
                         subtask_id, "COMPLETED", result=result
                     )
                     await session_manager.delete_streaming_content(subtask_id)
-                raise  # Re-raise to properly clean up
+                raise
 
             except asyncio.TimeoutError:
-                error_msg = "API call timeout"
-                logger.error(f"Chat stream timeout for subtask {subtask_id}")
-                # Save partial content before marking as failed
+                error_info = {"type": "error", "message": "API call timeout"}
+                logger.error(f"[STREAM] subtask={subtask_id} API call timeout")
                 if full_response:
                     await self._save_partial_response(
                         subtask_id, full_response, is_streaming=False
                     )
-                yield f"data: {json.dumps({'error': error_msg})}\n\n"
-                await self._update_subtask_status(subtask_id, "FAILED", error=error_msg)
+                await self._update_subtask_status(
+                    subtask_id, "FAILED", error="API call timeout"
+                )
 
             except httpx.RequestError as e:
                 error_msg = f"Network error: {str(e)}"
-                logger.error(f"Chat stream network error for subtask {subtask_id}: {e}")
-                # Save partial content before marking as failed
+                error_info = {"type": "error", "message": error_msg}
+                logger.error(f"[STREAM] subtask={subtask_id} network error: {e}")
                 if full_response:
                     await self._save_partial_response(
                         subtask_id, full_response, is_streaming=False
                     )
-                yield f"data: {json.dumps({'error': error_msg})}\n\n"
                 await self._update_subtask_status(subtask_id, "FAILED", error=error_msg)
 
             except Exception as e:
                 error_msg = str(e)
-                logger.error(
-                    f"Chat stream error for subtask {subtask_id}: {e}", exc_info=True
-                )
-                # Save partial content before marking as failed
+                error_info = {"type": "error", "message": error_msg}
+                logger.error(f"[STREAM] subtask={subtask_id} error: {e}", exc_info=True)
                 if full_response:
                     await self._save_partial_response(
                         subtask_id, full_response, is_streaming=False
                     )
-                yield f"data: {json.dumps({'error': error_msg})}\n\n"
                 await self._update_subtask_status(subtask_id, "FAILED", error=error_msg)
 
             finally:
-                # Cleanup: unregister stream and release semaphore (async for Redis)
+                # Always put end signal to queue so generator knows to stop
+                try:
+                    if error_info:
+                        chunk_queue.put_nowait(error_info)
+                    chunk_queue.put_nowait({"type": "end"})
+                except asyncio.QueueFull:
+                    pass
+
+                # Clean up from background registry
+                _background_consumer_tasks.pop(subtask_id, None)
+
+                # Clean up stream registration (if generate() didn't do it)
+                # This is safe to call multiple times
                 await session_manager.unregister_stream(subtask_id)
+
+        async def generate() -> AsyncGenerator[str, None]:
+            nonlocal cancel_event, messages
+            acquired = False
+            consumer_task = None
+
+            # Register this stream for cancellation support (async for Redis)
+            cancel_event = await session_manager.register_stream(subtask_id)
+
+            try:
+                # Try to acquire semaphore with timeout
+                try:
+                    acquired = await asyncio.wait_for(semaphore.acquire(), timeout=5.0)
+                except asyncio.TimeoutError:
+                    error_msg = (
+                        "Too many concurrent chat requests, please try again later"
+                    )
+                    logger.warning(
+                        f"[STREAM] subtask={subtask_id} too many concurrent requests"
+                    )
+                    yield f"data: {json.dumps({'error': error_msg})}\n\n"
+                    await self._update_subtask_status(
+                        subtask_id, "FAILED", error=error_msg
+                    )
+                    return
+
+                # Update status to RUNNING
+                await self._update_subtask_status(subtask_id, "RUNNING")
+
+                # Get chat history
+                history = await session_manager.get_chat_history(task_id)
+
+                # Build messages list - need to make this available to consumer task
+                messages = self._build_messages(history, message, system_prompt)
+
+                # Start background task to consume LLM stream
+                # CRITICAL: Register in global registry so it continues even if client disconnects
+                consumer_task = asyncio.create_task(llm_consumer_task())
+                _background_consumer_tasks[subtask_id] = consumer_task
+
+                # Read from queue and yield to client
+                # If yield blocks (nginx not reading), the consumer task continues independently
+                while True:
+                    try:
+                        # Wait for next item from queue with timeout
+                        # Timeout allows us to check if consumer task is still alive
+                        item = await asyncio.wait_for(chunk_queue.get(), timeout=30.0)
+                    except asyncio.TimeoutError:
+                        # Check if consumer task is done
+                        if consumer_task.done():
+                            # Consumer finished but we didn't get end signal, break
+                            break
+                        continue
+
+                    if item["type"] == "chunk":
+                        yield f"data: {json.dumps({'content': item['content'], 'done': False})}\n\n"
+                    elif item["type"] == "done":
+                        yield f"data: {json.dumps({'content': '', 'done': True, 'result': item.get('result')})}\n\n"
+                        break
+                    elif item["type"] == "cancelled":
+                        yield f"data: {json.dumps({'content': '', 'done': True, 'cancelled': True})}\n\n"
+                        break
+                    elif item["type"] == "error":
+                        yield f"data: {json.dumps({'error': item['message']})}\n\n"
+                        break
+                    elif item["type"] == "end":
+                        break
+
+            except asyncio.CancelledError:
+                # Client disconnected (e.g., user switched to another chat)
+                # CRITICAL: Do NOT cancel consumer_task - let it continue running in background
+                # This allows the LLM stream to complete and save data to Redis/DB
+                # so that when user switches back, they can resume the stream
+                # Don't cancel consumer_task - it will continue running and saving data
+                # The task is registered in _background_consumer_tasks and will clean itself up
+                raise
+
+            except Exception as e:
+                logger.error(f"[STREAM] subtask={subtask_id} error: {e}", exc_info=True)
+                # Consumer task handles its own errors and saves data
+
+            finally:
+                # Only wait for consumer task if it's done or we're not being cancelled
+                # If we're being cancelled (client disconnect), let consumer continue in background
+                if consumer_task:
+                    if consumer_task.done():
+                        # Clean up from registry
+                        _background_consumer_tasks.pop(subtask_id, None)
+
+                # Cleanup: release semaphore
+                # Note: Do NOT unregister stream here if consumer_task is still running
+                # The consumer_task needs the cancel_event to remain valid
+                # It will clean up when it finishes
+                if consumer_task and not consumer_task.done():
+                    # Consumer task is still running - don't unregister stream
+                    # The consumer task will handle cleanup when it finishes
+                    pass
+                else:
+                    # Consumer task is done, safe to unregister
+                    await session_manager.unregister_stream(subtask_id)
                 if acquired:
                     semaphore.release()
 
@@ -253,6 +405,31 @@ class ChatService(ChatServiceBase):
                 "Content-Encoding": "none",  # Ensure no compression buffering
             },
         )
+
+    def _safe_parse_json_args(
+        self, args: Union[str, Dict], tool_name: str, tool_id: str = "unknown"
+    ) -> Dict[str, Any]:
+        """
+        Safely parse tool arguments, handling both string JSON and existing dicts.
+        Returns empty dict on failure to prevent crashes.
+        """
+        if isinstance(args, dict):
+            return args
+
+        if not isinstance(args, str):
+            logger.warning(
+                f"Tool arguments for {tool_name} (id={tool_id}) are not string or dict: {type(args)}"
+            )
+            return {}
+
+        try:
+            return json.loads(args)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(
+                f"Failed to parse JSON arguments for tool '{tool_name}' (id={tool_id}): {e}. "
+                f"Raw args: {args[:500]}..."
+            )
+            return {}
 
     def _build_messages(
         self,
@@ -307,6 +484,158 @@ class ChatService(ChatServiceBase):
 
         return messages
 
+    async def _handle_tool_calling_flow(
+        self,
+        model_config: Dict[str, Any],
+        messages: List[Dict[str, Any]],
+        tools: List[Any],
+        subtask_id: int,
+        task_id: int,
+        original_message: Union[str, Dict[str, Any]],
+        cancel_event: asyncio.Event,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
+        """
+        Handle tool calling flow: send request with tools, detect tool calls, execute them, send results back.
+        """
+        # Step 0: Flatten tools (extract from FastMCP)
+        flat_tools = await self._flatten_tools(tools)
+
+        # Step 1: Adapt tools for the specific model
+        model_type = model_config.get("model", "openai")
+        adapted_tools = self._adapt_tools_for_model(flat_tools, model_type)
+
+        # Loop with recursion depth limiting
+        max_depth = 5  # Max tool recursion depth
+        current_depth = 0
+
+        while current_depth < max_depth:
+            # Only send tools if we are not at the max depth
+            # This forces the model to generate a final answer on the last step
+            current_tools = adapted_tools if current_depth < max_depth - 1 else None
+
+            # Call LLM streaming
+            stream_generator = self._call_llm_streaming_with_cancel(
+                model_config,
+                messages,
+                subtask_id,
+                cancel_event,
+                tools=current_tools,
+            )
+
+            # Accumulate tool calls and content for this step
+            accumulated_content = ""
+            tool_calls_accumulator = {}  # index -> {id, name, arguments}
+
+            async for chunk_data in stream_generator:
+                if not isinstance(chunk_data, dict):
+                    # Backward compatibility check
+                    if chunk_data:
+                        yield {"type": "content", "content": chunk_data}
+                        accumulated_content += chunk_data
+                    continue
+
+                if chunk_data.get("type") == "content":
+                    content = chunk_data.get("content", "")
+                    if content:
+                        accumulated_content += content
+                        yield chunk_data
+
+                elif chunk_data.get("type") == "tool_call_chunk":
+                    tc = chunk_data.get("tool_call", {})
+                    idx = tc.get("index", 0)
+
+                    if idx not in tool_calls_accumulator:
+                        tool_calls_accumulator[idx] = {
+                            "id": "",
+                            "name": "",
+                            "arguments": "",
+                        }
+
+                    if tc.get("id"):
+                        tool_calls_accumulator[idx]["id"] = tc["id"]
+                    if tc.get("name"):
+                        tool_calls_accumulator[idx]["name"] = tc["name"]
+                    if tc.get("arguments"):
+                        tool_calls_accumulator[idx]["arguments"] += tc["arguments"]
+
+            # Check for tool calls
+            if not tool_calls_accumulator:
+                # No tool calls detected, we are done
+                return
+
+            # Reconstruct tool calls
+            tool_calls = []
+            for idx in sorted(tool_calls_accumulator.keys()):
+                tc = tool_calls_accumulator[idx]
+                tool_calls.append(
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {"name": tc["name"], "arguments": tc["arguments"]},
+                    }
+                )
+
+            # Construct assistant message
+            assistant_message = {
+                "role": "assistant",
+                "content": accumulated_content if accumulated_content else None,
+                "tool_calls": tool_calls,
+            }
+            messages.append(assistant_message)
+
+            # Execute tool calls
+            for tool_call in tool_calls:
+                function_name = tool_call["function"]["name"]
+                tool_call_id = tool_call["id"]
+                function_args = self._safe_parse_json_args(
+                    tool_call["function"]["arguments"], function_name, tool_call_id
+                )
+
+                logger.info(f"Executing tool call: {function_name}")
+
+                # Execute tool
+                tool_result = ""
+                found_tool = next(
+                    (t for t in flat_tools if getattr(t, "name", "") == function_name),
+                    None,
+                )
+
+                if found_tool:
+                    try:
+                        # Get the underlying function
+                        fn = getattr(found_tool, "fn", None)
+                        if fn:
+                            if inspect.iscoroutinefunction(fn):
+                                tool_result = await fn(**function_args)
+                            else:
+                                tool_result = fn(**function_args)
+                        elif callable(found_tool):
+                            # Fallback if tool itself is callable
+                            if inspect.iscoroutinefunction(found_tool):
+                                tool_result = await found_tool(**function_args)
+                            else:
+                                tool_result = found_tool(**function_args)
+                        else:
+                            tool_result = f"Tool {function_name} execution failed: Tool function not found"
+
+                    except (TypeError, AttributeError, ValueError) as e:
+                        logger.exception(f"Tool execution failed for {function_name}")
+                        tool_result = f"Error: {str(e)}"
+                else:
+                    tool_result = f"Tool {function_name} not found"
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call_id,
+                        "name": function_name,
+                        "content": str(tool_result),
+                    }
+                )
+
+            # Increment depth and continue loop
+            current_depth += 1
+
     async def _call_llm_streaming(
         self, model_config: Dict[str, Any], messages: List[Dict[str, str]]
     ) -> AsyncGenerator[str, None]:
@@ -352,6 +681,7 @@ class ChatService(ChatServiceBase):
         messages: List[Dict[str, str]],
         subtask_id: int,
         cancel_event: asyncio.Event,
+        tools: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncGenerator[str, None]:
         """
         Call LLM API with streaming and cancellation support.
@@ -381,6 +711,7 @@ class ChatService(ChatServiceBase):
                 default_headers,
                 subtask_id,
                 cancel_event,
+                tools=tools,
             ):
                 # Check cancellation before yielding each chunk
                 if cancel_event.is_set():
@@ -396,6 +727,7 @@ class ChatService(ChatServiceBase):
                 default_headers,
                 subtask_id,
                 cancel_event,
+                tools=tools,
             ):
                 # Check cancellation before yielding each chunk
                 if cancel_event.is_set():
@@ -411,6 +743,7 @@ class ChatService(ChatServiceBase):
                 default_headers,
                 subtask_id,
                 cancel_event,
+                tools=tools,
             ):
                 # Check cancellation before yielding each chunk
                 if cancel_event.is_set():
@@ -428,6 +761,11 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call OpenAI-compatible API with streaming.
+
+        Note: Tool messages (role='tool') are converted to 'user' role because:
+        1. It maintains natural conversation flow (tool results augment user's question)
+        2. Most models expect user/assistant alternation
+        3. Tool results are contextual information for answering the user's question
         """
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {
@@ -444,7 +782,6 @@ class ChatService(ChatServiceBase):
 
         # Check if any messages contain vision content (array format)
         processed_messages = []
-        has_vision = False
 
         supports_vision = any(
             domain in base_url.lower()
@@ -457,11 +794,24 @@ class ChatService(ChatServiceBase):
         )
 
         for msg in messages:
+            msg_role = msg.get("role", "user")
             content = msg.get("content", "")
-            if isinstance(content, list):
-                # This is a multi-part content (vision message)
-                has_vision = True
 
+            # Handle assistant messages with tool_calls (content may be null)
+            if msg_role == "assistant" and "tool_calls" in msg:
+                # Keep the assistant message with tool_calls as-is
+                processed_messages.append(msg)
+            # Keep tool messages as-is with tool role
+            elif msg_role == "tool":
+                processed_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.get("tool_call_id"),
+                        "content": content,
+                    }
+                )
+            elif isinstance(content, list):
+                # This is a multi-part content (vision message)
                 if supports_vision:
                     # Keep the original vision format
                     processed_messages.append(msg)
@@ -480,10 +830,10 @@ class ChatService(ChatServiceBase):
 
                     combined_text = "\n".join(text_parts)
                     processed_messages.append(
-                        {"role": msg["role"], "content": combined_text}
+                        {"role": msg_role, "content": combined_text}
                     )
             else:
-                processed_messages.append(msg)
+                processed_messages.append({"role": msg_role, "content": content})
 
         payload = {
             "model": model_id,
@@ -530,6 +880,9 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[str, None]:
         """
         Call Claude API with streaming.
+
+        Note: Claude does not support 'tool' role. Tool messages are converted to 'user' role
+        because tool results provide contextual information for answering the user's question.
         """
         base_url_stripped = base_url.rstrip("/")
         if base_url_stripped.endswith("/v1"):
@@ -547,12 +900,15 @@ class ChatService(ChatServiceBase):
             headers.update(default_headers)
 
         # Separate system message from chat messages (Claude API requirement)
+        # Convert 'tool' role to 'user' role (Claude doesn't support 'tool' role)
         system_content = ""
         chat_messages = []
         for msg in messages:
             if msg["role"] == "system":
                 system_content = msg["content"]
             else:
+                # Convert 'tool' role to 'user' role for Claude
+                msg_role = "user" if msg["role"] == "tool" else msg["role"]
                 content = msg.get("content", "")
                 if isinstance(content, str):
                     formatted_content = [{"type": "text", "text": content}]
@@ -587,9 +943,7 @@ class ChatService(ChatServiceBase):
                 else:
                     formatted_content = [{"type": "text", "text": str(content)}]
 
-                chat_messages.append(
-                    {"role": msg["role"], "content": formatted_content}
-                )
+                chat_messages.append({"role": msg_role, "content": formatted_content})
 
         payload = {
             "model": model_id,
@@ -633,7 +987,8 @@ class ChatService(ChatServiceBase):
         default_headers: Dict[str, Any],
         subtask_id: int,
         cancel_event: asyncio.Event,
-    ) -> AsyncGenerator[str, None]:
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Call OpenAI-compatible API with streaming and cancellation support.
         """
@@ -649,7 +1004,6 @@ class ChatService(ChatServiceBase):
             headers.update(default_headers)
 
         processed_messages = []
-        has_vision = False
 
         supports_vision = any(
             domain in base_url.lower()
@@ -662,9 +1016,23 @@ class ChatService(ChatServiceBase):
         )
 
         for msg in messages:
+            msg_role = msg.get("role", "user")
             content = msg.get("content", "")
-            if isinstance(content, list):
-                has_vision = True
+
+            # Handle assistant messages with tool_calls (content may be null)
+            if msg_role == "assistant" and "tool_calls" in msg:
+                # Keep the assistant message with tool_calls as-is
+                processed_messages.append(msg)
+            # Keep tool messages as-is with tool role
+            elif msg_role == "tool":
+                processed_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": msg.get("tool_call_id"),
+                        "content": content,
+                    }
+                )
+            elif isinstance(content, list):
                 if supports_vision:
                     processed_messages.append(msg)
                 else:
@@ -680,16 +1048,25 @@ class ChatService(ChatServiceBase):
                             )
                     combined_text = "\n".join(text_parts)
                     processed_messages.append(
-                        {"role": msg["role"], "content": combined_text}
+                        {"role": msg_role, "content": combined_text}
                     )
             else:
-                processed_messages.append(msg)
+                processed_messages.append({"role": msg_role, "content": content})
 
         payload = {
             "model": model_id,
             "messages": processed_messages,
             "stream": True,
         }
+
+        if tools:
+            payload["tools"] = tools
+        # Log the request for debugging
+        logger.debug(
+            f"OpenAI streaming request: model={model_id}, "
+            f"messages={len(processed_messages)}, "
+            f"tools={len(tools) if tools else 0}"
+        )
 
         async with client.stream(
             "POST", url, json=payload, headers=headers
@@ -717,9 +1094,35 @@ class ChatService(ChatServiceBase):
                         choices = chunk_data.get("choices", [])
                         if choices:
                             delta = choices[0].get("delta", {})
+
+                            # Handle content
                             content = delta.get("content", "")
                             if content:
-                                yield content
+                                yield {"type": "content", "content": content}
+
+                            # Handle tool calls
+                            tool_calls = delta.get("tool_calls")
+                            if tool_calls:
+                                for tc in tool_calls:
+                                    # Normalize OpenAI tool call format to flat format expected by handler
+                                    normalized_tc = {
+                                        "index": tc.get("index", 0),
+                                        "id": tc.get("id"),
+                                    }
+
+                                    if "function" in tc:
+                                        func = tc["function"]
+                                        if "name" in func:
+                                            normalized_tc["name"] = func["name"]
+                                        if "arguments" in func:
+                                            normalized_tc["arguments"] = func[
+                                                "arguments"
+                                            ]
+
+                                    yield {
+                                        "type": "tool_call_chunk",
+                                        "tool_call": normalized_tc,
+                                    }
                     except json.JSONDecodeError:
                         continue
 
@@ -739,7 +1142,10 @@ class ChatService(ChatServiceBase):
         - Endpoint: {base_url}/v1beta/models/{model_id}:streamGenerateContent
         - API key is passed as query parameter
         - Messages use 'parts' array instead of 'content' string
-        - Role mapping: assistant -> model
+        - Role mapping: assistant -> model, tool -> user
+
+        Note: Gemini does not support 'tool' role. Tool messages are converted to 'user' role
+        because tool results provide contextual information for answering the user's question.
         """
         # Build URL with API key as query parameter
         base_url_stripped = base_url.rstrip("/")
@@ -782,8 +1188,11 @@ class ChatService(ChatServiceBase):
                     system_instruction = {"parts": [{"text": content}]}
                 continue
 
-            # Map roles: assistant -> model
-            gemini_role = "model" if role == "assistant" else "user"
+            # Map roles: assistant -> model, tool -> user (Gemini doesn't support 'tool' role)
+            if role == "assistant":
+                gemini_role = "model"
+            else:
+                gemini_role = "user"  # Both 'user' and 'tool' map to 'user'
 
             # Convert content to parts format
             if isinstance(content, str):
@@ -868,7 +1277,8 @@ class ChatService(ChatServiceBase):
         default_headers: Dict[str, Any],
         subtask_id: int,
         cancel_event: asyncio.Event,
-    ) -> AsyncGenerator[str, None]:
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Call Gemini API with streaming and cancellation support.
         """
@@ -895,6 +1305,19 @@ class ChatService(ChatServiceBase):
         if default_headers:
             headers.update(default_headers)
 
+        # Convert tools to Gemini format
+        gemini_tools = []
+        if tools:
+            for tool in tools:
+                function = tool.get("function", {})
+                gemini_tools.append(
+                    {
+                        "name": function.get("name"),
+                        "description": function.get("description"),
+                        "parameters": function.get("parameters"),
+                    }
+                )
+
         # Convert messages to Gemini format
         system_instruction = None
         gemini_contents = []
@@ -908,6 +1331,42 @@ class ChatService(ChatServiceBase):
                     system_instruction = {"parts": [{"text": content}]}
                 continue
 
+            # Handle assistant message with tool calls
+            if role == "assistant" and "tool_calls" in msg:
+                parts = []
+                if content:
+                    parts.append({"text": content})
+
+                for tc in msg["tool_calls"]:
+                    tool_name = tc["function"]["name"]
+                    tool_args = self._safe_parse_json_args(
+                        tc["function"]["arguments"], tool_name, tc.get("id", "unknown")
+                    )
+                    parts.append(
+                        {
+                            "functionCall": {
+                                "name": tool_name,
+                                "args": tool_args,
+                            }
+                        }
+                    )
+                gemini_contents.append({"role": "model", "parts": parts})
+                continue
+
+            # Handle tool result message
+            if role == "tool":
+                parts = [
+                    {
+                        "functionResponse": {
+                            "name": msg.get("name"),
+                            "response": {"content": content},
+                        }
+                    }
+                ]
+                gemini_contents.append({"role": "user", "parts": parts})
+                continue
+
+            # Regular messages
             gemini_role = "model" if role == "assistant" else "user"
 
             if isinstance(content, str):
@@ -947,6 +1406,14 @@ class ChatService(ChatServiceBase):
             "contents": gemini_contents,
         }
 
+        if gemini_tools:
+            payload["tools"] = [{"function_declarations": gemini_tools}]
+            # Gemini bug workaround: payload construction duplicated above in original code, fixing it here
+            # payload is already set, just adding tools
+            # Note: Original code had: payload = { "contents": ... } then if gemini_tools: payload["tools"] = ... then payload = { "contents": ... } (overwrite!).
+            # The overwrite at line 1381 in SEARCH block erased tools.
+            # Fixed here.
+
         if system_instruction:
             payload["systemInstruction"] = system_instruction
 
@@ -978,9 +1445,24 @@ class ChatService(ChatServiceBase):
                             content_obj = candidates[0].get("content", {})
                             parts = content_obj.get("parts", [])
                             for part in parts:
+                                # Handle text
                                 text = part.get("text", "")
                                 if text:
-                                    yield text
+                                    yield {"type": "content", "content": text}
+
+                                # Handle function calls
+                                if "functionCall" in part:
+                                    fc = part["functionCall"]
+                                    call_id = f"call_{uuid.uuid4().hex[:8]}"
+                                    yield {
+                                        "type": "tool_call_chunk",
+                                        "tool_call": {
+                                            "index": 0,  # Gemini usually returns one
+                                            "id": call_id,
+                                            "name": fc.get("name"),
+                                            "arguments": json.dumps(fc.get("args")),
+                                        },
+                                    }
                     except json.JSONDecodeError:
                         continue
 
@@ -994,7 +1476,8 @@ class ChatService(ChatServiceBase):
         default_headers: Dict[str, Any],
         subtask_id: int,
         cancel_event: asyncio.Event,
-    ) -> AsyncGenerator[str, None]:
+        tools: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Call Claude API with streaming and cancellation support.
         """
@@ -1012,49 +1495,104 @@ class ChatService(ChatServiceBase):
         if default_headers:
             headers.update(default_headers)
 
+        # Convert tools to Claude format
+        claude_tools = []
+        if tools:
+            for tool in tools:
+                function = tool.get("function", {})
+                claude_tools.append(
+                    {
+                        "name": function.get("name"),
+                        "description": function.get("description"),
+                        "input_schema": function.get("parameters"),
+                    }
+                )
+
+        # Convert messages to Claude format
         system_content = ""
         chat_messages = []
         for msg in messages:
-            if msg["role"] == "system":
-                system_content = msg["content"]
-            else:
-                content = msg.get("content", "")
-                if isinstance(content, str):
-                    formatted_content = [{"type": "text", "text": content}]
-                elif isinstance(content, list):
-                    formatted_content = []
-                    for block in content:
-                        if block.get("type") == "text":
-                            formatted_content.append(block)
-                        elif block.get("type") == "image_url":
-                            image_url_data = block.get("image_url", {})
-                            if isinstance(image_url_data, dict):
-                                image_url = image_url_data.get("url", "")
-                            else:
-                                image_url = image_url_data
+            role = msg.get("role")
+            content = msg.get("content", "")
 
-                            if image_url.startswith("data:"):
-                                parts = image_url.split(",", 1)
-                                if len(parts) == 2:
-                                    header = parts[0]
-                                    base64_data = parts[1]
-                                    media_type = header.split(":")[1].split(";")[0]
-                                    formatted_content.append(
-                                        {
-                                            "type": "image",
-                                            "source": {
-                                                "type": "base64",
-                                                "media_type": media_type,
-                                                "data": base64_data,
-                                            },
-                                        }
-                                    )
-                else:
-                    formatted_content = [{"type": "text", "text": str(content)}]
+            if role == "system":
+                system_content = content
+                continue
 
+            # Handle assistant message with tool calls
+            if role == "assistant" and "tool_calls" in msg:
+                tool_calls = msg["tool_calls"]
+                formatted_content = []
+                # Add text content if present
+                if content:
+                    formatted_content.append({"type": "text", "text": content})
+
+                # Add tool use blocks
+                for tc in tool_calls:
+                    tool_name = tc["function"]["name"]
+                    tool_args = self._safe_parse_json_args(
+                        tc["function"]["arguments"], tool_name, tc["id"]
+                    )
+                    formatted_content.append(
+                        {
+                            "type": "tool_use",
+                            "id": tc["id"],
+                            "name": tool_name,
+                            "input": tool_args,
+                        }
+                    )
                 chat_messages.append(
-                    {"role": msg["role"], "content": formatted_content}
+                    {"role": "assistant", "content": formatted_content}
                 )
+                continue
+
+            # Handle tool result message
+            if role == "tool":
+                formatted_content = [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": msg.get("tool_call_id"),
+                        "content": content,
+                    }
+                ]
+                chat_messages.append({"role": "user", "content": formatted_content})
+                continue
+
+            # Regular user/assistant message
+            if isinstance(content, str):
+                formatted_content = [{"type": "text", "text": content}]
+            elif isinstance(content, list):
+                formatted_content = []
+                for block in content:
+                    if block.get("type") == "text":
+                        formatted_content.append(block)
+                    elif block.get("type") == "image_url":
+                        image_url_data = block.get("image_url", {})
+                        if isinstance(image_url_data, dict):
+                            image_url = image_url_data.get("url", "")
+                        else:
+                            image_url = image_url_data
+
+                        if image_url.startswith("data:"):
+                            parts = image_url.split(",", 1)
+                            if len(parts) == 2:
+                                header = parts[0]
+                                base64_data = parts[1]
+                                media_type = header.split(":")[1].split(";")[0]
+                                formatted_content.append(
+                                    {
+                                        "type": "image",
+                                        "source": {
+                                            "type": "base64",
+                                            "media_type": media_type,
+                                            "data": base64_data,
+                                        },
+                                    }
+                                )
+            else:
+                formatted_content = [{"type": "text", "text": str(content)}]
+
+            chat_messages.append({"role": role, "content": formatted_content})
 
         payload = {
             "model": model_id,
@@ -1062,7 +1600,12 @@ class ChatService(ChatServiceBase):
             "stream": True,
             "messages": chat_messages,
         }
-        if system_content:
+
+        if claude_tools:
+            payload["tools"] = claude_tools
+            if system_content:
+                payload["system"] = system_content
+        elif system_content:
             payload["system"] = system_content
 
         async with client.stream(
@@ -1083,12 +1626,43 @@ class ChatService(ChatServiceBase):
                         break
                     try:
                         chunk_data = json.loads(data)
-                        if chunk_data.get("type") == "content_block_delta":
+                        event_type = chunk_data.get("type")
+
+                        if event_type == "content_block_start":
+                            # Start of a block (could be text or tool_use)
+                            index = chunk_data.get("index", 0)
+                            content_block = chunk_data.get("content_block", {})
+                            if content_block.get("type") == "tool_use":
+                                yield {
+                                    "type": "tool_call_chunk",
+                                    "tool_call": {
+                                        "index": index,
+                                        "id": content_block.get("id"),
+                                        "name": content_block.get("name"),
+                                        "arguments": "",  # Arguments come in deltas
+                                    },
+                                }
+
+                        elif event_type == "content_block_delta":
+                            # Delta update
+                            index = chunk_data.get("index", 0)
                             delta = chunk_data.get("delta", {})
                             if delta.get("type") == "text_delta":
                                 text = delta.get("text", "")
                                 if text:
-                                    yield text
+                                    yield {"type": "content", "content": text}
+
+                            elif delta.get("type") == "input_json_delta":
+                                partial_json = delta.get("partial_json", "")
+                                if partial_json:
+                                    yield {
+                                        "type": "tool_call_chunk",
+                                        "tool_call": {
+                                            "index": index,
+                                            "arguments": partial_json,
+                                        },
+                                    }
+
                     except json.JSONDecodeError:
                         continue
 
@@ -1181,9 +1755,6 @@ class ChatService(ChatServiceBase):
                     # Also update task status
                     self._update_task_status_sync(db, subtask.task_id)
 
-                    logger.debug(
-                        f"Subtask {subtask_id} status updated to {status} (sync)"
-                    )
             except Exception as e:
                 logger.error(f"Error updating subtask {subtask_id} status: {e}")
                 db.rollback()
@@ -1198,8 +1769,6 @@ class ChatService(ChatServiceBase):
         """
         Update task status based on subtask status (synchronous).
         """
-        from sqlalchemy.orm.attributes import flag_modified
-
         from app.models.kind import Kind
         from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
         from app.schemas.kind import Task
@@ -1207,7 +1776,7 @@ class ChatService(ChatServiceBase):
         try:
             task = (
                 db.query(Kind)
-                .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active == True)
+                .filter(Kind.id == task_id, Kind.kind == "Task", Kind.is_active)
                 .first()
             )
             if not task:
@@ -1289,9 +1858,6 @@ class ChatService(ChatServiceBase):
                     }
                     subtask.updated_at = datetime.now()
                     db.commit()
-                    logger.debug(
-                        f"Saved partial response for subtask {subtask_id}: {len(content)} chars, streaming={is_streaming}"
-                    )
             except Exception as e:
                 logger.error(
                     f"Error saving partial response for subtask {subtask_id}: {e}"
@@ -1366,6 +1932,60 @@ class ChatService(ChatServiceBase):
 
         # 4. Clean up Redis streaming cache
         await session_manager.delete_streaming_content(subtask_id)
+
+    async def _flatten_tools(self, tools: List[Any]) -> List[Any]:
+        """Extract FunctionTool objects from FastMCP instances."""
+        flat_tools = []
+        for t in tools:
+            if isinstance(t, FastMCP):
+                if hasattr(t, "_tool_manager"):
+                    # get_tools() is async in newer versions
+                    if hasattr(t._tool_manager, "get_tools"):
+                        res = t._tool_manager.get_tools()
+                        if inspect.iscoroutine(res):
+                            tool_dict = await res
+                        else:
+                            tool_dict = res
+
+                        if isinstance(tool_dict, dict):
+                            flat_tools.extend(tool_dict.values())
+            else:
+                flat_tools.append(t)
+        return flat_tools
+
+    def _adapt_tools_for_model(
+        self, tools: List[Any], model_type: str
+    ) -> List[Dict[str, Any]]:
+        """Adapt tools to model-specific format."""
+        adapted = []
+        for tool in tools:
+            # Check if it's a FastMCP FunctionTool (it has name, description, parameters)
+            name = getattr(tool, "name", "")
+            description = getattr(tool, "description", "")
+            parameters = getattr(tool, "parameters", {})
+
+            if (
+                model_type == "openai" or model_type == "gemini"
+            ):  # Gemini adapter expects OpenAI format
+                adapted.append(
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "description": description,
+                            "parameters": parameters,
+                        },
+                    }
+                )
+            elif model_type == "claude":
+                adapted.append(
+                    {
+                        "name": name,
+                        "description": description,
+                        "input_schema": parameters,
+                    }
+                )
+        return adapted
 
 
 # Global chat service instance

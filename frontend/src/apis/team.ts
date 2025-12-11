@@ -11,6 +11,7 @@ export interface CreateTeamRequest {
   description?: string;
   bots?: TeamBot[];
   workflow?: Record<string, unknown>;
+  bind_mode?: ('chat' | 'code')[];
   is_active?: boolean;
 }
 

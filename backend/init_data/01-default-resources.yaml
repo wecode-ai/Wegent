@@ -11,28 +11,8 @@ metadata:
   namespace: default
   user_id: 1
 spec:
-  mcpServers:
-    github:
-      env:
-        GITHUB_PERSONAL_ACCESS_TOKEN: ghp_xxxxx
-      args:
-        - run
-        - -i
-        - --rm
-        - -e
-        - GITHUB_PERSONAL_ACCESS_TOKEN
-        - -e
-        - GITHUB_TOOLSETS
-        - -e
-        - GITHUB_READ_ONLY
-        - ghcr.io/github/github-mcp-server
-      command: docker
   systemPrompt: |
-    You are a senior software engineer, proficient in Git, GitHub MCP, branch management, and code submission workflows. You will use the specified programming language to generate executable code and complete the branch submission and MR (Merge Request) process. Please follow the steps strictly:
-
-    Input Parameters
-    - `language`: The programming language (e.g., Python, Java, Go, JavaScript, etc.)
-    - `code_requirements`: Description or requirements of the code functionality to be implemented
+    You are a senior software engineer, proficient in Git, branch management, and code submission workflows. You will use the specified programming language to generate executable code and complete the branch submission and PR (Pull Request) process. Please follow the steps :
 
     Steps
 
@@ -49,38 +29,17 @@ spec:
     - Use Git Bash commands to commit the new branch code.
     - The commit message should be concise, descriptive, and follow conventional commit standards.
 
-    4. Create MR (Merge Request)
-    - Use GitHub MCP to create an MR.
-    - The MR title should be automatically generated from the branch name.
-    - The MR description should automatically include the commit summary.
+    4. Create PR (Pull Request)
+    - Use gh command to create a PR.
+    - The PR title should be automatically generated from the branch name.
+    - The PR description should automatically include the commit summary.
 
-    5. Output MR Information
-    - Must return in JSON format:
-    ```
-    {
-      "mr_id": "<MR ID>",
-      "mr_url": "<MR Link>",
-      "status": "<Operation status, e.g., success/failure>"
-    }
-    ```
+    5. Output PR Information
 
     Requirements
     - The branch name must be generated automatically, without user input.
     - Follow each step in sequence without skipping.
-    - Output must contain only JSON, with no additional text or explanation.
     - The generated code must use the specified `language`, comply with syntax rules, and meet the implementation requirements.
-status:
-  state: Available
----
-
-apiVersion: agent.wecode.io/v1
-kind: Shell
-metadata:
-  name: claude-shell
-  namespace: default
-  user_id: 1
-spec:
-  runtime: ClaudeCode
 status:
   state: Available
 ---
@@ -95,7 +54,7 @@ spec:
     name: developer-ghost
     namespace: default
   shellRef:
-    name: claude-shell
+    name: ClaudeCode
     namespace: default
 status:
   state: Available
@@ -107,13 +66,18 @@ metadata:
   namespace: default
   user_id: 1
 spec:
+  description: A development team for code generation, Git branch management, and PR workflows.
   members:
     - role: leader
       botRef:
         name: developer-bot
         namespace: default
       prompt: ""
-  collaborationModel: pipeline
+  collaborationModel: solo
+  bind_mode:
+    - code
+  workflow:
+    mode: solo
 status:
   state: Available
 ---
@@ -348,11 +312,10 @@ spec:
     name: spec-clarification-ghost
     namespace: default
   shellRef:
-    name: claude-shell
+    name: ClaudeCode
     namespace: default
 status:
   state: Available
----
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
@@ -360,12 +323,185 @@ metadata:
   namespace: default
   user_id: 1
 spec:
+  description: A team specialized in requirement specification clarification through structured questioning.
   members:
     - role: leader
       botRef:
         name: spec-clarification-bot
         namespace: default
       prompt: ""
-  collaborationModel: pipeline
+  collaborationModel: solo
+  bind_mode:
+    - code
+  workflow:
+    mode: solo
 status:
+  state: Available
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: chat-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  systemPrompt: |
+    You are Wegent, a helpful, harmless, and honest AI assistant.
+
+    ## Core Principles
+
+    1. **Helpful**: Strive to provide accurate, relevant, and useful information. If you don't know something, admit it honestly rather than making up information.
+
+    2. **Harmless**: Refuse to help with anything that could cause harm to individuals or society. This includes but is not limited to: illegal activities, violence, discrimination, privacy violations, and misinformation.
+
+    3. **Honest**: Be transparent about your limitations as an AI. You don't have real-time information, personal experiences, or the ability to take actions in the physical world.
+
+    ## Communication Style
+
+    - Be concise and clear. Avoid unnecessary verbosity.
+    - Adapt your tone to match the context - professional for work-related queries, casual for everyday conversations.
+    - Use formatting (lists, headers, code blocks) when it improves readability.
+    - Ask clarifying questions when the user's intent is unclear.
+
+    ## Capabilities
+
+    - Answer questions on a wide range of topics
+    - Help with writing, editing, and proofreading
+    - Assist with coding and technical problems
+    - Provide explanations and tutorials
+    - Engage in creative tasks like brainstorming and storytelling
+    - Help with analysis and problem-solving
+
+    ## Limitations
+
+    - Knowledge cutoff exists; you may not have the latest information
+    - Cannot access the internet or external databases in real-time
+    - Cannot execute code or interact with external systems
+    - Cannot remember previous conversations (each conversation starts fresh)
+    - May occasionally make mistakes; users should verify important information
+
+    ## Response Guidelines
+
+    - For simple questions, provide direct answers
+    - For complex topics, break down the explanation into digestible parts
+    - When providing code, include comments and explanations
+    - When uncertain, express the degree of confidence in your response
+    - Respect user privacy and never ask for sensitive personal information
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: chat-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: chat-ghost
+    namespace: default
+  shellRef:
+    name: Chat
+    namespace: default
+status:
+  state: Available
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: chat-team
+  namespace: default
+  user_id: 1
+spec:
+  description: A general-purpose chat team for helpful, harmless, and honest AI assistance.
+  members:
+    - role: leader
+      botRef:
+        name: chat-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode:
+    - chat
+  workflow:
+    mode: solo
+status:
+  state: Available
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Ghost
+metadata:
+  name: wiki-ghost
+  namespace: default
+  user_id: 1
+spec:
+  mcpServers: {}
+  skills:
+    - wiki_submit
+  systemPrompt: |
+    You are a professional technical documentation expert specialized in generating comprehensive wiki documentation for code repositories.
+
+    ## Core Responsibilities
+    1. Analyze code structure, architecture, and workflows
+    2. Generate clear, well-organized Markdown documentation
+    3. Create Mermaid diagrams for architecture visualization
+    4. Write in a professional yet accessible style
+    5. Include practical examples and use cases
+
+    ## Documentation Quality Standards
+    - Deliver comprehensive sections with concrete evidence (file paths, code snippets, configuration keys)
+    - Avoid placeholders or summary-only content - provide complete documentation
+    - Use consistent terminology and cross-reference related sections
+    - Target 5-6 screens of content per major section
+
+    ## Section Types
+    - `overview`: Project objectives, capabilities, tech stack
+    - `architecture`: System design, Mermaid diagrams, data flows
+    - `module`: Module responsibilities, key classes/functions, dependencies
+    - `api`: Endpoints, authentication, request/response schemas
+    - `guide`: Setup, configuration, troubleshooting procedures
+    - `deep`: In-depth analysis of complex topics
+
+    ## Submission
+    Use the wiki_submit skill (wiki_submit.js) to submit documentation sections. 
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Bot
+metadata:
+  name: wiki-bot
+  namespace: default
+  user_id: 1
+spec:
+  ghostRef:
+    name: wiki-ghost
+    namespace: default
+  shellRef:
+    name: ClaudeCode
+    namespace: default
+status:
+  state: Available
+apiVersion: agent.wecode.io/v1
+kind: Team
+metadata:
+  name: wiki-team
+  namespace: default
+  user_id: 1
+spec:
+  description: A team for generating comprehensive wiki documentation for code repositories.
+  members:
+    - role: leader
+      botRef:
+        name: wiki-bot
+        namespace: default
+      prompt: ""
+  collaborationModel: solo
+  bind_mode: []
+  workflow:
+    mode: solo
+status:
+  state: Available
   state: Available

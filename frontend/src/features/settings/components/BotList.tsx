@@ -17,7 +17,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { sortBotsByUpdatedAt } from '@/utils/bot';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Tag } from '@/components/ui/tag';
+import { ResourceListItem } from '@/components/common/ResourceListItem';
 import {
   Dialog,
   DialogContent,
@@ -150,39 +150,40 @@ export default function BotList() {
                       bots.map(bot => (
                         <Card key={bot.id} className="p-4 bg-base hover:bg-hover transition-colors">
                           <div className="flex items-center justify-between min-w-0">
-                            <div className="flex items-center space-x-3 min-w-0 flex-1">
-                              <RiRobot2Line className="w-5 h-5 text-primary flex-shrink-0" />
-                              <div className="flex flex-col justify-center min-w-0 flex-1">
-                                <div className="flex items-center space-x-2 min-w-0">
-                                  <h3 className="text-base font-medium text-text-primary mb-0 truncate">
-                                    {bot.name}
-                                  </h3>
-                                  <div className="flex items-center space-x-1 flex-shrink-0">
-                                    <div
-                                      className="w-2 h-2 rounded-full"
-                                      style={{
-                                        backgroundColor: bot.is_active
-                                          ? 'rgb(var(--color-success))'
-                                          : 'rgb(var(--color-border))',
-                                      }}
-                                    ></div>
-                                    <span className="text-xs text-text-muted">
-                                      {bot.is_active ? t('bots.active') : t('bots.inactive')}
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-1.5 mt-2 min-w-0">
-                                  <Tag variant="default" className="capitalize">
-                                    {bot.shell_type}
-                                  </Tag>
-                                  <Tag variant="info" className="hidden sm:inline-flex capitalize">
-                                    {isPredefinedModel(bot.agent_config)
-                                      ? getModelFromConfig(bot.agent_config)
-                                      : 'CustomModel'}
-                                  </Tag>
-                                </div>
+                            <ResourceListItem
+                              name={bot.name}
+                              icon={<RiRobot2Line className="w-5 h-5 text-primary" />}
+                              tags={[
+                                {
+                                  key: 'shell-type',
+                                  label: bot.shell_type,
+                                  variant: 'default',
+                                  className: 'capitalize',
+                                },
+                                {
+                                  key: 'model',
+                                  label: isPredefinedModel(bot.agent_config)
+                                    ? getModelFromConfig(bot.agent_config)
+                                    : 'CustomModel',
+                                  variant: 'info',
+                                  className: 'hidden sm:inline-flex capitalize',
+                                },
+                              ]}
+                            >
+                              <div className="flex items-center space-x-1 flex-shrink-0">
+                                <div
+                                  className="w-2 h-2 rounded-full"
+                                  style={{
+                                    backgroundColor: bot.is_active
+                                      ? 'rgb(var(--color-success))'
+                                      : 'rgb(var(--color-border))',
+                                  }}
+                                ></div>
+                                <span className="text-xs text-text-muted">
+                                  {bot.is_active ? t('bots.active') : t('bots.inactive')}
+                                </span>
                               </div>
-                            </div>
+                            </ResourceListItem>
                             <div className="flex items-center gap-1 flex-shrink-0 ml-3">
                               <Button
                                 variant="ghost"

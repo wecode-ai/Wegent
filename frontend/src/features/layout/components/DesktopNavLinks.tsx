@@ -4,42 +4,71 @@
 
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 
 interface DesktopNavLinksProps {
-  activePage: 'chat' | 'code' | 'dashboard';
+  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
 }
+
+// Check if Wiki module is enabled via environment variable
+const isWikiEnabled = process.env.NEXT_PUBLIC_ENABLE_WIKI !== 'false';
 
 export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
   const { t } = useTranslation('common');
   const router = useRouter();
+  const [isPending, startTransition] = useTransition();
 
   const indicatorContainerRef = useRef<HTMLDivElement | null>(null);
   const itemRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const [indicatorStyle, setIndicatorStyle] = useState({ width: 0, left: 0 });
+
+  // Prefetch all navigation pages on mount for smoother navigation
+  useEffect(() => {
+    router.prefetch(paths.chat.getHref());
+    router.prefetch(paths.code.getHref());
+    if (isWikiEnabled) {
+      router.prefetch(paths.wiki.getHref());
+    }
+  }, [router]);
 
   const navItems = useMemo(
     () => [
       {
         key: 'chat' as const,
         label: t('navigation.chat'),
-        onClick: () => router.push(paths.chat.getHref()),
+        onClick: () => {
+          startTransition(() => {
+            router.push(paths.chat.getHref());
+          });
+        },
       },
       {
         key: 'code' as const,
         label: t('navigation.code'),
-        onClick: () => router.push(paths.code.getHref()),
+        onClick: () => {
+          startTransition(() => {
+            router.push(paths.code.getHref());
+          });
+        },
       },
-      {
-        key: 'dashboard' as const,
-        label: t('navigation.settings'),
-        onClick: () => router.push(paths.settings.root.getHref()),
-      },
+      ...(isWikiEnabled
+        ? [
+            {
+              key: 'wiki' as const,
+              label: t('navigation.wiki'),
+              onClick: () => {
+                startTransition(() => {
+                  router.push(paths.wiki.getHref());
+                });
+              },
+            },
+          ]
+        : []),
     ],
-    [t, router]
+    [t, router, startTransition]
   );
 
   useEffect(() => {
@@ -93,11 +122,12 @@ export function DesktopNavLinks({ activePage }: DesktopNavLinksProps) {
             itemRefs.current[item.key] = element;
           }}
           onClick={item.onClick}
+          disabled={isPending}
           className={`relative px-1 py-1 text-base font-bold leading-none transition-colors duration-200 ${
             activePage === item.key
               ? 'text-text-primary'
               : 'text-text-muted hover:text-text-primary'
-          }`}
+          } ${isPending ? 'opacity-70' : ''}`}
           aria-current={activePage === item.key ? 'page' : undefined}
         >
           {item.label}

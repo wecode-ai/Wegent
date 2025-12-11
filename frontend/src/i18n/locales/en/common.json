@@ -3,6 +3,10 @@
     "name": "Wegent AI Assistant",
     "description": "A whole dev team of AI agents in your editor."
   },
+  "repos": {
+    "repository": "Select Repository",
+    "branch": "Select Branch"
+  },
   "actions": {
     "save": "Save",
     "saving": "Saving...",
@@ -41,8 +45,10 @@
     "tasks": "Tasks",
     "chat": "Chat",
     "code": "Code",
+    "wiki": "Wiki",
     "settings": "Settings",
-    "docs": "Docs"
+    "docs": "Docs",
+    "admin": "Admin"
   },
   "sidebar": {
     "recent_visits": "Recent Visits",
@@ -50,6 +56,10 @@
     "dark_mode": "Dark Mode",
     "collapse": "Collapse sidebar",
     "expand": "Expand sidebar"
+  },
+  "theme": {
+    "light": "Light Mode",
+    "dark": "Dark Mode"
   },
   "user": {
     "default_name": "User",
@@ -155,7 +165,7 @@
   },
   "teams": {
     "title": "Team List",
-    "description": "View all teams and their bots",
+    "description": "Agent = Bot + Collaboration Mode. Combine different bots and collaboration patterns to accomplish various tasks",
     "loading": "Loading teams...",
     "active": "Active",
     "inactive": "Inactive",
@@ -209,6 +219,8 @@
   "team": {
     "name": "Name",
     "name_placeholder": "Team Name",
+    "description": "Description",
+    "description_placeholder": "Brief description of this team",
     "leader": "Leader",
     "model": "Model",
     "bots": "Bots",
@@ -244,7 +256,14 @@
     "select_bot": "Configure bot",
     "select_bot_placeholder": "Please configure a bot",
     "no_bot_selected": "No bot configured",
-    "edit_bot_config": "Edit bot configuration"
+    "edit_bot_config": "Edit bot configuration",
+    "recommended_mode": "Recommended Mode",
+    "recommended_mode_both": "Both",
+    "recommended_mode_chat": "Chat",
+    "recommended_mode_code": "Code",
+    "bind_mode": "Bind Mode",
+    "bind_mode_chat": "Chat",
+    "bind_mode_code": "Code"
   },
   "team_model": {
     "solo": "Solo",
@@ -287,7 +306,11 @@
     "no_match": "No matching results",
     "default": "(default)",
     "set_token": "Set Token",
-    "configure_integration": "Configure Repository Integration"
+    "configure_integration": "Configure Repository Integration",
+    "load_more": "Refresh repository list",
+    "refreshing": "Refreshing...",
+    "refresh_success": "Repository list refreshed",
+    "refresh_failed": "Failed to refresh, please try again"
   },
   "tasks": {
     "search_placeholder": "Search task",
@@ -328,6 +351,14 @@
     "enable_success": "Browser notifications enabled successfully",
     "disable_success": "Browser notifications disabled"
   },
+  "send_key": {
+    "title": "Message Send Shortcut",
+    "description": "Choose which keyboard shortcut sends messages in the chat",
+    "option_enter": "Enter to send (Shift+Enter for new line)",
+    "option_cmd_enter": "Cmd/Ctrl+Enter to send (Enter for new line)",
+    "save_success": "Send key preference saved",
+    "save_failed": "Failed to save send key preference"
+  },
   "guide": {
     "title": "Welcome",
     "description": "Before you can start using the app, please complete the setup below first!",
@@ -358,7 +389,10 @@
     "cancel": "Cancel",
     "confirm": "Confirm",
     "open_sidebar": "Open sidebar",
-    "close_sidebar": "Close sidebar"
+    "close_sidebar": "Close sidebar",
+    "previous": "Previous",
+    "next": "Next",
+    "page_info": "Page {{current}} of {{total}}"
   },
   "quota": {
     "load_failed": "Failed to fetch quota info",
@@ -541,6 +575,50 @@
     "use_bot_model": "Use Bot's predefined model",
     "model_required": "Please select a model"
   },
+  "knowledge": {
+    "modules": {
+      "title": "Knowledge Space",
+      "code": "Code Knowledge",
+      "code_desc": "Repository documentation",
+      "wiki": "Wiki",
+      "wiki_desc": "Team knowledge base"
+    }
+  },
+  "wiki": {
+    "add_repository": "Add Repository",
+    "add_repository_desc": "Click to add a new repository",
+    "no_projects": "No projects found",
+    "source": "Source",
+    "indexing": "Indexing...",
+    "cancelling": "Cancelling...",
+    "cancel": "Cancel",
+    "cancel_title": "Click to cancel generation",
+    "view_task": "Click to view task progress",
+    "cancel_dialog_title": "Cancel Generation",
+    "cancel_dialog_description": "Are you sure you want to cancel the wiki generation? This action cannot be undone.",
+    "repository": "Repository",
+    "branch": "Branch",
+    "document_language": "Document Language",
+    "adding": "Adding...",
+    "language_en": "English",
+    "language_zh": "Chinese",
+    "repositories": "Git Repositories",
+    "search": "Search...",
+    "search_repositories": "Search repositories...",
+    "back_to_list": "Back to list",
+    "last_indexed": "Last indexed",
+    "loading": "Loading...",
+    "loading_content": "Loading content...",
+    "select_content": "Select content from the sidebar",
+    "select_content_hint": "Choose a topic to view its documentation",
+    "diagram": "Diagram",
+    "click_to_expand": "Click to expand",
+    "copy_code": "Copy code",
+    "copied": "Copied!",
+    "access_denied_title": "Repository Access Denied",
+    "access_denied_description": "The wiki task user does not have access to this repository. Please add the user to the GitLab project or configure a different user.",
+    "no_bound_model_warning": "Wiki generation is not available. The default wiki team does not have a model configured. Please contact administrator."
+  },
   "shells": {
     "title": "Shell Management",
     "description": "Manage custom shells with your own base images",
@@ -654,7 +732,11 @@
     "handler_no_teams": "No teams available",
     "handler_create_team_hint": "You need to create at least one team to copy this task.",
     "handler_copying": "Copying...",
-    "handler_copy_to_tasks": "Continue chat"
+    "handler_copy_to_tasks": "Continue chat",
+    "handler_code_settings": "Code Repository Settings",
+    "handler_repo_hint": "The system will try to auto-select the original task's repository. If you don't have access, please manually select another repository",
+    "handler_repo_required": "Please select a repository",
+    "handler_branch_required": "Please select a branch"
   },
   "inAppBrowser": {
     "title": "Open in Default Browser",
@@ -685,5 +767,12 @@
     "copyFailed": "Failed to copy. Please manually copy the URL from the address bar.",
     "continueAnyway": "Continue Anyway (may encounter login issues)",
     "footerNote": "Opening in default browser ensures all features work properly"
+  },
+  "quick_access": {
+    "switch_mode_title": "Switch Mode",
+    "switch_to_code_message": "This agent is recommended for Code mode. Would you like to switch?",
+    "switch_to_chat_message": "This agent is recommended for Chat mode. Would you like to switch?",
+    "switch_mode": "Switch Mode",
+    "stay_current": "Stay Here"
   }
 }

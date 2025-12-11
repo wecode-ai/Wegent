@@ -8,6 +8,8 @@ English | [简体中文](README_zh.md)
 [![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
 [![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
+[![Gemini](https://img.shields.io/badge/Gemini-supported-4285F4.svg)](https://ai.google.dev)
+[![Version](https://img.shields.io/badge/version-1.0.20-brightgreen.svg)](https://github.com/wecode-ai/wegent/releases)
 
 <div align="center">
 
@@ -25,12 +27,14 @@ English | [简体中文](README_zh.md)
 <img src="./docs/assets/images/example.gif" width="75%" alt="Demo Video"/>
 Wegent empowers you to create powerful AI applications through intelligent agent orchestration:
 
-### 🖥️ **Web-Based Coding Assistant**
-Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously
+### 💬 **Instant AI Chat**
+Get started immediately with the built-in default chat team - no configuration required. Supports multiple LLM providers including Claude, OpenAI, and Gemini. Optional web search integration for real-time information retrieval.
 
+### 🖥️ **Web-Based Coding Assistant**
+Build a full-featured development environment in your browser with GitHub integration, supporting independent development spaces locally or in the cloud, capable of running multiple Coding Agents simultaneously.
 
 ### 📰 **News Intelligence Platform**
-Create a smart news aggregation and analysis system 
+Create a smart news aggregation and analysis system with multi-agent collaboration patterns.
 
 ### 🔧 **Custom Agent Applications**
 The possibilities are endless - build agents for:
@@ -48,11 +52,12 @@ Wegent is an open-source AI native operating system that enables you to define, 
 
 ### 🌟 Core Capabilities
 
-1. **🎨 Configuration-Driven Agent Teams**: Define and run personalized agent teams through YAML configuration with web UI - no secondary development required
-2. **⚙️ Multi Execution Engines**: Built on Agno and Claude Code agent engines at the bottom layer, supporting both dialogue and coding modes at the upper layer
+1. **🎨 Configuration-Driven Agent Teams**: Define and run personalized agent teams through YAML configuration with web UI - no secondary development required. Includes built-in default chat team for instant start
+2. **⚙️ Multi Execution Engines**: Built on Agno and Claude Code agent engines, with Chat Shell supporting direct LLM API calls (Claude, OpenAI, Gemini)
 3. **🔒 Isolated Sandbox Environments**: Each agent team runs in an independent sandbox, enabling multiple teams to execute simultaneously
-4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, and other agent collaboration patterns for complex workflows like news insights and content retrieval
+4. **🤝 Advanced Collaboration Modes**: Dialogue mode supports parallel, leader-based, solo mode and other agent collaboration patterns for complex workflows like news insights and content retrieval
 5. **💻 AI Coding Integration**: Coding mode integrates with GitHub/GitLab and other code services to implement AI-driven development, code review, and other coding workflows
+6. **🔍 Web Search Integration**: Optional web search capability for Chat Shell teams, supporting multiple search engines through a generic HTTP adapter (SearXNG, Google Custom Search, Bing, Brave, etc.) with user-selectable engine preferences.
 
 ```mermaid
 graph LR
@@ -161,6 +166,7 @@ graph LR
    - **Claude Code Shell**: Uses `ANTHROPIC_AUTH_TOKEN`
    - **Agno Shell**: Uses `ANTHROPIC_API_KEY`
    - **Dify Shell**: Uses `DIFY_API_KEY` and `DIFY_BASE_URL`
+   - **Chat Shell**: Uses `OPENAI_API_KEY` (OpenAI), `ANTHROPIC_API_KEY` (Claude), or `GOOGLE_API_KEY` (Gemini)
 
    Please set the correct variable based on your Shell configuration. Check the Shell's documentation or the `executor/agents/` code for specific requirements.
 
@@ -193,6 +199,7 @@ graph TB
         Claude["🧠 Claude Code"]
         Agno["💻 Agno"]
         Dify["✨ Dify"]
+        Chat["💬 Chat<br/>(Claude/OpenAI/Gemini)"]
     end
 
 
@@ -224,6 +231,7 @@ wegent/
 ├── executor/         # Task execution engine
 ├── executor_manager/ # Execution orchestration
 ├── shared/           # Common utilities and models
+├── wegent-cli/       # kubectl-style CLI tool (wectl)
 └── docker/           # Container configurations
 ```
 
@@ -275,52 +283,60 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 
 Thanks to the following developers for their contributions and efforts to make this project better. 💪
 
+<!-- readme: contributors -start -->
 <table>
-  <tr>
+<tr>
     <td align="center">
-      <a href="https://github.com/qdaxb">
-        <img src="https://avatars.githubusercontent.com/qdaxb" width="80px;" alt="qdaxb"/>
-        <br />
-        <sub><b>qdaxb</b></sub>
-      </a>
+        <a href="https://github.com/qdaxb">
+            <img src="https://avatars.githubusercontent.com/u/4157870?v=4" width="80;" alt="qdaxb"/>
+            <br />
+            <sub><b>Axb</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/cc-yafei">
-        <img src="https://avatars.githubusercontent.com/cc-yafei" width="80px;" alt="cc-yafei"/>
-        <br />
-        <sub><b>cc-yafei</b></sub>
-      </a>
+        <a href="https://github.com/feifei325">
+            <img src="https://avatars.githubusercontent.com/u/46489071?v=4" width="80;" alt="feifei325"/>
+            <br />
+            <sub><b>Feifei</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/fengkuizhi">
-        <img src="https://avatars.githubusercontent.com/fengkuizhi" width="80px;" alt="fengkuizhi"/>
-        <br />
-        <sub><b>fengkuizhi</b></sub>
-      </a>
+        <a href="https://github.com/Micro66">
+            <img src="https://avatars.githubusercontent.com/u/27556103?v=4" width="80;" alt="Micro66"/>
+            <br />
+            <sub><b>MicroLee</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/feifei325">
-        <img src="https://avatars.githubusercontent.com/feifei325" width="80px;" alt="feifei325"/>
-        <br />
-        <sub><b>feifei325</b></sub>
-      </a>
+        <a href="https://github.com/cc-yafei">
+            <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
+            <br />
+            <sub><b>YaFei Liu</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/Micro66">
-        <img src="https://avatars.githubusercontent.com/Micro66" width="80px;" alt="Micro66"/>
-        <br />
-        <sub><b>Micro66</b></sub>
-      </a>
+        <a href="https://github.com/moqimoqidea">
+            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
+            <br />
+            <sub><b>moqimoqidea</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/moqimoqidea">
-        <img src="https://avatars.githubusercontent.com/moqimoqidea" width="80px;" alt="moqimoqidea"/>
-        <br />
-        <sub><b>moqimoqidea</b></sub>
-      </a>
+        <a href="https://github.com/fengkuizhi">
+            <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
+            <br />
+            <sub><b>fengkuizhi</b></sub>
+        </a>
     </td>
-  </tr>
+    <td align="center">
+        <a href="https://github.com/jolestar">
+            <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
+            <br />
+            <sub><b>Jolestar</b></sub>
+        </a>
+    </td></tr>
 </table>
+<!-- readme: contributors -end -->
 
 ---
 

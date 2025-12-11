@@ -12,14 +12,18 @@ describe('sanitizeRedirectPath', () => {
       expect(sanitizeRedirectPath('/tasks/123')).toBe('/tasks/123');
     });
 
-    it('should strip query parameters for security', () => {
-      // Query parameters are stripped to prevent injection attacks
-      expect(sanitizeRedirectPath('/chat?taskShare=abc123')).toBe('/chat');
+    it('should preserve query parameters for application routing', () => {
+      // Query parameters are now preserved as they're needed for application routing
+      // (e.g., taskShare parameter for shared task links)
+      // Security is maintained because the path portion is thoroughly validated
+      // and query params cannot cause external redirects
+      expect(sanitizeRedirectPath('/chat?taskShare=abc123')).toBe('/chat?taskShare=abc123');
     });
 
-    it('should strip fragments for security', () => {
-      // Fragments are stripped to prevent injection attacks
-      expect(sanitizeRedirectPath('/docs#section')).toBe('/docs');
+    it('should preserve fragments for client-side routing', () => {
+      // Fragments are preserved as they're needed for client-side navigation
+      // They cannot cause security issues as they're only processed client-side
+      expect(sanitizeRedirectPath('/docs#section')).toBe('/docs#section');
     });
 
     it('should normalize paths with dots', () => {
@@ -151,14 +155,19 @@ describe('sanitizeRedirectPath', () => {
   describe('Edge cases from security vulnerability', () => {
     it('should sanitize the reported vulnerability pattern', () => {
       // Based on: /login?a=uid=0(root)
-      // Query parameters are stripped for security
-      expect(sanitizeRedirectPath('/login?a=uid=0(root)')).toBe('/login');
+      // Query parameters are now preserved, but path validation prevents external redirects
+      // The path '/login' is valid and query params are application-level only
+      expect(sanitizeRedirectPath('/login?a=uid=0(root)')).toBe('/login?a=uid=0(root)');
     });
 
-    it('should handle complex query parameters safely by stripping them', () => {
-      // Query parameters are stripped to prevent injection attacks
-      expect(sanitizeRedirectPath('/chat?redirect=//evil.com')).toBe('/chat');
-      expect(sanitizeRedirectPath('/login?next=http://evil.com')).toBe('/login');
+    it('should handle complex query parameters safely', () => {
+      // Query parameters are preserved but cannot cause external redirects
+      // because the path portion is validated to be a relative path
+      // These are safe as they're just query strings on valid internal paths
+      expect(sanitizeRedirectPath('/chat?redirect=//evil.com')).toBe('/chat?redirect=//evil.com');
+      expect(sanitizeRedirectPath('/login?next=http://evil.com')).toBe(
+        '/login?next=http://evil.com'
+      );
     });
   });
 

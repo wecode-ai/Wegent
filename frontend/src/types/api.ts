@@ -4,15 +4,32 @@
 
 // Authentication Types
 
+// User Preferences
+export interface QuickAccessConfig {
+  version?: number; // User's synced system version
+  teams: number[]; // User's selected team IDs (excluding system recommended)
+}
+
+export interface UserPreferences {
+  send_key: 'enter' | 'cmd_enter';
+  quick_access?: QuickAccessConfig;
+}
+
 // User Types
+export type UserRole = 'admin' | 'user';
+export type AuthSource = 'password' | 'oidc' | 'unknown';
+
 export interface User {
   id: number;
   user_name: string;
   email: string;
   is_active: boolean;
+  role?: UserRole;
+  auth_source?: AuthSource;
   created_at: string;
   updated_at: string;
   git_info: GitInfo[];
+  preferences?: UserPreferences;
 }
 
 /** Git account information */
@@ -105,6 +122,8 @@ export interface Team {
   share_status?: number; // 0: 个人团队, 1: 分享中, 2: 共享团队
   agent_type?: string; // agno, claude, dify, etc.
   is_mix_team?: boolean; // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
+  recommended_mode?: 'chat' | 'code' | 'both'; // Recommended usage mode (for QuickAccess)
+  bind_mode?: ('chat' | 'code')[]; // Allowed modes for this team
   user?: {
     user_name: string;
   };
@@ -416,4 +435,29 @@ export interface AttachmentUploadState {
   isUploading: boolean;
   uploadProgress: number;
   error: string | null;
+}
+
+// Quick Access Types
+export interface QuickAccessTeam {
+  id: number;
+  name: string;
+  is_system: boolean; // True if from system recommendations
+  recommended_mode?: 'chat' | 'code' | 'both';
+  agent_type?: string;
+}
+
+export interface QuickAccessResponse {
+  system_version: number;
+  user_version: number | null;
+  show_system_recommended: boolean; // True if user_version < system_version
+  teams: QuickAccessTeam[];
+}
+
+export interface SystemConfigResponse {
+  version: number;
+  teams: number[];
+}
+
+export interface SystemConfigUpdate {
+  teams: number[];
 }

@@ -44,6 +44,9 @@ class StreamChatRequest(BaseModel):
     model_id: Optional[str] = None  # Optional model override
     force_override_bot_model: bool = False
     attachment_id: Optional[int] = None  # Optional attachment ID for file upload
+    # Web search toggle
+    enable_web_search: bool = False  # Enable web search for this message
+    search_engine: Optional[str] = None  # Search engine to use
     # Git info (optional, for record keeping)
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -475,6 +478,21 @@ async def stream_chat(
             request.message, attachment
         )
 
+    # Prepare web search tool definition if enabled
+    tools = None
+    if request.enable_web_search:
+        from app.core.config import settings
+        from app.services.chat.tools import get_web_search_mcp
+
+        # Check if web search is enabled globally
+        if settings.WEB_SEARCH_ENABLED:
+            # Pass the FastMCP tool object directly
+            web_search_mcp = get_web_search_mcp(engine_name=request.search_engine)
+            if web_search_mcp:
+                tools = [web_search_mcp]
+        else:
+            logger.warning("Web search requested but disabled in configuration")
+
     # Create task and subtasks (use original message for storage, final_message for LLM)
     task, assistant_subtask = await _create_task_and_subtasks(
         db, current_user, team, request.message, request, request.task_id
@@ -604,6 +622,7 @@ async def stream_chat(
             message=final_message,
             model_config=model_config,
             system_prompt=system_prompt,
+            tools=tools,
         )
 
         # Forward the stream
@@ -864,7 +883,7 @@ async def _handle_resume_stream(
                 await pubsub.unsubscribe()
                 await pubsub.close()
                 if redis_client:
-                    await redis_client.close()
+                    await redis_client.aclose()
 
         except Exception as e:
             logger.error(
@@ -1264,7 +1283,7 @@ async def resume_stream(
                 await pubsub.unsubscribe()
                 await pubsub.close()
                 if redis_client:
-                    await redis_client.close()
+                    await redis_client.aclose()
 
         except Exception as e:
             logger.error(
@@ -1282,3 +1301,31 @@ async def resume_stream(
             "Content-Encoding": "none",
         },
     )
+
+
+@router.get("/search-engines")
+async def get_search_engines(
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get available search engines from configuration.
+
+    Returns:
+        {
+            "enabled": bool,
+            "engines": [{"name": str, "display_name": str}]
+        }
+    """
+    from app.core.config import settings
+    from app.services.search.factory import get_available_engines
+
+    if not settings.WEB_SEARCH_ENABLED:
+        return {"enabled": False, "engines": []}
+
+    # Get available engines from factory
+    engines = get_available_engines()
+
+    return {
+        "enabled": True,
+        "engines": engines,
+    }

@@ -8,6 +8,8 @@
 [![Next.js](https://img.shields.io/badge/Next.js-15+-black.svg)](https://nextjs.org)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://docker.com)
 [![Claude](https://img.shields.io/badge/Claude-Code-orange.svg)](https://claude.ai)
+[![Gemini](https://img.shields.io/badge/Gemini-支持-4285F4.svg)](https://ai.google.dev)
+[![Version](https://img.shields.io/badge/版本-1.0.20-brightgreen.svg)](https://github.com/wecode-ai/wegent/releases)
 
 <div align="center">
 
@@ -25,12 +27,14 @@
 <img src="./docs/assets/images/example.gif" width="75%" alt="演示视频"/>
 Wegent 让你通过智能体编排创建强大的 AI 应用：
 
-### 🖥️ **网页版编程助手**
-在浏览器中构建全功能开发环境，可与Github集成，支持本地或云端的独立开发空间，可运行多个Coding Agent同时编码
+### 💬 **即开即用的 AI 对话**
+内置默认聊天团队，无需配置即可立即开始。支持多种 LLM 提供商，包括 Claude、OpenAI 和 Gemini。可选的联网搜索集成，实现实时信息检索。
 
+### 🖥️ **网页版编程助手**
+在浏览器中构建全功能开发环境，可与 GitHub 集成，支持本地或云端的独立开发空间，可运行多个 Coding Agent 同时编码。
 
 ### 📰 **新闻智能平台**
-创建智能新闻聚合和分析系统
+创建智能新闻聚合和分析系统，支持多智能体协作模式。
 
 ### 🔧 **自定义智能体应用**
 可能性无限 - 为以下场景构建智能体：
@@ -48,11 +52,12 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 
 ### 🌟 核心能力
 
-1. **🎨 配置驱动的智能体团队**：通过 YAML 配置定义和运行个性化 Agent 团队，提供网页 UI，无需二次开发
-2. **⚙️ 多引擎架构**：底层支持 Agno 和 Claude Code 两个 Agent 执行引擎，上层支持对话和编码两种模式
+1. **🎨 配置驱动的智能体团队**：通过 YAML 配置定义和运行个性化 Agent 团队，提供网页 UI，无需二次开发。内置默认聊天团队，开箱即用
+2. **⚙️ 多引擎架构**：底层支持 Agno 和 Claude Code 两个 Agent 执行引擎，Chat Shell 支持直接调用 LLM API（Claude、OpenAI、Gemini）
 3. **🔒 独立沙箱环境**：每个 Agent 团队运行在独立沙箱环境中，支持多个 Agent 团队同时运行
-4. **🤝 高级协作模式**：对话模式可以实现并行、Leader 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
+4. **🤝 高级协作模式**：对话模式可以实现并行、Leader、Solo 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
 5. **💻 AI 编码集成**：编码模式可以与 GitHub/GitLab 等代码服务对接，实现代码开发、review 等 AI Coding 工作流
+6. **🔍 联网搜索集成**：Chat Shell 团队可选的联网搜索功能，通过通用 HTTP 适配器支持多种搜索引擎（SearXNG、Google Custom Search、Bing、Brave 等），支持用户自选搜索引擎。
 
 ```mermaid
 graph LR
@@ -163,6 +168,7 @@ graph LR
    - **Claude Code Shell**: 使用 `ANTHROPIC_AUTH_TOKEN`
    - **Agno Shell**: 使用 `ANTHROPIC_API_KEY`
    - **Dify Shell**: 使用 `DIFY_API_KEY` 和 `DIFY_BASE_URL`
+   - **Chat Shell**: 使用 `OPENAI_API_KEY` (OpenAI)、`ANTHROPIC_API_KEY` (Claude) 或 `GOOGLE_API_KEY` (Gemini)
 
    请根据您的 Shell 配置设置正确的环境变量。具体要求请查看 Shell 文档或 `executor/agents/` 代码。
 
@@ -195,6 +201,7 @@ graph TB
         Claude["🧠 Claude Code"]
         Agno["💻 Agno"]
         Dify["✨ Dify"]
+        Chat["💬 Chat<br/>(Claude/OpenAI/Gemini)"]
     end
 
 
@@ -226,6 +233,7 @@ wegent/
 ├── executor/         # 任务执行引擎
 ├── executor_manager/ # 执行编排
 ├── shared/           # 通用工具和模型
+├── wegent-cli/       # kubectl 风格的 CLI 工具 (wectl)
 └── docker/           # 容器配置
 ```
 
@@ -277,52 +285,60 @@ wegent/
 
 感谢以下开发者对本项目的贡献，为了让项目变得更好 💪
 
+<!-- readme: contributors -start -->
 <table>
-  <tr>
+<tr>
     <td align="center">
-      <a href="https://github.com/qdaxb">
-        <img src="https://avatars.githubusercontent.com/qdaxb" width="80px;" alt="qdaxb"/>
-        <br />
-        <sub><b>qdaxb</b></sub>
-      </a>
+        <a href="https://github.com/qdaxb">
+            <img src="https://avatars.githubusercontent.com/u/4157870?v=4" width="80;" alt="qdaxb"/>
+            <br />
+            <sub><b>Axb</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/cc-yafei">
-        <img src="https://avatars.githubusercontent.com/cc-yafei" width="80px;" alt="cc-yafei"/>
-        <br />
-        <sub><b>cc-yafei</b></sub>
-      </a>
+        <a href="https://github.com/feifei325">
+            <img src="https://avatars.githubusercontent.com/u/46489071?v=4" width="80;" alt="feifei325"/>
+            <br />
+            <sub><b>Feifei</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/fengkuizhi">
-        <img src="https://avatars.githubusercontent.com/fengkuizhi" width="80px;" alt="fengkuizhi"/>
-        <br />
-        <sub><b>fengkuizhi</b></sub>
-      </a>
+        <a href="https://github.com/Micro66">
+            <img src="https://avatars.githubusercontent.com/u/27556103?v=4" width="80;" alt="Micro66"/>
+            <br />
+            <sub><b>MicroLee</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/feifei325">
-        <img src="https://avatars.githubusercontent.com/feifei325" width="80px;" alt="feifei325"/>
-        <br />
-        <sub><b>feifei325</b></sub>
-      </a>
+        <a href="https://github.com/cc-yafei">
+            <img src="https://avatars.githubusercontent.com/u/78540184?v=4" width="80;" alt="cc-yafei"/>
+            <br />
+            <sub><b>YaFei Liu</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/Micro66">
-        <img src="https://avatars.githubusercontent.com/Micro66" width="80px;" alt="Micro66"/>
-        <br />
-        <sub><b>Micro66</b></sub>
-      </a>
+        <a href="https://github.com/moqimoqidea">
+            <img src="https://avatars.githubusercontent.com/u/39821951?v=4" width="80;" alt="moqimoqidea"/>
+            <br />
+            <sub><b>Moqimoqidea</b></sub>
+        </a>
     </td>
     <td align="center">
-      <a href="https://github.com/moqimoqidea">
-        <img src="https://avatars.githubusercontent.com/moqimoqidea" width="80px;" alt="moqimoqidea"/>
-        <br />
-        <sub><b>moqimoqidea</b></sub>
-      </a>
+        <a href="https://github.com/fengkuizhi">
+            <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
+            <br />
+            <sub><b>Fengkuizhi</b></sub>
+        </a>
     </td>
-  </tr>
+    <td align="center">
+        <a href="https://github.com/jolestar">
+            <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
+            <br />
+            <sub><b>Jolestar</b></sub>
+        </a>
+    </td></tr>
 </table>
+<!-- readme: contributors -end -->
 
 ---
 
