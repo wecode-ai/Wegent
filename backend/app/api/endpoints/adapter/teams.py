@@ -2,10 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import logging
+import time
 from typing import Optional
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.orm import Session
+
+logger = logging.getLogger(__name__)
 
 from app.api.dependencies import get_db
 from app.core import security
@@ -52,7 +56,14 @@ def list_teams(
     - scope='group': group teams (requires group_name)
     - scope='all': personal + shared + all user's groups
     """
+    api_start = time.time()
+    logger.info(
+        f"[list_teams] START user_id={current_user.id}, page={page}, limit={limit}, scope={scope}, group_name={group_name}"
+    )
+
     skip = (page - 1) * limit
+
+    t1 = time.time()
     items = team_kinds_service.get_user_teams(
         db=db,
         user_id=current_user.id,
@@ -61,12 +72,22 @@ def list_teams(
         scope=scope,
         group_name=group_name,
     )
+    logger.info(
+        f"[list_teams] get_user_teams took {time.time() - t1:.3f}s, returned {len(items)} items"
+    )
+
+    t2 = time.time()
     if page == 1 and len(items) < limit:
         total = len(items)
     else:
         total = team_kinds_service.count_user_teams(
             db=db, user_id=current_user.id, scope=scope, group_name=group_name
         )
+    logger.info(
+        f"[list_teams] count_user_teams took {time.time() - t2:.3f}s, total={total}"
+    )
+
+    logger.info(f"[list_teams] TOTAL API took {time.time() - api_start:.3f}s")
     return {"total": total, "items": items}
 
 

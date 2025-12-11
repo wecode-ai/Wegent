@@ -148,13 +148,14 @@ def get_shell_info_by_name(
             "execution_type": "local_engine",
             "base_image": shell_crd.spec.baseImage,
             "is_custom": True,
+            "namespace": user_shell.namespace,  # Return the actual namespace
         }
         if shell_crd.metadata.labels and "type" in shell_crd.metadata.labels:
             result["execution_type"] = shell_crd.metadata.labels["type"]
         logger.info(
             f"Found user shell '{shell_name}', "
             f"shell_type={result['shell_type']}, execution_type={result['execution_type']}, "
-            f"base_image={result['base_image']}"
+            f"base_image={result['base_image']}, namespace={result['namespace']}"
         )
         return result
 
@@ -185,13 +186,14 @@ def get_shell_info_by_name(
                 "execution_type": "local_engine",
                 "base_image": shell_crd.spec.baseImage,
                 "is_custom": True,  # Group shells are also custom
+                "namespace": group_shell.namespace,  # Return the actual namespace
             }
             if shell_crd.metadata.labels and "type" in shell_crd.metadata.labels:
                 result["execution_type"] = shell_crd.metadata.labels["type"]
             logger.info(
                 f"Found group shell '{shell_name}' in namespace '{ns}', "
                 f"shell_type={result['shell_type']}, execution_type={result['execution_type']}, "
-                f"base_image={result['base_image']}"
+                f"base_image={result['base_image']}, namespace={result['namespace']}"
             )
             return result
 
@@ -216,13 +218,14 @@ def get_shell_info_by_name(
             "execution_type": "local_engine",
             "base_image": shell_crd.spec.baseImage,
             "is_custom": False,
+            "namespace": public_shell.namespace,  # Return the actual namespace (should be 'default')
         }
         if shell_crd.metadata.labels and "type" in shell_crd.metadata.labels:
             result["execution_type"] = shell_crd.metadata.labels["type"]
         logger.info(
             f"Found public shell '{shell_name}', "
             f"shell_type={result['shell_type']}, execution_type={result['execution_type']}, "
-            f"base_image={result['base_image']}"
+            f"base_image={result['base_image']}, namespace={result['namespace']}"
         )
         return result
 
