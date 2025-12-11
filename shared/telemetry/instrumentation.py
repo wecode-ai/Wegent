@@ -240,22 +240,256 @@ def _setup_httpx_instrumentation(logger: logging.Logger) -> None:
     """Setup HTTPX instrumentation for tracing async HTTP client requests."""
     try:
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+        from shared.telemetry.config import get_http_capture_settings
 
-        HTTPXClientInstrumentor().instrument()
+        # Get HTTP capture settings
+        capture_settings = get_http_capture_settings()
+
+        # Build hooks for capturing request/response data
+        request_hook = None
+        response_hook = None
+
+        if (
+            capture_settings.get("capture_request_headers")
+            or capture_settings.get("capture_request_body")
+        ):
+            request_hook = _create_httpx_request_hook(capture_settings, logger)
+
+        if (
+            capture_settings.get("capture_response_headers")
+            or capture_settings.get("capture_response_body")
+        ):
+            response_hook = _create_httpx_response_hook(capture_settings, logger)
+
+        HTTPXClientInstrumentor().instrument(
+            request_hook=request_hook,
+            response_hook=response_hook,
+        )
         logger.info("✓ HTTPX instrumentation enabled")
+
+        # Log capture settings
+        if any(capture_settings.values()):
+            enabled_captures = [k for k, v in capture_settings.items() if v]
+            logger.info(f"  HTTPX capture enabled for: {', '.join(enabled_captures)}")
+
     except ImportError:
         logger.debug("HTTPX instrumentation not available (package not installed)")
     except Exception as e:
         logger.warning(f"Failed to setup HTTPX instrumentation: {e}")
 
 
+def _create_httpx_request_hook(capture_settings: dict, logger: logging.Logger):
+    """Create a request hook for HTTPX client to capture request headers and body."""
+
+    def request_hook(span, request):
+        """Hook called when an HTTPX request is made."""
+        if span is None or not span.is_recording():
+            return
+
+        try:
+            # Capture request headers
+            if capture_settings.get("capture_request_headers"):
+                for header_name, header_value in request.headers.items():
+                    # Skip sensitive headers
+                    if header_name.lower() in ("authorization", "cookie", "set-cookie"):
+                        header_value = "[REDACTED]"
+                    span.set_attribute(f"http.request.header.{header_name}", header_value)
+
+            # Capture request body
+            if capture_settings.get("capture_request_body"):
+                try:
+                    # HTTPX request body is in request.content
+                    if hasattr(request, "content") and request.content:
+                        body = request.content
+                        max_body_size = 4096  # 4KB limit
+                        if isinstance(body, bytes):
+                            if len(body) <= max_body_size:
+                                body_str = body.decode("utf-8", errors="replace")
+                            else:
+                                body_str = (
+                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    + f"... [truncated, total size: {len(body)} bytes]"
+                                )
+                            span.set_attribute("http.request.body", body_str)
+                except Exception as e:
+                    logger.debug(f"Failed to capture HTTPX request body: {e}")
+
+        except Exception as e:
+            logger.debug(f"Error in HTTPX request_hook: {e}")
+
+    return request_hook
+
+
+def _create_httpx_response_hook(capture_settings: dict, logger: logging.Logger):
+    """Create a response hook for HTTPX client to capture response headers and body."""
+
+    def response_hook(span, request, response):
+        """Hook called when an HTTPX response is received."""
+        if span is None or not span.is_recording():
+            return
+
+        try:
+            # Capture response headers
+            if capture_settings.get("capture_response_headers"):
+                for header_name, header_value in response.headers.items():
+                    # Skip sensitive headers
+                    if header_name.lower() in ("authorization", "cookie", "set-cookie"):
+                        header_value = "[REDACTED]"
+                    span.set_attribute(f"http.response.header.{header_name}", header_value)
+
+            # Capture response body
+            if capture_settings.get("capture_response_body"):
+                try:
+                    # HTTPX response body is in response.content
+                    if hasattr(response, "content") and response.content:
+                        body = response.content
+                        max_body_size = 4096  # 4KB limit
+                        if isinstance(body, bytes):
+                            if len(body) <= max_body_size:
+                                body_str = body.decode("utf-8", errors="replace")
+                            else:
+                                body_str = (
+                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    + f"... [truncated, total size: {len(body)} bytes]"
+                                )
+                            span.set_attribute("http.response.body", body_str)
+                except Exception as e:
+                    logger.debug(f"Failed to capture HTTPX response body: {e}")
+
+        except Exception as e:
+            logger.debug(f"Error in HTTPX response_hook: {e}")
+
+    return response_hook
+
+
+def _create_requests_request_hook(capture_settings: dict, logger: logging.Logger):
+    """Create a request hook for Requests library to capture request headers and body."""
+
+    def request_hook(span, request):
+        """Hook called when a Requests request is made."""
+        if span is None or not span.is_recording():
+            return
+
+        try:
+            # Capture request headers
+            if capture_settings.get("capture_request_headers"):
+                for header_name, header_value in request.headers.items():
+                    # Skip sensitive headers
+                    if header_name.lower() in ("authorization", "cookie", "set-cookie"):
+                        header_value = "[REDACTED]"
+                    span.set_attribute(f"http.request.header.{header_name}", header_value)
+
+            # Capture request body
+            if capture_settings.get("capture_request_body"):
+                try:
+                    # Requests body is in request.body
+                    if hasattr(request, "body") and request.body:
+                        body = request.body
+                        max_body_size = 4096  # 4KB limit
+                        if isinstance(body, bytes):
+                            if len(body) <= max_body_size:
+                                body_str = body.decode("utf-8", errors="replace")
+                            else:
+                                body_str = (
+                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    + f"... [truncated, total size: {len(body)} bytes]"
+                                )
+                            span.set_attribute("http.request.body", body_str)
+                        elif isinstance(body, str):
+                            if len(body) <= max_body_size:
+                                span.set_attribute("http.request.body", body)
+                            else:
+                                span.set_attribute(
+                                    "http.request.body",
+                                    body[:max_body_size] + f"... [truncated, total size: {len(body)} chars]"
+                                )
+                except Exception as e:
+                    logger.debug(f"Failed to capture Requests request body: {e}")
+
+        except Exception as e:
+            logger.debug(f"Error in Requests request_hook: {e}")
+
+    return request_hook
+
+
+def _create_requests_response_hook(capture_settings: dict, logger: logging.Logger):
+    """Create a response hook for Requests library to capture response headers and body."""
+
+    def response_hook(span, request, response):
+        """Hook called when a Requests response is received."""
+        if span is None or not span.is_recording():
+            return
+
+        try:
+            # Capture response headers
+            if capture_settings.get("capture_response_headers"):
+                for header_name, header_value in response.headers.items():
+                    # Skip sensitive headers
+                    if header_name.lower() in ("authorization", "cookie", "set-cookie"):
+                        header_value = "[REDACTED]"
+                    span.set_attribute(f"http.response.header.{header_name}", header_value)
+
+            # Capture response body
+            if capture_settings.get("capture_response_body"):
+                try:
+                    # Requests response body is in response.content or response.text
+                    if hasattr(response, "content") and response.content:
+                        body = response.content
+                        max_body_size = 4096  # 4KB limit
+                        if isinstance(body, bytes):
+                            if len(body) <= max_body_size:
+                                body_str = body.decode("utf-8", errors="replace")
+                            else:
+                                body_str = (
+                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    + f"... [truncated, total size: {len(body)} bytes]"
+                                )
+                            span.set_attribute("http.response.body", body_str)
+                except Exception as e:
+                    logger.debug(f"Failed to capture Requests response body: {e}")
+
+        except Exception as e:
+            logger.debug(f"Error in Requests response_hook: {e}")
+
+    return response_hook
+
+
 def _setup_requests_instrumentation(logger: logging.Logger) -> None:
     """Setup Requests instrumentation for tracing sync HTTP client requests."""
     try:
         from opentelemetry.instrumentation.requests import RequestsInstrumentor
+        from shared.telemetry.config import get_http_capture_settings
 
-        RequestsInstrumentor().instrument()
+        # Get HTTP capture settings
+        capture_settings = get_http_capture_settings()
+
+        # Build hooks for capturing request/response data
+        request_hook = None
+        response_hook = None
+
+        if (
+            capture_settings.get("capture_request_headers")
+            or capture_settings.get("capture_request_body")
+        ):
+            request_hook = _create_requests_request_hook(capture_settings, logger)
+
+        if (
+            capture_settings.get("capture_response_headers")
+            or capture_settings.get("capture_response_body")
+        ):
+            response_hook = _create_requests_response_hook(capture_settings, logger)
+
+        RequestsInstrumentor().instrument(
+            request_hook=request_hook,
+            response_hook=response_hook,
+        )
         logger.info("✓ Requests instrumentation enabled")
+
+        # Log capture settings
+        if any(capture_settings.values()):
+            enabled_captures = [k for k, v in capture_settings.items() if v]
+            logger.info(f"  Requests capture enabled for: {', '.join(enabled_captures)}")
+
     except ImportError:
         logger.debug("Requests instrumentation not available (package not installed)")
     except Exception as e:
