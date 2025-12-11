@@ -167,8 +167,8 @@ class ModelAggregationService:
             True if compatible, False otherwise
         """
         # Shell type to model provider mapping
-        # Agno supports both OpenAI and Claude models
-        shell_provider_map = {"Agno": ["openai", "claude"], "ClaudeCode": ["claude"]}
+        # Agno supports OpenAI, Claude and Gemini models
+        shell_provider_map = {"Agno": ["openai", "claude", "gemini"], "ClaudeCode": ["claude"]}
 
         # If supportModel is specified in shell, use it
         if support_model:

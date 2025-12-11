@@ -453,8 +453,8 @@ def get_compatible_models(
                 model_type = env.get("model", "")
 
                 # Filter compatible models
-                # Agno supports both OpenAI and Claude models
-                if shell_type == "Agno" and model_type in ["openai", "claude"]:
+                # Agno supports OpenAI, Claude and Gemini models
+                if shell_type == "Agno" and model_type in ["openai", "claude", "gemini"]:
                     compatible_models.append({"name": model_kind.name})
                 elif shell_type == "ClaudeCode" and model_type == "claude":
                     compatible_models.append({"name": model_kind.name})

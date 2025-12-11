@@ -16,6 +16,7 @@ dependencies = [
     "cryptography==46.0.3",
     "fastapi==0.109.1",
     "gitpython==3.1.43",
+    "google-genai==1.55.0",
     "httpx==0.28.1",
     "mcp==1.12.4",
     "openai==1.107.1",

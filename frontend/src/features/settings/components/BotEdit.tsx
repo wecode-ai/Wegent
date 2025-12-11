@@ -1071,6 +1071,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                           <>
                             <SelectItem value="openai">OpenAI</SelectItem>
                             <SelectItem value="claude">Claude (Anthropic)</SelectItem>
+                            <SelectItem value="gemini">Gemini (Google)</SelectItem>
                           </>
                         )}
                         {/* Show all options if agent type is unknown or not selected */}
