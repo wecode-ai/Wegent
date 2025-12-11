@@ -867,6 +867,7 @@
     "displayNamePlaceholder": "My Group",
     "descriptionPlaceholder": "Enter group description...",
     "nameValidation": "Name must contain only letters, numbers, dashes, and underscores",
+    "nameCannotStartWithDefault": "Group name cannot start with 'default'",
     "parentGroup": "Parent Group",
     "noParentGroup": "No Parent Group",
     "parentGroupHint": "Select a parent group to create a subgroup (max 5 levels of nesting)",

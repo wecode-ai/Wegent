@@ -864,6 +864,7 @@
     "displayNamePlaceholder": "我的群组",
     "descriptionPlaceholder": "输入群组描述...",
     "nameValidation": "名称只能包含字母、数字、短横线和下划线",
+    "nameCannotStartWithDefault": "群组名称不能以 'default' 开头",
     "parentGroup": "父群组",
     "noParentGroup": "无父群组",
     "parentGroupHint": "选择父群组后，新群组将成为其子群组（最多5级嵌套）",

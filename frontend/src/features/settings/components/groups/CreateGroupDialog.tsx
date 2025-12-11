@@ -73,6 +73,10 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
     if (name.length > 100) {
       return t('validation.max_length', { max: 100 })
     }
+    // Check if name starts with "default" (case-insensitive)
+    if (name.toLowerCase().startsWith('default')) {
+      return t('groupCreate.nameCannotStartWithDefault')
+    }
     // Name must be alphanumeric with dashes/underscores, no spaces
     if (!/^[a-zA-Z0-9_-]+$/.test(name)) {
       return t('groupCreate.nameValidation')
