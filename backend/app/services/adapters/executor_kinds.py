@@ -260,9 +260,7 @@ class ExecutorKindsService(
 
         try:
             model_name = private_model_name.strip()
-            public_model = (
-                db.query(Kind).filter(Kind.name == model_name).first()
-            )
+            public_model = db.query(Kind).filter(Kind.name == model_name).first()
 
             if public_model and public_model.json:
                 model_config = public_model.json.get("spec", {}).get("modelConfig", {})
@@ -445,7 +443,7 @@ class ExecutorKindsService(
                 # If user shell not found, try public shells
                 shell_base_image = None
                 if not shell:
-                    
+
                     public_shell = (
                         db.query(Kind)
                         .filter(
@@ -488,8 +486,7 @@ class ExecutorKindsService(
                             db.query(Kind)
                             .filter(
                                 Kind.name == bot_crd.spec.modelRef.name,
-                                Kind.namespace
-                                == bot_crd.spec.modelRef.namespace,
+                                Kind.namespace == bot_crd.spec.modelRef.namespace,
                                 Kind.is_active == True,
                             )
                             .first()

@@ -54,12 +54,19 @@ def list_teams(
     """
     skip = (page - 1) * limit
     items = team_kinds_service.get_user_teams(
-        db=db, user_id=current_user.id, skip=skip, limit=limit, scope=scope, group_name=group_name
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        scope=scope,
+        group_name=group_name,
     )
     if page == 1 and len(items) < limit:
         total = len(items)
     else:
-        total = team_kinds_service.count_user_teams(db=db, user_id=current_user.id, scope=scope, group_name=group_name)
+        total = team_kinds_service.count_user_teams(
+            db=db, user_id=current_user.id, scope=scope, group_name=group_name
+        )
     return {"total": total, "items": items}
 
 

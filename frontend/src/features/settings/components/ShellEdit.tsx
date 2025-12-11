@@ -45,10 +45,17 @@ interface ShellEditProps {
   shell: UnifiedShell | null;
   onClose: () => void;
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
+  scope?: 'personal' | 'group' | 'all';
   groupName?: string;
 }
 
-const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast, groupName }) => {
+const ShellEdit: React.FC<ShellEditProps> = ({
+  shell,
+  onClose,
+  toast,
+  scope = 'personal',
+  groupName,
+}) => {
   const { t } = useTranslation('common');
   const isEditing = !!shell;
 
@@ -335,8 +342,8 @@ const ShellEdit: React.FC<ShellEditProps> = ({ shell, onClose, toast, groupName 
         return;
       }
 
-      // Force group selection when creating shell
-      if (!groupName) {
+      // Validation for group scope: must have groupName
+      if (scope === 'group' && !groupName) {
         toast({
           variant: 'destructive',
           title: t('shells.errors.group_required'),

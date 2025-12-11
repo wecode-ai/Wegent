@@ -136,9 +136,7 @@ class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
                             "spec": {
                                 "modelConfig": {
                                     "env": (
-                                        dict(it.env)
-                                        if isinstance(it.env, dict)
-                                        else {}
+                                        dict(it.env) if isinstance(it.env, dict) else {}
                                     )
                                 }
                             },

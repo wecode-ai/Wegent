@@ -19,7 +19,9 @@ class BotCreate(BaseModel):
     system_prompt: Optional[str] = None
     mcp_servers: Optional[dict[str, Any]] = None
     skills: Optional[List[str]] = None
-    namespace: Optional[str] = "default"  # Namespace for the bot (group name or 'default')
+    namespace: Optional[str] = (
+        "default"  # Namespace for the bot (group name or 'default')
+    )
     is_active: bool = True
 
 

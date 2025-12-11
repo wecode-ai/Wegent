@@ -13,6 +13,7 @@ from app.models.namespace_member import NamespaceMember
 from app.schemas.namespace import (
     GroupCreate,
     GroupResponse,
+    GroupRole,
     GroupUpdate,
     GroupVisibility,
 )
@@ -23,10 +24,9 @@ from app.schemas.namespace_member import (
 )
 from app.services.group_permission import (
     check_group_permission,
-    get_user_role_in_group,
     get_effective_role_in_group,
+    get_user_role_in_group,
 )
-from app.schemas.namespace import GroupRole
 
 # Maximum nesting depth for groups
 MAX_GROUP_DEPTH = 5
@@ -93,7 +93,10 @@ def create_group(
             GroupRole.Reporter: 3,
         }
 
-        if user_role is None or role_hierarchy.get(user_role, 999) > role_hierarchy[GroupRole.Maintainer]:
+        if (
+            user_role is None
+            or role_hierarchy.get(user_role, 999) > role_hierarchy[GroupRole.Maintainer]
+        ):
             raise HTTPException(
                 status_code=403,
                 detail=f"Insufficient permissions to create subgroup under '{parent_name}'",
@@ -347,9 +350,7 @@ def delete_group(db: Session, group_name: str, user_id: int) -> None:
         )
 
     # Hard delete all members
-    db.query(NamespaceMember).filter(
-        NamespaceMember.group_name == group_name
-    ).delete()
+    db.query(NamespaceMember).filter(NamespaceMember.group_name == group_name).delete()
 
     # Hard delete group
     db.delete(group)
@@ -394,7 +395,9 @@ def add_member(
         raise HTTPException(status_code=404, detail="Group not found")
 
     # Check inviter has permission (must be at least Maintainer)
-    if not check_group_permission(db, invited_by_user_id, group_name, GroupRole.Maintainer):
+    if not check_group_permission(
+        db, invited_by_user_id, group_name, GroupRole.Maintainer
+    ):
         raise HTTPException(
             status_code=403,
             detail="Only Maintainers and Owners can add members",
@@ -574,9 +577,9 @@ def update_member_role(
             status_code=403,
             detail="Only Maintainers and Owners can update member roles",
         )
-    
+
     current_role = GroupRole(member.role)
-    
+
     # Maintainers cannot modify Owner roles or promote to Owner
     if updater_role == GroupRole.Maintainer:
         if current_role == GroupRole.Owner:
@@ -735,7 +738,9 @@ def invite_all_users(
         raise HTTPException(status_code=404, detail="Group not found")
 
     # Check permission (must be at least Maintainer)
-    if not check_group_permission(db, invited_by_user_id, group_name, GroupRole.Maintainer):
+    if not check_group_permission(
+        db, invited_by_user_id, group_name, GroupRole.Maintainer
+    ):
         raise HTTPException(
             status_code=403,
             detail="Only Maintainers and Owners can invite users",

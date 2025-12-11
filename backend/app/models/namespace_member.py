@@ -18,6 +18,7 @@ class NamespaceMember(Base):
     Stores user membership in groups with role-based permissions.
     Roles: Owner, Maintainer, Developer, Reporter
     """
+
     __tablename__ = "namespace_members"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -39,7 +40,7 @@ class NamespaceMember(Base):
         "Namespace",
         back_populates="members",
         primaryjoin="NamespaceMember.group_name == Namespace.name",
-        foreign_keys="[NamespaceMember.group_name]"
+        foreign_keys="[NamespaceMember.group_name]",
     )
 
     __table_args__ = (
