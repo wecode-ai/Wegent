@@ -345,8 +345,6 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
   const scope = props.scope || 'personal';
   const groupName = props.groupName;
 
-  console.log('[TeamEditDrawer] Rendering with props:', { scope, groupName, allowedAgents: props.allowedAgents });
-
   return (
     <Drawer open={visible} onOpenChange={open => !open && handleClose()}>
       <DrawerContent className="h-[100vh] max-w-[860px] ml-auto" data-team-edit-drawer="true">
@@ -354,7 +352,7 @@ export default function TeamEditDrawer(props: TeamEditDrawerProps) {
           {mode === 'edit' ? 'Edit Bot' : 'Edit Prompts'}
         </DrawerTitle>
         <div className="h-full overflow-y-auto">
-          {mode === 'edit' && editingBotId !== null && scope && (
+          {mode === 'edit' && editingBotId !== null && (
             <BotEdit
               bots={bots}
               setBots={setBots}

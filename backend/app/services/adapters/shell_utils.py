@@ -25,7 +25,7 @@ def get_shell_by_name(
     db: Session, shell_name: str, user_id: int, namespace: str = "default"
 ) -> Optional[Kind]:
     """
-    Get a Shell by name, first checking user's custom shells, then public shells.
+    Get a Shell by name, checking user's shells, group shells, and public shells.
 
     Args:
         db: Database session
@@ -34,10 +34,12 @@ def get_shell_by_name(
         namespace: Namespace (default: 'default')
 
     Returns:
-        Kind object (for user shells) or public shell Kind object (for public shells),
+        Kind object (for user/group shells) or public shell Kind object (for public shells),
         or None if not found.
     """
-    # First, try to find in user's custom shells (kinds table)
+    from app.services.group_permission import get_user_groups
+    
+    # First, try to find in user's custom shells (namespace='default')
     user_shell = (
         db.query(Kind)
         .filter(
@@ -54,12 +56,32 @@ def get_shell_by_name(
         logger.debug(f"Found user shell '{shell_name}' for user {user_id}")
         return user_shell
 
-    # Then, try to find in public shells
+    # Then, try to find in user's accessible groups (if namespace != 'default')
+    if namespace != "default":
+        user_groups = get_user_groups(db, user_id)
+        if namespace in user_groups:
+            group_shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.name == shell_name,
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if group_shell:
+                logger.debug(f"Found group shell '{shell_name}' in namespace '{namespace}'")
+                return group_shell
+
+    # Finally, try to find in public shells (user_id=0, namespace='default')
     public_shell = (
         db.query(Kind)
         .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
             Kind.name == shell_name,
-            Kind.namespace == namespace,
+            Kind.namespace == "default",
             Kind.is_active == True,
         )
         .first()
@@ -69,7 +91,7 @@ def get_shell_by_name(
         logger.debug(f"Found public shell '{shell_name}'")
         return public_shell
 
-    logger.warning(f"Shell '{shell_name}' not found in user shells or public shells")
+    logger.warning(f"Shell '{shell_name}' not found in user shells, group shells, or public shells")
     return None
 
 
@@ -79,14 +101,14 @@ def get_shell_info_by_name(
     """
     Get shell information by shell name.
 
-    First tries to find a user-defined custom shell in kinds table,
-    then falls back to public shells in public_shells table.
+    Checks user's shells, group shells, and public shells.
+    If namespace is 'default', also searches in all user's accessible groups.
 
     Args:
         db: Database session
         shell_name: Name of the shell (e.g., 'ClaudeCode', 'my-custom-shell')
         user_id: User ID
-        namespace: Namespace (default: 'default')
+        namespace: Namespace (default: 'default'). If 'default', searches all accessible namespaces.
 
     Returns:
         Dict with:
@@ -99,14 +121,16 @@ def get_shell_info_by_name(
     Raises:
         ValueError: If shell is not found
     """
-    # First, try to find in user's custom shells (kinds table)
+    from app.services.group_permission import get_user_groups
+    
+    # First, try to find in user's custom shells (namespace='default')
     user_shell = (
         db.query(Kind)
         .filter(
             Kind.user_id == user_id,
             Kind.kind == "Shell",
             Kind.name == shell_name,
-            Kind.namespace == namespace,
+            Kind.namespace == "default",
             Kind.is_active == True,
         )
         .first()
@@ -114,7 +138,6 @@ def get_shell_info_by_name(
 
     if user_shell and isinstance(user_shell.json, dict):
         shell_crd = Shell.model_validate(user_shell.json)
-        # For custom shells, shellType contains the actual agent type
         result = {
             "shell_type": shell_crd.spec.shellType,
             "support_model": shell_crd.spec.supportModel or [],
@@ -131,12 +154,51 @@ def get_shell_info_by_name(
         )
         return result
 
-    # Then, try to find in public shells
+    # Then, try to find in user's accessible groups
+    # If namespace is specified and not 'default', only search that namespace
+    # If namespace is 'default', search all user's groups
+    user_groups = get_user_groups(db, user_id)
+    namespaces_to_search = [namespace] if namespace != "default" else user_groups
+    
+    for ns in namespaces_to_search:
+        if ns == "default":
+            continue  # Already searched above
+        group_shell = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Shell",
+                Kind.name == shell_name,
+                Kind.namespace == ns,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if group_shell and isinstance(group_shell.json, dict):
+            shell_crd = Shell.model_validate(group_shell.json)
+            result = {
+                "shell_type": shell_crd.spec.shellType,
+                "support_model": shell_crd.spec.supportModel or [],
+                "execution_type": "local_engine",
+                "base_image": shell_crd.spec.baseImage,
+                "is_custom": True,  # Group shells are also custom
+            }
+            if shell_crd.metadata.labels and "type" in shell_crd.metadata.labels:
+                result["execution_type"] = shell_crd.metadata.labels["type"]
+            logger.info(
+                f"Found group shell '{shell_name}' in namespace '{ns}', "
+                f"shell_type={result['shell_type']}, execution_type={result['execution_type']}, "
+                f"base_image={result['base_image']}"
+            )
+            return result
+
+    # Finally, try to find in public shells (user_id=0, namespace='default')
     public_shell = (
         db.query(Kind)
         .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
             Kind.name == shell_name,
-            Kind.namespace == namespace,
+            Kind.namespace == "default",
             Kind.is_active == True,
         )
         .first()
@@ -144,7 +206,6 @@ def get_shell_info_by_name(
 
     if public_shell and isinstance(public_shell.json, dict):
         shell_crd = Shell.model_validate(public_shell.json)
-        # For public shells, the shell name IS the shell type (e.g., 'ClaudeCode')
         result = {
             "shell_type": shell_crd.spec.shellType,
             "support_model": shell_crd.spec.supportModel or [],
@@ -161,8 +222,8 @@ def get_shell_info_by_name(
         )
         return result
 
-    # Shell not found - raise error instead of using fallback
-    raise ValueError(f"Shell '{shell_name}' not found in user shells or public shells")
+    # Shell not found - raise error
+    raise ValueError(f"Shell '{shell_name}' not found in user shells, group shells, or public shells")
 
 
 def get_shell_type(

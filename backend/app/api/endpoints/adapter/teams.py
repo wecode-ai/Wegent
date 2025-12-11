@@ -66,16 +66,17 @@ def list_teams(
 @router.post("", response_model=TeamInDB, status_code=status.HTTP_201_CREATED)
 def create_team(
     team_create: TeamCreate,
-    group_name: Optional[str] = Query(None, description="Group name (namespace)"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """
     Create new Team.
 
-    If group_name is provided, creates the team in that group's namespace.
+    If namespace is provided in the request body, creates the team in that group's namespace.
     User must have Developer+ permission in the group.
     """
+    # Use namespace from request body
+    group_name = team_create.namespace if team_create.namespace != "default" else None
     return team_kinds_service.create_with_user(
         db=db, obj_in=team_create, user_id=current_user.id, group_name=group_name
     )

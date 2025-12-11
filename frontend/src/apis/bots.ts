@@ -6,6 +6,7 @@ import { apiClient } from './client';
 import { Bot, PaginationParams, SuccessMessage } from '../types/api';
 
 // Bot Request/Response Types
+// Bot Request/Response Types
 export interface CreateBotRequest {
   name: string;
   shell_name: string; // Shell name (e.g., 'ClaudeCode', 'Agno', 'my-custom-shell')
@@ -13,6 +14,7 @@ export interface CreateBotRequest {
   system_prompt: string;
   mcp_servers: Record<string, unknown>;
   skills?: string[];
+  namespace?: string; // Group namespace, defaults to 'default' for personal bots
 }
 
 export interface UpdateBotRequest {
@@ -23,8 +25,8 @@ export interface UpdateBotRequest {
   mcp_servers?: Record<string, unknown>;
   skills?: string[];
   is_active?: boolean;
+  namespace?: string; // Group namespace
 }
-
 export interface BotListResponse {
   total: number;
   items: Bot[];

@@ -426,6 +426,7 @@ export default function TeamEdit(props: TeamEditProps) {
               workflow,
               bind_mode: bindMode,
               bots: botsData,
+              namespace: scope === 'group' && groupName ? groupName : undefined,
             });
             setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
           } else {
@@ -435,6 +436,7 @@ export default function TeamEdit(props: TeamEditProps) {
               workflow,
               bind_mode: bindMode,
               bots: botsData,
+              namespace: scope === 'group' && groupName ? groupName : undefined,
             });
             setTeams(prev => [created, ...prev]);
           }
@@ -515,6 +517,7 @@ export default function TeamEdit(props: TeamEditProps) {
           workflow,
           bind_mode: bindMode,
           bots: botsData,
+          namespace: scope === 'group' && groupName ? groupName : undefined,
         });
         setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
       } else {
@@ -524,6 +527,7 @@ export default function TeamEdit(props: TeamEditProps) {
           workflow,
           bind_mode: bindMode,
           bots: botsData,
+          namespace: scope === 'group' && groupName ? groupName : undefined,
         });
         setTeams(prev => [created, ...prev]);
       }

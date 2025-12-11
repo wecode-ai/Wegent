@@ -156,6 +156,8 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
                   cloningBot={cloningBot}
                   onClose={handleCloseEditor}
                   toast={toast}
+                  scope={scope}
+                  groupName={groupName}
                 />
               ) : (
                 <>

@@ -304,47 +304,31 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   // Get shells list (including both public and user-defined shells)
   // Get shells list (including both public and user-defined shells)
   useEffect(() => {
-    console.log('[BotEdit] useEffect triggered', { scope, groupName, allowedAgents });
-    
     // Wait for scope to be defined before fetching
-    // This prevents the initial fetch with undefined scope
     if (scope === undefined) {
-      console.log('[BotEdit] Skipping shells fetch - waiting for scope prop');
       return;
     }
 
     const fetchShells = async () => {
-      console.log('[BotEdit] Starting fetchShells', { scope, groupName });
       setLoadingShells(true);
       try {
         const response = await shellApis.getUnifiedShells(scope, groupName);
-        console.log('[BotEdit] Shells API response:', response);
-        console.log('[BotEdit] Response data length:', response.data?.length);
-        
         // Filter shells based on allowedAgents prop (using shellType as agent type)
         let filteredShells = response.data || [];
-        console.log('[BotEdit] Before filter - filteredShells count:', filteredShells.length);
-        console.log('[BotEdit] allowedAgents:', allowedAgents);
-        
         if (allowedAgents && allowedAgents.length > 0) {
           filteredShells = filteredShells.filter(shell =>
             allowedAgents.includes(shell.shellType as AgentType)
           );
-          console.log('[BotEdit] After filter - filteredShells count:', filteredShells.length);
         }
-        
-        console.log('[BotEdit] Setting shells state with:', filteredShells);
         setShells(filteredShells);
-        console.log('[BotEdit] Shells state updated successfully');
       } catch (error) {
-        console.error('[BotEdit] Failed to fetch shells:', error);
+        console.error('Failed to fetch shells:', error);
         toast({
           variant: 'destructive',
           title: t('bot.errors.fetch_agents_failed'),
         });
       } finally {
         setLoadingShells(false);
-        console.log('[BotEdit] fetchShells completed');
       }
     };
 
@@ -377,13 +361,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
-    console.log('[DEBUG] fetchModels useEffect triggered', {
-      agentName,
-      baseBot_shell_name: baseBot?.shell_name,
-      baseBot_shell_type: baseBot?.shell_type,
-      baseBot_agent_config: baseBot?.agent_config,
-    });
-
     if (!agentName) {
       setModels([]);
       return;
@@ -398,8 +375,8 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         const shellType = selectedShell?.shellType || agentName;
 
         // Use the new unified models API which includes type information
-        const response = await modelApis.getUnifiedModels(shellType);
-        console.log('[DEBUG] Models loaded:', response.data);
+        // Pass scope and groupName to filter models based on current context
+        const response = await modelApis.getUnifiedModels(shellType, false, scope, groupName);
         setModels(response.data);
 
         // After loading models, check if we should restore the bot's saved model
@@ -412,17 +389,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         const agentMatches = baseBotShellName === agentName;
         const isPredefined = hasConfig && isPredefinedModel(baseBot.agent_config);
 
-        console.log('[DEBUG] Model restore check:', {
-          hasConfig,
-          agentMatches,
-          isPredefined,
-          agent_config: baseBot?.agent_config,
-        });
-
         if (hasConfig && agentMatches && isPredefined) {
           const savedModelName = getModelFromConfig(baseBot.agent_config);
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config);
-          console.log('[DEBUG] Saved model name:', savedModelName, 'type:', savedModelType);
           // Only set the model if it exists in the loaded models list
           // Match by both name and type if type is specified
           const foundModel = response.data.find((m: UnifiedModel) => {
@@ -432,16 +401,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
             return m.name === savedModelName;
           });
           if (savedModelName && foundModel) {
-            console.log(
-              '[DEBUG] Setting selectedModel to:',
-              savedModelName,
-              'type:',
-              foundModel.type
-            );
             setSelectedModel(savedModelName);
             setSelectedModelType(foundModel.type);
           } else {
-            console.log('[DEBUG] Model not found in list, clearing selection');
             // Model not found in list, clear selection
             setSelectedModel('');
             setSelectedModelType(undefined);
@@ -652,6 +614,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         system_prompt: botData.system_prompt,
         mcp_servers: botData.mcp_servers,
         skills: botData.skills,
+        namespace: scope === 'group' && groupName ? groupName : undefined,
       };
 
       if (editingBotId && editingBotId > 0) {
@@ -687,14 +650,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 
   // Save logic
   const handleSave = async () => {
-    console.log('[DEBUG] handleSave called', {
-      botName,
-      agentName,
-      isCustomModel,
-      selectedModel,
-      agentConfig,
-    });
-
     if (!botName.trim() || !agentName.trim()) {
       toast({
         variant: 'destructive',
@@ -777,8 +732,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       parsedAgentConfig = createPredefinedModelConfig(selectedModel, selectedModelType);
     }
 
-    console.log('[DEBUG] parsedAgentConfig:', parsedAgentConfig);
-
     let parsedMcpConfig: Record<string, unknown> | null = null;
 
     // Skip MCP config for Dify agent
@@ -815,23 +768,20 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
         system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
         mcp_servers: parsedMcpConfig ?? {},
         skills: selectedSkills.length > 0 ? selectedSkills : [],
+        namespace: scope === 'group' && groupName ? groupName : undefined,
       };
-      console.log('[DEBUG] Saving bot request:', JSON.stringify(botReq, null, 2));
 
       if (editingBotId && editingBotId > 0) {
         // Edit existing bot
         const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest);
-        console.log('[DEBUG] Bot updated response:', JSON.stringify(updated, null, 2));
         setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)));
       } else {
         // Create new bot
         const created = await botApis.createBot(botReq);
-        console.log('[DEBUG] Bot created response:', JSON.stringify(created, null, 2));
         setBots(prev => [created, ...prev]);
       }
       onClose();
     } catch (error) {
-      console.error('[DEBUG] Save error:', error);
       toast({
         variant: 'destructive',
         title: (error as Error)?.message || t('bot.errors.save_failed'),
@@ -978,21 +928,16 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                 <SelectValue placeholder={t('bot.agent_select')} />
               </SelectTrigger>
               <SelectContent>
-                {(() => {
-                  console.log('[BotEdit] Rendering SelectContent, shells:', shells);
-                  console.log('[BotEdit] Shells count:', shells.length);
-                  console.log('[BotEdit] loadingShells:', loadingShells);
-                  return shells.map(shell => (
-                    <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
-                      {shell.displayName || shell.name}
-                      {shell.type === 'user' && (
-                        <span className="ml-1 text-xs text-text-muted">
-                          [{t('bot.custom_shell', '自定义')}]
-                        </span>
-                      )}
-                    </SelectItem>
-                  ));
-                })()}
+                {shells.map(shell => (
+                  <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
+                    {shell.displayName || shell.name}
+                    {shell.type === 'user' && (
+                      <span className="ml-1 text-xs text-text-muted">
+                        [{t('bot.custom_shell', '自定义')}]
+                      </span>
+                    )}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
           </div>
