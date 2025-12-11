@@ -20,7 +20,7 @@ import {
 } from '@/components/ui/select'
 import { createGroup, listGroups } from '@/apis/groups'
 import { toast } from 'sonner'
-import type { GroupCreate, GroupVisibility, Group } from '@/types/group'
+import type { GroupCreate, Group } from '@/types/group'
 
 interface CreateGroupDialogProps {
   isOpen: boolean
@@ -134,10 +134,11 @@ export function CreateGroupDialog({ isOpen, onClose, onSuccess }: CreateGroupDia
       setErrors({})
       onSuccess()
       onClose()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to create group:', error)
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
       const errorMessage =
-        error?.response?.data?.detail || error?.message || 'Failed to create group'
+        err?.response?.data?.detail || err?.message || 'Failed to create group'
       toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)

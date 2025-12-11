@@ -64,6 +64,7 @@ export function GroupMembersDialog({
     if (isOpen && group) {
       loadMembers()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, group])
 
   const loadMembers = async () => {
@@ -107,9 +108,10 @@ export function GroupMembersDialog({
       } else {
         toast.error(result.message || t('groupMembers.addMemberFailed'))
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to add member:', error)
-      const errorMessage = error?.message || t('groupMembers.addMemberFailed')
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groupMembers.addMemberFailed')
       toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)
@@ -128,9 +130,10 @@ export function GroupMembersDialog({
       toast.success(t('groups.messages.memberRemoved'))
       loadMembers()
       onSuccess()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to remove member:', error)
-      const errorMessage = error?.message || t('groupMembers.removeMemberFailed')
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groupMembers.removeMemberFailed')
       toast.error(errorMessage)
     }
   }
@@ -143,9 +146,10 @@ export function GroupMembersDialog({
       toast.success(t('groups.messages.roleUpdated'))
       loadMembers()
       onSuccess()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to update role:', error)
-      const errorMessage = error?.message || t('groupMembers.updateRoleFailed')
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groupMembers.updateRoleFailed')
       toast.error(errorMessage)
     }
   }
@@ -163,9 +167,10 @@ export function GroupMembersDialog({
       toast.success(t('groupMembers.inviteAllSuccess'))
       loadMembers()
       onSuccess()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to invite all users:', error)
-      const errorMessage = error?.message || t('groupMembers.inviteAllFailed')
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groupMembers.inviteAllFailed')
       toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)
@@ -184,9 +189,10 @@ export function GroupMembersDialog({
       toast.success(t('groupMembers.leaveSuccess'))
       onSuccess()
       onClose()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to leave group:', error)
-      const errorMessage = error?.message || t('groupMembers.leaveFailed')
+      const err = error as { message?: string }
+      const errorMessage = err?.message || t('groupMembers.leaveFailed')
       toast.error(errorMessage)
     }
   }

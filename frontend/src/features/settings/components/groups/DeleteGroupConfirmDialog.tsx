@@ -51,10 +51,11 @@ export function DeleteGroupConfirmDialog({
       toast.success(t('groups.messages.deleteSuccess'))
       onSuccess()
       onClose()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to delete group:', error)
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
       const errorMessage =
-        error?.response?.data?.detail || error?.message || t('groups.messages.deleteFailed')
+        err?.response?.data?.detail || err?.message || t('groups.messages.deleteFailed')
       toast.error(errorMessage)
     } finally {
       setIsDeleting(false)

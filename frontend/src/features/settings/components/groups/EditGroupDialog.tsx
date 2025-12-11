@@ -11,16 +11,9 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { updateGroup } from '@/apis/groups'
 import { toast } from 'sonner'
-import type { Group, GroupUpdate, GroupVisibility } from '@/types/group'
+import type { Group, GroupUpdate } from '@/types/group'
 
 interface EditGroupDialogProps {
   isOpen: boolean
@@ -80,10 +73,11 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
 
       onSuccess()
       onClose()
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to update group:', error)
+      const err = error as { response?: { data?: { detail?: string } }; message?: string }
       const errorMessage =
-        error?.response?.data?.detail || error?.message || 'Failed to update group'
+        err?.response?.data?.detail || err?.message || 'Failed to update group'
       toast.error(errorMessage)
     } finally {
       setIsSubmitting(false)

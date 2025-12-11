@@ -44,9 +44,34 @@ function DashboardContent() {
   const searchParams = useSearchParams();
   const { t } = useTranslation('common');
 
-  // Get initial values from URL
-  const getInitialSection = () => searchParams.get('section') || 'personal';
-  const getInitialTab = () => searchParams.get('tab') || 'models';
+  // Get initial values from URL with backward compatibility
+  const getInitialSection = () => {
+    const section = searchParams.get('section');
+    const tab = searchParams.get('tab');
+
+    // Backward compatibility: map old tab values to new sections
+    if (!section && tab) {
+      if (tab === 'team') return 'personal';
+      if (tab === 'models') return 'personal';
+      if (tab === 'shells') return 'personal';
+    }
+
+    return section || 'personal';
+  };
+
+  const getInitialTab = () => {
+    const section = searchParams.get('section');
+    const tab = searchParams.get('tab');
+
+    // Backward compatibility: map old tab values to new tab IDs
+    if (!section && tab) {
+      if (tab === 'team') return 'personal-team';
+      if (tab === 'models') return 'personal-models';
+      if (tab === 'shells') return 'personal-shells';
+    }
+
+    return tab || 'personal-models';
+  };
 
   const [selectedSection, setSelectedSection] = useState(getInitialSection);
   const [selectedTab, setSelectedTab] = useState(getInitialTab);
@@ -151,7 +176,7 @@ function DashboardContent() {
   const currentComponent = useMemo(() => {
     for (const section of menuStructure) {
       if (section.children) {
-        const child = section.children.find((c) => c.id === selectedTab);
+        const child = section.children.find(c => c.id === selectedTab);
         if (child) return child.component;
       }
     }
@@ -159,7 +184,7 @@ function DashboardContent() {
   }, [selectedTab, menuStructure]);
 
   const handleSectionToggle = (sectionId: string) => {
-    setExpandedSections((prev) => {
+    setExpandedSections(prev => {
       const newSet = new Set(prev);
       if (newSet.has(sectionId)) {
         newSet.delete(sectionId);
@@ -173,17 +198,18 @@ function DashboardContent() {
   const handleTabSelect = (sectionId: string, tabId: string) => {
     setSelectedSection(sectionId);
     setSelectedTab(tabId);
-    setExpandedSections((prev) => new Set(prev).add(sectionId));
+    setExpandedSections(prev => new Set(prev).add(sectionId));
     router.replace(`?section=${sectionId}&tab=${tabId}`);
   };
 
+  // Desktop menu item renderer
   // Desktop menu item renderer
   const renderDesktopMenuItem = (item: MenuItem) => {
     const isExpanded = expandedSections.has(item.id);
     const hasChildren = item.children && item.children.length > 0;
     // Check if this is a single-child item (Integrations or General)
-    const isSingleChild = hasChildren && item.children.length === 1 && item.children[0].id === item.id;
-
+    const isSingleChild =
+      hasChildren && item.children!.length === 1 && item.children![0].id === item.id;
     return (
       <div key={item.id} className="space-y-1">
         {/* Parent item */}
@@ -226,7 +252,7 @@ function DashboardContent() {
         {/* Children items - only show for multi-child items */}
         {hasChildren && !isSingleChild && isExpanded && (
           <div className="ml-7 space-y-1">
-            {item.children?.map((child) => (
+            {item.children?.map(child => (
               <button
                 key={child.id}
                 onClick={() => handleTabSelect(item.id, child.id)}
@@ -247,18 +273,19 @@ function DashboardContent() {
 
   // Mobile menu renderer (simplified, no tree structure)
   const renderMobileMenu = () => {
-    const allTabs = menuStructure.flatMap((section) =>
-      section.children?.map((child) => ({
-        ...child,
-        sectionId: section.id,
-        sectionLabel: section.label,
-      })) || []
+    const allTabs = menuStructure.flatMap(
+      section =>
+        section.children?.map(child => ({
+          ...child,
+          sectionId: section.id,
+          sectionLabel: section.label,
+        })) || []
     );
 
     return (
       <div className="bg-base border-b border-border overflow-x-auto">
         <div className="flex space-x-1 px-2 py-2 min-w-max">
-          {allTabs.map((tab) => (
+          {allTabs.map(tab => (
             <button
               key={tab.id}
               onClick={() => handleTabSelect(tab.sectionId, tab.id)}

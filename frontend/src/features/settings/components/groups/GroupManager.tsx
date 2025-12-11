@@ -71,18 +71,6 @@ export function GroupManager() {
     loadGroups()
   }
 
-  const getVisibilityBadge = (visibility: string) => {
-    const variants: Record<string, 'default' | 'secondary'> = {
-      private: 'default',
-      internal: 'secondary',
-      public: 'secondary',
-    }
-    return (
-      <Badge variant={variants[visibility] || 'default'}>
-        {t(`groups.${visibility}`)}
-      </Badge>
-    )
-  }
 
   if (loading) {
     return (

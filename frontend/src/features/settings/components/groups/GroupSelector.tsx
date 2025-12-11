@@ -38,6 +38,7 @@ export function GroupSelector({ value, onChange, scope = 'all' }: GroupSelectorP
     if (scope === 'group' || scope === 'all') {
       loadGroups()
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope])
 
   const loadGroups = async () => {
