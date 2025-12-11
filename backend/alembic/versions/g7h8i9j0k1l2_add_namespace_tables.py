@@ -31,19 +31,19 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE TABLE `namespace` (
-          `id` int(11) NOT NULL AUTO_INCREMENT,
-          `name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Unique identifier, immutable after creation. Sub-groups use prefix format (e.g., aaa/bbb)',
-          `display_name` varchar(100) COLLATE utf8mb4_unicode_ci DEFAULT NULL COMMENT 'Display name, can be modified',
-          `owner_user_id` int(11) NOT NULL COMMENT 'Group owner user ID',
-          `visibility` varchar(20) COLLATE utf8mb4_unicode_ci DEFAULT 'private' COMMENT 'Visibility: private, internal, public',
-          `description` text COLLATE utf8mb4_unicode_ci COMMENT 'Group description',
-          `is_active` tinyint(1) DEFAULT '1' COMMENT 'Is group active',
-          `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation timestamp',
-          `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
+          `id` int(11) NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
+          `name` varchar(100) NOT NULL DEFAULT '' COMMENT 'Unique identifier, immutable after creation. Sub-groups use prefix format (e.g., aaa/bbb)',
+          `display_name` varchar(100) NOT NULL DEFAULT '' COMMENT 'Display name, can be modified',
+          `owner_user_id` int(11) NOT NULL DEFAULT '0' COMMENT 'Group owner user ID',
+          `visibility` varchar(20) NOT NULL DEFAULT 'private' COMMENT 'Visibility: private, internal, public',
+          `description` text NOT NULL COMMENT 'Group description',
+          `is_active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'Is group active',
+          `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation timestamp',
+          `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
           PRIMARY KEY (`id`),
-          UNIQUE KEY `idx_namespace_name_unique` (`name`),
+          UNIQUE KEY `uniq_namespace_name` (`name`),
           KEY `idx_namespace_owner_user_id` (`owner_user_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Group (Namespace) table for resource organization'
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Group (Namespace) table for resource organization'
         """
     )
 
@@ -51,18 +51,18 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE TABLE `namespace_members` (
-          `id` int(11) NOT NULL AUTO_INCREMENT,
-          `group_name` varchar(100) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'References namespace.name',
-          `user_id` int(11) NOT NULL COMMENT 'Member user ID',
-          `role` varchar(20) COLLATE utf8mb4_unicode_ci NOT NULL COMMENT 'Member role: Owner, Maintainer, Developer, Reporter',
-          `invited_by_user_id` int(11) DEFAULT NULL COMMENT 'User ID who invited this member',
-          `is_active` tinyint(1) DEFAULT '1' COMMENT 'Is membership active',
-          `created_at` datetime DEFAULT CURRENT_TIMESTAMP COMMENT 'Membership creation timestamp',
-          `updated_at` datetime DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
+          `id` int(11) NOT NULL AUTO_INCREMENT COMMENT 'Primary key ID',
+          `group_name` varchar(100) NOT NULL DEFAULT '' COMMENT 'References namespace.name',
+          `user_id` int(11) NOT NULL DEFAULT '0' COMMENT 'Member user ID',
+          `role` varchar(20) NOT NULL DEFAULT '' COMMENT 'Member role: Owner, Maintainer, Developer, Reporter',
+          `invited_by_user_id` int(11) NOT NULL DEFAULT '0' COMMENT 'User ID who invited this member',
+          `is_active` tinyint(1) NOT NULL DEFAULT '1' COMMENT 'Is membership active',
+          `created_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Membership creation timestamp',
+          `updated_at` datetime NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
           PRIMARY KEY (`id`),
-          UNIQUE KEY `idx_group_user` (`group_name`,`user_id`),
+          UNIQUE KEY `uniq_group_user` (`group_name`,`user_id`),
           KEY `idx_namespace_members_user_id` (`user_id`)
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Group membership table'
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Group membership table'
         """
     )
 
