@@ -4,16 +4,13 @@
 
 'use client';
 
-import { Suspense, useState, useCallback, useEffect, useMemo } from 'react';
+import { Suspense, useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
 import UserMenu from '@/features/layout/UserMenu';
 import {
   PuzzlePieceIcon,
-  UsersIcon,
   BellIcon,
-  CpuChipIcon,
-  CommandLineIcon,
   UserGroupIcon,
   UserIcon,
   ChevronDownIcon,
