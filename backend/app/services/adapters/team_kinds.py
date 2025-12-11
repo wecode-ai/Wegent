@@ -244,8 +244,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 queries.append(own_teams_query)
 
-                # Only add shared teams for personal scope
-                if scope == "personal":
+                # Add shared teams for personal and all scopes
+                if scope in ("personal", "all"):
                     # Query for shared teams
                     shared_teams_query = (
                         db.query(
@@ -767,8 +767,8 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 )
                 total_count += own_teams_count
 
-                # Count shared teams (only for personal scope)
-                if scope == "personal":
+                # Count shared teams (for personal and all scopes)
+                if scope in ("personal", "all"):
                     shared_teams_count = (
                         db.query(SharedTeam)
                         .join(Kind, SharedTeam.team_id == Kind.id)
@@ -1095,6 +1095,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "id": team.id,
             "user_id": team.user_id,
             "name": team.name,
+            "namespace": team.namespace,  # Add namespace field
             "description": description,
             "bots": bots,
             "workflow": workflow,

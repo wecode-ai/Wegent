@@ -69,6 +69,7 @@ class TeamInDB(TeamBase):
 
     id: int
     user_id: int
+    namespace: Optional[str] = "default"  # Group namespace
     created_at: datetime
     updated_at: datetime
     user: Optional[dict[str, Any]] = None
