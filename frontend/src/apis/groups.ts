@@ -16,6 +16,7 @@ import type {
   GroupMemberCreate,
   GroupMemberUpdate,
   GroupMemberListResponse,
+  AddMemberResult,
 } from '@/types/group'
 
 /**
