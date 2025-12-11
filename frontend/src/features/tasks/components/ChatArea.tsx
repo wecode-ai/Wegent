@@ -431,6 +431,12 @@ export default function ChatArea({
     return !selectedModel;
   }, [selectedTeam, selectedModel]);
 
+  // Unified canSubmit flag for both button and keyboard submission
+  // This ensures consistent behavior between clicking the send button and pressing Enter
+  const canSubmit = React.useMemo(() => {
+    return !isLoading && !isStreaming && !isModelSelectionRequired && isAttachmentReadyToSend;
+  }, [isLoading, isStreaming, isModelSelectionRequired, isAttachmentReadyToSend]);
+
   const handleTeamChange = (team: Team | null) => {
     console.log('[ChatArea] handleTeamChange called:', team?.name || 'null', team?.id || 'null');
     setSelectedTeam(team);
@@ -1044,6 +1050,7 @@ export default function ChatArea({
                       isLoading={isLoading}
                       taskType={taskType}
                       autoFocus={!hasMessages}
+                      canSubmit={canSubmit}
                     />
                   )}
                   {/* Team Selector and Send Button - always show */}
@@ -1281,6 +1288,7 @@ export default function ChatArea({
                     handleSendMessage={handleSendMessage}
                     isLoading={isLoading}
                     taskType={taskType}
+                    canSubmit={canSubmit}
                   />
                 )}
                 {/* Team Selector and Send Button - always show */}

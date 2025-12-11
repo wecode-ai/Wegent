@@ -19,6 +19,8 @@ interface ChatInputProps {
   disabled?: boolean;
   taskType?: 'chat' | 'code';
   autoFocus?: boolean;
+  // Controls whether the message can be submitted (e.g., model selection required)
+  canSubmit?: boolean;
 }
 
 export default function ChatInput({
@@ -28,6 +30,7 @@ export default function ChatInput({
   disabled = false,
   taskType = 'code',
   autoFocus = false,
+  canSubmit = true,
 }: ChatInputProps) {
   const { t } = useTranslation('chat');
   const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
@@ -100,7 +103,10 @@ export default function ChatInput({
       // Cmd/Ctrl+Enter sends message, Enter creates new line
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
-        handleSendMessage();
+        // Check if submission is allowed (e.g., model is selected when required)
+        if (canSubmit) {
+          handleSendMessage();
+        }
       }
       // Enter without modifier creates new line (default behavior)
     } else {
@@ -108,7 +114,10 @@ export default function ChatInput({
         return;
       } else if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
-        handleSendMessage();
+        // Check if submission is allowed (e.g., model is selected when required)
+        if (canSubmit) {
+          handleSendMessage();
+        }
       }
       // Shift+Enter creates new line (default behavior, no preventDefault)
     }
