@@ -243,7 +243,8 @@ export function GroupMembersDialog({
               {t('groups.actions.addMember')}
             </Button>
           )}
-          {canInviteAll && (
+          {/* Temporarily hidden: Invite All Users button */}
+          {false && canInviteAll && (
             <Button variant="outline" size="sm" onClick={handleInviteAll} disabled={isSubmitting}>
               <UserPlusIcon className="w-4 h-4 mr-2" />
               {t('groups.actions.inviteAll')}
