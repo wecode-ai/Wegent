@@ -14,7 +14,7 @@ import type {
   GitBranch,
   Attachment,
 } from '@/types/api';
-import { Copy, Share2, Link, FileText, ChevronDown } from 'lucide-react';
+import { Copy, Share2, FileText, ChevronDown, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -645,65 +645,68 @@ export default function MessagesArea({
     onContentChange,
   ]);
 
-  // Memoize share button to prevent infinite re-renders
+  // Memoize share and export buttons to prevent infinite re-renders
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || displayMessages.length === 0) {
       return null;
     }
 
-    const isDisabled = isSharing || isExportingPdf || isExportingDocx;
-
     return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isDisabled}
-            className="flex items-center gap-2"
-          >
-            <Share2 className="h-4 w-4" />
-            {tCommon('shared_task.share_task')}
-            <ChevronDown className="h-3 w-3 ml-0.5" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-30">
-          <DropdownMenuItem
-            onClick={handleShareTask}
-            disabled={isSharing}
-            className="flex items-center gap-2 cursor-pointer"
-          >
-            <Link className="h-4 w-4" />
-            <span>
-              {isSharing ? tCommon('shared_task.sharing') : tCommon('shared_task.share_link')}
-            </span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={handleExportPdf}
-            disabled={isExportingPdf}
-            className="flex items-center gap-2 cursor-pointer"
-          >
-            <FileText className="h-4 w-4" />
-            <span>
-              {isExportingPdf
-                ? t('export.exporting') || 'Exporting...'
-                : tCommon('shared_task.share_pdf')}
-            </span>
-          </DropdownMenuItem>
-          <DropdownMenuItem
-            onClick={handleExportDocx}
-            disabled={isExportingDocx}
-            className="flex items-center gap-2 cursor-pointer"
-          >
-            <FileText className="h-4 w-4" />
-            <span>
-              {isExportingDocx
-                ? t('export.exporting_docx') || 'Exporting DOCX...'
-                : t('export.export_docx') || 'Export DOCX'}
-            </span>
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <div className="flex items-center gap-2">
+        {/* Share Button */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleShareTask}
+          disabled={isSharing}
+          className="flex items-center gap-2"
+        >
+          <Share2 className="h-4 w-4" />
+          {isSharing ? tCommon('shared_task.sharing') : tCommon('shared_task.share_link')}
+        </Button>
+
+        {/* Export Button (Dropdown Menu) */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={isExportingPdf || isExportingDocx}
+              className="flex items-center gap-2"
+            >
+              <Download className="h-4 w-4" />
+              {t('export.export')}
+              <ChevronDown className="h-3 w-3 ml-0.5" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-30">
+            <DropdownMenuItem
+              onClick={handleExportPdf}
+              disabled={isExportingPdf}
+              className="flex items-center gap-2 cursor-pointer"
+            >
+              <FileText className="h-4 w-4" />
+              <span>
+                {isExportingPdf
+                  ? t('export.exporting') || 'Exporting...'
+                  : tCommon('shared_task.share_pdf')}
+              </span>
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={handleExportDocx}
+              disabled={isExportingDocx}
+              className="flex items-center gap-2 cursor-pointer"
+            >
+              <FileText className="h-4 w-4" />
+              <span>
+                {isExportingDocx
+                  ? t('export.exporting_docx') || 'Exporting DOCX...'
+                  : t('export.export_docx') || 'Export DOCX'}
+              </span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     );
   }, [
     selectedTaskDetail?.id,
