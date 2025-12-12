@@ -3,28 +3,16 @@
 # SPDX-License-Identifier: Apache-2.0
 
 [project]
-name = "wegent-executor"
+name = "wegent-shared"
 version = "1.0.0"
-description = "Wegent Task Executor Service"
-readme = "BUILD.md"
+description = "Wegent Shared Utilities and Models"
+readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "ag-ui-protocol==0.1.8",
-    "agno==2.1.5",
-    "anthropic==0.67.0",
-    "claude-agent-sdk==0.1.13",
-    "cryptography==46.0.3",
-    "fastapi==0.109.1",
-    "gitpython==3.1.43",
-    "google-genai==1.55.0",
-    "httpx==0.28.1",
-    "mcp==1.12.4",
-    "openai==1.107.1",
-    "pydantic==2.11.2",
-    "pymysql==1.1.0",
-    "requests==2.31.0",
-    "sqlalchemy==2.0.43",
-    "uvicorn==0.25.0",
+    "pyyaml>=6.0.1",
+    "cryptography>=42.0.4",
+    "httpx>=0.26.0",
+    "requests>=2.31.0",
 
     # OpenTelemetry core packages
     "opentelemetry-api>=1.27.0",
@@ -44,7 +32,6 @@ dev = [
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
-    "pytest-httpx>=0.36.0",
 ]
 
 [tool.pytest.ini_options]

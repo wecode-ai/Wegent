@@ -10,25 +10,22 @@
 API client module, handles communication with the API
 """
 
-# Import the shared logger
-from executor_manager.executors.dispatcher import ExecutorDispatcher
-from shared.logger import setup_logger
+import json
+import time
 
 import requests
-import time
-import json
-from executor_manager.config.config import (
-    CALLBACK_TASK_API_URL,
-    FETCH_TASK_API_BASE_URL,
-    TASK_FETCH_LIMIT,
-    TASK_FETCH_STATUS,
-    OFFLINE_TASK_FETCH_LIMIT,
-    API_TIMEOUT,
-    API_MAX_RETRIES,
-    API_RETRY_DELAY,
-    API_RETRY_BACKOFF,
-)
+from shared.logger import setup_logger
 from shared.utils.http_util import build_payload
+
+from executor_manager.config.config import (API_MAX_RETRIES, API_RETRY_BACKOFF,
+                                            API_RETRY_DELAY, API_TIMEOUT,
+                                            CALLBACK_TASK_API_URL,
+                                            FETCH_TASK_API_BASE_URL,
+                                            OFFLINE_TASK_FETCH_LIMIT,
+                                            TASK_FETCH_LIMIT,
+                                            TASK_FETCH_STATUS)
+# Import the shared logger
+from executor_manager.executors.dispatcher import ExecutorDispatcher
 
 logger = setup_logger(__name__)
 
