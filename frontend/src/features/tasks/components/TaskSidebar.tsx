@@ -335,18 +335,6 @@ export default function TaskSidebar({
         </DialogContent>
       </Dialog>
 
-      {/* Mark All As Read Button - hide in collapsed mode */}
-      {!isCollapsed && totalUnreadCount > 0 && (
-        <div className="px-1 mb-2">
-          <button
-            onClick={handleMarkAllAsViewed}
-            className="w-full text-xs text-text-primary hover:text-text-primary py-1 px-2 rounded hover:bg-hover transition-colors text-center"
-          >
-            {t('tasks.mark_all_read')} ({totalUnreadCount})
-          </button>
-        </div>
-      )}
-
       {/* Navigation Buttons - hide in collapsed mode */}
       {!isCollapsed && navigationButtons.length > 0 && (
         <div className="px-1 mb-2">
@@ -401,8 +389,17 @@ export default function TaskSidebar({
       >
         {/* History Title or Search Result Header */}
         {!isCollapsed && !isSearchResult && (
-          <div className="px-1 pb-2 text-xs font-medium text-text-muted">
-            {t('tasks.history_title')}
+          <div className="px-1 pb-2 text-xs font-medium text-text-muted flex items-center justify-between">
+            <span>{t('tasks.history_title')}</span>
+            {/* Mark All As Read Button - show only when there are unread tasks */}
+            {totalUnreadCount > 0 && (
+              <button
+                onClick={handleMarkAllAsViewed}
+                className="text-xs text-text-muted hover:text-text-primary transition-colors"
+              >
+                {t('tasks.mark_all_read')} ({totalUnreadCount})
+              </button>
+            )}
           </div>
         )}
         {!isCollapsed && isSearchResult && (
