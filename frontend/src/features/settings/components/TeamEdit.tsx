@@ -583,7 +583,7 @@ export default function TeamEdit(props: TeamEditProps) {
           {t('common.back')}
         </button>
 
-        <Button onClick={handleSave} disabled={saving}>
+        <Button onClick={handleSave} disabled={saving} className="bg-primary hover:bg-primary/90">
           {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
           {saving ? (editingTeam ? t('actions.saving') : t('actions.creating')) : t('actions.save')}
         </Button>

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -14,7 +14,7 @@ import { CommandLineIcon, PencilIcon, TrashIcon, GlobeAltIcon } from '@heroicons
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/hooks/useTranslation';
-import ShellEdit from './ShellEdit';
+import ShellEditDialog from './ShellEditDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -46,7 +46,7 @@ const ShellList: React.FC<ShellListProps> = ({
   const [shells, setShells] = useState<UnifiedShell[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingShell, setEditingShell] = useState<UnifiedShell | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteConfirmShell, setDeleteConfirmShell] = useState<UnifiedShell | null>(null);
 
   const fetchShells = useCallback(async () => {
@@ -139,12 +139,18 @@ const ShellList: React.FC<ShellListProps> = ({
     }
 
     setEditingShell(shell);
+    setDialogOpen(true);
   };
 
   const handleEditClose = () => {
     setEditingShell(null);
-    setIsCreating(false);
+    setDialogOpen(false);
     fetchShells();
+  };
+
+  const handleCreate = () => {
+    setEditingShell(null);
+    setDialogOpen(true);
   };
 
   const getExecutionTypeLabel = (executionType?: string | null) => {
@@ -152,18 +158,6 @@ const ShellList: React.FC<ShellListProps> = ({
     if (executionType === 'external_api') return 'External API';
     return executionType || 'Unknown';
   };
-
-  if (editingShell || isCreating) {
-    return (
-      <ShellEdit
-        shell={editingShell}
-        onClose={handleEditClose}
-        toast={toast}
-        scope={scope}
-        groupName={groupName}
-      />
-    );
-  }
 
   return (
     <div className="space-y-3">
@@ -406,13 +400,21 @@ const ShellList: React.FC<ShellListProps> = ({
         {!loading && (scope === 'personal' || canCreateInAnyGroup) && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
-              <UnifiedAddButton onClick={() => setIsCreating(true)}>
-                {t('shells.create')}
-              </UnifiedAddButton>
+              <UnifiedAddButton onClick={handleCreate}>{t('shells.create')}</UnifiedAddButton>
             </div>
           </div>
         )}
       </div>
+
+      {/* Shell Edit/Create Dialog */}
+      <ShellEditDialog
+        open={dialogOpen}
+        shell={editingShell}
+        onClose={handleEditClose}
+        toast={toast}
+        scope={scope}
+        groupName={groupName}
+      />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteConfirmShell} onOpenChange={() => setDeleteConfirmShell(null)}>
