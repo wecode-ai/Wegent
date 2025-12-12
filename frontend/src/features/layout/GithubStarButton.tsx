@@ -4,19 +4,23 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+// import { useEffect, useState } from 'react';
 
-const REPO_API = 'https://api.github.com/repos/wecode-ai/Wegent';
-const REPO_URL = 'https://github.com/wecode-ai/Wegent';
-const CACHE_KEY = 'github_star_count';
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+// const REPO_API = 'https://api.github.com/repos/wecode-ai/Wegent';
+// const REPO_URL = 'https://github.com/wecode-ai/Wegent';
+// const CACHE_KEY = 'github_star_count';
+// const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
-interface CachedData {
-  count: number;
-  timestamp: number;
-}
+// interface CachedData {
+//   count: number;
+//   timestamp: number;
+// }
 
-export function GithubStarButton({ className = '' }: { className?: string }) {
+export function GithubStarButton({}: { className?: string }) {
+  // Hidden - return null to hide GitHub star button
+  return null;
+  /*
+
   const [stars, setStars] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -134,4 +138,5 @@ export function GithubStarButton({ className = '' }: { className?: string }) {
       <span className="min-w-[2.5rem] text-center">{displayValue}</span>
     </button>
   );
+  */
 }

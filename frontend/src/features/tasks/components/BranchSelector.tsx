@@ -13,6 +13,8 @@ import { githubApis } from '@/apis/github';
 import { useToast } from '@/hooks/use-toast';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { TaskContext } from '../contexts/taskContext';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { cn } from '@/lib/utils';
 
 /**
  * BranchSelector component
@@ -153,11 +155,41 @@ export default function BranchSelector({
     }
   };
 
+  // Tooltip content for branch selector
+  const tooltipContent = t('repos.branch_tooltip', '选择分支');
+
   return (
-    <div className="flex items-center space-x-2 min-w-0">
-      <FiGitBranch
-        className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${showLoading ? 'animate-pulse' : ''}`}
-      />
+    <div className="flex items-center min-w-0">
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled || showError || showNoBranch || showLoading}
+              className={cn(
+                'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                'transition-colors',
+                'text-text-muted hover:text-text-primary hover:bg-muted',
+                showLoading ? 'animate-pulse' : '',
+                'focus:outline-none focus:ring-0',
+                'disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+              onClick={() => {
+                // Trigger the SearchableSelect to open
+                const trigger = document.querySelector(
+                  '[data-branch-trigger]'
+                ) as HTMLButtonElement;
+                trigger?.click();
+              }}
+            >
+              <FiGitBranch className="w-4 h-4 flex-shrink-0" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <p>{tooltipContent}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <div className="relative" style={{ width: isMobile ? 200 : 260 }}>
         <SearchableSelect
           value={selectedBranch?.name}

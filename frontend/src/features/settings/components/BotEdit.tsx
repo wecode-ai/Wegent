@@ -792,7 +792,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   };
   return (
     <div
-      className={`flex flex-col w-full bg-surface rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'h-full min-h-0' : 'min-h-[650px]'}`}
+      className={`flex flex-col w-full bg-white dark:bg-white/95 rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'h-full min-h-0' : 'min-h-[650px]'}`}
     >
       {/* Top navigation bar */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
@@ -830,7 +830,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   {t('common.cancel')}
                 </Button>
               )}
-              <Button onClick={handleSave} disabled={botSaving}>
+              <Button onClick={handleSave} disabled={botSaving} variant="primary">
                 {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 {botSaving ? t('actions.saving') : t('actions.save')}
               </Button>
@@ -838,108 +838,109 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           ))}
       </div>
 
-      {/* Main content area - using responsive layout */}
-      <div className="flex flex-col lg:flex-row gap-4 flex-1 mx-2 min-h-0 overflow-hidden">
-        <div
-          className={`flex flex-col space-y-3 overflow-y-auto w-full flex-shrink-0 ${isDifyAgent ? 'lg:w-full' : 'lg:w-2/5 xl:w-1/3'}`}
-        >
-          {/* Bot Name */}
-          <div className="flex flex-col">
-            <div className="flex items-center mb-1">
-              <label className="block text-lg font-semibold text-text-primary">
-                {t('bot.name')} <span className="text-red-400">*</span>
-              </label>
+      {/* Main content area - using vertical layout */}
+      <div className="flex flex-col gap-4 flex-1 mx-2 min-h-0 overflow-y-auto">
+        <div className={`flex flex-col space-y-3 w-full flex-shrink-0`}>
+          {/* Bot Name and Agent in one row */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Bot Name */}
+            <div className="flex flex-col flex-1">
+              <div className="flex items-center mb-1">
+                <label className="block text-lg font-semibold text-text-primary">
+                  {t('bot.name')} <span className="text-red-400">*</span>
+                </label>
+              </div>
+              <input
+                type="text"
+                value={botName}
+                onChange={e => setBotName(e.target.value)}
+                placeholder={t('bot.name_placeholder')}
+                disabled={readOnly}
+                className={`w-full px-4 py-1 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              />
             </div>
-            <input
-              type="text"
-              value={botName}
-              onChange={e => setBotName(e.target.value)}
-              placeholder={t('bot.name_placeholder')}
-              disabled={readOnly}
-              className={`w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
-            />
-          </div>
 
-          {/* Agent */}
-          <div className="flex flex-col">
-            <div className="flex items-center mb-1">
-              <label className="block text-lg font-semibold text-text-primary">
-                {t('bot.agent')} <span className="text-red-400">*</span>
-              </label>
-              {/* Help Icon */}
-              <button
-                type="button"
-                onClick={() => handleOpenShellDocs()}
-                className="ml-2 text-text-muted hover:text-primary transition-colors"
-                title={t('bot.view_shell_config_guide')}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
+            {/* Agent */}
+            <div className="flex flex-col flex-1">
+              <div className="flex items-center mb-1">
+                <label className="block text-lg font-semibold text-text-primary">
+                  {t('bot.agent')} <span className="text-red-400">*</span>
+                </label>
+                {/* Help Icon */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenShellDocs()}
+                  className="ml-2 text-text-muted hover:text-primary transition-colors"
+                  title={t('bot.view_shell_config_guide')}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-              </button>
-            </div>
-            <Select
-              value={agentName}
-              onValueChange={value => {
-                if (readOnly) return;
-                if (value !== agentName) {
-                  setIsCustomModel(false);
-                  setSelectedModel('');
-                  setAgentConfig('');
-                  setAgentConfigError(false);
-                  setModels([]);
-                  // Clear protocol when switching agent type since protocols are filtered by agent
-                  setSelectedProtocol('');
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <Select
+                value={agentName}
+                onValueChange={value => {
+                  if (readOnly) return;
+                  if (value !== agentName) {
+                    setIsCustomModel(false);
+                    setSelectedModel('');
+                    setAgentConfig('');
+                    setAgentConfigError(false);
+                    setModels([]);
+                    // Clear protocol when switching agent type since protocols are filtered by agent
+                    setSelectedProtocol('');
 
-                  // Adapt MCP config when switching agent type
-                  if (mcpConfig.trim()) {
-                    try {
-                      const currentMcpConfig = JSON.parse(mcpConfig);
-                      if (isValidAgentType(value)) {
-                        const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value);
-                        setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
-                      } else {
-                        console.warn(
-                          `Unknown agent type "${value}", skipping MCP config adaptation`
-                        );
+                    // Adapt MCP config when switching agent type
+                    if (mcpConfig.trim()) {
+                      try {
+                        const currentMcpConfig = JSON.parse(mcpConfig);
+                        if (isValidAgentType(value)) {
+                          const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value);
+                          setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
+                        } else {
+                          console.warn(
+                            `Unknown agent type "${value}", skipping MCP config adaptation`
+                          );
+                        }
+                      } catch (error) {
+                        // If parsing fails, keep the original config
+                        console.warn('Failed to adapt MCP config on agent change:', error);
                       }
-                    } catch (error) {
-                      // If parsing fails, keep the original config
-                      console.warn('Failed to adapt MCP config on agent change:', error);
                     }
                   }
-                }
-                setAgentName(value);
-              }}
-              disabled={loadingShells || readOnly}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder={t('bot.agent_select')} />
-              </SelectTrigger>
-              <SelectContent>
-                {shells.map(shell => (
-                  <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
-                    {shell.displayName || shell.name}
-                    {shell.type === 'user' && (
-                      <span className="ml-1 text-xs text-text-muted">
-                        [{t('bot.custom_shell', '自定义')}]
-                      </span>
-                    )}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  setAgentName(value);
+                }}
+                disabled={loadingShells || readOnly}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={t('bot.agent_select')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {shells.map(shell => (
+                    <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
+                      {shell.displayName || shell.name}
+                      {shell.type === 'user' && (
+                        <span className="ml-1 text-xs text-text-muted">
+                          [{t('bot.custom_shell', '自定义')}]
+                        </span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {/* Conditional rendering based on agent type */}
@@ -1122,7 +1123,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
 }`
                           : ''
                     }
-                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-border focus:ring-primary/40 focus:border-primary'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   />
                 ) : (
                   <Select
@@ -1301,7 +1302,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                   }}
                   onBlur={prettifyMcpConfig}
                   disabled={readOnly}
-                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-border focus:ring-primary/40 focus:border-primary'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   placeholder={`{
   "github": {
     "command": "docker",
@@ -1330,9 +1331,9 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
           )}
         </div>
 
-        {/* Right Prompt area - responsive layout */}
+        {/* Prompt area - below the config section */}
         {!isDifyAgent && (
-          <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col min-h-0">
+          <div className="w-full flex flex-col min-h-0">
             <div className="mb-1 flex-shrink-0">
               <div className="flex items-center">
                 <label className="block text-base font-medium text-text-primary">
@@ -1351,7 +1352,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
               }}
               disabled={readOnly}
               placeholder={t('bot.prompt_placeholder')}
-              className={`w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              className={`w-full h-full px-4 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base resize-none custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
         )}
@@ -1391,25 +1392,6 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
       <style
         dangerouslySetInnerHTML={{
           __html: `
-          @media (max-width: 1024px) {
-            /* Stack layout on tablet and mobile */
-            .flex.flex-col.lg\\:flex-row {
-              flex-direction: column !important;
-            }
-            .w-full.lg\\:w-2\\/5.xl\\:w-1\\/3 {
-              width: 100% !important;
-              margin-bottom: 1rem;
-            }
-            
-            /* Ensure Dify full width on mobile */
-            .lg\\:w-full {
-               width: 100% !important;
-            }
-            .w-full.lg\\:w-3\\/5.xl\\:w-2\\/3 {
-              width: 100% !important;
-            }
-          }
-
           @media (max-width: 640px) {
             /* Mobile specific optimizations */
             .flex.flex-col.w-full.bg-surface.rounded-lg {

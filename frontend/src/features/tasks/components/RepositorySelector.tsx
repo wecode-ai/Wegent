@@ -37,6 +37,7 @@ import { githubApis } from '@/apis/github';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useToast } from '@/hooks/use-toast';
 import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null;
@@ -414,13 +415,43 @@ export default function RepositorySelector({
     return items;
   }, [repos, selectedRepo]);
 
+  // Tooltip content for repository selector
+  const tooltipContent = t('repos.repository_tooltip', '选择代码仓库');
+
   return (
     <div
-      className={cn('flex items-center space-x-2 min-w-0', fullWidth && 'w-full')}
+      className={cn('flex items-center min-w-0', fullWidth && 'w-full')}
       data-tour="repo-selector"
       style={fullWidth ? undefined : { maxWidth: isMobile ? 200 : 280 }}
     >
-      <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0 ml-1" />
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled || loading}
+              className={cn(
+                'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                'transition-colors',
+                'text-text-muted hover:text-text-primary hover:bg-muted',
+                loading ? 'animate-pulse' : '',
+                'focus:outline-none focus:ring-0',
+                'disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+              onClick={() => {
+                // Trigger the SearchableSelect to open
+                const trigger = document.querySelector('[data-repo-trigger]') as HTMLButtonElement;
+                trigger?.click();
+              }}
+            >
+              <FiGithub className="w-4 h-4 flex-shrink-0" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <p>{tooltipContent}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <div className={cn('relative flex items-center gap-2 min-w-0 flex-1', fullWidth && 'w-full')}>
         <SearchableSelect
           value={selectedRepo?.git_repo_id.toString()}

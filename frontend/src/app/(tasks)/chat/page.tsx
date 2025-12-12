@@ -4,12 +4,13 @@
 
 'use client';
 
-import { Suspense, useState, useEffect } from 'react';
+import { Suspense, useState, useEffect, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
+import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
 import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
@@ -26,13 +27,18 @@ import ChatArea from '@/features/tasks/components/ChatArea';
 import { saveLastTab } from '@/utils/userPreferences';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
+import { paths } from '@/config/paths';
 
 export default function ChatPage() {
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for refreshing task list
-  const { refreshTasks } = useTaskContext();
+  const { refreshTasks, tasks } = useTaskContext();
+
+  // Chat stream context
+  const { clearAllStreams } = useChatStreamContext();
 
   // User state for git token check
   const { user } = useUser();
@@ -45,6 +51,10 @@ export default function ChatPage() {
   const hasShareId = !!searchParams.get('share_id');
   const taskId = searchParams.get('taskId');
 
+  // Track completed tasks for notification dot
+  const [hasCompletedTask, setHasCompletedTask] = useState(false);
+  const prevTasksRef = useRef<typeof tasks>([]);
+
   // Check for pending task share from public page (after login)
   useEffect(() => {
     const pendingToken = localStorage.getItem('pendingTaskShare');
@@ -55,6 +65,25 @@ export default function ChatPage() {
       router.push(`/chat?taskShare=${pendingToken}`);
     }
   }, [router]);
+
+  // Monitor task completion for notification dot
+  useEffect(() => {
+    if (prevTasksRef.current.length > 0) {
+      const completedStatuses = ['COMPLETED', 'SUCCESS'];
+      const newlyCompleted = tasks.some(task => {
+        const prevTask = prevTasksRef.current.find(t => t.id === task.id);
+        return (
+          completedStatuses.includes(task.status) &&
+          prevTask &&
+          !completedStatuses.includes(prevTask.status)
+        );
+      });
+      if (newlyCompleted) {
+        setHasCompletedTask(true);
+      }
+    }
+    prevTasksRef.current = tasks;
+  }, [tasks]);
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -99,8 +128,18 @@ export default function ChatPage() {
     setIsCollapsed(prev => {
       const newValue = !prev;
       localStorage.setItem('task-sidebar-collapsed', String(newValue));
+      // Clear notification dot when expanding sidebar
+      if (prev && hasCompletedTask) {
+        setHasCompletedTask(false);
+      }
       return newValue;
     });
+  };
+
+  // Handle new task from collapsed sidebar button
+  const handleNewTask = () => {
+    clearAllStreams();
+    router.replace(paths.chat.getHref());
   };
 
   return (
@@ -129,6 +168,14 @@ export default function ChatPage() {
         hasShareId={hasShareId}
       />
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
+        {/* Collapsed sidebar floating buttons */}
+        {isCollapsed && !isMobile && (
+          <CollapsedSidebarButtons
+            onExpand={handleToggleCollapsed}
+            onNewTask={handleNewTask}
+            hasCompletedTask={hasCompletedTask}
+          />
+        )}
         {/* Responsive resizable sidebar */}
         <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
           <TaskSidebar
