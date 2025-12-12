@@ -193,10 +193,7 @@ export function SearchableSelect({
                         {item.content ? (
                           <div className="flex-1 min-w-0">{item.content}</div>
                         ) : (
-                          <span
-                            className="flex-1 break-all whitespace-pre-wrap"
-                            style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
-                          >
+                          <span className="flex-1 min-w-0 truncate" title={item.label}>
                             {item.label}
                           </span>
                         )}
