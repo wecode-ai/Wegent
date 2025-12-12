@@ -5,7 +5,9 @@
   },
   "repos": {
     "repository": "Select Repository",
-    "branch": "Select Branch"
+    "branch": "Select Branch",
+    "repository_tooltip": "Select code repository",
+    "branch_tooltip": "Select branch"
   },
   "actions": {
     "save": "Save",
@@ -596,7 +598,8 @@
     "mixed_team_warning": "This team contains multiple executor types, cannot specify a unified model",
     "default_model": "Default",
     "use_bot_model": "Use Bot's predefined model",
-    "model_required": "Please select a model"
+    "model_required": "Please select a model",
+    "model_tooltip": "Select AI model for conversation"
   },
   "knowledge": {
     "modules": {

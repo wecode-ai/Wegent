@@ -192,8 +192,8 @@ CHAT_SLOGAN_TIPS_CONFIG_KEY = "chat_slogan_tips"
 # Default slogan and tips configuration
 DEFAULT_SLOGAN_TIPS_CONFIG = {
     "slogan": {
-        "zh": "欢迎使用 Wegent，让 AI 成为您的智能助手",
-        "en": "Welcome to Wegent, let AI be your intelligent assistant",
+        "zh": "今天有什么可以帮到你？",
+        "en": "What can I help you with today?",
     },
     "tips": [
         # Chat mode tips

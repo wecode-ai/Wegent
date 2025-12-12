@@ -32,6 +32,7 @@ interface QuickAccessCardsProps {
   currentMode: 'chat' | 'code';
   isLoading?: boolean;
   isTeamsLoading?: boolean;
+  hideSelected?: boolean; // Whether to hide the selected team from the cards
 }
 
 export function QuickAccessCards({
@@ -41,6 +42,7 @@ export function QuickAccessCards({
   currentMode,
   isLoading,
   isTeamsLoading,
+  hideSelected = false,
 }: QuickAccessCardsProps) {
   const router = useRouter();
   const { t } = useTranslation('common');
@@ -109,8 +111,14 @@ export function QuickAccessCards({
       : // Fallback: show first teams from filtered list if no quick access configured
         filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam);
 
+  // Filter out selected team if hideSelected is true
+  const teamsAfterFilter =
+    hideSelected && selectedTeam
+      ? allDisplayTeams.filter(t => t.id !== selectedTeam.id)
+      : allDisplayTeams;
+
   // Limit display teams to MAX_QUICK_ACCESS_CARDS
-  const displayTeams = allDisplayTeams.slice(0, MAX_QUICK_ACCESS_CARDS);
+  const displayTeams = teamsAfterFilter.slice(0, MAX_QUICK_ACCESS_CARDS);
 
   // Close dropdown when clicking outside
   useEffect(() => {

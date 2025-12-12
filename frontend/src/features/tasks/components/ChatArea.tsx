@@ -20,6 +20,7 @@ import LoadingDots from './LoadingDots';
 import ExternalApiParamsInput from './ExternalApiParamsInput';
 import FileUpload from './FileUpload';
 import { QuickAccessCards } from './QuickAccessCards';
+import { SelectedTeamBadge } from './SelectedTeamBadge';
 import type {
   Team,
   GitRepoInfo,
@@ -36,6 +37,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { useTaskContext } from '../contexts/taskContext';
 import { useChatStreamContext } from '../contexts/chatStreamContext';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import QuotaUsage from './QuotaUsage';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { saveLastTeamByMode, getLastTeamIdByMode, saveLastRepo } from '@/utils/userPreferences';
@@ -57,7 +59,7 @@ function SloganDisplay({ slogan }: { slogan: ChatSloganConfig }) {
   if (!sloganText) return null;
 
   return (
-    <div className="text-center mb-6">
+    <div className="text-center mb-10">
       <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">{sloganText}</h1>
     </div>
   );
@@ -1087,7 +1089,7 @@ export default function ChatArea({
                     </div>
                   )}
 
-                  {/* File Upload Preview - show above input when file is selected */}
+                  {/* File Upload Preview - show above input on its own row */}
                   {(attachmentState.attachment ||
                     attachmentState.isUploading ||
                     attachmentState.error) && (
@@ -1103,18 +1105,27 @@ export default function ChatArea({
                       />
                     </div>
                   )}
-                  {/* Chat Input - hide for workflow mode when no messages */}
+                  {/* Chat Input with inline badge */}
                   {!shouldHideChatInput && (
-                    <ChatInput
-                      message={taskInputMessage}
-                      setMessage={setTaskInputMessage}
-                      handleSendMessage={handleSendMessage}
-                      isLoading={isLoading}
-                      taskType={taskType}
-                      autoFocus={!hasMessages}
-                      canSubmit={canSubmit}
-                      tipText={randomTip}
-                    />
+                    <div className="px-3 pt-2">
+                      <ChatInput
+                        message={taskInputMessage}
+                        setMessage={setTaskInputMessage}
+                        handleSendMessage={handleSendMessage}
+                        isLoading={isLoading}
+                        taskType={taskType}
+                        autoFocus={!hasMessages}
+                        canSubmit={canSubmit}
+                        tipText={randomTip}
+                        badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
+                      />
+                    </div>
+                  )}
+                  {/* Selected Team Badge only - show when chat input is hidden (workflow mode) */}
+                  {shouldHideChatInput && selectedTeam && (
+                    <div className="px-3 pt-2">
+                      <SelectedTeamBadge team={selectedTeam} />
+                    </div>
                   )}
                   {/* Team Selector and Send Button - always show */}
                   <div
@@ -1158,6 +1169,26 @@ export default function ChatArea({
                           selectedTeam={selectedTeam}
                           disabled={hasMessages || isLoading}
                         />
+                      )}
+                      {/* Repository and Branch Selectors - inside input box */}
+                      {showRepositorySelector && (
+                        <>
+                          <RepositorySelector
+                            selectedRepo={selectedRepo}
+                            handleRepoChange={setSelectedRepo}
+                            disabled={hasMessages}
+                            selectedTaskDetail={selectedTaskDetail}
+                          />
+
+                          {selectedRepo && (
+                            <BranchSelector
+                              selectedRepo={selectedRepo}
+                              selectedBranch={selectedBranch}
+                              handleBranchChange={setSelectedBranch}
+                              disabled={hasMessages}
+                            />
+                          )}
+                        </>
                       )}
                     </div>
                     <div className="ml-auto flex items-center gap-2 flex-shrink-0">
@@ -1213,52 +1244,38 @@ export default function ChatArea({
                           <CircleStop className="h-5 w-5 text-orange-500" />
                         </div>
                       ) : (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          onClick={handleSendMessage}
-                          disabled={
-                            isLoading ||
-                            isStreaming ||
-                            isModelSelectionRequired ||
-                            !isAttachmentReadyToSend ||
-                            (shouldHideChatInput ? false : !taskInputMessage.trim())
-                          }
-                          className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
-                          data-tour="send-button"
-                        >
-                          {isLoading ? (
-                            <LoadingDots />
-                          ) : (
-                            <Send className="h-5 w-5 text-text-muted" />
-                          )}
-                        </Button>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                onClick={handleSendMessage}
+                                disabled={
+                                  isLoading ||
+                                  isStreaming ||
+                                  isModelSelectionRequired ||
+                                  !isAttachmentReadyToSend ||
+                                  (shouldHideChatInput ? false : !taskInputMessage.trim())
+                                }
+                                className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                                data-tour="send-button"
+                              >
+                                {isLoading ? (
+                                  <LoadingDots />
+                                ) : (
+                                  <Send className="h-5 w-5 text-text-muted" />
+                                )}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent side="top">
+                              <p>Enter</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       )}
                     </div>
                   </div>
-                </div>
-
-                {/* Bottom Controls */}
-                <div className="flex flex-row gap-3 mb-2 ml-3 mt-3 items-center flex-wrap">
-                  {showRepositorySelector && (
-                    <>
-                      <RepositorySelector
-                        selectedRepo={selectedRepo}
-                        handleRepoChange={setSelectedRepo}
-                        disabled={hasMessages}
-                        selectedTaskDetail={selectedTaskDetail}
-                      />
-
-                      {selectedRepo && (
-                        <BranchSelector
-                          selectedRepo={selectedRepo}
-                          selectedBranch={selectedBranch}
-                          handleBranchChange={setSelectedBranch}
-                          disabled={hasMessages}
-                        />
-                      )}
-                    </>
-                  )}
                 </div>
               </div>
 
@@ -1270,6 +1287,7 @@ export default function ChatArea({
                 currentMode={taskType}
                 isLoading={isTeamsLoading}
                 isTeamsLoading={isTeamsLoading}
+                hideSelected={true}
               />
             </div>
           </div>
@@ -1336,15 +1354,17 @@ export default function ChatArea({
                 )}
                 {/* Chat Input - hide for workflow mode */}
                 {!shouldHideChatInput && (
-                  <ChatInput
-                    message={taskInputMessage}
-                    setMessage={setTaskInputMessage}
-                    handleSendMessage={handleSendMessage}
-                    isLoading={isLoading}
-                    taskType={taskType}
-                    canSubmit={canSubmit}
-                    tipText={randomTip}
-                  />
+                  <div className="px-3 pt-2">
+                    <ChatInput
+                      message={taskInputMessage}
+                      setMessage={setTaskInputMessage}
+                      handleSendMessage={handleSendMessage}
+                      isLoading={isLoading}
+                      taskType={taskType}
+                      canSubmit={canSubmit}
+                      tipText={randomTip}
+                    />
+                  </div>
                 )}
                 {/* Team Selector and Send Button - always show */}
                 <div
@@ -1385,6 +1405,26 @@ export default function ChatArea({
                         selectedTeam={selectedTeam}
                         disabled={hasMessages || isLoading}
                       />
+                    )}
+                    {/* Repository and Branch Selectors - inside input box */}
+                    {showRepositorySelector && (
+                      <>
+                        <RepositorySelector
+                          selectedRepo={selectedRepo}
+                          handleRepoChange={setSelectedRepo}
+                          disabled={hasMessages}
+                          selectedTaskDetail={selectedTaskDetail}
+                        />
+
+                        {selectedRepo && (
+                          <BranchSelector
+                            selectedRepo={selectedRepo}
+                            selectedBranch={selectedBranch}
+                            handleBranchChange={setSelectedBranch}
+                            disabled={hasMessages}
+                          />
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="ml-auto flex items-center gap-2 flex-shrink-0">
@@ -1440,48 +1480,36 @@ export default function ChatArea({
                         <CircleStop className="h-5 w-5 text-orange-500" />
                       </div>
                     ) : (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={handleSendMessage}
-                        disabled={
-                          isLoading ||
-                          isStreaming ||
-                          isModelSelectionRequired ||
-                          !isAttachmentReadyToSend ||
-                          (shouldHideChatInput ? false : !taskInputMessage.trim())
-                        }
-                        className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
-                      >
-                        {isLoading ? <LoadingDots /> : <Send className="h-5 w-5 text-text-muted" />}
-                      </Button>
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={handleSendMessage}
+                              disabled={
+                                isLoading ||
+                                isStreaming ||
+                                isModelSelectionRequired ||
+                                !isAttachmentReadyToSend ||
+                                (shouldHideChatInput ? false : !taskInputMessage.trim())
+                              }
+                              className="h-6 w-6 rounded-full hover:bg-primary/10 flex-shrink-0 translate-y-0.5"
+                            >
+                              {isLoading ? (
+                                <LoadingDots />
+                              ) : (
+                                <Send className="h-5 w-5 text-text-muted" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top">
+                            <p>Enter</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
                     )}
                   </div>
-                </div>
-              </div>
-
-              {/* Bottom Controls */}
-              <div className="flex flex-row gap-3 ml-3 mt-3 items-center flex-wrap justify-between">
-                <div className="flex flex-row gap-3 items-center flex-wrap">
-                  {showRepositorySelector && (
-                    <>
-                      <RepositorySelector
-                        selectedRepo={selectedRepo}
-                        handleRepoChange={setSelectedRepo}
-                        disabled={hasMessages}
-                        selectedTaskDetail={selectedTaskDetail}
-                      />
-
-                      {selectedRepo && (
-                        <BranchSelector
-                          selectedRepo={selectedRepo}
-                          selectedBranch={selectedBranch}
-                          handleBranchChange={setSelectedBranch}
-                          disabled={hasMessages}
-                        />
-                      )}
-                    </>
-                  )}
                 </div>
               </div>
             </div>

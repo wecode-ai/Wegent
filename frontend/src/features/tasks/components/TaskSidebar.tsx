@@ -10,16 +10,7 @@ import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import {
-  Search,
-  Plus,
-  X,
-  PanelLeftClose,
-  PanelLeftOpen,
-  MessageSquare,
-  Code,
-  BookOpen,
-} from 'lucide-react';
+import { Search, Plus, X, PanelLeftClose, PanelLeftOpen, Code, BookOpen } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
@@ -129,23 +120,16 @@ export default function TaskSidebar({
     }
   }, [isSearchDialogOpen]);
 
-  // Get navigation buttons based on current page type
+  // Get navigation buttons - Code button is always shown, Wiki button only when not on knowledge page
   const getNavigationButtons = () => {
     const buttons = [];
-    if (pageType !== 'chat') {
-      buttons.push({
-        label: t('navigation.chat'),
-        icon: MessageSquare,
-        path: paths.chat.getHref(),
-      });
-    }
-    if (pageType !== 'code') {
-      buttons.push({
-        label: t('navigation.code'),
-        icon: Code,
-        path: paths.code.getHref(),
-      });
-    }
+    // Code button is always shown (third button)
+    buttons.push({
+      label: t('navigation.code'),
+      icon: Code,
+      path: paths.code.getHref(),
+    });
+    // Wiki button only shown when not on knowledge page (fourth button)
     if (pageType !== 'knowledge') {
       buttons.push({
         label: t('navigation.wiki'),
@@ -158,22 +142,14 @@ export default function TaskSidebar({
 
   const navigationButtons = getNavigationButtons();
 
-  // New task
+  // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {
     // Clear all stream states to reset the chat area to initial state
     clearAllStreams();
 
     if (typeof window !== 'undefined') {
-      // Navigate to the same page type for new task creation
-      switch (pageType) {
-        case 'code':
-          router.replace(paths.code.getHref());
-          break;
-        case 'chat':
-        default:
-          router.replace(paths.chat.getHref());
-          break;
-      }
+      // Always navigate to chat page for new conversation
+      router.replace(paths.chat.getHref());
     }
     // Close mobile sidebar after navigation
     setIsMobileSidebarOpen(false);
@@ -250,7 +226,7 @@ export default function TaskSidebar({
         </div>
       </div>
 
-      {/* New Task Button */}
+      {/* New Conversation Button - always shows "New Conversation" */}
       <div className="px-1 mb-0">
         {isCollapsed ? (
           <TooltipProvider>
@@ -260,15 +236,13 @@ export default function TaskSidebar({
                   variant="ghost"
                   onClick={handleNewAgentClick}
                   className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
-                  aria-label={
-                    pageType === 'chat' ? t('tasks.new_conversation') : t('tasks.new_task')
-                  }
+                  aria-label={t('tasks.new_conversation')}
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
-                <p>{pageType === 'chat' ? t('tasks.new_conversation') : t('tasks.new_task')}</p>
+                <p>{t('tasks.new_conversation')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -280,12 +254,12 @@ export default function TaskSidebar({
             size="sm"
           >
             <Plus className="h-4 w-4 mr-0.5" />
-            {pageType === 'chat' ? t('tasks.new_conversation') : t('tasks.new_task')}
+            {t('tasks.new_conversation')}
           </Button>
         )}
       </div>
 
-      {/* Search Button */}
+      {/* Search Button - always shows "Search Conversation" */}
       <div className="px-1 mb-0">
         {isCollapsed ? (
           <TooltipProvider>
@@ -295,21 +269,13 @@ export default function TaskSidebar({
                   variant="ghost"
                   onClick={handleOpenSearchDialog}
                   className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
-                  aria-label={
-                    pageType === 'chat'
-                      ? t('tasks.search_placeholder_chat')
-                      : t('tasks.search_placeholder')
-                  }
+                  aria-label={t('tasks.search_placeholder_chat')}
                 >
                   <Search className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
-                <p>
-                  {pageType === 'chat'
-                    ? t('tasks.search_placeholder_chat')
-                    : t('tasks.search_placeholder')}
-                </p>
+                <p>{t('tasks.search_placeholder_chat')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -321,22 +287,16 @@ export default function TaskSidebar({
             size="sm"
           >
             <Search className="h-4 w-4 mr-0.5" />
-            {pageType === 'chat'
-              ? t('tasks.search_placeholder_chat')
-              : t('tasks.search_placeholder')}
+            {t('tasks.search_placeholder_chat')}
           </Button>
         )}
       </div>
 
-      {/* Search Dialog */}
+      {/* Search Dialog - always shows "Search Conversation" */}
       <Dialog open={isSearchDialogOpen} onOpenChange={setIsSearchDialogOpen}>
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>
-              {pageType === 'chat'
-                ? t('tasks.search_placeholder_chat')
-                : t('tasks.search_placeholder')}
-            </DialogTitle>
+            <DialogTitle>{t('tasks.search_placeholder_chat')}</DialogTitle>
           </DialogHeader>
           <div className="relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-text-muted" />
@@ -345,11 +305,7 @@ export default function TaskSidebar({
               type="text"
               value={localSearchTerm}
               onChange={handleSearchChange}
-              placeholder={
-                pageType === 'chat'
-                  ? t('tasks.search_placeholder_chat')
-                  : t('tasks.search_placeholder')
-              }
+              placeholder={t('tasks.search_placeholder_chat')}
               className="w-full pl-10 pr-10 py-2 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
               onKeyDown={e => {
                 if (e.key === 'Enter') {

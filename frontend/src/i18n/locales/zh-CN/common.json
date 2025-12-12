@@ -5,7 +5,9 @@
   },
   "repos": {
     "repository": "选择仓库",
-    "branch": "选择分支"
+    "branch": "选择分支",
+    "repository_tooltip": "选择代码仓库",
+    "branch_tooltip": "选择分支"
   },
   "actions": {
     "save": "保存",
@@ -596,7 +598,8 @@
     "mixed_team_warning": "当前智能体包含多种执行器类型，无法统一指定模型",
     "default_model": "默认模型",
     "use_bot_model": "使用 Bot 预设模型",
-    "model_required": "请选择模型"
+    "model_required": "请选择模型",
+    "model_tooltip": "选择用于对话的 AI 模型"
   },
   "knowledge": {
     "modules": {
