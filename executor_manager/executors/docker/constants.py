@@ -13,7 +13,6 @@ Constants definition file for Docker executor
 # Container owner identifier
 import os
 
-
 CONTAINER_OWNER = "executor_manager"
 
 # Docker host configuration

@@ -56,6 +56,19 @@ dependencies = [
     "redis>=5.0.1",
     # Security related
     "pycryptodome>=3.20.0",
+
+    # OpenTelemetry core packages
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+
+    # OpenTelemetry instrumentation packages
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "opentelemetry-instrumentation-requests>=0.48b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.48b0",
+    "opentelemetry-instrumentation-system-metrics>=0.48b0",
+
     # Document parsing for file attachments
     "pypdf2>=3.0.0",
     "python-docx>=1.1.0",

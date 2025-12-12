@@ -97,9 +97,20 @@ def create_task_with_optional_id(
     db: Session = Depends(get_db),
 ):
     """Create new task with optional task_id in parameters"""
-    return task_kinds_service.create_task_or_append(
+    result = task_kinds_service.create_task_or_append(
         db=db, obj_in=task_create, user=current_user, task_id=task_id
     )
+
+    # Record task creation metric (only if telemetry is enabled)
+    if settings.OTEL_ENABLED:
+        from shared.telemetry.metrics import record_task_created
+
+        record_task_created(
+            user_id=str(current_user.id),
+            team_id=str(task_create.team_id) if task_create.team_id else None,
+        )
+
+    return result
 
 
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
