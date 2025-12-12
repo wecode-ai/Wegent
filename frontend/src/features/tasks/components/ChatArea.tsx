@@ -27,7 +27,7 @@ import type {
   GitBranch,
   Attachment,
   ChatTipItem,
-  ChatSloganConfig,
+  ChatSloganItem,
 } from '@/types/api';
 import type { WelcomeConfigResponse } from '@/types/api';
 import { userApis } from '@/apis/user';
@@ -51,10 +51,10 @@ const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 const COMPACT_QUOTA_NAME_THRESHOLD = 22;
 
 // Slogan Display Component - shows above input when no messages
-function SloganDisplay({ slogan }: { slogan: ChatSloganConfig }) {
+function SloganDisplay({ slogan }: { slogan: ChatSloganItem | null }) {
   const { i18n } = useTranslation();
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
-  const sloganText = currentLang === 'zh' ? slogan.zh : slogan.en;
+  const sloganText = slogan ? (currentLang === 'zh' ? slogan.zh : slogan.en) : '';
 
   if (!sloganText) return null;
 
@@ -182,6 +182,26 @@ export default function ChatArea({
 
     fetchWelcomeConfig();
   }, []);
+
+  // Get random slogan for display - memoized to prevent re-randomization on re-renders
+  // Filter slogans by taskType: show slogans that match the current mode or are for 'both' modes
+  const randomSlogan = useMemo<ChatSloganItem | null>(() => {
+    if (!welcomeConfig?.slogans || welcomeConfig.slogans.length === 0) {
+      return null;
+    }
+    // Filter slogans by mode: include slogans that match current taskType or are for 'both'
+    const filteredSlogans = welcomeConfig.slogans.filter(slogan => {
+      const sloganMode = slogan.mode || 'both'; // Default to 'both' if mode is not specified
+      return sloganMode === taskType || sloganMode === 'both';
+    });
+
+    if (filteredSlogans.length === 0) {
+      return null;
+    }
+
+    const randomIndex = Math.floor(Math.random() * filteredSlogans.length);
+    return filteredSlogans[randomIndex];
+  }, [welcomeConfig?.slogans, taskType]);
 
   // Get random tip for placeholder - memoized to prevent re-randomization on re-renders
   // Filter tips by taskType: show tips that match the current mode or are for 'both' modes
@@ -1056,7 +1076,7 @@ export default function ChatArea({
             {/* Floating Input Area */}
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
               {/* Slogan Display - show above input when no messages */}
-              {welcomeConfig?.slogan && <SloganDisplay slogan={welcomeConfig.slogan} />}
+              {randomSlogan && <SloganDisplay slogan={randomSlogan} />}
               <div className="w-full">
                 {/* External API Parameters Input - only show for Dify teams */}
                 {selectedTeam && selectedTeam.agent_type === 'dify' && (

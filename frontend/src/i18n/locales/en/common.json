@@ -354,6 +354,7 @@
     "delete_task": "Delete Task",
     "searching": "Searching...",
     "press_enter_to_search": "Press Enter to search",
+    "clear_search": "Clear",
     "mark_all_read": "Mark all as read",
     "open_from": "<> Code",
     "open_from_vscode": "VSCode",
@@ -616,6 +617,7 @@
     "model_tooltip": "Select AI model for conversation"
   },
   "knowledge": {
+    "title": "Knowledge",
     "modules": {
       "title": "Knowledge Space",
       "code": "Code Knowledge",

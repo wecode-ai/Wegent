@@ -13,7 +13,7 @@ from app.core import security
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
-    ChatSloganConfig,
+    ChatSloganItem,
     ChatTipItem,
     QuickAccessResponse,
     QuickAccessTeam,
@@ -191,10 +191,20 @@ CHAT_SLOGAN_TIPS_CONFIG_KEY = "chat_slogan_tips"
 
 # Default slogan and tips configuration
 DEFAULT_SLOGAN_TIPS_CONFIG = {
-    "slogan": {
-        "zh": "今天有什么可以帮到你？",
-        "en": "What can I help you with today?",
-    },
+    "slogans": [
+        {
+            "id": 1,
+            "zh": "今天有什么可以帮到你？",
+            "en": "What can I help you with today?",
+            "mode": "chat",
+        },
+        {
+            "id": 2,
+            "zh": "让我们一起写代码吧",
+            "en": "Let's code together",
+            "mode": "code",
+        },
+    ],
     "tips": [
         # Chat mode tips
         {
@@ -257,7 +267,7 @@ async def get_welcome_config(
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get welcome configuration (slogan and tips) for the chat page.
+    Get welcome configuration (slogans and tips) for the chat page.
     This is a public endpoint for logged-in users.
     """
     config = (
@@ -269,15 +279,18 @@ async def get_welcome_config(
     if not config:
         # Return default configuration
         return WelcomeConfigResponse(
-            slogan=ChatSloganConfig(**DEFAULT_SLOGAN_TIPS_CONFIG["slogan"]),
+            slogans=[
+                ChatSloganItem(**s) for s in DEFAULT_SLOGAN_TIPS_CONFIG["slogans"]
+            ],
             tips=[ChatTipItem(**tip) for tip in DEFAULT_SLOGAN_TIPS_CONFIG["tips"]],
         )
 
     config_value = config.config_value or {}
     return WelcomeConfigResponse(
-        slogan=ChatSloganConfig(
-            **config_value.get("slogan", DEFAULT_SLOGAN_TIPS_CONFIG["slogan"])
-        ),
+        slogans=[
+            ChatSloganItem(**s)
+            for s in config_value.get("slogans", DEFAULT_SLOGAN_TIPS_CONFIG["slogans"])
+        ],
         tips=[
             ChatTipItem(**tip)
             for tip in config_value.get("tips", DEFAULT_SLOGAN_TIPS_CONFIG["tips"])

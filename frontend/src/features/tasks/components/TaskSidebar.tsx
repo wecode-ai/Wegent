@@ -120,27 +120,22 @@ export default function TaskSidebar({
     }
   }, [isSearchDialogOpen]);
 
-  // Get navigation buttons - Code button is always shown, Wiki button only when not on knowledge page
-  const getNavigationButtons = () => {
-    const buttons = [];
-    // Code button is always shown (third button)
-    buttons.push({
+  // Navigation buttons - always show all buttons
+  const navigationButtons = [
+    {
       label: t('navigation.code'),
       icon: Code,
       path: paths.code.getHref(),
-    });
-    // Wiki button only shown when not on knowledge page (fourth button)
-    if (pageType !== 'knowledge') {
-      buttons.push({
-        label: t('navigation.wiki'),
-        icon: BookOpen,
-        path: paths.wiki.getHref(),
-      });
-    }
-    return buttons;
-  };
-
-  const navigationButtons = getNavigationButtons();
+      isActive: pageType === 'code',
+      tooltip: pageType === 'code' ? t('tasks.new_task') : undefined,
+    },
+    {
+      label: t('navigation.wiki'),
+      icon: BookOpen,
+      path: paths.wiki.getHref(),
+      isActive: pageType === 'knowledge',
+    },
+  ];
 
   // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {
@@ -152,6 +147,18 @@ export default function TaskSidebar({
       router.replace(paths.chat.getHref());
     }
     // Close mobile sidebar after navigation
+    setIsMobileSidebarOpen(false);
+  };
+
+  // Handle navigation button click - for code mode, clear streams to create new task
+  const handleNavigationClick = (path: string, isActive: boolean) => {
+    if (isActive) {
+      // If already on this page, clear streams to create new task
+      clearAllStreams();
+      router.replace(path);
+    } else {
+      router.push(path);
+    }
     setIsMobileSidebarOpen(false);
   };
 
@@ -182,7 +189,7 @@ export default function TaskSidebar({
 
   const sidebarContent = (
     <>
-      {/* Logo */}
+      {/* Logo and Mode Indicator */}
       <div className="px-1 pt-2 pb-3">
         <div
           className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between pl-2'} gap-2`}
@@ -226,7 +233,7 @@ export default function TaskSidebar({
         </div>
       </div>
 
-      {/* New Conversation Button - always shows "New Conversation" */}
+      {/* New Conversation Button - always shows "New Conversation" and navigates to chat */}
       <div className="px-1 mb-0">
         {isCollapsed ? (
           <TooltipProvider>
@@ -344,16 +351,45 @@ export default function TaskSidebar({
       {!isCollapsed && navigationButtons.length > 0 && (
         <div className="px-1 mb-2">
           {navigationButtons.map(btn => (
-            <Button
-              key={btn.path}
-              variant="ghost"
-              onClick={() => router.push(btn.path)}
-              className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
-              size="sm"
-            >
-              <btn.icon className="h-4 w-4 mr-0.5" />
-              {btn.label}
-            </Button>
+            <div key={btn.path} className="relative group">
+              <Button
+                variant="ghost"
+                onClick={() => handleNavigationClick(btn.path, btn.isActive)}
+                className={`w-full justify-start px-2 py-1.5 h-8 text-sm rounded-xl transition-colors ${
+                  btn.isActive
+                    ? 'bg-primary/10 text-primary font-medium'
+                    : 'text-text-primary hover:bg-hover'
+                }`}
+                size="sm"
+              >
+                <btn.icon className={`h-4 w-4 mr-0.5 ${btn.isActive ? 'text-primary' : ''}`} />
+                {btn.label}
+              </Button>
+              {/* Show "New Task" button on hover when in code mode */}
+              {btn.isActive && btn.tooltip && (
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                  <TooltipProvider>
+                    <Tooltip delayDuration={0}>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleNavigationClick(btn.path, btn.isActive);
+                          }}
+                          className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
+                        >
+                          <Plus className="h-3 w-3" />
+                          <span>{t('tasks.new_task')}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        <p>{btn.tooltip}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}
@@ -363,10 +399,22 @@ export default function TaskSidebar({
         className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar border-t border-border`}
         ref={scrollRef}
       >
-        {/* History Title */}
+        {/* History Title or Search Result Header */}
         {!isCollapsed && !isSearchResult && (
           <div className="px-1 pb-2 text-xs font-medium text-text-muted">
             {t('tasks.history_title')}
+          </div>
+        )}
+        {!isCollapsed && isSearchResult && (
+          <div className="px-1 pb-2 flex items-center justify-between">
+            <span className="text-xs font-medium text-text-muted">{t('tasks.search_results')}</span>
+            <button
+              onClick={handleClearSearch}
+              className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+            >
+              <X className="h-3 w-3" />
+              {t('tasks.clear_search')}
+            </button>
           </div>
         )}
         {isSearching ? (
@@ -378,11 +426,11 @@ export default function TaskSidebar({
         ) : (
           <TaskListSection
             tasks={tasks}
-            title={isSearchResult ? t('tasks.search_results') : ''}
+            title=""
             unreadCount={getUnreadCount(tasks)}
             onTaskClick={() => setIsMobileSidebarOpen(false)}
             isCollapsed={isCollapsed}
-            showTitle={isSearchResult}
+            showTitle={false}
             key={`tasks-${viewStatusVersion}`}
           />
         )}

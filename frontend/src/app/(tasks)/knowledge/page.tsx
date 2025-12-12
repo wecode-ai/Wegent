@@ -158,6 +158,7 @@ export default function KnowledgePage() {
         <TopNavigation
           activePage="wiki"
           variant="with-sidebar"
+          title={t('knowledge.title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
         >
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}

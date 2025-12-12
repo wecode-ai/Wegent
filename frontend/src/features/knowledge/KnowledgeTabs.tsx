@@ -45,39 +45,37 @@ export function KnowledgeTabs({ activeTab, onTabChange }: KnowledgeTabsProps) {
   const { t } = useTranslation('common');
 
   return (
-    <div className="border-b border-border bg-surface">
-      <div className="flex items-center px-4">
-        {tabs.map(tab => {
-          const isActive = activeTab === tab.id;
-          const Icon = tab.icon;
+    <div className="flex items-center gap-1 px-4 py-2 border-t border-border bg-white">
+      {tabs.map(tab => {
+        const isActive = activeTab === tab.id;
+        const Icon = tab.icon;
 
-          return (
-            <button
-              key={tab.id}
-              onClick={() => !tab.disabled && onTabChange(tab.id)}
-              disabled={tab.disabled}
-              className={`
-                relative flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors
-                ${
-                  isActive
-                    ? 'text-primary border-b-2 border-primary -mb-[1px]'
-                    : tab.disabled
-                      ? 'text-text-muted cursor-not-allowed'
-                      : 'text-text-secondary hover:text-text-primary'
-                }
-              `}
-            >
-              <Icon className="w-4 h-4" />
-              <span>{t(tab.labelKey)}</span>
-              {tab.comingSoon && (
-                <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-muted text-text-muted">
-                  {t('common.coming_soon')}
-                </span>
-              )}
-            </button>
-          );
-        })}
-      </div>
+        return (
+          <button
+            key={tab.id}
+            onClick={() => !tab.disabled && onTabChange(tab.id)}
+            disabled={tab.disabled}
+            className={`
+              relative flex items-center gap-2 px-3 py-2 text-sm font-medium whitespace-nowrap rounded-md transition-colors duration-200
+              ${
+                isActive
+                  ? 'text-primary bg-primary/10'
+                  : tab.disabled
+                    ? 'text-text-muted cursor-not-allowed'
+                    : 'text-text-secondary hover:text-text-primary hover:bg-muted'
+              }
+            `}
+          >
+            <Icon className="w-4 h-4" />
+            <span>{t(tab.labelKey)}</span>
+            {tab.comingSoon && (
+              <span className="ml-1 text-xs px-1.5 py-0.5 rounded-full bg-muted text-text-muted">
+                {t('common.coming_soon')}
+              </span>
+            )}
+          </button>
+        );
+      })}
     </div>
   );
 }

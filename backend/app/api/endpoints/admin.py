@@ -27,7 +27,7 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserResponse,
     AdminUserUpdate,
-    ChatSloganConfig,
+    ChatSloganItem,
     ChatSloganTipsResponse,
     ChatSloganTipsUpdate,
     ChatTipItem,
@@ -1056,10 +1056,20 @@ CHAT_SLOGAN_TIPS_CONFIG_KEY = "chat_slogan_tips"
 
 # Default slogan and tips configuration
 DEFAULT_SLOGAN_TIPS_CONFIG = {
-    "slogan": {
-        "zh": "今天有什么可以帮到你？",
-        "en": "What can I help you with today?",
-    },
+    "slogans": [
+        {
+            "id": 1,
+            "zh": "今天有什么可以帮到你？",
+            "en": "What can I help you with today?",
+            "mode": "chat",
+        },
+        {
+            "id": 2,
+            "zh": "让我们一起写代码吧",
+            "en": "Let's code together",
+            "mode": "code",
+        },
+    ],
     "tips": [
         {
             "id": 1,
@@ -1107,16 +1117,19 @@ async def get_slogan_tips_config(
         # Return default configuration
         return ChatSloganTipsResponse(
             version=0,
-            slogan=ChatSloganConfig(**DEFAULT_SLOGAN_TIPS_CONFIG["slogan"]),
+            slogans=[
+                ChatSloganItem(**s) for s in DEFAULT_SLOGAN_TIPS_CONFIG["slogans"]
+            ],
             tips=[ChatTipItem(**tip) for tip in DEFAULT_SLOGAN_TIPS_CONFIG["tips"]],
         )
 
     config_value = config.config_value or {}
     return ChatSloganTipsResponse(
         version=config.version,
-        slogan=ChatSloganConfig(
-            **config_value.get("slogan", DEFAULT_SLOGAN_TIPS_CONFIG["slogan"])
-        ),
+        slogans=[
+            ChatSloganItem(**s)
+            for s in config_value.get("slogans", DEFAULT_SLOGAN_TIPS_CONFIG["slogans"])
+        ],
         tips=[ChatTipItem(**tip) for tip in config_value.get("tips", [])],
     )
 
@@ -1138,7 +1151,7 @@ async def update_slogan_tips_config(
     )
 
     config_value = {
-        "slogan": config_data.slogan.model_dump(),
+        "slogans": [s.model_dump() for s in config_data.slogans],
         "tips": [tip.model_dump() for tip in config_data.tips],
     }
 
@@ -1162,6 +1175,6 @@ async def update_slogan_tips_config(
 
     return ChatSloganTipsResponse(
         version=config.version,
-        slogan=config_data.slogan,
+        slogans=config_data.slogans,
         tips=config_data.tips,
     )

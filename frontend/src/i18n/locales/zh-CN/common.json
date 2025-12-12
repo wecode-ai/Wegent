@@ -354,6 +354,7 @@
     "delete_task": "删除任务",
     "searching": "搜索中...",
     "press_enter_to_search": "按 Enter 键搜索",
+    "clear_search": "清除",
     "mark_all_read": "全部标记为已读",
     "open_from": "<> Code",
     "open_from_vscode": "VSCode",
@@ -616,6 +617,7 @@
     "model_tooltip": "选择用于对话的 AI 模型"
   },
   "knowledge": {
+    "title": "知识库",
     "modules": {
       "title": "我的知识",
       "code": "代码知识",

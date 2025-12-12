@@ -455,9 +455,11 @@ export interface QuickAccessResponse {
 }
 
 // Welcome Config Types (Slogan & Tips)
-export interface ChatSloganConfig {
+export interface ChatSloganItem {
+  id: number;
   zh: string;
   en: string;
+  mode?: 'chat' | 'code' | 'both';
 }
 
 export interface ChatTipItem {
@@ -468,7 +470,7 @@ export interface ChatTipItem {
 }
 
 export interface WelcomeConfigResponse {
-  slogan: ChatSloganConfig;
+  slogans: ChatSloganItem[];
   tips: ChatTipItem[];
 }
 

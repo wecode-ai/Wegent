@@ -86,28 +86,30 @@ export interface SystemStats {
 }
 
 // Chat Slogan & Tips Types
-export interface ChatSloganConfig {
+export type SloganTipMode = 'chat' | 'code' | 'both';
+
+export interface ChatSloganItem {
+  id: number;
   zh: string;
   en: string;
+  mode?: SloganTipMode;
 }
-
-export type TipMode = 'chat' | 'code' | 'both';
 
 export interface ChatTipItem {
   id: number;
   zh: string;
   en: string;
-  mode?: TipMode;
+  mode?: SloganTipMode;
 }
 
 export interface ChatSloganTipsUpdate {
-  slogan: ChatSloganConfig;
+  slogans: ChatSloganItem[];
   tips: ChatTipItem[];
 }
 
 export interface ChatSloganTipsResponse {
   version: number;
-  slogan: ChatSloganConfig;
+  slogans: ChatSloganItem[];
   tips: ChatTipItem[];
 }
 
