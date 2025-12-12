@@ -34,24 +34,12 @@ anthropic>=0.18.0
 openai>=1.0.0
 
 # Utilities
-python-dotenv>=1.1.0
+python-dotenv==1.0.0
 tenacity==8.2.3
 pyyaml>=6.0
 
 # Logging and monitoring
 structlog>=23.1.0
-
-# OpenTelemetry core packages
-opentelemetry-api>=1.27.0
-opentelemetry-sdk>=1.27.0
-opentelemetry-exporter-otlp>=1.27.0
-
-# OpenTelemetry instrumentation packages
-opentelemetry-instrumentation-fastapi>=0.48b0
-opentelemetry-instrumentation-httpx>=0.48b0
-opentelemetry-instrumentation-requests>=0.48b0
-opentelemetry-instrumentation-sqlalchemy>=0.48b0
-opentelemetry-instrumentation-system-metrics>=0.48b0
 
 # Data processing and validation
 python-dateutil>=2.8.2
