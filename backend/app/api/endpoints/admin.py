@@ -27,6 +27,10 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserResponse,
     AdminUserUpdate,
+    ChatSloganItem,
+    ChatSloganTipsResponse,
+    ChatSloganTipsUpdate,
+    ChatTipItem,
     PasswordReset,
     PublicModelCreate,
     PublicModelListResponse,
@@ -1043,4 +1047,134 @@ async def update_quick_access_config(
     return SystemConfigResponse(
         version=config.version,
         teams=config.config_value.get("teams", []),
+    )
+
+
+# ==================== Chat Slogan & Tips Config Endpoints ====================
+
+CHAT_SLOGAN_TIPS_CONFIG_KEY = "chat_slogan_tips"
+
+# Default slogan and tips configuration
+DEFAULT_SLOGAN_TIPS_CONFIG = {
+    "slogans": [
+        {
+            "id": 1,
+            "zh": "今天有什么可以帮到你？",
+            "en": "What can I help you with today?",
+            "mode": "chat",
+        },
+        {
+            "id": 2,
+            "zh": "让我们一起写代码吧",
+            "en": "Let's code together",
+            "mode": "code",
+        },
+    ],
+    "tips": [
+        {
+            "id": 1,
+            "zh": "试试问我：帮我分析这段代码的性能问题",
+            "en": "Try asking: Help me analyze the performance issues in this code",
+        },
+        {
+            "id": 2,
+            "zh": "你可以上传文件让我帮你处理",
+            "en": "You can upload files for me to help you process",
+        },
+        {
+            "id": 3,
+            "zh": "我可以帮你生成代码、修复 Bug 或重构现有代码",
+            "en": "I can help you generate code, fix bugs, or refactor existing code",
+        },
+        {
+            "id": 4,
+            "zh": "试试让我帮你编写单元测试或文档",
+            "en": "Try asking me to write unit tests or documentation",
+        },
+        {
+            "id": 5,
+            "zh": "我可以解释复杂的代码逻辑，帮助你理解代码库",
+            "en": "I can explain complex code logic and help you understand the codebase",
+        },
+    ],
+}
+
+
+@router.get("/system-config/slogan-tips", response_model=ChatSloganTipsResponse)
+async def get_slogan_tips_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get chat slogan and tips configuration
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == CHAT_SLOGAN_TIPS_CONFIG_KEY)
+        .first()
+    )
+    if not config:
+        # Return default configuration
+        return ChatSloganTipsResponse(
+            version=0,
+            slogans=[
+                ChatSloganItem(**s) for s in DEFAULT_SLOGAN_TIPS_CONFIG["slogans"]
+            ],
+            tips=[ChatTipItem(**tip) for tip in DEFAULT_SLOGAN_TIPS_CONFIG["tips"]],
+        )
+
+    config_value = config.config_value or {}
+    return ChatSloganTipsResponse(
+        version=config.version,
+        slogans=[
+            ChatSloganItem(**s)
+            for s in config_value.get("slogans", DEFAULT_SLOGAN_TIPS_CONFIG["slogans"])
+        ],
+        tips=[ChatTipItem(**tip) for tip in config_value.get("tips", [])],
+    )
+
+
+@router.put("/system-config/slogan-tips", response_model=ChatSloganTipsResponse)
+async def update_slogan_tips_config(
+    config_data: ChatSloganTipsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Update chat slogan and tips configuration (admin only).
+    Version number is automatically incremented.
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == CHAT_SLOGAN_TIPS_CONFIG_KEY)
+        .first()
+    )
+
+    config_value = {
+        "slogans": [s.model_dump() for s in config_data.slogans],
+        "tips": [tip.model_dump() for tip in config_data.tips],
+    }
+
+    if not config:
+        # Create new config
+        config = SystemConfig(
+            config_key=CHAT_SLOGAN_TIPS_CONFIG_KEY,
+            config_value=config_value,
+            version=1,
+            updated_by=current_user.id,
+        )
+        db.add(config)
+    else:
+        # Update existing config and increment version
+        config.config_value = config_value
+        config.version = config.version + 1
+        config.updated_by = current_user.id
+
+    db.commit()
+    db.refresh(config)
+
+    return ChatSloganTipsResponse(
+        version=config.version,
+        slogans=config_data.slogans,
+        tips=config_data.tips,
     )

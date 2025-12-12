@@ -44,6 +44,7 @@ interface SearchableSelectProps {
   footer?: React.ReactNode;
   listFooter?: React.ReactNode; // Content rendered at the end of the list (after items, before footer)
   showChevron?: boolean; // Whether to show chevron icon
+  defaultOpen?: boolean; // Whether to open the dropdown by default
 }
 
 export function SearchableSelect({
@@ -65,8 +66,9 @@ export function SearchableSelect({
   footer,
   listFooter,
   showChevron = false,
+  defaultOpen = false,
 }: SearchableSelectProps) {
-  const [isOpen, setIsOpen] = React.useState(false);
+  const [isOpen, setIsOpen] = React.useState(defaultOpen);
   const [searchValue, setSearchValue] = React.useState('');
 
   // Find selected item

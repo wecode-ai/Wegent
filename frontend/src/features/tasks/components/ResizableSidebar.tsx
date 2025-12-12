@@ -25,7 +25,7 @@ export default function ResizableSidebar({
   isCollapsed = false,
   onToggleCollapsed,
 }: ResizableSidebarProps) {
-  const COLLAPSED_WIDTH = 60;
+  const COLLAPSED_WIDTH = 0;
   const AUTO_COLLAPSE_THRESHOLD = 80;
 
   const [sidebarWidth, setSidebarWidth] = useState(defaultWidth);
@@ -120,13 +120,15 @@ export default function ResizableSidebar({
 
   return (
     <div
-      className="hidden lg:flex relative border-r border-border transition-all duration-200"
-      style={{ width: `${sidebarWidth}px` }}
+      className={`hidden lg:flex relative transition-all duration-200 ${isCollapsed ? '' : 'border-r border-border'}`}
+      style={{ width: `${sidebarWidth}px`, overflow: isCollapsed ? 'hidden' : 'visible' }}
     >
-      {/* Sidebar content container */}
-      <div ref={sidebarRef} className="flex flex-col w-full h-full">
-        {children}
-      </div>
+      {/* Sidebar content container - hidden when collapsed */}
+      {!isCollapsed && (
+        <div ref={sidebarRef} className="flex flex-col w-full h-full">
+          {children}
+        </div>
+      )}
 
       {/* Resizer handle - disabled when collapsed */}
       {!isCollapsed && (

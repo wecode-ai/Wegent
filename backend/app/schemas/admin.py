@@ -159,3 +159,63 @@ class QuickAccessResponse(BaseModel):
     user_version: Optional[int] = None
     show_system_recommended: bool  # True if user_version < system_version
     teams: List[QuickAccessTeam]
+
+
+# Chat Slogan & Tips Schemas
+class ChatSloganItem(BaseModel):
+    """Individual slogan item with multi-language support"""
+
+    id: int = Field(..., description="Unique slogan ID")
+    zh: str = Field(..., description="Chinese slogan")
+    en: str = Field(..., description="English slogan")
+    mode: Optional[Literal["chat", "code", "both"]] = Field(
+        default="both",
+        description="Which mode this slogan applies to: chat, code, or both",
+    )
+
+
+class ChatTipItem(BaseModel):
+    """Individual tip item with multi-language support"""
+
+    id: int = Field(..., description="Unique tip ID")
+    zh: str = Field(..., description="Chinese tip text")
+    en: str = Field(..., description="English tip text")
+    mode: Optional[Literal["chat", "code", "both"]] = Field(
+        default="both",
+        description="Which mode this tip applies to: chat, code, or both",
+    )
+
+
+class ChatTipsConfig(BaseModel):
+    """Chat tips configuration"""
+
+    tips: List[ChatTipItem] = Field(default_factory=list, description="List of tips")
+
+
+class ChatSloganTipsUpdate(BaseModel):
+    """Update model for chat slogan and tips"""
+
+    slogans: List[ChatSloganItem] = Field(..., description="List of slogans")
+    tips: List[ChatTipItem] = Field(..., description="List of tips")
+
+
+class ChatSloganTipsResponse(BaseModel):
+    """Response model for chat slogan and tips configuration"""
+
+    version: int = Field(..., description="Configuration version")
+    slogans: List[ChatSloganItem] = Field(
+        default_factory=list, description="List of slogans"
+    )
+    tips: List[ChatTipItem] = Field(default_factory=list, description="List of tips")
+
+    class Config:
+        from_attributes = True
+
+
+class WelcomeConfigResponse(BaseModel):
+    """Public response model for welcome config (slogan + tips)"""
+
+    slogans: List[ChatSloganItem] = Field(
+        default_factory=list, description="List of slogans"
+    )
+    tips: List[ChatTipItem] = Field(default_factory=list, description="List of tips")

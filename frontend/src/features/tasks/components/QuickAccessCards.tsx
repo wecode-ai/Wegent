@@ -4,13 +4,26 @@
 
 'use client';
 
-import { useEffect, useState, useCallback, useTransition } from 'react';
+import { useEffect, useState, useCallback, useTransition, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { FaUsers } from 'react-icons/fa';
 import { HiOutlineCode, HiOutlineChatAlt2 } from 'react-icons/hi';
+import {
+  ChevronDownIcon,
+  Cog6ToothIcon,
+  CheckIcon,
+  MagnifyingGlassIcon,
+} from '@heroicons/react/24/outline';
 import { userApis } from '@/apis/user';
 import { QuickAccessTeam, Team } from '@/types/api';
 import { saveLastTeamByMode } from '@/utils/userPreferences';
+import { useTranslation } from '@/hooks/useTranslation';
+import { Tag } from '@/components/ui/tag';
+import { paths } from '@/config/paths';
+import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
+
+// Maximum number of quick access cards to display
+const MAX_QUICK_ACCESS_CARDS = 4;
 
 interface QuickAccessCardsProps {
   teams: Team[];
@@ -18,6 +31,8 @@ interface QuickAccessCardsProps {
   onTeamSelect: (team: Team) => void;
   currentMode: 'chat' | 'code';
   isLoading?: boolean;
+  isTeamsLoading?: boolean;
+  hideSelected?: boolean; // Whether to hide the selected team from the cards
 }
 
 export function QuickAccessCards({
@@ -26,13 +41,18 @@ export function QuickAccessCards({
   onTeamSelect,
   currentMode,
   isLoading,
+  isTeamsLoading,
+  hideSelected = false,
 }: QuickAccessCardsProps) {
   const router = useRouter();
+  const { t } = useTranslation('common');
   const [isPending, startTransition] = useTransition();
   const [quickAccessTeams, setQuickAccessTeams] = useState<QuickAccessTeam[]>([]);
   const [isQuickAccessLoading, setIsQuickAccessLoading] = useState(true);
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null);
   const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | null>(null);
+  const [showMoreTeams, setShowMoreTeams] = useState(false);
+  const moreButtonRef = useRef<HTMLDivElement>(null);
 
   // Define the extended team type for display
   type DisplayTeam = Team & { is_system: boolean; recommended_mode?: 'chat' | 'code' | 'both' };
@@ -62,15 +82,18 @@ export function QuickAccessCards({
     fetchQuickAccess();
   }, []);
 
-  // Filter out teams with empty bind_mode array (teams that are not available in any mode)
+  // Filter teams by bind_mode based on current mode (same logic as TeamSelector)
   const filteredTeams = teams.filter(team => {
     // If bind_mode is an empty array, filter it out
     if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false;
-    return true;
+    // If bind_mode is not set (undefined/null), show in all modes
+    if (!team.bind_mode) return true;
+    // Otherwise, only show if current mode is in bind_mode
+    return team.bind_mode.includes(currentMode);
   });
 
   // Get display teams: quick access teams matched with full team data
-  const displayTeams: DisplayTeam[] =
+  const allDisplayTeams: DisplayTeam[] =
     quickAccessTeams.length > 0
       ? quickAccessTeams
           .map(qa => {
@@ -85,8 +108,63 @@ export function QuickAccessCards({
             return null;
           })
           .filter((t): t is DisplayTeam => t !== null)
-      : // Fallback: show first 4 filtered teams if no quick access configured
-        filteredTeams.slice(0, 4).map(t => ({ ...t, is_system: false }) as DisplayTeam);
+      : // Fallback: show first teams from filtered list if no quick access configured
+        filteredTeams.map(t => ({ ...t, is_system: false }) as DisplayTeam);
+
+  // Filter out selected team if hideSelected is true
+  const teamsAfterFilter =
+    hideSelected && selectedTeam
+      ? allDisplayTeams.filter(t => t.id !== selectedTeam.id)
+      : allDisplayTeams;
+
+  // Limit display teams to MAX_QUICK_ACCESS_CARDS
+  const displayTeams = teamsAfterFilter.slice(0, MAX_QUICK_ACCESS_CARDS);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (moreButtonRef.current && !moreButtonRef.current.contains(event.target as Node)) {
+        setShowMoreTeams(false);
+      }
+    };
+
+    if (showMoreTeams) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, [showMoreTeams]);
+
+  // Handle team selection from dropdown
+  const handleTeamSelectFromDropdown = useCallback(
+    (team: Team) => {
+      onTeamSelect(team);
+      setShowMoreTeams(false);
+    },
+    [onTeamSelect]
+  );
+
+  // Search state for team list
+  const [searchQuery, setSearchQuery] = useState('');
+
+  // Filter teams for dropdown based on search query
+  const dropdownTeams = useMemo(() => {
+    if (!searchQuery.trim()) return filteredTeams;
+    const query = searchQuery.toLowerCase();
+    return filteredTeams.filter(team => team.name.toLowerCase().includes(query));
+  }, [filteredTeams, searchQuery]);
+
+  // Get shared badge style
+  const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), []);
+
+  // Reset search when dropdown closes
+  useEffect(() => {
+    if (!showMoreTeams) {
+      setSearchQuery('');
+    }
+  }, [showMoreTeams]);
 
   // Determine the target mode for a team based on recommended_mode or bind_mode
   const getTeamTargetMode = (team: DisplayTeam): 'chat' | 'code' | 'both' => {
@@ -215,7 +293,7 @@ export function QuickAccessCards({
           animation: slide-fade 0.2s ease-out forwards;
         }
       `}</style>
-      <div className="grid grid-cols-4 gap-3 mt-4">
+      <div className="flex flex-wrap items-center gap-2 mt-4">
         {displayTeams.map(team => {
           const isSelected = selectedTeam?.id === team.id;
           const isClicked = clickedTeamId === team.id;
@@ -227,8 +305,8 @@ export function QuickAccessCards({
               key={team.id}
               onClick={() => !isClicked && !isPending && handleTeamClick(team)}
               className={`
-                group relative flex items-center gap-2 px-4 py-2
-                rounded-lg border cursor-pointer transition-all duration-200
+                group relative flex items-center gap-1.5 px-3 py-1.5
+                rounded-full border cursor-pointer transition-all duration-200
                 ${
                   isClicked || isPending
                     ? 'switching-card border-primary bg-primary/10 ring-2 ring-primary/50'
@@ -241,50 +319,156 @@ export function QuickAccessCards({
               title={team.description || undefined}
             >
               <FaUsers
-                className={`w-4 h-4 flex-shrink-0 transition-colors duration-200 ${
+                className={`w-3.5 h-3.5 flex-shrink-0 transition-colors duration-200 ${
                   isClicked || isSelected ? 'text-primary' : 'text-text-muted'
                 }`}
               />
-              <div className="flex flex-col min-w-0">
-                <span
-                  className={`text-sm font-medium transition-colors duration-200 ${
-                    isClicked || isSelected ? 'text-primary' : 'text-text-secondary'
-                  }`}
-                >
-                  {team.name}
-                </span>
-                {team.description && (
-                  <span className="text-xs text-text-muted truncate max-w-[150px]">
-                    {team.description}
-                  </span>
-                )}
-              </div>
+              <span
+                className={`text-sm font-medium transition-colors duration-200 whitespace-nowrap ${
+                  isClicked || isSelected ? 'text-primary' : 'text-text-secondary'
+                }`}
+              >
+                {team.name}
+              </span>
 
               {/* Mode switch indicator */}
               {isClicked && switchingToMode && (
-                <div className="mode-indicator flex items-center gap-1 ml-1 text-primary">
+                <div className="mode-indicator flex items-center gap-1 ml-0.5 text-primary">
                   <span className="text-xs">→</span>
                   {switchingToMode === 'code' ? (
-                    <HiOutlineCode className="w-4 h-4" />
-                  ) : (
-                    <HiOutlineChatAlt2 className="w-4 h-4" />
-                  )}
-                </div>
-              )}
-
-              {/* Hover hint for mode switch - absolute positioned to prevent width change */}
-              {!isClicked && willSwitchMode && (
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center text-text-muted opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                  {targetMode === 'code' ? (
                     <HiOutlineCode className="w-3.5 h-3.5" />
                   ) : (
                     <HiOutlineChatAlt2 className="w-3.5 h-3.5" />
                   )}
                 </div>
               )}
+
+              {/* Hover hint for mode switch */}
+              {!isClicked && willSwitchMode && (
+                <div className="flex items-center text-text-muted opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-0.5">
+                  {targetMode === 'code' ? (
+                    <HiOutlineCode className="w-3 h-3" />
+                  ) : (
+                    <HiOutlineChatAlt2 className="w-3 h-3" />
+                  )}
+                </div>
+              )}
             </div>
           );
         })}
+
+        {/* More button - always show for team selection */}
+        <div ref={moreButtonRef} className="relative">
+          <button
+            onClick={() => setShowMoreTeams(!showMoreTeams)}
+            className={`
+                flex items-center gap-1.5 px-3 py-1.5
+                rounded-full border cursor-pointer transition-all duration-200
+                ${
+                  showMoreTeams
+                    ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                    : 'border-border bg-surface hover:bg-hover hover:border-border-strong'
+                }
+              `}
+            title={t('teams.more_teams')}
+          >
+            <span className="text-sm font-medium text-text-secondary">{t('teams.more')}</span>
+            <ChevronDownIcon
+              className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 ${showMoreTeams ? 'rotate-180' : ''}`}
+            />
+          </button>
+
+          {/* Dropdown with team list */}
+          {showMoreTeams && (
+            <div className="absolute top-full left-0 mt-2 z-50 min-w-[300px] max-w-[400px] bg-surface border border-border rounded-xl shadow-xl overflow-hidden">
+              {/* Search input */}
+              <div className="p-2 border-b border-border">
+                <div className="relative">
+                  <MagnifyingGlassIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={e => setSearchQuery(e.target.value)}
+                    placeholder={t('teams.search_team')}
+                    className="w-full pl-9 pr-3 py-2 text-sm bg-base border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-primary/20 placeholder:text-text-muted"
+                    autoFocus
+                  />
+                </div>
+              </div>
+
+              {/* Team list */}
+              <div className="max-h-[240px] overflow-y-auto">
+                {isTeamsLoading ? (
+                  <div className="py-4 text-center text-sm text-text-muted">
+                    {t('actions.loading')}
+                  </div>
+                ) : dropdownTeams.length === 0 ? (
+                  <div className="py-4 text-center text-sm text-text-muted">
+                    {t('teams.no_match')}
+                  </div>
+                ) : (
+                  dropdownTeams.map(team => {
+                    const isSelected = selectedTeam?.id === team.id;
+                    const isSharedTeam = team.share_status === 2 && team.user?.user_name;
+                    const isGroupTeam = team.namespace && team.namespace !== 'default';
+
+                    return (
+                      <div
+                        key={team.id}
+                        onClick={() => handleTeamSelectFromDropdown(team)}
+                        className={`
+                            flex items-center gap-3 px-3 py-2 mx-1 my-0.5 rounded-md cursor-pointer
+                            transition-colors duration-150
+                            ${
+                              isSelected
+                                ? 'bg-primary/10 text-primary'
+                                : 'hover:bg-hover text-text-primary'
+                            }
+                          `}
+                      >
+                        <CheckIcon
+                          className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'opacity-100 text-primary' : 'opacity-0'}`}
+                        />
+                        <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
+                        <span className="flex-1 text-sm font-medium truncate" title={team.name}>
+                          {team.name}
+                        </span>
+                        {isGroupTeam && (
+                          <Tag className="text-xs !m-0 flex-shrink-0" variant="info">
+                            {team.namespace}
+                          </Tag>
+                        )}
+                        {isSharedTeam && (
+                          <Tag
+                            className="text-xs !m-0 flex-shrink-0"
+                            variant="default"
+                            style={sharedBadgeStyle}
+                          >
+                            {team.user?.user_name}
+                          </Tag>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+              {/* Footer with settings link */}
+              <div
+                className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-3 py-2.5 text-xs text-text-secondary hover:bg-muted transition-colors duration-150"
+                onClick={() => {
+                  setShowMoreTeams(false);
+                  router.push(paths.settings.team.getHref());
+                }}
+              >
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('teams.manage')}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
     </>
   );

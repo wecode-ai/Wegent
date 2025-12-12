@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { Search, Plus, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Search, Plus, X, PanelLeftClose, PanelLeftOpen, Code, BookOpen } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
@@ -18,11 +18,12 @@ import { useTranslation } from '@/hooks/useTranslation';
 import MobileSidebar from '@/features/layout/MobileSidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
   setIsMobileSidebarOpen: (open: boolean) => void;
-  pageType?: 'chat' | 'code';
+  pageType?: 'chat' | 'code' | 'knowledge';
   isCollapsed?: boolean;
   onToggleCollapsed?: () => void;
 }
@@ -40,7 +41,6 @@ export default function TaskSidebar({
   const {
     tasks,
     loadMore,
-    hasMore,
     loadingMore,
     searchTerm,
     setSearchTerm,
@@ -53,6 +53,8 @@ export default function TaskSidebar({
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Custom debounce
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -99,53 +101,64 @@ export default function TaskSidebar({
     searchTasks('');
   };
 
-  // Grouping logic
-  // Include viewStatusVersion in dependencies to recalculate unread counts when view status changes
-  const groupTasksByDate = React.useMemo(() => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Open search dialog
+  const handleOpenSearchDialog = () => {
+    setIsSearchDialogOpen(true);
+  };
 
-    // Calculate the start of this week (Monday 00:00:00)
-    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday, 6 days back; otherwise (dayOfWeek - 1)
-    const thisMonday = new Date(today.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
+  // Close search dialog
+  const handleCloseSearchDialog = () => {
+    setIsSearchDialogOpen(false);
+  };
 
-    const todayTasks = tasks.filter(task => new Date(task.created_at) >= today);
-    const thisWeekTasks = tasks.filter(task => {
-      const taskDate = new Date(task.created_at);
-      return taskDate >= thisMonday && taskDate < today;
-    });
-    const earlierTasks = tasks.filter(task => new Date(task.created_at) < thisMonday);
+  // Focus input when dialog opens
+  useEffect(() => {
+    if (isSearchDialogOpen && searchInputRef.current) {
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+    }
+  }, [isSearchDialogOpen]);
 
-    return {
-      today: todayTasks,
-      thisWeek: thisWeekTasks,
-      earlier: earlierTasks,
-      todayUnread: getUnreadCount(todayTasks),
-      thisWeekUnread: getUnreadCount(thisWeekTasks),
-      earlierUnread: getUnreadCount(earlierTasks),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, getUnreadCount, viewStatusVersion]);
+  // Navigation buttons - always show all buttons
+  const navigationButtons = [
+    {
+      label: t('navigation.code'),
+      icon: Code,
+      path: paths.code.getHref(),
+      isActive: pageType === 'code',
+      tooltip: pageType === 'code' ? t('tasks.new_task') : undefined,
+    },
+    {
+      label: t('navigation.wiki'),
+      icon: BookOpen,
+      path: paths.wiki.getHref(),
+      isActive: pageType === 'knowledge',
+    },
+  ];
 
-  // New task
+  // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {
     // Clear all stream states to reset the chat area to initial state
     clearAllStreams();
 
     if (typeof window !== 'undefined') {
-      // Navigate to the same page type for new task creation
-      switch (pageType) {
-        case 'code':
-          router.replace(paths.code.getHref());
-          break;
-        case 'chat':
-        default:
-          router.replace(paths.chat.getHref());
-          break;
-      }
+      // Always navigate to chat page for new conversation
+      router.replace(paths.chat.getHref());
     }
     // Close mobile sidebar after navigation
+    setIsMobileSidebarOpen(false);
+  };
+
+  // Handle navigation button click - for code mode, clear streams to create new task
+  const handleNavigationClick = (path: string, isActive: boolean) => {
+    if (isActive) {
+      // If already on this page, clear streams to create new task
+      clearAllStreams();
+      router.replace(path);
+    } else {
+      router.push(path);
+    }
     setIsMobileSidebarOpen(false);
   };
 
@@ -176,7 +189,7 @@ export default function TaskSidebar({
 
   const sidebarContent = (
     <>
-      {/* Logo */}
+      {/* Logo and Mode Indicator */}
       <div className="px-1 pt-2 pb-3">
         <div
           className={`flex items-center ${isCollapsed ? 'justify-center' : 'justify-between pl-2'} gap-2`}
@@ -201,7 +214,7 @@ export default function TaskSidebar({
                     variant="ghost"
                     size="icon"
                     onClick={onToggleCollapsed}
-                    className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover"
+                    className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-xl"
                     aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
                   >
                     {isCollapsed ? (
@@ -220,7 +233,7 @@ export default function TaskSidebar({
         </div>
       </div>
 
-      {/* New Task Button */}
+      {/* New Conversation Button - always shows "New Conversation" and navigates to chat */}
       <div className="px-1 mb-0">
         {isCollapsed ? (
           <TooltipProvider>
@@ -229,14 +242,14 @@ export default function TaskSidebar({
                 <Button
                   variant="ghost"
                   onClick={handleNewAgentClick}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded"
-                  aria-label={t('tasks.new_task')}
+                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
+                  aria-label={t('tasks.new_conversation')}
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
-                <p>{t('tasks.new_task')}</p>
+                <p>{t('tasks.new_conversation')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -244,16 +257,16 @@ export default function TaskSidebar({
           <Button
             variant="ghost"
             onClick={handleNewAgentClick}
-            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover"
+            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
             size="sm"
           >
             <Plus className="h-4 w-4 mr-0.5" />
-            {t('tasks.new_task')}
+            {t('tasks.new_conversation')}
           </Button>
         )}
       </div>
 
-      {/* Search */}
+      {/* Search Button - always shows "Search Conversation" */}
       <div className="px-1 mb-0">
         {isCollapsed ? (
           <TooltipProvider>
@@ -261,39 +274,66 @@ export default function TaskSidebar({
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
-                  onClick={onToggleCollapsed}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded"
-                  aria-label={t('tasks.search_placeholder')}
+                  onClick={handleOpenSearchDialog}
+                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
+                  aria-label={t('tasks.search_placeholder_chat')}
                 >
                   <Search className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
-                <p>{t('tasks.search_placeholder')}</p>
+                <p>{t('tasks.search_placeholder_chat')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         ) : (
-          <div className="relative group">
-            <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+          <Button
+            variant="ghost"
+            onClick={handleOpenSearchDialog}
+            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
+            size="sm"
+          >
+            <Search className="h-4 w-4 mr-0.5" />
+            {t('tasks.search_placeholder_chat')}
+          </Button>
+        )}
+      </div>
+
+      {/* Search Dialog - always shows "Search Conversation" */}
+      <Dialog open={isSearchDialogOpen} onOpenChange={setIsSearchDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('tasks.search_placeholder_chat')}</DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-text-muted" />
             <input
+              ref={searchInputRef}
               type="text"
               value={localSearchTerm}
               onChange={handleSearchChange}
-              placeholder={t('tasks.search_placeholder')}
-              className="w-full pl-8 pr-8 py-1.5 bg-transparent group-hover:bg-hover border border-transparent group-hover:border-border rounded text-sm text-text-primary placeholder:text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent focus:bg-hover cursor-text"
+              placeholder={t('tasks.search_placeholder_chat')}
+              className="w-full pl-10 pr-10 py-2 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  handleCloseSearchDialog();
+                }
+              }}
             />
             {localSearchTerm && (
               <button
                 onClick={handleClearSearch}
-                className="absolute right-2 top-1/2 transform -translate-y-1/2"
+                className="absolute right-3 top-1/2 transform -translate-y-1/2"
               >
-                <X className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
+                <X className="h-4 w-4 text-text-muted hover:text-text-primary" />
               </button>
             )}
           </div>
-        )}
-      </div>
+          {localSearchTerm && (
+            <p className="text-xs text-text-muted mt-2">{t('tasks.press_enter_to_search')}</p>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Mark All As Read Button - hide in collapsed mode */}
       {!isCollapsed && totalUnreadCount > 0 && (
@@ -307,59 +347,95 @@ export default function TaskSidebar({
         </div>
       )}
 
+      {/* Navigation Buttons - hide in collapsed mode */}
+      {!isCollapsed && navigationButtons.length > 0 && (
+        <div className="px-1 mb-2">
+          {navigationButtons.map(btn => (
+            <div key={btn.path} className="relative group">
+              <Button
+                variant="ghost"
+                onClick={() => handleNavigationClick(btn.path, btn.isActive)}
+                className={`w-full justify-start px-2 py-1.5 h-8 text-sm rounded-xl transition-colors ${
+                  btn.isActive
+                    ? 'bg-primary/10 text-primary font-medium'
+                    : 'text-text-primary hover:bg-hover'
+                }`}
+                size="sm"
+              >
+                <btn.icon className={`h-4 w-4 mr-0.5 ${btn.isActive ? 'text-primary' : ''}`} />
+                {btn.label}
+              </Button>
+              {/* Show "New Task" button on hover when in code mode */}
+              {btn.isActive && btn.tooltip && (
+                <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                  <TooltipProvider>
+                    <Tooltip delayDuration={0}>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={e => {
+                            e.stopPropagation();
+                            handleNavigationClick(btn.path, btn.isActive);
+                          }}
+                          className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
+                        >
+                          <Plus className="h-3 w-3" />
+                          <span>{t('tasks.new_task')}</span>
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right">
+                        <p>{btn.tooltip}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Tasks Section */}
       <div
-        className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar`}
+        className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar border-t border-border`}
         ref={scrollRef}
       >
+        {/* History Title or Search Result Header */}
+        {!isCollapsed && !isSearchResult && (
+          <div className="px-1 pb-2 text-xs font-medium text-text-muted">
+            {t('tasks.history_title')}
+          </div>
+        )}
+        {!isCollapsed && isSearchResult && (
+          <div className="px-1 pb-2 flex items-center justify-between">
+            <span className="text-xs font-medium text-text-muted">{t('tasks.search_results')}</span>
+            <button
+              onClick={handleClearSearch}
+              className="flex items-center gap-1 text-xs text-text-muted hover:text-text-primary transition-colors"
+            >
+              <X className="h-3 w-3" />
+              {t('tasks.clear_search')}
+            </button>
+          </div>
+        )}
         {isSearching ? (
           <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
         ) : tasks.length === 0 ? (
           <div className="text-center py-8 text-xs text-text-muted">
             {isSearchResult ? t('tasks.no_search_results') : t('tasks.no_tasks')}
           </div>
-        ) : isSearchResult ? (
+        ) : (
           <TaskListSection
             tasks={tasks}
-            title={t('tasks.search_results')}
+            title=""
             unreadCount={getUnreadCount(tasks)}
             onTaskClick={() => setIsMobileSidebarOpen(false)}
             isCollapsed={isCollapsed}
-            key={`search-${viewStatusVersion}`}
+            showTitle={false}
+            key={`tasks-${viewStatusVersion}`}
           />
-        ) : (
-          <>
-            <TaskListSection
-              tasks={groupTasksByDate.today}
-              title={t('tasks.today')}
-              unreadCount={groupTasksByDate.todayUnread}
-              onTaskClick={() => setIsMobileSidebarOpen(false)}
-              isCollapsed={isCollapsed}
-              key={`today-${viewStatusVersion}`}
-            />
-            <TaskListSection
-              tasks={groupTasksByDate.thisWeek}
-              title={t('tasks.this_week')}
-              unreadCount={groupTasksByDate.thisWeekUnread}
-              onTaskClick={() => setIsMobileSidebarOpen(false)}
-              isCollapsed={isCollapsed}
-              key={`week-${viewStatusVersion}`}
-            />
-            <TaskListSection
-              tasks={groupTasksByDate.earlier}
-              title={t('tasks.earlier')}
-              unreadCount={groupTasksByDate.earlierUnread}
-              onTaskClick={() => setIsMobileSidebarOpen(false)}
-              isCollapsed={isCollapsed}
-              key={`earlier-${viewStatusVersion}`}
-            />
-          </>
         )}
         {loadingMore && (
           <div className="text-center py-2 text-xs text-text-muted">{t('tasks.loading')}</div>
-        )}
-        {!isSearchResult && !hasMore && tasks.length > 0 && (
-          <div className="text-center py-2 text-xs text-text-muted">{t('tasks.no_more_tasks')}</div>
         )}
       </div>
 

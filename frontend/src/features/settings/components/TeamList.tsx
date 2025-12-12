@@ -1,11 +1,10 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
 'use client';
 
 import React, { useCallback, useEffect, useState } from 'react';
-import { useMediaQuery } from '@/hooks/useMediaQuery';
 import '@/features/common/scrollbar.css';
 import { AiOutlineTeam } from 'react-icons/ai';
 import { RiRobot2Line } from 'react-icons/ri';
@@ -20,7 +19,7 @@ import {
 import { Bot, Team } from '@/types/api';
 import { fetchTeamsList, deleteTeam, shareTeam } from '../services/teams';
 import { fetchBotsList } from '../services/bots';
-import TeamEdit from './TeamEdit';
+import TeamEditDialog from './TeamEditDialog';
 import BotList from './BotList';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import TeamShareModal from './TeamShareModal';
@@ -42,8 +41,8 @@ import {
 import { ResourceListItem } from '@/components/common/ResourceListItem';
 
 interface TeamListProps {
-  scope?: 'personal' | 'group' | 'all'
-  groupName?: string
+  scope?: 'personal' | 'group' | 'all';
+  groupName?: string;
 }
 
 export default function TeamList({ scope = 'personal', groupName }: TeamListProps) {
@@ -61,9 +60,8 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
   const [sharingId, setSharingId] = useState<number | null>(null);
   const [_deletingId, setDeletingId] = useState<number | null>(null);
   const [botListVisible, setBotListVisible] = useState(false);
+  const [editDialogOpen, setEditDialogOpen] = useState(false);
   const router = useRouter();
-  const isEditing = editingTeamId !== null;
-  const isMobile = useMediaQuery('(max-width: 639px)');
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
     updater => {
@@ -93,7 +91,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
       try {
         const [teamsData, botsData] = await Promise.all([
           fetchTeamsList(scope, groupName),
-          fetchBotsList(scope, groupName)
+          fetchBotsList(scope, groupName),
         ]);
         setTeamsSorted(teamsData);
         setBotsSorted(botsData);
@@ -125,13 +123,16 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
       });
       return;
     }
-    
+
     setPrefillTeam(null);
     setEditingTeamId(0); // Use 0 to mark new creation
+    setEditDialogOpen(true);
   };
 
   const handleEditTeam = (team: Team) => {
+    setPrefillTeam(null);
     setEditingTeamId(team.id);
+    setEditDialogOpen(true);
   };
 
   const handleCopyTeam = (team: Team) => {
@@ -142,6 +143,13 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
     };
     setPrefillTeam(clone);
     setEditingTeamId(0);
+    setEditDialogOpen(true);
+  };
+
+  const handleCloseEditDialog = () => {
+    setEditDialogOpen(false);
+    setEditingTeamId(null);
+    setPrefillTeam(null);
   };
 
   const handleChatTeam = (team: Team) => {
@@ -222,187 +230,176 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
           <h2 className="text-xl font-semibold text-text-primary mb-1">{t('teams.title')}</h2>
           <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
-        <div
-          className={`bg-base border border-border rounded-md p-2 w-full max-w-full overflow-hidden ${
-            isEditing
-              ? 'flex-1 flex flex-col min-h-0'
-              : isMobile
-                ? 'max-h-[calc(100vh-200px)] flex flex-col overflow-y-auto custom-scrollbar'
-                : 'max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar'
-          }`}
-        >
+        <div className="bg-base border border-border rounded-md p-2 w-full max-w-full overflow-hidden max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('teams.loading')} />
           ) : (
             <>
-              {/* Edit/New mode */}
-              {isEditing ? (
-                <TeamEdit
-                  teams={teams}
-                  setTeams={setTeamsSorted}
-                  editingTeamId={editingTeamId}
-                  setEditingTeamId={setEditingTeamId}
-                  initialTeam={prefillTeam}
-                  bots={bots}
-                  setBots={setBotsSorted}
-                  toast={toast}
-                  scope={scope}
-                  groupName={groupName}
-                />
-              ) : (
-                <>
-                  <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 p-1">
-                    {teams.length > 0 ? (
-                      teams.map(team => (
-                        <Card
-                          key={team.id}
-                          className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
+              <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 p-1">
+                {teams.length > 0 ? (
+                  teams.map(team => (
+                    <Card
+                      key={team.id}
+                      className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
+                    >
+                      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 min-w-0">
+                        <ResourceListItem
+                          name={team.name}
+                          description={team.description}
+                          icon={<AiOutlineTeam className="w-5 h-5 text-primary" />}
+                          tags={[
+                            ...(team.workflow?.mode
+                              ? [
+                                  {
+                                    key: 'mode',
+                                    label: t(`team_model.${String(team.workflow.mode)}`),
+                                    variant: 'default' as const,
+                                    className: 'capitalize text-xs',
+                                  },
+                                ]
+                              : []),
+                            ...(team.share_status === 1
+                              ? [
+                                  {
+                                    key: 'sharing',
+                                    label: t('teams.sharing'),
+                                    variant: 'info' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(team.share_status === 2 && team.user?.user_name
+                              ? [
+                                  {
+                                    key: 'shared',
+                                    label: t('teams.shared_by', {
+                                      author: team.user.user_name,
+                                    }),
+                                    variant: 'success' as const,
+                                  },
+                                ]
+                              : []),
+                            ...(team.bots.length > 0
+                              ? [
+                                  {
+                                    key: 'bots',
+                                    label: `${team.bots.length} ${team.bots.length === 1 ? 'Bot' : 'Bots'}`,
+                                    variant: 'info' as const,
+                                    className: 'hidden sm:inline-flex text-xs',
+                                  },
+                                ]
+                              : []),
+                          ]}
                         >
-                          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-0 min-w-0">
-                            <ResourceListItem
-                              name={team.name}
-                              description={team.description}
-                              icon={<AiOutlineTeam className="w-5 h-5 text-primary" />}
-                              tags={[
-                                ...(team.workflow?.mode
-                                  ? [
-                                      {
-                                        key: 'mode',
-                                        label: t(`team_model.${String(team.workflow.mode)}`),
-                                        variant: 'default' as const,
-                                        className: 'capitalize text-xs',
-                                      },
-                                    ]
-                                  : []),
-                                ...(team.share_status === 1
-                                  ? [
-                                      {
-                                        key: 'sharing',
-                                        label: t('teams.sharing'),
-                                        variant: 'info' as const,
-                                      },
-                                    ]
-                                  : []),
-                                ...(team.share_status === 2 && team.user?.user_name
-                                  ? [
-                                      {
-                                        key: 'shared',
-                                        label: t('teams.shared_by', {
-                                          author: team.user.user_name,
-                                        }),
-                                        variant: 'success' as const,
-                                      },
-                                    ]
-                                  : []),
-                                ...(team.bots.length > 0
-                                  ? [
-                                      {
-                                        key: 'bots',
-                                        label: `${team.bots.length} ${team.bots.length === 1 ? 'Bot' : 'Bots'}`,
-                                        variant: 'info' as const,
-                                        className: 'hidden sm:inline-flex text-xs',
-                                      },
-                                    ]
-                                  : []),
-                              ]}
-                            >
-                              <div className="flex items-center space-x-1 flex-shrink-0">
-                                <div
-                                  className="w-2 h-2 rounded-full"
-                                  style={{
-                                    backgroundColor: team.is_active
-                                      ? 'rgb(var(--color-success))'
-                                      : 'rgb(var(--color-border))',
-                                  }}
-                                ></div>
-                                <span className="text-xs text-text-muted">
-                                  {team.is_active ? t('teams.active') : t('teams.inactive')}
-                                </span>
-                              </div>
-                            </ResourceListItem>
-                            <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0 sm:ml-3 self-end sm:self-auto">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleChatTeam(team)}
-                                title={t('teams.chat')}
-                                className="h-7 w-7 sm:h-8 sm:w-8"
-                              >
-                                <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                              </Button>
-                              {shouldShowEditDelete(team) && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleEditTeam(team)}
-                                  title={t('teams.edit')}
-                                  className="h-7 w-7 sm:h-8 sm:w-8"
-                                >
-                                  <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                </Button>
-                              )}
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={() => handleCopyTeam(team)}
-                                title={t('teams.copy')}
-                                className="h-7 w-7 sm:h-8 sm:w-8"
-                              >
-                                <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                              </Button>
-                              {shouldShowShare(team) && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleShareTeam(team)}
-                                  title={t('teams.share')}
-                                  className="h-7 w-7 sm:h-8 sm:w-8"
-                                  disabled={sharingId === team.id}
-                                >
-                                  <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                </Button>
-                              )}
-                              {shouldShowEditDelete(team) && (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  onClick={() => handleDelete(team.id)}
-                                  title={t('teams.delete')}
-                                  className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
-                                >
-                                  <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                                </Button>
-                              )}
-                            </div>
+                          <div className="flex items-center space-x-1 flex-shrink-0">
+                            <div
+                              className="w-2 h-2 rounded-full"
+                              style={{
+                                backgroundColor: team.is_active
+                                  ? 'rgb(var(--color-success))'
+                                  : 'rgb(var(--color-border))',
+                              }}
+                            ></div>
+                            <span className="text-xs text-text-muted">
+                              {team.is_active ? t('teams.active') : t('teams.inactive')}
+                            </span>
                           </div>
-                        </Card>
-                      ))
-                    ) : (
-                      <div className="text-center text-text-muted py-8">
-                        <p className="text-sm">{t('teams.no_teams')}</p>
+                        </ResourceListItem>
+                        <div className="flex items-center gap-0.5 sm:gap-1 flex-shrink-0 sm:ml-3 self-end sm:self-auto">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleChatTeam(team)}
+                            title={t('teams.chat')}
+                            className="h-7 w-7 sm:h-8 sm:w-8"
+                          >
+                            <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          </Button>
+                          {shouldShowEditDelete(team) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleEditTeam(team)}
+                              title={t('teams.edit')}
+                              className="h-7 w-7 sm:h-8 sm:w-8"
+                            >
+                              <PencilIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            </Button>
+                          )}
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleCopyTeam(team)}
+                            title={t('teams.copy')}
+                            className="h-7 w-7 sm:h-8 sm:w-8"
+                          >
+                            <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          </Button>
+                          {shouldShowShare(team) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleShareTeam(team)}
+                              title={t('teams.share')}
+                              className="h-7 w-7 sm:h-8 sm:w-8"
+                              disabled={sharingId === team.id}
+                            >
+                              <ShareIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            </Button>
+                          )}
+                          {shouldShowEditDelete(team) && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              onClick={() => handleDelete(team.id)}
+                              title={t('teams.delete')}
+                              className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
+                            >
+                              <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            </Button>
+                          )}
+                        </div>
                       </div>
-                    )}
+                    </Card>
+                  ))
+                ) : (
+                  <div className="text-center text-text-muted py-8">
+                    <p className="text-sm">{t('teams.no_teams')}</p>
                   </div>
-                  <div className="border-t border-border pt-3 mt-3 bg-base">
-                    <div className="flex justify-center gap-3">
-                      <UnifiedAddButton onClick={handleCreateTeam}>
-                        {t('teams.new_team')}
-                      </UnifiedAddButton>
-                      <UnifiedAddButton
-                        variant="outline"
-                        onClick={() => setBotListVisible(true)}
-                        icon={<RiRobot2Line className="w-4 h-4" />}
-                      >
-                        {t('bots.manage_bots')}
-                      </UnifiedAddButton>
-                    </div>
-                  </div>
-                </>
-              )}
+                )}
+              </div>
+              <div className="border-t border-border pt-3 mt-3 bg-base">
+                <div className="flex justify-center gap-3">
+                  <UnifiedAddButton onClick={handleCreateTeam}>
+                    {t('teams.new_team')}
+                  </UnifiedAddButton>
+                  <UnifiedAddButton
+                    variant="outline"
+                    onClick={() => setBotListVisible(true)}
+                    icon={<RiRobot2Line className="w-4 h-4" />}
+                  >
+                    {t('bots.manage_bots')}
+                  </UnifiedAddButton>
+                </div>
+              </div>
             </>
           )}
         </div>
       </div>
+
+      {/* Team Edit Dialog */}
+      <TeamEditDialog
+        open={editDialogOpen}
+        onClose={handleCloseEditDialog}
+        teams={teams}
+        setTeams={setTeamsSorted}
+        editingTeamId={editingTeamId}
+        initialTeam={prefillTeam}
+        bots={bots}
+        setBots={setBotsSorted}
+        toast={toast}
+        scope={scope}
+        groupName={groupName}
+      />
 
       {/* Delete confirmation dialog */}
       <Dialog open={deleteConfirmVisible} onOpenChange={setDeleteConfirmVisible}>
