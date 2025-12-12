@@ -246,24 +246,31 @@ def _setup_httpx_instrumentation(logger: logging.Logger) -> None:
         capture_settings = get_http_capture_settings()
 
         # Build hooks for capturing request/response data
+        # We need both sync and async hooks since OpenAI SDK uses async httpx
         request_hook = None
         response_hook = None
+        async_request_hook = None
+        async_response_hook = None
 
         if (
             capture_settings.get("capture_request_headers")
             or capture_settings.get("capture_request_body")
         ):
             request_hook = _create_httpx_request_hook(capture_settings, logger)
+            async_request_hook = _create_httpx_async_request_hook(capture_settings, logger)
 
         if (
             capture_settings.get("capture_response_headers")
             or capture_settings.get("capture_response_body")
         ):
             response_hook = _create_httpx_response_hook(capture_settings, logger)
+            async_response_hook = _create_httpx_async_response_hook(capture_settings, logger)
 
         HTTPXClientInstrumentor().instrument(
             request_hook=request_hook,
             response_hook=response_hook,
+            async_request_hook=async_request_hook,
+            async_response_hook=async_response_hook,
         )
         logger.info("✓ HTTPX instrumentation enabled")
 
@@ -301,7 +308,7 @@ def _create_httpx_request_hook(capture_settings: dict, logger: logging.Logger):
                     # HTTPX request body is in request.content
                     if hasattr(request, "content") and request.content:
                         body = request.content
-                        max_body_size = 4096  # 4KB limit
+                        max_body_size = capture_settings.get("max_body_size", 4096)
                         if isinstance(body, bytes):
                             if len(body) <= max_body_size:
                                 body_str = body.decode("utf-8", errors="replace")
@@ -343,7 +350,7 @@ def _create_httpx_response_hook(capture_settings: dict, logger: logging.Logger):
                     # HTTPX response body is in response.content
                     if hasattr(response, "content") and response.content:
                         body = response.content
-                        max_body_size = 4096  # 4KB limit
+                        max_body_size = capture_settings.get("max_body_size", 4096)
                         if isinstance(body, bytes):
                             if len(body) <= max_body_size:
                                 body_str = body.decode("utf-8", errors="replace")
@@ -360,6 +367,167 @@ def _create_httpx_response_hook(capture_settings: dict, logger: logging.Logger):
             logger.debug(f"Error in HTTPX response_hook: {e}")
 
     return response_hook
+
+def _create_httpx_async_request_hook(capture_settings: dict, logger: logging.Logger):
+    """Create an async request hook for HTTPX client to capture request headers and body."""
+
+    async def async_request_hook(span, request):
+        """Async hook called when an HTTPX request is made."""
+        if span is None or not span.is_recording():
+            return
+
+        try:
+            # Capture request headers
+            if capture_settings.get("capture_request_headers"):
+                for header_name, header_value in request.headers.items():
+                    # Skip sensitive headers
+                    if header_name.lower() in ("authorization", "cookie", "set-cookie"):
+                        header_value = "[REDACTED]"
+                    span.set_attribute(f"http.request.header.{header_name}", header_value)
+
+            # Capture request body
+            if capture_settings.get("capture_request_body"):
+                try:
+                    body = None
+                    max_body_size = capture_settings.get("max_body_size", 4096)
+
+                    # Debug: Log request object attributes (use INFO level for visibility)
+                    request_attrs = [attr for attr in dir(request) if not attr.startswith('_')]
+                    logger.info(f"[OTEL DEBUG] HTTPX request type: {type(request).__name__}, attrs: {request_attrs[:10]}...")
+
+                    # Try different ways to get the request body
+                    # Method 1: request.content (bytes) - most common
+                    if hasattr(request, "content"):
+                        content = request.content
+                        content_preview = content[:100] if content else b'empty'
+                        logger.info(f"[OTEL DEBUG] request.content type: {type(content)}, len: {len(content) if content else 0}, preview: {content_preview}")
+                        if content:
+                            body = content
+
+                    # Method 2: request.stream (for streaming requests)
+                    if body is None and hasattr(request, "stream"):
+                        stream = request.stream
+                        stream_attrs = [attr for attr in dir(stream) if not attr.startswith('__')]
+                        logger.info(f"[OTEL DEBUG] request.stream type: {type(stream).__name__}, attrs: {stream_attrs[:10]}")
+                        
+                        # Try _stream first (ByteStream uses this)
+                        if hasattr(stream, "_stream"):
+                            inner_stream = stream._stream
+                            logger.info(f"[OTEL DEBUG] Found stream._stream: {type(inner_stream)}")
+                            if isinstance(inner_stream, bytes):
+                                body = inner_stream
+                                logger.info(f"[OTEL DEBUG] _stream is bytes, len: {len(body)}")
+                            elif hasattr(inner_stream, "read"):
+                                # It's a file-like object (BytesIO), try to read and reset
+                                try:
+                                    current_pos = inner_stream.tell() if hasattr(inner_stream, "tell") else 0
+                                    body = inner_stream.read()
+                                    if hasattr(inner_stream, "seek"):
+                                        inner_stream.seek(current_pos)
+                                    logger.info(f"[OTEL DEBUG] Read from _stream: {type(body)}, len: {len(body) if body else 0}")
+                                except Exception as read_err:
+                                    logger.info(f"[OTEL DEBUG] _stream read failed: {read_err}")
+                        # Fallback to _content
+                        elif hasattr(stream, "_content") and stream._content:
+                            body = stream._content
+                            logger.info(f"[OTEL DEBUG] Found stream._content: {type(body)}, len: {len(body) if body else 0}")
+                        elif hasattr(stream, "body") and stream.body:
+                            body = stream.body
+                            logger.info(f"[OTEL DEBUG] Found stream.body: {type(body)}")
+                        elif hasattr(stream, "_body") and stream._body:
+                            body = stream._body
+                            logger.info(f"[OTEL DEBUG] Found stream._body: {type(body)}")
+
+                    # Method 3: Check if request has _content attribute
+                    if body is None and hasattr(request, "_content"):
+                        body = request._content
+                        logger.info(f"[OTEL DEBUG] Found request._content: {type(body)}")
+
+                    # Method 4: Try to read from stream if it's a ByteStream
+                    if body is None and hasattr(request, "stream"):
+                        stream = request.stream
+                        # Check if it's an IteratorByteStream or similar
+                        stream_type = type(stream).__name__
+                        logger.info(f"[OTEL DEBUG] Stream type name: {stream_type}")
+                        
+                        # For ByteStream, try to get the underlying bytes
+                        if hasattr(stream, "__iter__"):
+                            # Don't consume the iterator, just log that it exists
+                            logger.info("[OTEL DEBUG] Stream is iterable, cannot capture without consuming")
+
+                    if body:
+                        if isinstance(body, bytes):
+                            if len(body) <= max_body_size:
+                                body_str = body.decode("utf-8", errors="replace")
+                            else:
+                                body_str = (
+                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    + f"... [truncated, total size: {len(body)} bytes]"
+                                )
+                            span.set_attribute("http.request.body", body_str)
+                            logger.info(f"[OTEL DEBUG] Captured request body: {len(body)} bytes")
+                        elif isinstance(body, str):
+                            if len(body) <= max_body_size:
+                                span.set_attribute("http.request.body", body)
+                            else:
+                                span.set_attribute(
+                                    "http.request.body",
+                                    body[:max_body_size] + f"... [truncated, total size: {len(body)} chars]"
+                                )
+                            logger.info(f"[OTEL DEBUG] Captured request body: {len(body)} chars")
+                    else:
+                        logger.info("[OTEL DEBUG] No request body found to capture")
+                except Exception as e:
+                    logger.warning(f"[OTEL DEBUG] Failed to capture HTTPX async request body: {e}")
+
+        except Exception as e:
+            logger.debug(f"Error in HTTPX async_request_hook: {e}")
+
+    return async_request_hook
+
+
+def _create_httpx_async_response_hook(capture_settings: dict, logger: logging.Logger):
+    """Create an async response hook for HTTPX client to capture response headers and body."""
+
+    async def async_response_hook(span, request, response):
+        """Async hook called when an HTTPX response is received."""
+        if span is None or not span.is_recording():
+            return
+
+        try:
+            # Capture response headers
+            if capture_settings.get("capture_response_headers"):
+                for header_name, header_value in response.headers.items():
+                    # Skip sensitive headers
+                    if header_name.lower() in ("authorization", "cookie", "set-cookie"):
+                        header_value = "[REDACTED]"
+                    span.set_attribute(f"http.response.header.{header_name}", header_value)
+
+            # Capture response body
+            if capture_settings.get("capture_response_body"):
+                try:
+                    # For async responses, we need to read the content
+                    # Note: This may not work for streaming responses
+                    if hasattr(response, "content") and response.content:
+                        body = response.content
+                        max_body_size = capture_settings.get("max_body_size", 4096)
+                        if isinstance(body, bytes):
+                            if len(body) <= max_body_size:
+                                body_str = body.decode("utf-8", errors="replace")
+                            else:
+                                body_str = (
+                                    body[:max_body_size].decode("utf-8", errors="replace")
+                                    + f"... [truncated, total size: {len(body)} bytes]"
+                                )
+                            span.set_attribute("http.response.body", body_str)
+                except Exception as e:
+                    logger.debug(f"Failed to capture HTTPX async response body: {e}")
+
+        except Exception as e:
+            logger.debug(f"Error in HTTPX async_response_hook: {e}")
+
+    return async_response_hook
+
 
 
 def _create_requests_request_hook(capture_settings: dict, logger: logging.Logger):
@@ -385,7 +553,7 @@ def _create_requests_request_hook(capture_settings: dict, logger: logging.Logger
                     # Requests body is in request.body
                     if hasattr(request, "body") and request.body:
                         body = request.body
-                        max_body_size = 4096  # 4KB limit
+                        max_body_size = capture_settings.get("max_body_size", 4096)
                         if isinstance(body, bytes):
                             if len(body) <= max_body_size:
                                 body_str = body.decode("utf-8", errors="replace")
@@ -435,7 +603,7 @@ def _create_requests_response_hook(capture_settings: dict, logger: logging.Logge
                     # Requests response body is in response.content or response.text
                     if hasattr(response, "content") and response.content:
                         body = response.content
-                        max_body_size = 4096  # 4KB limit
+                        max_body_size = capture_settings.get("max_body_size", 4096)
                         if isinstance(body, bytes):
                             if len(body) <= max_body_size:
                                 body_str = body.decode("utf-8", errors="replace")

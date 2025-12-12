@@ -535,6 +535,7 @@ class DockerExecutor(Executor):
                 "-e", f"OTEL_CAPTURE_REQUEST_BODY={'true' if otel_config.capture_request_body else 'false'}",
                 "-e", f"OTEL_CAPTURE_RESPONSE_HEADERS={'true' if otel_config.capture_response_headers else 'false'}",
                 "-e", f"OTEL_CAPTURE_RESPONSE_BODY={'true' if otel_config.capture_response_body else 'false'}",
+                "-e", f"OTEL_MAX_BODY_SIZE={otel_config.max_body_size}",
             ])
             logger.debug("Added OTEL configuration env vars to container")
 

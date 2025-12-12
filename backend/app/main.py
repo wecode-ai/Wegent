@@ -290,6 +290,7 @@ def create_app():
                 capture_request_body=otel_config.capture_request_body,
                 capture_response_headers=otel_config.capture_response_headers,
                 capture_response_body=otel_config.capture_response_body,
+                max_body_size=otel_config.max_body_size,
             )
             logger.info("OpenTelemetry initialized successfully")
 
@@ -344,7 +345,7 @@ def create_app():
                 body_bytes = await request.body()
                 if body_bytes:
                     # Limit body size to avoid huge spans
-                    max_body_size = 4096  # 4KB limit
+                    max_body_size = otel_config.max_body_size
                     if len(body_bytes) <= max_body_size:
                         request_body = body_bytes.decode("utf-8", errors="replace")
                     else:
@@ -415,7 +416,7 @@ def create_app():
                                 response_body = b"".join(response_body_chunks)
 
                                 # Limit body size
-                                max_body_size = 4096  # 4KB limit
+                                max_body_size = otel_config.max_body_size
                                 if response_body:
                                     if len(response_body) <= max_body_size:
                                         body_str = response_body.decode(

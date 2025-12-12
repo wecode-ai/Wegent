@@ -50,6 +50,7 @@ async def lifespan(app):
                 capture_request_body=otel_config.capture_request_body,
                 capture_response_headers=otel_config.capture_response_headers,
                 capture_response_body=otel_config.capture_response_body,
+                max_body_size=otel_config.max_body_size,
             )
             logger.info("OpenTelemetry initialized successfully")
 

@@ -51,6 +51,7 @@ async def lifespan(app: FastAPI):
                 capture_request_body=otel_config.capture_request_body,
                 capture_response_headers=otel_config.capture_response_headers,
                 capture_response_body=otel_config.capture_response_body,
+                max_body_size=otel_config.max_body_size,
             )
             logger.info("OpenTelemetry initialized successfully")
 
@@ -119,7 +120,7 @@ async def log_requests(request: Request, call_next):
         try:
             body_bytes = await request.body()
             if body_bytes:
-                max_body_size = 4096
+                max_body_size = otel_cfg.max_body_size
                 if len(body_bytes) <= max_body_size:
                     request_body = body_bytes.decode("utf-8", errors="replace")
                 else:
@@ -184,7 +185,7 @@ async def log_requests(request: Request, call_next):
 
                                 response_body = b"".join(response_body_chunks)
 
-                                max_body_size = 4096
+                                max_body_size = otel_cfg.max_body_size
                                 if response_body:
                                     if len(response_body) <= max_body_size:
                                         body_str = response_body.decode("utf-8", errors="replace")

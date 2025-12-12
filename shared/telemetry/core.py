@@ -44,6 +44,7 @@ def init_telemetry(
     capture_request_body: bool = False,
     capture_response_headers: bool = False,
     capture_response_body: bool = False,
+    max_body_size: int = 4096,
 ) -> bool:
     """
     Initialize OpenTelemetry with tracing and optional metrics support.
@@ -60,6 +61,7 @@ def init_telemetry(
         capture_request_body: Whether to capture HTTP request body (default: False)
         capture_response_headers: Whether to capture HTTP response headers (default: False)
         capture_response_body: Whether to capture HTTP response body (default: False)
+        max_body_size: Maximum body size to capture in bytes (default: 4096)
 
     Returns:
         bool: True if initialization was successful, False otherwise
@@ -76,6 +78,7 @@ def init_telemetry(
         capture_request_body=capture_request_body,
         capture_response_headers=capture_response_headers,
         capture_response_body=capture_response_body,
+        max_body_size=max_body_size,
     )
 
     if not enabled:
@@ -128,7 +131,7 @@ def init_telemetry(
         logger.info(
             f"OpenTelemetry initialized successfully for service '{service_name}' "
             f"with endpoint '{otlp_endpoint}', sampler ratio {sampler_ratio}, "
-            f"HTTP capture: [{capture_str}]"
+            f"HTTP capture: [{capture_str}], max_body_size: {max_body_size} bytes"
         )
 
         return True

@@ -19,6 +19,7 @@ Environment Variables:
     OTEL_CAPTURE_REQUEST_BODY: Capture HTTP request body (default: false)
     OTEL_CAPTURE_RESPONSE_HEADERS: Capture HTTP response headers (default: false)
     OTEL_CAPTURE_RESPONSE_BODY: Capture HTTP response body (default: false)
+    OTEL_MAX_BODY_SIZE: Maximum body size to capture in bytes (default: 4096, max: 1048576)
 """
 
 import os
@@ -43,6 +44,7 @@ class OtelConfig:
     capture_request_body: bool
     capture_response_headers: bool
     capture_response_body: bool
+    max_body_size: int  # Maximum body size to capture in bytes
 
 
 # Cached configuration instance
@@ -94,6 +96,10 @@ def get_otel_config(service_name_override: Optional[str] = None) -> OtelConfig:
             capture_response_body=os.getenv(
                 "OTEL_CAPTURE_RESPONSE_BODY", "false"
             ).lower() == "true",
+            max_body_size=min(
+                int(os.getenv("OTEL_MAX_BODY_SIZE", "4096")),
+                10485760  # Hard limit of 1MB to prevent memory issues
+            ),
         )
     
     return _otel_config
@@ -125,15 +131,16 @@ def get_otel_config_from_env() -> Dict[str, any]:
 
 
 # Global HTTP capture settings
-_http_capture_settings: Dict[str, bool] = {
+_http_capture_settings: Dict[str, any] = {
     "capture_request_headers": False,
     "capture_request_body": False,
     "capture_response_headers": False,
     "capture_response_body": False,
+    "max_body_size": 4096,
 }
 
 
-def get_http_capture_settings() -> Dict[str, bool]:
+def get_http_capture_settings() -> Dict[str, any]:
     """
     Get the current HTTP capture settings.
 
@@ -148,6 +155,7 @@ def set_http_capture_settings(
     capture_request_body: bool = False,
     capture_response_headers: bool = False,
     capture_response_body: bool = False,
+    max_body_size: int = 4096,
 ) -> None:
     """
     Set HTTP capture settings globally.
@@ -157,12 +165,14 @@ def set_http_capture_settings(
         capture_request_body: Whether to capture HTTP request body
         capture_response_headers: Whether to capture HTTP response headers
         capture_response_body: Whether to capture HTTP response body
+        max_body_size: Maximum body size to capture in bytes (default: 4096)
     """
     global _http_capture_settings
     _http_capture_settings["capture_request_headers"] = capture_request_headers
     _http_capture_settings["capture_request_body"] = capture_request_body
     _http_capture_settings["capture_response_headers"] = capture_response_headers
     _http_capture_settings["capture_response_body"] = capture_response_body
+    _http_capture_settings["max_body_size"] = max_body_size
 
 
 def reset_otel_config() -> None:
