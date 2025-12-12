@@ -5,7 +5,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Executor One-Click Startup Script (uv-based)
-# Usage: ./start.sh [--port PORT] [--host HOST] [--python PYTHON_PATH]
+# Usage: ./start.sh [--port PORT] [--host HOST] [--python PYTHON_PATH] [--workspace-root PATH] [--callback-url URL]
 
 set -e
 
@@ -30,10 +30,14 @@ NC='\033[0m' # No Color
 # Default configuration
 DEFAULT_PORT=10001
 DEFAULT_HOST="0.0.0.0"
+DEFAULT_WORKSPACE_ROOT="$HOME/wegent/workspace/"
+DEFAULT_CALLBACK_URL="http://127.0.0.1:8001/executor-manager/callback"
 PYTHON_PATH=""
 
 PORT=$DEFAULT_PORT
 HOST=$DEFAULT_HOST
+WORKSPACE_ROOT=$DEFAULT_WORKSPACE_ROOT
+CALLBACK_URL=$DEFAULT_CALLBACK_URL
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -50,19 +54,31 @@ while [[ $# -gt 0 ]]; do
             PYTHON_PATH="$2"
             shift 2
             ;;
+        --workspace-root)
+            WORKSPACE_ROOT="$2"
+            shift 2
+            ;;
+        --callback-url)
+            CALLBACK_URL="$2"
+            shift 2
+            ;;
         -h|--help)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "Options:"
-            echo "  --port PORT          Executor server port (default: 10001)"
-            echo "  --host HOST          Executor server host (default: 0.0.0.0)"
-            echo "  --python PATH        Python executable path (default: auto-detect)"
-            echo "  -h, --help           Show this help message"
+            echo "  --port PORT              Executor server port (default: 10001)"
+            echo "  --host HOST              Executor server host (default: 0.0.0.0)"
+            echo "  --python PATH            Python executable path (default: auto-detect)"
+            echo "  --workspace-root PATH    Workspace root directory (default: ~/wegent/workspace/)"
+            echo "  --callback-url URL       Callback URL for executor manager (default: http://127.0.0.1:8001/executor-manager/callback)"
+            echo "  -h, --help               Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0                                      # Use default configuration"
             echo "  $0 --port 10002                         # Use custom port"
             echo "  $0 --python /usr/local/bin/python3.12   # Use specific Python"
+            echo "  $0 --workspace-root /data/workspace     # Use custom workspace root"
+            echo "  $0 --callback-url http://localhost:8001/executor-manager/callback  # Use custom callback URL"
             exit 0
             ;;
         *)
@@ -134,6 +150,8 @@ echo -e "${BLUE}╚════════════════════�
 echo ""
 echo -e "${GREEN}Configuration:${NC}"
 echo -e "  Executor: http://$HOST:$PORT"
+echo -e "  Workspace Root: $WORKSPACE_ROOT"
+echo -e "  Callback URL: $CALLBACK_URL"
 echo ""
 echo -e "${BLUE}Tip: Use ${NC}${YELLOW}./start.sh --help${NC}${BLUE} to see all available options${NC}"
 echo ""
@@ -267,8 +285,16 @@ echo ""
 echo -e "${YELLOW}Press Ctrl+C to stop the server${NC}"
 echo ""
 
-# Export PORT environment variable for the application
+# Export environment variables for the application
 export PORT="$PORT"
+export WORKSPACE_ROOT="$WORKSPACE_ROOT"
+export CALLBACK_URL="$CALLBACK_URL"
+
+# Create workspace directory if it doesn't exist
+if [ ! -d "$WORKSPACE_ROOT" ]; then
+    echo -e "${YELLOW}Creating workspace directory: $WORKSPACE_ROOT${NC}"
+    mkdir -p "$WORKSPACE_ROOT"
+fi
 
 # Start with uvicorn
 uvicorn main:app --reload --host "$HOST" --port "$PORT"

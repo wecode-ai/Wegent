@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import subprocess
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from shared.logger import setup_logger
 from shared.utils.crypto import decrypt_git_token, is_token_encrypted
@@ -72,11 +72,46 @@ def get_domain_from_url(url):
     return parsed.hostname if parsed.netloc else ""
 
 
+def is_gerrit_url(url):
+    """
+    Check if the URL is a Gerrit repository URL.
+    Gerrit URLs typically contain 'gerrit' in the domain name.
+
+    Args:
+        url: Git repository URL
+
+    Returns:
+        True if likely a Gerrit URL, False otherwise
+    """
+
+    url_lower = url.lower()
+
+    # Gerrit URLs typically contain 'gerrit' in the domain
+    # Examples: gerrit.example.com, code-review-gerrit.company.com, review.gerrit.internal
+    if "gerrit" in url_lower:
+        return True
+
+    return False
+
+
 def clone_repo_with_token(project_url, branch, project_path, username, token):
 
     if project_url.startswith("https://") or project_url.startswith("http://"):
         protocol, rest = project_url.split("://", 1)
-        auth_url = f"{protocol}://{username}:{token}@{rest}"
+
+        # Only URL encode credentials for Gerrit repositories
+        # Gerrit passwords may contain special characters like '/' that need encoding
+        # GitHub, GitLab, and Gitee don't have this issue
+        if is_gerrit_url(project_url):
+            # URL encode username and token to handle special characters
+            # safe='' means encode all special characters including /
+            encoded_username = quote(username, safe="")
+            encoded_token = quote(token, safe="")
+            auth_url = f"{protocol}://{encoded_username}:{encoded_token}@{rest}"
+            logger.info(f"Auth URL: {auth_url}")
+        else:
+            # For non-Gerrit repos (GitHub, GitLab, etc.), use credentials as-is
+            auth_url = f"{protocol}://{username}:{token}@{rest}"
     else:
         auth_url = project_url
 
