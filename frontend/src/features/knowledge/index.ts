@@ -25,4 +25,6 @@ export { useMermaidInit } from './useMermaidInit';
 export { DiagramModal } from './DiagramModal';
 export { KnowledgeModuleNav } from './KnowledgeModuleNav';
 export type { KnowledgeModule } from './KnowledgeModuleNav';
+export { KnowledgeTabs } from './KnowledgeTabs';
+export type { KnowledgeTabType } from './KnowledgeTabs';
 export type { ContentWriteSummary, ContentWrite } from './wikiUtils';
