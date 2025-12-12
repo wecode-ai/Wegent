@@ -378,7 +378,7 @@ class ModelAggregationService:
         )
 
         for model_dict in public_models:
-            # public_model_service.get_models returns dict with 'config' key
+            # public_model_service.get_models returns dict with 'config' and 'displayName' keys
             config = model_dict.get("config", {})
             env = config.get("env", {}) if isinstance(config, dict) else {}
 
@@ -394,7 +394,9 @@ class ModelAggregationService:
             unified = UnifiedModel(
                 name=model_dict.get("name", ""),
                 model_type=ModelType.PUBLIC,  # Mark as public model
-                display_name=None,  # Public models don't have displayName in current schema
+                display_name=model_dict.get(
+                    "displayName"
+                ),  # Get displayName from model dict
                 provider=provider,
                 model_id=model_id,
                 is_active=model_dict.get("is_active", True),
