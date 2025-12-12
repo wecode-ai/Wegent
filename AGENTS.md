@@ -424,7 +424,6 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 | **Task** | Execution unit | `title`, `prompt`, `teamRef`, `workspaceRef` |
 | **Workspace** | Git repository | `repository{gitUrl, gitRepo, branchName, gitDomain}` |
 | **Skill** | Claude Code skill | `description`, `version`, `author`, `tags` |
-| **Group** | Resource organization | `name`, `display_name`, `visibility`, `description`, `members` |
 
 ### Shell Types
 
@@ -591,8 +590,14 @@ git commit -m "chore: merge alembic heads"
 
 | Type | Description | Storage |
 |------|-------------|---------|
-| **Public** | System-provided, shared across users | `public_models` table |
-| **User** | User-defined private models | `kinds` table (kind='Model') |
+| **Public** | System-provided models, shared across all users | `kinds` table (user_id=0, namespace='default') |
+| **User** | User-defined private models | `kinds` table (user_id=xxx, namespace='default') |
+| **Group** | Group-shared models | `kinds` table (user_id=xxx, namespace!=default) |
+
+**Note:**
+- Group resources use `user_id=xxx`, `namespace!=default` (user_id represents who created the group resource)
+- Public models migrated from `public_models` table to `kinds` table with `user_id=0` marker (kind='Model')
+- Public shells also migrated to `kinds` table with `user_id=0` marker (kind='Shell')
 
 ### Model Resolution Order
 
@@ -743,7 +748,6 @@ The `role` column was added via migration `b2c3d4e5f6a7_add_role_to_users.py`:
 Groups are organizational units that allow users to:
 - **Organize resources**: Group related Bots, Models, Shells, and Teams together
 - **Collaborate**: Share resources with team members via group membership
-- **Control access**: Manage visibility and permissions at the group level
 - **Hierarchical structure**: Support nested groups (e.g., `parent/child/grandchild`)
 
 ### Group Properties
@@ -753,7 +757,7 @@ Groups are organizational units that allow users to:
 | `name` | string | Unique identifier, immutable (supports hierarchical format: `aaa/bbb/ccc`) |
 | `display_name` | string | Human-readable name (optional, mutable) |
 | `owner_user_id` | int | Group creator and owner |
-| `visibility` | enum | Access level: `private`, `internal`, `public` |
+| `visibility` | enum | Access level: `private`, `internal`, `public` (default: `public`, currently not enforced) |
 | `description` | string | Group description |
 | `is_active` | bool | Group status |
 | `member_count` | int | Number of members in the group |
@@ -768,14 +772,6 @@ Groups are organizational units that allow users to:
 | **Developer** | Create and edit resources, view members |
 | **Reporter** | Read-only access to resources |
 
-### Visibility Levels
-
-| Visibility | Description |
-|------------|-------------|
-| `private` | Only members can view and access |
-| `internal` | All logged-in users can view, only members can edit |
-| `public` | Everyone can view, only members can edit |
-
 ### Hierarchical Groups
 
 Groups support up to 5 levels of nesting using `/` separator:
@@ -783,11 +779,6 @@ Groups support up to 5 levels of nesting using `/` separator:
 - Example: `ai-team/models/production`
 - Permissions: Inherited from parent groups
 - Max depth: 5 levels (0-4 slashes)
-
-**Name validation:**
-- No spaces, tabs, or special characters (`,`, `;`, `:`, `<`, `>`, `?`, `*`, `|`, `"`, `'`, `\`)
-- Cannot exceed 100 characters
-- Must be unique across all groups
 
 ### Resource Scopes
 
@@ -813,86 +804,6 @@ When querying resources (Bots, Models, Shells, Teams), you can specify a scope:
 | `GroupSelector` | Dropdown selector for resource creation |
 | `BotListWithScope`, `ModelListWithScope`, `ShellListWithScope`, `TeamListWithScope` | Resource lists with group filtering |
 
-### Backend Services
-
-**Location:** `backend/app/services/`
-
-| Service | Purpose |
-|---------|---------|
-| `group_service.py` | Group CRUD operations, member management |
-| `group_permission.py` | Permission checks, role inheritance, access control |
-| `adapters/public_model.py` | Replaced public models with group-based sharing |
-| `adapters/public_shell.py` | Replaced public shells with group-based sharing |
-
-### Database Models
-
-**Location:** `backend/app/models/`
-
-| Model | Purpose |
-|-------|---------|
-| `Namespace` | Group entity (replaces `PublicModel`, `PublicShell`) |
-| `NamespaceMember` | Group membership and roles |
-
-### Migration Notes
-
-**PR #404 introduces these breaking changes:**
-
-1. **Public Models/Shells replaced by Groups:**
-   - `public_models` table → Migrated to `namespace` table with `visibility='public'`
-   - `public_shells` table → Migrated to `namespace` table with `visibility='public'`
-   - Migration: `h8i9j0k1l2m3_migrate_public_resources.py`
-
-2. **API Changes:**
-   - Models/Shells/Bots/Teams APIs now support `scope` parameter
-   - Added `/api/groups` endpoints for group management
-   - Unified resource listing with scope filtering
-
-3. **Frontend Changes:**
-   - Settings page reorganized with group management tab
-   - Resource lists show source labels: `personal`, `shared` (group name), `public`
-   - Group selector in resource creation dialogs
-
-### Common Operations
-
-**Create a group:**
-```python
-# Backend
-from app.services import group_service
-group = group_service.create_group(
-    db=db,
-    group_data=GroupCreate(
-        name="my-team",
-        display_name="My Team",
-        visibility=GroupVisibility.private,
-        description="Team resources"
-    ),
-    owner_user_id=user.id
-)
-```
-
-**Add member:**
-```python
-# Backend
-member = group_service.add_member(
-    db=db,
-    group_name="my-team",
-    user_id=member_user_id,
-    role=GroupRole.Developer,
-    inviter_user_id=owner_user_id
-)
-```
-
-**Query resources by scope:**
-```python
-# Backend API
-GET /api/bots?scope=group&group_name=my-team
-
-# Frontend
-import { listBots } from '@/apis/bots'
-const bots = await listBots({ scope: 'group', group_name: 'my-team' })
-```
-
----
 
 ## 🔒 Security
 
