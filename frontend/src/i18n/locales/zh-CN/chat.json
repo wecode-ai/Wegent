@@ -167,6 +167,7 @@
     "additional_placeholder": "在此输入其他想法、补充需求或特殊说明..."
   },
   "export": {
+    "export": "导出",
     "export_pdf": "导出 PDF",
     "export_docx": "导出 DOCX",
     "no_messages": "暂无可导出的消息",
