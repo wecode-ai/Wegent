@@ -316,6 +316,7 @@ spec:
     namespace: default
 status:
   state: Available
+---
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
@@ -407,6 +408,7 @@ spec:
     namespace: default
 status:
   state: Available
+---
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
@@ -484,6 +486,7 @@ spec:
     namespace: default
 status:
   state: Available
+---
 apiVersion: agent.wecode.io/v1
 kind: Team
 metadata:
