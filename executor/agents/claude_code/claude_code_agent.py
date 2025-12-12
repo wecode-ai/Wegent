@@ -592,6 +592,9 @@ class ClaudeCodeAgent(Agent):
                     # Setup Claude.md symlink from Agents.md if exists
                     self._setup_claude_md_symlink(self.project_path)
 
+                    # Setup team agents for coordinate mode
+                    self._setup_team_agents()
+
                 except Exception as e:
                     logger.warning(f"Failed to process custom instructions: {e}")
                     # Continue execution with original systemPrompt
@@ -1246,4 +1249,79 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.error(f"Error in _download_and_deploy_skills: {str(e)}")
             # Don't raise - skills deployment failure shouldn't block task execution
+
+    def _setup_team_agents(self) -> None:
+        """
+        Setup Claude Code subagent files for coordinate team mode.
+
+        This method creates .claude/agents/*.md files based on the team configuration
+        passed in task_data. These files enable Claude Code's native subagent mechanism
+        to handle team coordination.
+        """
+        try:
+            # Check if agent_files are provided in task_data
+            agent_files = self.task_data.get("agent_files")
+            if not agent_files:
+                logger.debug("No agent_files in task_data, skipping team agent setup")
+                return
+
+            mode = self.task_data.get("mode")
+            if mode != "coordinate":
+                logger.debug(f"Team mode is '{mode}', not 'coordinate', skipping agent setup")
+                return
+
+            # Determine the project path to use
+            project_path = self.project_path
+            if not project_path:
+                project_path = self.options.get("cwd")
+            if not project_path:
+                logger.warning("No project path available for team agent setup")
+                return
+
+            # Create .claude/agents/ directory
+            agents_dir = Path(project_path) / ".claude" / "agents"
+            agents_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Created agents directory: {agents_dir}")
+
+            # Write each subagent's Markdown file
+            created_files = []
+            for filename, content in agent_files.items():
+                agent_file = agents_dir / filename
+                try:
+                    agent_file.write_text(content, encoding="utf-8")
+                    created_files.append(filename)
+                    logger.info(f"Created subagent file: {agent_file}")
+                except Exception as e:
+                    logger.warning(f"Failed to write subagent file {filename}: {e}")
+
+            # Add .claude/agents/ to .git/info/exclude to prevent git diff
+            self._add_to_git_exclude(project_path, ".claude/agents/")
+
+            # Update coordinator's system prompt if provided
+            coordinator_system_prompt = self.task_data.get("coordinator_system_prompt")
+            if coordinator_system_prompt:
+                # Update the system_prompt in options to include team context
+                current_prompt = self.options.get("system_prompt", "")
+                if current_prompt:
+                    self.options["system_prompt"] = coordinator_system_prompt
+                    logger.info("Updated coordinator system prompt with team context")
+
+            if created_files:
+                logger.info(
+                    f"Successfully setup {len(created_files)} subagent files for coordinate team mode: {created_files}"
+                )
+                self.add_thinking_step(
+                    title="Team Agents Configured",
+                    report_immediately=False,
+                    use_i18n_keys=False,
+                    details={
+                        "agent_count": len(created_files),
+                        "agents": created_files,
+                        "mode": "coordinate"
+                    }
+                )
+
+        except Exception as e:
+            logger.warning(f"Failed to setup team agents: {e}")
+            # Don't raise - team agent setup failure shouldn't block task execution
 

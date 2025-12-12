@@ -22,6 +22,7 @@ from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
 from app.schemas.subtask import SubtaskExecutorUpdate
 from app.services.base import BaseService
+from app.services.team_agent_converter import team_agent_converter
 from app.services.webhook_notification import Notification, webhook_notification_service
 
 logger = logging.getLogger(__name__)
@@ -678,6 +679,26 @@ class ExecutorKindsService(
                     }
                 )
 
+            # Generate agent_files for ClaudeCode coordinate team mode
+            agent_files = {}
+            coordinator_system_prompt = None
+            if collaboration_model == "coordinate" and len(bots) > 0:
+                # Check if all bots use ClaudeCode shell type
+                shell_types = [b.get("shell_type") for b in bots]
+                if all(st == "ClaudeCode" for st in shell_types):
+                    try:
+                        team_config = team_agent_converter.convert_team_to_agents(
+                            bots, collaboration_model
+                        )
+                        if team_config:
+                            agent_files = team_config.agent_files
+                            coordinator_system_prompt = team_config.coordinator_system_prompt
+                            logger.info(
+                                f"Generated {len(agent_files)} agent files for coordinate team mode"
+                            )
+                    except Exception as e:
+                        logger.warning(f"Failed to convert team to agents: {e}")
+
             type = (
                 task_crd.metadata.labels
                 and task_crd.metadata.labels.get("type")
@@ -740,6 +761,8 @@ class ExecutorKindsService(
                     "progress": subtask.progress,
                     "created_at": subtask.created_at,
                     "updated_at": subtask.updated_at,
+                    "agent_files": agent_files,  # Claude Code subagent files for coordinate mode
+                    "coordinator_system_prompt": coordinator_system_prompt,  # Enhanced coordinator prompt
                 }
             )
 
