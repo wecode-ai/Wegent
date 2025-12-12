@@ -73,9 +73,9 @@ function unifiedToModel(unified: UnifiedModel): Model {
   };
 }
 
-// Helper function to get display text for a model: displayName(modelId) or name(modelId)
+// Helper function to get display text for a model: displayName or name
 function getModelDisplayText(model: Model): string {
-  return model.displayName ? `${model.displayName}(${model.name})` : model.name;
+  return model.displayName || model.name;
 }
 
 // Helper function to check if all bots in a team have predefined models

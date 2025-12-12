@@ -1157,7 +1157,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
                             key={`${model.name}:${model.type}`}
                             value={`${model.name}:${model.type}`}
                           >
-                            {model.displayName ? `${model.displayName}(${model.name})` : model.name}
+                            {model.displayName || model.name}
                             {model.type === 'public' && (
                               <span className="ml-1 text-xs text-text-muted">
                                 [{t('bot.public_model', '公共')}]
