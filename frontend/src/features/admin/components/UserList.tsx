@@ -542,7 +542,7 @@ const UserList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleCreateUser} disabled={saving}>
+            <Button variant="primary" onClick={handleCreateUser} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.create')}
             </Button>
@@ -596,7 +596,7 @@ const UserList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleUpdateUser} disabled={saving}>
+            <Button variant="primary" onClick={handleUpdateUser} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.save')}
             </Button>
@@ -629,7 +629,7 @@ const UserList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsResetPasswordDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleResetPassword} disabled={saving}>
+            <Button variant="primary" onClick={handleResetPassword} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.reset')}
             </Button>
@@ -648,8 +648,8 @@ const UserList: React.FC = () => {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteUser} className="bg-error hover:bg-error/90">
-              {t('common.delete')}
+            <AlertDialogAction onClick={handleDeleteUser} asChild>
+              <Button variant="destructive">{t('common.delete')}</Button>
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

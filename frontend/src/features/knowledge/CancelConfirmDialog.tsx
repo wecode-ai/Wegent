@@ -15,6 +15,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { Button } from '@/components/ui/button';
 
 interface CancelConfirmDialogProps {
   isOpen: boolean;
@@ -47,11 +48,8 @@ export default function CancelConfirmDialog({
         </AlertDialogHeader>
         <AlertDialogFooter>
           <AlertDialogCancel onClick={onClose}>{t('actions.cancel')}</AlertDialogCancel>
-          <AlertDialogAction
-            onClick={handleConfirm}
-            className="bg-error hover:bg-error/90 text-white"
-          >
-            {t('actions.confirm')}
+          <AlertDialogAction onClick={handleConfirm} asChild>
+            <Button variant="destructive">{t('actions.confirm')}</Button>
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

@@ -334,7 +334,7 @@ export function GroupMembersDialog({
               }}>
                 {t('actions.cancel')}
               </Button>
-              <Button size="sm" onClick={handleAddMember} disabled={!newMemberUsername.trim() || isSubmitting}>
+              <Button variant="primary" size="sm" onClick={handleAddMember} disabled={!newMemberUsername.trim() || isSubmitting}>
                 {t('groupMembers.add')}
               </Button>
             </div>

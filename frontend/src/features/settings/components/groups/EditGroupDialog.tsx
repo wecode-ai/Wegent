@@ -144,7 +144,7 @@ export function EditGroupDialog({ isOpen, onClose, onSuccess, group }: EditGroup
           <Button type="button" variant="outline" onClick={handleClose} disabled={isSubmitting}>
             {t('actions.cancel')}
           </Button>
-          <Button type="submit" disabled={isSubmitting}>
+          <Button type="submit" variant="primary" disabled={isSubmitting}>
             {isSubmitting ? (
               <div className="flex items-center">
                 <svg

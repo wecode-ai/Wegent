@@ -386,7 +386,7 @@ const PublicModelList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsCreateDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleCreateModel} disabled={saving}>
+            <Button variant="primary" onClick={handleCreateModel} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.create')}
             </Button>
@@ -438,7 +438,7 @@ const PublicModelList: React.FC = () => {
             <Button variant="outline" onClick={() => setIsEditDialogOpen(false)}>
               {t('common.cancel')}
             </Button>
-            <Button onClick={handleUpdateModel} disabled={saving}>
+            <Button variant="primary" onClick={handleUpdateModel} disabled={saving}>
               {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
               {t('common.save')}
             </Button>
@@ -457,8 +457,8 @@ const PublicModelList: React.FC = () => {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteModel} className="bg-error hover:bg-error/90">
-              {t('common.delete')}
+            <AlertDialogAction onClick={handleDeleteModel} asChild>
+              <Button variant="destructive">{t('common.delete')}</Button>
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
