@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { Search, Plus, X, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { Search, Plus, X, PanelLeftClose, PanelLeftOpen, MessageSquare, Code, BookOpen } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
@@ -22,7 +22,7 @@ import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu'
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
   setIsMobileSidebarOpen: (open: boolean) => void;
-  pageType?: 'chat' | 'code';
+  pageType?: 'chat' | 'code' | 'knowledge';
   isCollapsed?: boolean;
   onToggleCollapsed?: () => void;
 }
@@ -99,34 +99,34 @@ export default function TaskSidebar({
     searchTasks('');
   };
 
-  // Grouping logic
-  // Include viewStatusVersion in dependencies to recalculate unread counts when view status changes
-  const groupTasksByDate = React.useMemo(() => {
-    const now = new Date();
-    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  // Get navigation buttons based on current page type
+  const getNavigationButtons = () => {
+    const buttons = [];
+    if (pageType !== 'chat') {
+      buttons.push({
+        label: t('navigation.chat'),
+        icon: MessageSquare,
+        path: paths.chat.getHref(),
+      });
+    }
+    if (pageType !== 'code') {
+      buttons.push({
+        label: t('navigation.code'),
+        icon: Code,
+        path: paths.code.getHref(),
+      });
+    }
+    if (pageType !== 'knowledge') {
+      buttons.push({
+        label: t('navigation.wiki'),
+        icon: BookOpen,
+        path: paths.wiki.getHref(),
+      });
+    }
+    return buttons;
+  };
 
-    // Calculate the start of this week (Monday 00:00:00)
-    const dayOfWeek = now.getDay(); // 0 = Sunday, 1 = Monday, ..., 6 = Saturday
-    const daysFromMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1; // If Sunday, 6 days back; otherwise (dayOfWeek - 1)
-    const thisMonday = new Date(today.getTime() - daysFromMonday * 24 * 60 * 60 * 1000);
-
-    const todayTasks = tasks.filter(task => new Date(task.created_at) >= today);
-    const thisWeekTasks = tasks.filter(task => {
-      const taskDate = new Date(task.created_at);
-      return taskDate >= thisMonday && taskDate < today;
-    });
-    const earlierTasks = tasks.filter(task => new Date(task.created_at) < thisMonday);
-
-    return {
-      today: todayTasks,
-      thisWeek: thisWeekTasks,
-      earlier: earlierTasks,
-      todayUnread: getUnreadCount(todayTasks),
-      thisWeekUnread: getUnreadCount(thisWeekTasks),
-      earlierUnread: getUnreadCount(earlierTasks),
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tasks, getUnreadCount, viewStatusVersion]);
+  const navigationButtons = getNavigationButtons();
 
   // New task
   const handleNewAgentClick = () => {
@@ -307,6 +307,26 @@ export default function TaskSidebar({
         </div>
       )}
 
+      {/* Navigation Buttons - hide in collapsed mode */}
+      {!isCollapsed && navigationButtons.length > 0 && (
+        <div className="px-1 mb-2">
+          <div className="border-t border-border pt-2">
+            {navigationButtons.map(btn => (
+              <Button
+                key={btn.path}
+                variant="ghost"
+                onClick={() => router.push(btn.path)}
+                className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover mb-0.5"
+                size="sm"
+              >
+                <btn.icon className="h-4 w-4 mr-2" />
+                {btn.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Tasks Section */}
       <div
         className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar`}
@@ -318,42 +338,16 @@ export default function TaskSidebar({
           <div className="text-center py-8 text-xs text-text-muted">
             {isSearchResult ? t('tasks.no_search_results') : t('tasks.no_tasks')}
           </div>
-        ) : isSearchResult ? (
+        ) : (
           <TaskListSection
             tasks={tasks}
-            title={t('tasks.search_results')}
+            title={isSearchResult ? t('tasks.search_results') : ''}
             unreadCount={getUnreadCount(tasks)}
             onTaskClick={() => setIsMobileSidebarOpen(false)}
             isCollapsed={isCollapsed}
-            key={`search-${viewStatusVersion}`}
+            showTitle={isSearchResult}
+            key={`tasks-${viewStatusVersion}`}
           />
-        ) : (
-          <>
-            <TaskListSection
-              tasks={groupTasksByDate.today}
-              title={t('tasks.today')}
-              unreadCount={groupTasksByDate.todayUnread}
-              onTaskClick={() => setIsMobileSidebarOpen(false)}
-              isCollapsed={isCollapsed}
-              key={`today-${viewStatusVersion}`}
-            />
-            <TaskListSection
-              tasks={groupTasksByDate.thisWeek}
-              title={t('tasks.this_week')}
-              unreadCount={groupTasksByDate.thisWeekUnread}
-              onTaskClick={() => setIsMobileSidebarOpen(false)}
-              isCollapsed={isCollapsed}
-              key={`week-${viewStatusVersion}`}
-            />
-            <TaskListSection
-              tasks={groupTasksByDate.earlier}
-              title={t('tasks.earlier')}
-              unreadCount={groupTasksByDate.earlierUnread}
-              onTaskClick={() => setIsMobileSidebarOpen(false)}
-              isCollapsed={isCollapsed}
-              key={`earlier-${viewStatusVersion}`}
-            />
-          </>
         )}
         {loadingMore && (
           <div className="text-center py-2 text-xs text-text-muted">{t('tasks.loading')}</div>
