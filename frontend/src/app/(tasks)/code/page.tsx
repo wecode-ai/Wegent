@@ -4,12 +4,13 @@
 
 'use client';
 
-import { Suspense, useState, useEffect, useMemo } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { Suspense, useState, useEffect, useMemo, useRef } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
+import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
@@ -24,10 +25,12 @@ import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { Team } from '@/types/api';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import { saveLastTab } from '@/utils/userPreferences';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { calculateOpenLinks } from '@/utils/openLinks';
 import { useUser } from '@/features/common/UserContext';
+import { paths } from '@/config/paths';
 
 export default function CodePage() {
   // Get search params to check for taskId
@@ -40,10 +43,39 @@ export default function CodePage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for workbench data
-  const { selectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail, tasks } = useTaskContext();
+
+  // Chat stream context
+  const { clearAllStreams } = useChatStreamContext();
+
+  // Router for navigation
+  const router = useRouter();
 
   // User state for git token check
   const { user } = useUser();
+
+  // Track completed tasks for notification dot
+  const [hasCompletedTask, setHasCompletedTask] = useState(false);
+  const prevTasksRef = useRef<typeof tasks>([]);
+
+  // Monitor task completion for notification dot
+  useEffect(() => {
+    if (prevTasksRef.current.length > 0) {
+      const completedStatuses = ['COMPLETED', 'SUCCESS'];
+      const newlyCompleted = tasks.some(task => {
+        const prevTask = prevTasksRef.current.find(t => t.id === task.id);
+        return (
+          completedStatuses.includes(task.status) &&
+          prevTask &&
+          !completedStatuses.includes(prevTask.status)
+        );
+      });
+      if (newlyCompleted) {
+        setHasCompletedTask(true);
+      }
+    }
+    prevTasksRef.current = tasks;
+  }, [tasks]);
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -133,8 +165,18 @@ export default function CodePage() {
     setIsCollapsed(prev => {
       const newValue = !prev;
       localStorage.setItem('task-sidebar-collapsed', String(newValue));
+      // Clear notification dot when expanding sidebar
+      if (prev && hasCompletedTask) {
+        setHasCompletedTask(false);
+      }
       return newValue;
     });
+  };
+
+  // Handle new task from collapsed sidebar button
+  const handleNewTask = () => {
+    clearAllStreams();
+    router.replace(paths.code.getHref());
   };
 
   return (
@@ -160,6 +202,14 @@ export default function CodePage() {
         hasShareId={hasShareId}
       />
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
+        {/* Collapsed sidebar floating buttons */}
+        {isCollapsed && !isMobile && (
+          <CollapsedSidebarButtons
+            onExpand={handleToggleCollapsed}
+            onNewTask={handleNewTask}
+            hasCompletedTask={hasCompletedTask}
+          />
+        )}
         {/* Responsive resizable sidebar - fixed, not affected by right panel */}
         <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
           <TaskSidebar

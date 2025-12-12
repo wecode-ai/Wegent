@@ -5,8 +5,8 @@
 'use client';
 
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
-import { CpuChipIcon, Cog6ToothIcon } from '@heroicons/react/24/outline';
-import { Check } from 'lucide-react';
+import { Cog6ToothIcon } from '@heroicons/react/24/outline';
+import { Check, Brain } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Team, BotSummary } from '@/types/api';
@@ -25,6 +25,7 @@ import {
   CommandList,
 } from '@/components/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { isPredefinedModel, getModelFromConfig } from '@/features/settings/services/bots';
 
 // Model type for component props (extended with type information)
@@ -400,205 +401,212 @@ export default function ModelSelector({
     return displayText;
   };
 
-  return (
-    <div className="flex items-center space-x-2 min-w-0" style={{ maxWidth: isMobile ? 200 : 260 }}>
-      <CpuChipIcon
-        className={`w-3 h-3 flex-shrink-0 ml-1 ${isModelRequired ? 'text-error' : 'text-text-muted'} ${isLoading || externalLoading ? 'animate-pulse' : ''}`}
-      />
-      <div className="relative min-w-0 flex-1">
-        <Popover open={isOpen} onOpenChange={setIsOpen}>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              role="combobox"
-              aria-expanded={isOpen}
-              aria-controls="model-selector-popover"
-              disabled={isDisabled}
-              className={cn(
-                'flex w-full min-w-0 items-center justify-between text-left',
-                'bg-transparent px-0 py-0 text-xs',
-                isModelRequired ? 'text-error' : 'text-text-muted',
-                'hover:bg-transparent transition-colors',
-                'focus:outline-none focus:ring-0',
-                'disabled:cursor-not-allowed disabled:opacity-50'
-              )}
-            >
-              <span className="truncate flex-1 min-w-0" title={selectedModel?.name || ''}>
-                {getTriggerDisplayText()}
-              </span>
-            </button>
-          </PopoverTrigger>
+  // Tooltip content for model selector
+  const tooltipContent = t('task_submit.model_tooltip', '选择用于对话的 AI 模型');
 
-          <PopoverContent
-            className={cn(
-              'p-0 w-auto min-w-[280px] max-w-[320px] border border-border bg-base',
-              'shadow-xl rounded-xl overflow-hidden',
-              'max-h-[var(--radix-popover-content-available-height,400px)]',
-              'flex flex-col'
-            )}
-            align="start"
-            sideOffset={4}
-            collisionPadding={8}
-            avoidCollisions={true}
-            sticky="partial"
-          >
-            <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
-              <CommandInput
-                placeholder={t('task_submit.search_model', '搜索模型...')}
-                value={searchValue}
-                onValueChange={setSearchValue}
-                className={cn(
-                  'h-9 rounded-none border-b border-border flex-shrink-0',
-                  'placeholder:text-text-muted text-sm'
-                )}
-              />
-              <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
-                {error ? (
-                  <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
-                ) : filteredModels.length === 0 ? (
+  return (
+    <div className="flex items-center min-w-0" style={{ maxWidth: isMobile ? 200 : 260 }}>
+      <Popover open={isOpen} onOpenChange={setIsOpen}>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <PopoverTrigger asChild>
+                <button
+                  type="button"
+                  role="combobox"
+                  aria-expanded={isOpen}
+                  aria-controls="model-selector-popover"
+                  disabled={isDisabled}
+                  className={cn(
+                    'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                    'transition-colors',
+                    isModelRequired
+                      ? 'text-error hover:text-error hover:bg-error/10'
+                      : 'text-text-muted hover:text-text-primary hover:bg-muted',
+                    isLoading || externalLoading ? 'animate-pulse' : '',
+                    'focus:outline-none focus:ring-0',
+                    'disabled:cursor-not-allowed disabled:opacity-50'
+                  )}
+                >
+                  <Brain className="h-4 w-4 flex-shrink-0" />
+                  <span className="truncate text-xs min-w-0">{getTriggerDisplayText()}</span>
+                </button>
+              </PopoverTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{tooltipContent}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+
+        <PopoverContent
+          className={cn(
+            'p-0 w-auto min-w-[280px] max-w-[320px] border border-border bg-base',
+            'shadow-xl rounded-xl overflow-hidden',
+            'max-h-[var(--radix-popover-content-available-height,400px)]',
+            'flex flex-col'
+          )}
+          align="start"
+          sideOffset={4}
+          collisionPadding={8}
+          avoidCollisions={true}
+          sticky="partial"
+        >
+          <Command className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden">
+            <CommandInput
+              placeholder={t('task_submit.search_model', '搜索模型...')}
+              value={searchValue}
+              onValueChange={setSearchValue}
+              className={cn(
+                'h-9 rounded-none border-b border-border flex-shrink-0',
+                'placeholder:text-text-muted text-sm'
+              )}
+            />
+            <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
+              {error ? (
+                <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
+              ) : filteredModels.length === 0 ? (
+                <CommandEmpty className="py-4 text-center text-sm text-text-muted">
+                  {isLoading ? 'Loading...' : t('models.no_models')}
+                </CommandEmpty>
+              ) : (
+                <>
                   <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                    {isLoading ? 'Loading...' : t('models.no_models')}
+                    {t('branches.no_match')}
                   </CommandEmpty>
-                ) : (
-                  <>
-                    <CommandEmpty className="py-4 text-center text-sm text-text-muted">
-                      {t('branches.no_match')}
-                    </CommandEmpty>
-                    <CommandGroup>
-                      {/* Default option - only show when all bots have predefined models */}
-                      {showDefaultOption && (
-                        <CommandItem
-                          key={DEFAULT_MODEL_NAME}
-                          value={`${DEFAULT_MODEL_NAME} ${t('task_submit.default_model', '默认')} ${t('task_submit.use_bot_model', '使用 Bot 预设模型')}`}
-                          onSelect={() => handleModelSelect(DEFAULT_MODEL_NAME)}
+                  <CommandGroup>
+                    {/* Default option - only show when all bots have predefined models */}
+                    {showDefaultOption && (
+                      <CommandItem
+                        key={DEFAULT_MODEL_NAME}
+                        value={`${DEFAULT_MODEL_NAME} ${t('task_submit.default_model', '默认')} ${t('task_submit.use_bot_model', '使用 Bot 预设模型')}`}
+                        onSelect={() => handleModelSelect(DEFAULT_MODEL_NAME)}
+                        className={cn(
+                          'group cursor-pointer select-none',
+                          'px-3 py-1.5 text-sm text-text-primary',
+                          'rounded-md mx-1 my-[2px]',
+                          'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                          'aria-selected:bg-hover',
+                          '!flex !flex-row !items-start !gap-3'
+                        )}
+                      >
+                        <Check
                           className={cn(
-                            'group cursor-pointer select-none',
-                            'px-3 py-1.5 text-sm text-text-primary',
-                            'rounded-md mx-1 my-[2px]',
-                            'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
-                            'aria-selected:bg-hover',
-                            '!flex !flex-row !items-start !gap-3'
+                            'h-3 w-3 shrink-0 mt-0.5 ml-1',
+                            selectedModel?.name === DEFAULT_MODEL_NAME
+                              ? 'opacity-100 text-primary'
+                              : 'opacity-0 text-text-muted'
                           )}
-                        >
-                          <Check
-                            className={cn(
-                              'h-3 w-3 shrink-0 mt-0.5 ml-1',
-                              selectedModel?.name === DEFAULT_MODEL_NAME
-                                ? 'opacity-100 text-primary'
-                                : 'opacity-0 text-text-muted'
-                            )}
-                          />
-                          <div className="flex items-center gap-2 min-w-0 flex-1">
-                            <CpuChipIcon className="w-3.5 h-3.5 flex-shrink-0 text-primary" />
-                            <div className="flex flex-col min-w-0 flex-1">
-                              <span className="font-medium text-xs text-text-secondary">
-                                {t('task_submit.default_model', '默认')}
-                              </span>
-                              <span className="text-[10px] text-text-muted">
-                                {t('task_submit.use_bot_model', '使用 Bot 预设模型')}
-                              </span>
-                            </div>
+                        />
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <Brain className="w-3.5 h-3.5 flex-shrink-0 text-primary" />
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <span className="font-medium text-xs text-text-secondary">
+                              {t('task_submit.default_model', '默认')}
+                            </span>
+                            <span className="text-[10px] text-text-muted">
+                              {t('task_submit.use_bot_model', '使用 Bot 预设模型')}
+                            </span>
                           </div>
-                        </CommandItem>
-                      )}
-                      {filteredModels.map(model => (
-                        <CommandItem
-                          key={getModelKey(model)}
-                          value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
-                          onSelect={() => handleModelSelect(getModelKey(model))}
+                        </div>
+                      </CommandItem>
+                    )}
+                    {filteredModels.map(model => (
+                      <CommandItem
+                        key={getModelKey(model)}
+                        value={`${model.name} ${model.displayName || ''} ${model.provider} ${model.modelId} ${model.type}`}
+                        onSelect={() => handleModelSelect(getModelKey(model))}
+                        className={cn(
+                          'group cursor-pointer select-none',
+                          'px-3 py-1.5 text-sm text-text-primary',
+                          'rounded-md mx-1 my-[2px]',
+                          'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
+                          'aria-selected:bg-hover',
+                          '!flex !flex-row !items-start !gap-3'
+                        )}
+                      >
+                        <Check
                           className={cn(
-                            'group cursor-pointer select-none',
-                            'px-3 py-1.5 text-sm text-text-primary',
-                            'rounded-md mx-1 my-[2px]',
-                            'data-[selected=true]:bg-primary/10 data-[selected=true]:text-primary',
-                            'aria-selected:bg-hover',
-                            '!flex !flex-row !items-start !gap-3'
+                            'h-3 w-3 shrink-0 mt-0.5 ml-1',
+                            selectedModel?.name === model.name && selectedModel?.type === model.type
+                              ? 'opacity-100 text-primary'
+                              : 'opacity-0 text-text-muted'
                           )}
-                        >
-                          <Check
-                            className={cn(
-                              'h-3 w-3 shrink-0 mt-0.5 ml-1',
-                              selectedModel?.name === model.name &&
-                                selectedModel?.type === model.type
-                                ? 'opacity-100 text-primary'
-                                : 'opacity-0 text-text-muted'
-                            )}
-                          />
-                          <div className="flex items-center gap-2 min-w-0 flex-1">
-                            <CpuChipIcon className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
-                            <div className="flex flex-col min-w-0 flex-1">
-                              <div className="flex items-center gap-1.5 flex-nowrap">
-                                <span
-                                  className="font-medium text-xs text-text-secondary truncate min-w-0"
-                                  title={getModelDisplayText(model)}
+                        />
+                        <div className="flex items-center gap-2 min-w-0 flex-1">
+                          <Brain className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
+                          <div className="flex flex-col min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5 flex-nowrap">
+                              <span
+                                className="font-medium text-xs text-text-secondary truncate min-w-0"
+                                title={getModelDisplayText(model)}
+                              >
+                                {getModelDisplayText(model)}
+                              </span>
+                              {model.type === 'public' && (
+                                <Tag
+                                  variant="info"
+                                  className="text-[10px] flex-shrink-0 whitespace-nowrap"
                                 >
-                                  {getModelDisplayText(model)}
-                                </span>
-                                {model.type === 'public' && (
-                                  <Tag
-                                    variant="info"
-                                    className="text-[10px] flex-shrink-0 whitespace-nowrap"
-                                  >
-                                    {t('models.public', '公共')}
-                                  </Tag>
-                                )}
-                              </div>
-                              {model.modelId && (
-                                <span
-                                  className="text-[10px] text-text-muted truncate"
-                                  title={model.modelId}
-                                >
-                                  {model.modelId}
-                                </span>
+                                  {t('models.public', '公共')}
+                                </Tag>
                               )}
                             </div>
+                            {model.modelId && (
+                              <span
+                                className="text-[10px] text-text-muted truncate"
+                                title={model.modelId}
+                              >
+                                {model.modelId}
+                              </span>
+                            )}
                           </div>
-                        </CommandItem>
-                      ))}
-                    </CommandGroup>
-                  </>
-                )}
-              </CommandList>
-              {/* Force override checkbox in dropdown footer - always show when model is selected */}
-              {selectedModel && !isMixedTeam && (
-                <div className="border-t border-border px-3 py-2">
-                  <label
-                    className="flex items-center gap-2 cursor-pointer text-xs text-text-secondary hover:text-text-primary"
-                    onClick={e => e.stopPropagation()}
-                  >
-                    <Checkbox
-                      id="force-override-model-dropdown"
-                      checked={forceOverride}
-                      onCheckedChange={handleForceOverrideChange}
-                      disabled={disabled || externalLoading}
-                      className="h-3.5 w-3.5"
-                    />
-                    <span>{t('task_submit.force_override_model', '强制覆盖 Bot 绑定的模型')}</span>
-                  </label>
-                </div>
+                        </div>
+                      </CommandItem>
+                    ))}
+                  </CommandGroup>
+                </>
               )}
-              {/* Model Settings Link */}
-              <div
-                className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
-                onClick={() => router.push(paths.settings.models.getHref())}
-                role="button"
-                tabIndex={0}
-                onKeyDown={e => {
-                  if (e.key === 'Enter' || e.key === ' ') {
-                    e.preventDefault();
-                    router.push(paths.settings.models.getHref());
-                  }
-                }}
-              >
-                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-                <span className="font-medium group-hover:text-text-primary">
-                  {t('models.manage', '模型设置')}
-                </span>
+            </CommandList>
+            {/* Force override checkbox in dropdown footer - always show when model is selected */}
+            {selectedModel && !isMixedTeam && (
+              <div className="border-t border-border px-3 py-2">
+                <label
+                  className="flex items-center gap-2 cursor-pointer text-xs text-text-secondary hover:text-text-primary"
+                  onClick={e => e.stopPropagation()}
+                >
+                  <Checkbox
+                    id="force-override-model-dropdown"
+                    checked={forceOverride}
+                    onCheckedChange={handleForceOverrideChange}
+                    disabled={disabled || externalLoading}
+                    className="h-3.5 w-3.5"
+                  />
+                  <span>{t('task_submit.force_override_model', '强制覆盖 Bot 绑定的模型')}</span>
+                </label>
               </div>
-            </Command>
-          </PopoverContent>
-        </Popover>
-      </div>
+            )}
+            {/* Model Settings Link */}
+            <div
+              className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
+              onClick={() => router.push(paths.settings.models.getHref())}
+              role="button"
+              tabIndex={0}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  router.push(paths.settings.models.getHref());
+                }
+              }}
+            >
+              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+              <span className="font-medium group-hover:text-text-primary">
+                {t('models.manage', '模型设置')}
+              </span>
+            </div>
+          </Command>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,6 +15,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Loader2 } from 'lucide-react';
 import { BeakerIcon, CheckCircleIcon, XCircleIcon } from '@heroicons/react/24/outline';
@@ -41,7 +48,8 @@ const STAGE_PROGRESS: Record<ValidationStage, number> = {
   completed: 100,
 };
 
-interface ShellEditProps {
+interface ShellEditDialogProps {
+  open: boolean;
   shell: UnifiedShell | null;
   onClose: () => void;
   toast: ReturnType<typeof import('@/hooks/use-toast').useToast>['toast'];
@@ -49,7 +57,8 @@ interface ShellEditProps {
   groupName?: string;
 }
 
-const ShellEdit: React.FC<ShellEditProps> = ({
+const ShellEditDialog: React.FC<ShellEditDialogProps> = ({
+  open,
   shell,
   onClose,
   toast,
@@ -60,11 +69,11 @@ const ShellEdit: React.FC<ShellEditProps> = ({
   const isEditing = !!shell;
 
   // Form state
-  const [name, setName] = useState(shell?.name || '');
-  const [displayName, setDisplayName] = useState(shell?.displayName || '');
-  const [baseShellRef, setBaseShellRef] = useState(shell?.baseShellRef || '');
-  const [baseImage, setBaseImage] = useState(shell?.baseImage || '');
-  const [originalBaseImage] = useState(shell?.baseImage || ''); // Track original value for edit mode
+  const [name, setName] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [baseShellRef, setBaseShellRef] = useState('');
+  const [baseImage, setBaseImage] = useState('');
+  const [originalBaseImage, setOriginalBaseImage] = useState('');
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
   const [_validationId, setValidationId] = useState<string | null>(null);
@@ -91,6 +100,33 @@ const ShellEdit: React.FC<ShellEditProps> = ({
     };
   }, []);
 
+  // Reset form when dialog opens/closes or shell changes
+  useEffect(() => {
+    if (open) {
+      if (shell) {
+        setName(shell.name || '');
+        setDisplayName(shell.displayName || '');
+        setBaseShellRef(shell.baseShellRef || '');
+        setBaseImage(shell.baseImage || '');
+        setOriginalBaseImage(shell.baseImage || '');
+      } else {
+        // Reset for new shell
+        setName('');
+        setDisplayName('');
+        setBaseShellRef('');
+        setBaseImage('');
+        setOriginalBaseImage('');
+      }
+      setValidationStatus(null);
+      setValidationId(null);
+      if (pollingRef.current) {
+        clearInterval(pollingRef.current);
+        pollingRef.current = null;
+      }
+    }
+  }, [open, shell]);
+
+  // Fetch base shells
   useEffect(() => {
     const fetchBaseShells = async () => {
       try {
@@ -102,8 +138,10 @@ const ShellEdit: React.FC<ShellEditProps> = ({
         setLoadingBaseShells(false);
       }
     };
-    fetchBaseShells();
-  }, []);
+    if (open) {
+      fetchBaseShells();
+    }
+  }, [open]);
 
   // Start polling for validation status
   const startPolling = useCallback(
@@ -284,7 +322,6 @@ const ShellEdit: React.FC<ShellEditProps> = ({
   };
 
   // Check if save button should be disabled
-  // Check if save button should be disabled
   const isSaveDisabled = useCallback(() => {
     // If there's no baseImage, no validation needed
     if (!baseImage) return false;
@@ -298,6 +335,7 @@ const ShellEdit: React.FC<ShellEditProps> = ({
 
     return false;
   }, [baseImage, isEditing, originalBaseImage, validationStatus]);
+
   const getSaveButtonTooltip = useCallback(() => {
     if (isSaveDisabled()) {
       return t('shells.validation_required');
@@ -355,7 +393,7 @@ const ShellEdit: React.FC<ShellEditProps> = ({
 
     setSaving(true);
     try {
-      if (isEditing) {
+      if (isEditing && shell) {
         await shellApis.updateShell(shell.name, {
           displayName: displayName.trim() || undefined,
           baseImage: baseImage.trim() || undefined,
@@ -390,23 +428,14 @@ const ShellEdit: React.FC<ShellEditProps> = ({
     }
   };
 
-  const handleBack = useCallback(() => {
-    // Clean up polling when going back
+  const handleClose = useCallback(() => {
+    // Clean up polling when closing
     if (pollingRef.current) {
       clearInterval(pollingRef.current);
+      pollingRef.current = null;
     }
     onClose();
   }, [onClose]);
-
-  useEffect(() => {
-    const handleEsc = (event: KeyboardEvent) => {
-      if (event.key !== 'Escape') return;
-      handleBack();
-    };
-
-    window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
-  }, [handleBack]);
 
   // Get stage display text
   const getStageDisplayText = (status: ValidationStage | 'error' | 'success' | 'failed') => {
@@ -431,115 +460,88 @@ const ShellEdit: React.FC<ShellEditProps> = ({
   };
 
   return (
-    <div className="flex flex-col w-full bg-surface rounded-lg px-2 py-4 min-h-[500px]">
-      {/* Top Navigation */}
-      <div className="flex items-center justify-between mb-6 flex-shrink-0">
-        <button
-          onClick={handleBack}
-          className="flex items-center text-text-muted hover:text-text-primary text-base"
-          title={t('common.back')}
-        >
-          <svg
-            width="24"
-            height="24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            className="mr-1"
-          >
-            <path d="M15 6l-6 6 6 6" />
-          </svg>
-          {t('common.back')}
-        </button>
-        <div className="flex gap-2">
-          <Button
-            onClick={handleSave}
-            disabled={saving || validating || isSaveDisabled()}
-            title={getSaveButtonTooltip()}
-          >
-            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {saving ? t('actions.saving') : t('actions.save')}
-          </Button>
-        </div>
-      </div>
+    <Dialog open={open} onOpenChange={open => !open && handleClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{isEditing ? t('shells.edit_title') : t('shells.create_title')}</DialogTitle>
+        </DialogHeader>
 
-      {/* Form */}
-      <div className="space-y-6 max-w-xl mx-2">
-        {/* Shell Name */}
-        <div className="space-y-2">
-          <Label htmlFor="name" className="text-lg font-semibold text-text-primary">
-            {t('shells.shell_name')} <span className="text-red-400">*</span>
-          </Label>
-          <Input
-            id="name"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="my-custom-shell"
-            disabled={isEditing}
-            className="bg-base"
-          />
-          <p className="text-xs text-text-muted">
-            {isEditing ? t('shells.name_readonly_hint') : t('shells.name_hint')}
-          </p>
-        </div>
+        <div className="space-y-4 py-4">
+          {/* Shell Name and Display Name - Two columns */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="name" className="text-sm font-medium">
+                {t('shells.shell_name')} <span className="text-red-400">*</span>
+              </Label>
+              <Input
+                id="name"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="my-custom-shell"
+                disabled={isEditing}
+                className="bg-base"
+              />
+              <p className="text-xs text-text-muted">
+                {isEditing ? t('shells.name_readonly_hint') : t('shells.name_hint')}
+              </p>
+            </div>
 
-        {/* Display Name */}
-        <div className="space-y-2">
-          <Label htmlFor="displayName" className="text-lg font-semibold text-text-primary">
-            {t('shells.display_name')}
-          </Label>
-          <Input
-            id="displayName"
-            value={displayName}
-            onChange={e => setDisplayName(e.target.value)}
-            placeholder={t('shells.display_name_placeholder')}
-            className="bg-base"
-          />
-          <p className="text-xs text-text-muted">{t('shells.display_name_hint')}</p>
-        </div>
+            <div className="space-y-2">
+              <Label htmlFor="displayName" className="text-sm font-medium">
+                {t('shells.display_name')}
+              </Label>
+              <Input
+                id="displayName"
+                value={displayName}
+                onChange={e => setDisplayName(e.target.value)}
+                placeholder={t('shells.display_name_placeholder')}
+                className="bg-base"
+              />
+              <p className="text-xs text-text-muted">{t('shells.display_name_hint')}</p>
+            </div>
+          </div>
 
-        {/* Base Shell Reference */}
-        <div className="space-y-2">
-          <Label htmlFor="baseShellRef" className="text-lg font-semibold text-text-primary">
-            {t('shells.base_shell')} <span className="text-red-400">*</span>
-          </Label>
-          <Select
-            value={baseShellRef}
-            onValueChange={setBaseShellRef}
-            disabled={isEditing || loadingBaseShells}
-          >
-            <SelectTrigger className="bg-base">
-              <SelectValue placeholder={t('shells.select_base_shell')} />
-            </SelectTrigger>
-            <SelectContent>
-              {baseShells.map(shell => (
-                <SelectItem key={shell.name} value={shell.name}>
-                  <div className="flex items-center gap-2">
-                    <span>{shell.displayName || shell.name}</span>
-                    <span className="text-xs text-text-muted">({shell.shellType})</span>
-                  </div>
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <p className="text-xs text-text-muted">{t('shells.base_shell_hint')}</p>
+          {/* Base Shell Reference */}
+          <div className="space-y-2">
+            <Label htmlFor="baseShellRef" className="text-sm font-medium">
+              {t('shells.base_shell')} <span className="text-red-400">*</span>
+            </Label>
+            <Select
+              value={baseShellRef}
+              onValueChange={setBaseShellRef}
+              disabled={isEditing || loadingBaseShells}
+            >
+              <SelectTrigger className="bg-base">
+                <SelectValue placeholder={t('shells.select_base_shell')} />
+              </SelectTrigger>
+              <SelectContent>
+                {baseShells.map(baseShell => (
+                  <SelectItem key={baseShell.name} value={baseShell.name}>
+                    <div className="flex items-center gap-2">
+                      <span>{baseShell.displayName || baseShell.name}</span>
+                      <span className="text-xs text-text-muted">({baseShell.shellType})</span>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-text-muted">{t('shells.base_shell_hint')}</p>
 
-          {/* Software Requirements Display */}
-          {baseShellRef &&
-            (() => {
-              const selectedShell = baseShells.find(s => s.name === baseShellRef);
-              return selectedShell ? (
-                <SoftwareRequirements shellType={selectedShell.shellType} />
-              ) : null;
-            })()}
-        </div>
+            {/* Software Requirements Display */}
+            {baseShellRef &&
+              (() => {
+                const selectedShell = baseShells.find(s => s.name === baseShellRef);
+                return selectedShell ? (
+                  <SoftwareRequirements shellType={selectedShell.shellType} />
+                ) : null;
+              })()}
+          </div>
 
-        {/* Base Image */}
-        <div className="space-y-2">
-          <Label htmlFor="baseImage" className="text-lg font-semibold text-text-primary">
-            {t('shells.base_image')} <span className="text-red-400">*</span>
-          </Label>
-          <div className="flex gap-2">
+          {/* Base Image */}
+          <div className="space-y-2">
+            <Label htmlFor="baseImage" className="text-sm font-medium">
+              {t('shells.base_image')} <span className="text-red-400">*</span>
+            </Label>
             <Input
               id="baseImage"
               value={baseImage}
@@ -554,116 +556,133 @@ const ShellEdit: React.FC<ShellEditProps> = ({
                 }
               }}
               placeholder="ghcr.io/your-org/your-image:latest"
-              className="bg-base flex-1"
+              className="bg-base"
             />
+            <p className="text-xs text-text-muted">{t('shells.base_image_hint')}</p>
+
+            {/* Validation Status */}
+            {validationStatus && (
+              <div
+                className={`mt-3 p-3 rounded-md border ${
+                  validationStatus.status === 'success' || validationStatus.valid === true
+                    ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
+                    : validationStatus.status === 'submitted' ||
+                        validationStatus.status === 'pulling_image' ||
+                        validationStatus.status === 'starting_container' ||
+                        validationStatus.status === 'running_checks'
+                      ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800'
+                      : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
+                }`}
+              >
+                <div className="flex items-center gap-2 mb-2">
+                  {validationStatus.status === 'success' || validationStatus.valid === true ? (
+                    <CheckCircleIcon className="w-5 h-5 text-green-600 dark:text-green-400" />
+                  ) : validationStatus.status === 'submitted' ||
+                    validationStatus.status === 'pulling_image' ||
+                    validationStatus.status === 'starting_container' ||
+                    validationStatus.status === 'running_checks' ? (
+                    <Loader2 className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin" />
+                  ) : (
+                    <XCircleIcon className="w-5 h-5 text-red-600 dark:text-red-400" />
+                  )}
+                  <span
+                    className={`font-medium ${
+                      validationStatus.status === 'success' || validationStatus.valid === true
+                        ? 'text-green-700 dark:text-green-300'
+                        : validationStatus.status === 'submitted' ||
+                            validationStatus.status === 'pulling_image' ||
+                            validationStatus.status === 'starting_container' ||
+                            validationStatus.status === 'running_checks'
+                          ? 'text-blue-700 dark:text-blue-300'
+                          : 'text-red-700 dark:text-red-300'
+                    }`}
+                  >
+                    {getStageDisplayText(validationStatus.status)}
+                  </span>
+                </div>
+
+                {/* Progress bar for in-progress validation */}
+                {validating && validationStatus.progress > 0 && (
+                  <div className="mb-2">
+                    <Progress value={validationStatus.progress} className="h-2" />
+                    <p className="text-xs text-text-muted mt-1">
+                      {validationStatus.message} ({validationStatus.progress}%)
+                    </p>
+                  </div>
+                )}
+
+                {!validating && (
+                  <p className="text-sm text-text-secondary">{validationStatus.message}</p>
+                )}
+
+                {validationStatus.checks && validationStatus.checks.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-sm">
+                    {validationStatus.checks.map((check, index) => (
+                      <li key={index} className="flex items-center gap-2">
+                        {check.status === 'pass' ? (
+                          <CheckCircleIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
+                        ) : (
+                          <XCircleIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
+                        )}
+                        <span className="text-text-secondary">
+                          {check.name}
+                          {check.version && ` (${check.version})`}
+                          {check.message && `: ${check.message}`}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+                {validationStatus.errors && validationStatus.errors.length > 0 && (
+                  <ul className="mt-2 space-y-1 text-sm text-red-600 dark:text-red-400">
+                    {validationStatus.errors.map((error, index) => (
+                      <li key={index}>{error}</li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            )}
+
+            {/* Validation required hint when save is disabled */}
+            {isSaveDisabled() && !validating && (
+              <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
+                {t('shells.validation_required')}
+              </p>
+            )}
+          </div>
+        </div>
+
+        <DialogFooter className="flex items-center justify-between sm:justify-between">
+          <Button
+            variant="outline"
+            onClick={handleValidateImage}
+            disabled={validating || !baseImage || !baseShellRef}
+          >
+            {validating ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <BeakerIcon className="w-4 h-4 mr-1" />
+            )}
+            {t('shells.validate')}
+          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={handleClose}>
+              {t('actions.cancel')}
+            </Button>
             <Button
-              variant="outline"
-              onClick={handleValidateImage}
-              disabled={validating || !baseImage || !baseShellRef}
+              onClick={handleSave}
+              disabled={saving || validating || isSaveDisabled()}
+              title={getSaveButtonTooltip()}
+              className="bg-primary hover:bg-primary/90"
             >
-              {validating ? (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              ) : (
-                <BeakerIcon className="w-4 h-4 mr-1" />
-              )}
-              {t('shells.validate')}
+              {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {saving ? t('actions.saving') : t('actions.save')}
             </Button>
           </div>
-          <p className="text-xs text-text-muted">{t('shells.base_image_hint')}</p>
-
-          {/* Validation Status */}
-          {validationStatus && (
-            <div
-              className={`mt-3 p-3 rounded-md border ${
-                validationStatus.status === 'success' || validationStatus.valid === true
-                  ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-800'
-                  : validationStatus.status === 'submitted' ||
-                      validationStatus.status === 'pulling_image' ||
-                      validationStatus.status === 'starting_container' ||
-                      validationStatus.status === 'running_checks'
-                    ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800'
-                    : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-800'
-              }`}
-            >
-              <div className="flex items-center gap-2 mb-2">
-                {validationStatus.status === 'success' || validationStatus.valid === true ? (
-                  <CheckCircleIcon className="w-5 h-5 text-green-600 dark:text-green-400" />
-                ) : validationStatus.status === 'submitted' ||
-                  validationStatus.status === 'pulling_image' ||
-                  validationStatus.status === 'starting_container' ||
-                  validationStatus.status === 'running_checks' ? (
-                  <Loader2 className="w-5 h-5 text-blue-600 dark:text-blue-400 animate-spin" />
-                ) : (
-                  <XCircleIcon className="w-5 h-5 text-red-600 dark:text-red-400" />
-                )}
-                <span
-                  className={`font-medium ${
-                    validationStatus.status === 'success' || validationStatus.valid === true
-                      ? 'text-green-700 dark:text-green-300'
-                      : validationStatus.status === 'submitted' ||
-                          validationStatus.status === 'pulling_image' ||
-                          validationStatus.status === 'starting_container' ||
-                          validationStatus.status === 'running_checks'
-                        ? 'text-blue-700 dark:text-blue-300'
-                        : 'text-red-700 dark:text-red-300'
-                  }`}
-                >
-                  {getStageDisplayText(validationStatus.status)}
-                </span>
-              </div>
-
-              {/* Progress bar for in-progress validation */}
-              {validating && validationStatus.progress > 0 && (
-                <div className="mb-2">
-                  <Progress value={validationStatus.progress} className="h-2" />
-                  <p className="text-xs text-text-muted mt-1">
-                    {validationStatus.message} ({validationStatus.progress}%)
-                  </p>
-                </div>
-              )}
-
-              {!validating && (
-                <p className="text-sm text-text-secondary">{validationStatus.message}</p>
-              )}
-
-              {validationStatus.checks && validationStatus.checks.length > 0 && (
-                <ul className="mt-2 space-y-1 text-sm">
-                  {validationStatus.checks.map((check, index) => (
-                    <li key={index} className="flex items-center gap-2">
-                      {check.status === 'pass' ? (
-                        <CheckCircleIcon className="w-4 h-4 text-green-600 dark:text-green-400" />
-                      ) : (
-                        <XCircleIcon className="w-4 h-4 text-red-600 dark:text-red-400" />
-                      )}
-                      <span className="text-text-secondary">
-                        {check.name}
-                        {check.version && ` (${check.version})`}
-                        {check.message && `: ${check.message}`}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {validationStatus.errors && validationStatus.errors.length > 0 && (
-                <ul className="mt-2 space-y-1 text-sm text-red-600 dark:text-red-400">
-                  {validationStatus.errors.map((error, index) => (
-                    <li key={index}>{error}</li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          )}
-
-          {/* Validation required hint when save is disabled */}
-          {isSaveDisabled() && !validating && (
-            <p className="text-xs text-amber-600 dark:text-amber-400 mt-2">
-              {t('shells.validation_required')}
-            </p>
-          )}
-        </div>
-      </div>
-    </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 };
 
-export default ShellEdit;
+export default ShellEditDialog;

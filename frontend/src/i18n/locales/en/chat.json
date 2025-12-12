@@ -167,6 +167,7 @@
     "additional_placeholder": "Enter additional thoughts, requirements, or special notes here..."
   },
   "export": {
+    "export": "Export",
     "export_pdf": "Export PDF",
     "export_docx": "Export DOCX",
     "no_messages": "No messages to export",

@@ -30,6 +30,7 @@ interface TaskListSectionProps {
   unreadCount?: number;
   onTaskClick?: () => void;
   isCollapsed?: boolean;
+  showTitle?: boolean;
 }
 
 import { useRouter } from 'next/navigation';
@@ -41,6 +42,7 @@ export default function TaskListSection({
   unreadCount = 0,
   onTaskClick,
   isCollapsed = false,
+  showTitle = true,
 }: TaskListSectionProps) {
   const router = useRouter();
   const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
@@ -327,12 +329,14 @@ export default function TaskListSection({
     <div className={`mb-2 w-full ${isCollapsed ? 'px-2' : ''}`}>
       {/* Section title with divider in collapsed mode */}
       {isCollapsed ? (
-        <div className="border-t border-border my-2" />
+        showTitle && <div className="border-t border-border my-2" />
       ) : (
-        <h3 className="text-sm text-text-primary tracking-wide mb-1 px-2">
-          {title}
-          {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
-        </h3>
+        showTitle && title && (
+          <h3 className="text-sm text-text-primary tracking-wide mb-1 px-2">
+            {title}
+            {unreadCount > 0 && <span className="text-primary ml-1">({unreadCount})</span>}
+          </h3>
+        )
       )}
       <div className="space-y-0">
         {tasks.map(task => {

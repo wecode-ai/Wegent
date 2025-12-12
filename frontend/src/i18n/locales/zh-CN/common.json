@@ -5,7 +5,9 @@
   },
   "repos": {
     "repository": "选择仓库",
-    "branch": "选择分支"
+    "branch": "选择分支",
+    "repository_tooltip": "选择代码仓库",
+    "branch_tooltip": "选择分支"
   },
   "actions": {
     "save": "保存",
@@ -181,7 +183,9 @@
     "chat": "发送任务",
     "delete": "删除智能体",
     "copy": "复制智能体",
-    "more": "更多操作",
+    "more": "更多",
+    "more_teams": "查看更多智能体",
+    "more_actions": "更多操作",
     "no_teams": "没有可用的智能体",
     "new_team": "新建智能体",
     "search_placeholder": "搜索智能体...",
@@ -189,6 +193,10 @@
     "manage": "智能体设置",
     "delete_confirm_title": "确认删除",
     "delete_confirm_message": "确定要删除这个智能体吗？此操作无法撤销。",
+    "edit_title": "编辑智能体",
+    "create_title": "新建智能体",
+    "edit_failed": "编辑智能体失败",
+    "create_failed": "创建智能体失败",
     "sharing": "共享中",
     "shared_by": "{{author}}共享",
     "share_failed": "分享失败，请重试",
@@ -226,7 +234,11 @@
   },
   "team": {
     "name": "名称",
+    "name_required": "智能体名称不能为空",
     "name_placeholder": "智能体名称",
+    "bot_required": "请配置一个机器人",
+    "leader_required": "请选择领导者",
+    "members": "智能体成员",
     "description": "描述",
     "description_placeholder": "简要描述这个智能体",
     "leader": "领导者",
@@ -264,6 +276,8 @@
     "select_bot": "配置机器人",
     "select_bot_placeholder": "请配置一个机器人",
     "no_bot_selected": "未配置机器人",
+    "current_bot": "当前机器人",
+    "no_bots_available": "暂无可用机器人",
     "edit_bot_config": "编辑机器人配置",
     "recommended_mode": "推荐模式",
     "recommended_mode_both": "都可以",
@@ -321,8 +335,11 @@
     "refresh_failed": "刷新失败，请重试"
   },
   "tasks": {
+    "history_title": "历史对话",
     "search_placeholder": "搜索任务",
-    "new_task": "新建任务",
+    "search_placeholder_chat": "搜索对话",
+    "new_task": "新任务",
+    "new_conversation": "新对话",
     "no_tasks": "没有任务",
     "today": "今天",
     "this_week": "本周",
@@ -336,12 +353,15 @@
     "cancel_task": "取消任务",
     "delete_task": "删除任务",
     "searching": "搜索中...",
+    "press_enter_to_search": "按 Enter 键搜索",
+    "clear_search": "清除",
     "mark_all_read": "全部标记为已读",
     "open_from": "<> Code",
     "open_from_vscode": "VSCode",
     "open_from_git": "Git"
   },
   "settings": {
+    "title": "设置",
     "integrations": "集成",
     "bot": "机器人",
     "team": "智能体",
@@ -405,7 +425,8 @@
     "next": "下一页",
     "page_info": "第 {{current}} 页 / 共 {{total}} 页",
     "warning": "警告",
-    "cannotUndo": "此操作无法撤销"
+    "cannotUndo": "此操作无法撤销",
+    "coming_soon": "即将推出"
   },
   "quota": {
     "load_failed": "用量信息获取失败",
@@ -533,7 +554,9 @@
     "my_models": "我的模型",
     "manage": "模型设置",
     "create": "创建模型",
+    "create_title": "创建链接",
     "edit": "编辑模型",
+    "edit_title": "编辑链接",
     "delete": "删除模型",
     "test_connection": "测试连接",
     "model_id_name": "模型标识",
@@ -590,15 +613,21 @@
     "mixed_team_warning": "当前智能体包含多种执行器类型，无法统一指定模型",
     "default_model": "默认模型",
     "use_bot_model": "使用 Bot 预设模型",
-    "model_required": "请选择模型"
+    "model_required": "请选择模型",
+    "model_tooltip": "选择用于对话的 AI 模型"
   },
   "knowledge": {
+    "title": "知识库",
     "modules": {
       "title": "我的知识",
       "code": "代码知识",
       "code_desc": "仓库文档",
       "wiki": "Wiki",
       "wiki_desc": "团队知识库"
+    },
+    "tabs": {
+      "code": "代码知识",
+      "document": "文档知识"
     }
   },
   "wiki": {
@@ -645,7 +674,9 @@
     "public_shells": "公共执行器",
     "my_shells": "我的执行器",
     "create": "创建 Shell",
+    "create_title": "创建执行器",
     "edit": "编辑 Shell",
+    "edit_title": "编辑执行器",
     "delete": "删除 Shell",
     "validate": "验证",
     "shell_name": "Shell 名称",
@@ -731,7 +762,7 @@
     "copy_link": "复制链接",
     "link_copied": "分享链接已复制！",
     "link_copied_desc": "您现在可以将此链接分享给他人",
-    "share_task": "分享/导出",
+    "share_task": "分享",
     "share_link": "链接分享",
     "share_pdf": "导出PDF",
     "sharing": "分享中...",
