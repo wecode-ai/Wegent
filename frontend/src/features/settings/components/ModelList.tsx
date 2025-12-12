@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -20,7 +20,7 @@ import {
 import { Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { useTranslation } from '@/hooks/useTranslation';
-import ModelEdit from './ModelEdit';
+import ModelEditDialog from './ModelEditDialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -64,7 +64,7 @@ const ModelList: React.FC<ModelListProps> = ({
   const [unifiedModels, setUnifiedModels] = useState<UnifiedModel[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingModel, setEditingModel] = useState<ModelCRD | null>(null);
-  const [isCreating, setIsCreating] = useState(false);
+  const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteConfirmModel, setDeleteConfirmModel] = useState<DisplayModel | null>(null);
   const [testingModelName, setTestingModelName] = useState<string | null>(null);
   const [loadingModelName, setLoadingModelName] = useState<string | null>(null);
@@ -253,10 +253,12 @@ const ModelList: React.FC<ModelListProps> = ({
       // Fetch the full CRD data for editing with correct namespace
       const modelCRD = await modelApis.getModel(displayModel.name, displayModel.namespace);
       setEditingModel(modelCRD);
+      setDialogOpen(true);
     } catch (error) {
       // If fetch fails, construct from unified data
       console.warn('Failed to fetch model CRD, using unified data:', error);
       setEditingModel(convertToModelCRD(displayModel));
+      setDialogOpen(true);
     } finally {
       setLoadingModelName(null);
     }
@@ -264,8 +266,13 @@ const ModelList: React.FC<ModelListProps> = ({
 
   const handleEditClose = () => {
     setEditingModel(null);
-    setIsCreating(false);
+    setDialogOpen(false);
     fetchModels();
+  };
+
+  const handleCreate = () => {
+    setEditingModel(null);
+    setDialogOpen(true);
   };
 
   const getProviderLabel = (modelType: string) => {
@@ -278,18 +285,6 @@ const ModelList: React.FC<ModelListProps> = ({
         return 'Anthropic';
     }
   };
-
-  if (editingModel || isCreating) {
-    return (
-      <ModelEdit
-        model={editingModel}
-        onClose={handleEditClose}
-        toast={toast}
-        groupName={groupName}
-        scope={scope === 'all' ? 'personal' : scope}
-      />
-    );
-  }
 
   return (
     <div className="space-y-3">
@@ -522,13 +517,21 @@ const ModelList: React.FC<ModelListProps> = ({
         {!loading && (scope === 'personal' || canCreateInAnyGroup) && (
           <div className="border-t border-border pt-3 mt-3 bg-base">
             <div className="flex justify-center">
-              <UnifiedAddButton onClick={() => setIsCreating(true)}>
-                {t('models.create')}
-              </UnifiedAddButton>
+              <UnifiedAddButton onClick={handleCreate}>{t('models.create')}</UnifiedAddButton>
             </div>
           </div>
         )}
       </div>
+
+      {/* Model Edit/Create Dialog */}
+      <ModelEditDialog
+        open={dialogOpen}
+        model={editingModel}
+        onClose={handleEditClose}
+        toast={toast}
+        groupName={groupName}
+        scope={scope === 'all' || scope === undefined ? 'personal' : scope}
+      />
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={!!deleteConfirmModel} onOpenChange={() => setDeleteConfirmModel(null)}>
