@@ -110,21 +110,6 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
         }`}
         style={{ boxShadow: 'var(--shadow-popover)' }}
       >
-        {/* Menu header */}
-        <div className="px-3 py-2 border-b border-border/60 bg-muted/30">
-          <div className="flex items-center gap-2">
-            <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center">
-              <UserCircleIcon className="w-6 h-6 text-primary" />
-            </div>
-            <div className="flex flex-col">
-              <span className="text-sm font-semibold text-text-primary">{userDisplayName}</span>
-              {user?.email && (
-                <span className="text-xs text-text-muted truncate max-w-[140px]">{user.email}</span>
-              )}
-            </div>
-          </div>
-        </div>
-
         {/* Menu items */}
         <div className="py-1">
           {/* Settings */}
