@@ -799,7 +799,7 @@
     "displayName": "显示名称",
     "visibility": "可见性",
     "description": "描述",
-    "owner": "Ower",
+    "owner": "Owner",
     "role": "角色",
     "members": "成员",
     "resources": "资源",
@@ -809,10 +809,10 @@
     "internal": "内部",
     "public": "公开",
     "roles": {
-      "Owner": "Ower",
-      "Maintainer": "Maintainer",
-      "Developer": "Developer",
-      "Reporter": "Reporter"
+      "Owner": "创建者",
+      "Maintainer": "管理员",
+      "Developer": "开发者",
+      "Reporter": "使用者"
     },
     "actions": {
       "addMember": "添加成员",
