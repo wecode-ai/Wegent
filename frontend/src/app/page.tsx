@@ -5,7 +5,6 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from '@/hooks/useTranslation';
 import LanguageSwitcher from '@/components/LanguageSwitcher';
@@ -14,6 +13,7 @@ import { getToken } from '@/apis/user';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { getLastTab } from '@/utils/userPreferences';
+import { Button } from '@/components/ui/button';
 
 export default function Home() {
   const router = useRouter();

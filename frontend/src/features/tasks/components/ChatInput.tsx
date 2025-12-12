@@ -4,12 +4,11 @@
 
 'use client';
 
-import React, { useState, useMemo, useRef, useEffect } from 'react';
-import TextareaAutosize from 'react-textarea-autosize';
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useUser } from '@/features/common/UserContext';
+import type { ChatTipItem } from '@/types/api';
 
 interface ChatInputProps {
   message: string;
@@ -21,6 +20,9 @@ interface ChatInputProps {
   autoFocus?: boolean;
   // Controls whether the message can be submitted (e.g., model selection required)
   canSubmit?: boolean;
+  tipText?: ChatTipItem | null;
+  // Optional badge element to render inline with text
+  badge?: React.ReactNode;
 }
 
 export default function ChatInput({
@@ -28,25 +30,77 @@ export default function ChatInput({
   setMessage,
   handleSendMessage,
   disabled = false,
-  taskType = 'code',
+  taskType: _taskType = 'code',
   autoFocus = false,
   canSubmit = true,
+  tipText,
+  badge,
 }: ChatInputProps) {
-  const { t } = useTranslation('chat');
-  const placeholderKey = taskType === 'chat' ? 'placeholder.input' : 'placeholder.input';
+  const { t, i18n } = useTranslation('chat');
+
+  // Get current language for tip text
+  const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
+
+  // Use tip text as placeholder if available, otherwise use default
+  const placeholder = useMemo(() => {
+    if (tipText) {
+      return tipText[currentLang] || tipText.en || t('placeholder.input');
+    }
+    return t('placeholder.input');
+  }, [tipText, currentLang, t]);
   const [isComposing, setIsComposing] = useState(false);
   // Track if composition just ended (for Safari where compositionend fires before keydown)
   const compositionJustEndedRef = useRef(false);
   const isMobile = useIsMobile();
   const { user } = useUser();
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editableRef = useRef<HTMLDivElement>(null);
+  const badgeRef = useRef<HTMLSpanElement>(null);
+  const [badgeWidth, setBadgeWidth] = useState(0);
+
+  // Track if we should show placeholder
+  const [showPlaceholder, setShowPlaceholder] = useState(!message);
+
+  // Update placeholder visibility when message changes externally
+  useEffect(() => {
+    setShowPlaceholder(!message);
+  }, [message]);
+
+  // Measure badge width for text-indent
+  useEffect(() => {
+    if (badgeRef.current && badge) {
+      // Add some margin (6px = mr-1.5)
+      setBadgeWidth(badgeRef.current.offsetWidth + 8);
+    } else {
+      setBadgeWidth(0);
+    }
+  }, [badge]);
+
+  // Sync contenteditable content with message prop
+  useEffect(() => {
+    if (editableRef.current && editableRef.current.textContent !== message) {
+      // Only update if different to avoid cursor jumping
+      const selection = window.getSelection();
+      const hadFocus = document.activeElement === editableRef.current;
+
+      editableRef.current.textContent = message;
+
+      // Restore cursor to end if had focus
+      if (hadFocus && selection && message) {
+        const range = document.createRange();
+        range.selectNodeContents(editableRef.current);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+  }, [message]);
 
   // Auto focus the input when autoFocus is true and not disabled
   useEffect(() => {
-    if (autoFocus && !disabled && textareaRef.current) {
+    if (autoFocus && !disabled && editableRef.current) {
       // Use setTimeout to ensure the DOM is fully rendered
       const timer = setTimeout(() => {
-        textareaRef.current?.focus();
+        editableRef.current?.focus();
       }, 100);
       return () => clearTimeout(timer);
     }
@@ -54,22 +108,6 @@ export default function ChatInput({
 
   // Get user's send key preference (default to 'enter')
   const sendKey = user?.preferences?.send_key || 'enter';
-
-  // Check if running on Mac
-  const isMac = useMemo(() => {
-    if (typeof window !== 'undefined') {
-      return navigator.platform.toUpperCase().indexOf('MAC') >= 0;
-    }
-    return false;
-  }, []);
-
-  // Get tooltip text for send shortcut based on user preference
-  const tooltipText = useMemo(() => {
-    if (sendKey === 'cmd_enter') {
-      return isMac ? t('send_shortcut_cmd_enter_mac') : t('send_shortcut_cmd_enter_win');
-    }
-    return t('send_shortcut');
-  }, [t, sendKey, isMac]);
 
   const handleCompositionStart = () => {
     setIsComposing(true);
@@ -87,7 +125,7 @@ export default function ChatInput({
     }, 100);
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     // Check multiple conditions for IME compatibility:
     // 1. isComposing state - tracks composition via React state
     // 2. nativeEvent.isComposing - native browser flag (more reliable in some browsers)
@@ -123,33 +161,81 @@ export default function ChatInput({
     }
   };
 
+  const handleInput = useCallback(
+    (e: React.FormEvent<HTMLDivElement>) => {
+      if (disabled) return;
+      const text = e.currentTarget.textContent || '';
+      setMessage(text);
+      setShowPlaceholder(!text);
+    },
+    [disabled, setMessage]
+  );
+
+  const handleFocus = useCallback(() => {
+    // Move cursor to end on focus
+    if (editableRef.current) {
+      const selection = window.getSelection();
+      if (selection) {
+        const range = document.createRange();
+        range.selectNodeContents(editableRef.current);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+      }
+    }
+  }, []);
+
+  // Calculate min height based on device
+  const minHeight = isMobile ? '3.5rem' : '1.75rem';
+  const maxHeight = isMobile ? '9rem' : '12rem';
+
   return (
-    <TooltipProvider>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <div className="w-full" data-tour="task-input">
-            <TextareaAutosize
-              ref={textareaRef}
-              value={message}
-              onChange={e => {
-                if (!disabled) setMessage(e.target.value);
-              }}
-              onKeyDown={handleKeyPress}
-              onCompositionStart={handleCompositionStart}
-              onCompositionEnd={handleCompositionEnd}
-              placeholder={t(placeholderKey)}
-              className={`w-full px-3 py-2 bg-transparent custom-scrollbar text-text-primary text-base placeholder:text-text-muted placeholder:text-base focus:outline-none data-[focus]:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
-              disabled={disabled}
-              minRows={isMobile ? 2 : 1}
-              maxRows={isMobile ? 6 : 8}
-              style={{ resize: 'none', overflow: 'auto' }}
-            />
-          </div>
-        </TooltipTrigger>
-        <TooltipContent side="top" align="start">
-          <p>{tooltipText}</p>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+    <div className="w-full relative" data-tour="task-input">
+      {/* Badge - positioned absolutely, not editable */}
+      {badge && (
+        <span
+          ref={badgeRef}
+          className="absolute left-0 top-2 z-10 pointer-events-auto"
+          style={{ userSelect: 'none' }}
+        >
+          {badge}
+        </span>
+      )}
+
+      {/* Placeholder - shown when empty */}
+      {showPlaceholder && (
+        <div
+          className="absolute pointer-events-none text-text-muted text-base"
+          style={{
+            top: '0.5rem',
+            left: badge ? `${badgeWidth}px` : '0',
+          }}
+        >
+          {placeholder}
+        </div>
+      )}
+
+      {/* Editable content area */}
+      <div
+        ref={editableRef}
+        contentEditable={!disabled}
+        onInput={handleInput}
+        onKeyDown={handleKeyDown}
+        onCompositionStart={handleCompositionStart}
+        onCompositionEnd={handleCompositionEnd}
+        onFocus={handleFocus}
+        className={`w-full py-2 bg-transparent custom-scrollbar text-text-primary text-base focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        style={{
+          minHeight,
+          maxHeight,
+          overflowY: 'auto',
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          // Use text-indent for first line to make room for badge
+          textIndent: badge ? `${badgeWidth}px` : '0',
+        }}
+        suppressContentEditableWarning
+      />
+    </div>
   );
 }

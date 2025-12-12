@@ -85,6 +85,34 @@ export interface SystemStats {
   total_public_models: number;
 }
 
+// Chat Slogan & Tips Types
+export type SloganTipMode = 'chat' | 'code' | 'both';
+
+export interface ChatSloganItem {
+  id: number;
+  zh: string;
+  en: string;
+  mode?: SloganTipMode;
+}
+
+export interface ChatTipItem {
+  id: number;
+  zh: string;
+  en: string;
+  mode?: SloganTipMode;
+}
+
+export interface ChatSloganTipsUpdate {
+  slogans: ChatSloganItem[];
+  tips: ChatTipItem[];
+}
+
+export interface ChatSloganTipsResponse {
+  version: number;
+  slogans: ChatSloganItem[];
+  tips: ChatTipItem[];
+}
+
 // Admin API Services
 export const adminApis = {
   // ==================== User Management ====================
@@ -218,5 +246,21 @@ export const adminApis = {
    */
   async updateQuickAccessConfig(teams: number[]): Promise<{ version: number; teams: number[] }> {
     return apiClient.put('/admin/system-config/quick-access', { teams });
+  },
+
+  // ==================== Chat Slogan & Tips Config ====================
+
+  /**
+   * Get chat slogan and tips configuration
+   */
+  async getSloganTipsConfig(): Promise<ChatSloganTipsResponse> {
+    return apiClient.get('/admin/system-config/slogan-tips');
+  },
+
+  /**
+   * Update chat slogan and tips configuration
+   */
+  async updateSloganTipsConfig(data: ChatSloganTipsUpdate): Promise<ChatSloganTipsResponse> {
+    return apiClient.put('/admin/system-config/slogan-tips', data);
   },
 };

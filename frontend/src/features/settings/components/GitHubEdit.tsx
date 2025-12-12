@@ -368,7 +368,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             !token.trim() ||
             tokenSaving
           }
-          variant="default"
+          variant="primary"
           size="sm"
           style={{ flex: 1 }}
         >
