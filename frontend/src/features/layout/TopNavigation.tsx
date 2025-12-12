@@ -9,11 +9,9 @@ import { Bars3Icon } from '@heroicons/react/24/outline';
 
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery';
-import { MobileNavTabs } from './components/MobileNavTabs';
-import { DesktopNavLinks } from './components/DesktopNavLinks';
 
 type TopNavigationProps = {
-  activePage: 'chat' | 'code' | 'wiki' | 'dashboard';
+  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard';
   variant?: 'with-sidebar' | 'standalone';
   showLogo?: boolean;
   children?: React.ReactNode;
@@ -21,7 +19,6 @@ type TopNavigationProps = {
 };
 
 export default function TopNavigation({
-  activePage,
   variant = 'standalone',
   showLogo = false,
   children,
@@ -39,7 +36,7 @@ export default function TopNavigation({
 
   return (
     <div className="relative flex items-center justify-between px-4 sm:px-6 py-2 sm:py-3 min-h-[44px] bg-base">
-      {/* Left side - Mobile sidebar toggle, Logo, and Mode selector */}
+      {/* Left side - Mobile sidebar toggle and Logo */}
       <div className="flex items-center gap-3">
         {showHamburgerMenu && (
           <button
@@ -67,17 +64,8 @@ export default function TopNavigation({
         )}
       </div>
 
-      {/* Center - Navigation links */}
-      <nav
-        className="flex-1 flex justify-center items-center"
-        aria-label={t('common.main_navigation')}
-      >
-        {isMobile ? (
-          <MobileNavTabs activePage={activePage} />
-        ) : (
-          <DesktopNavLinks activePage={activePage} />
-        )}
-      </nav>
+      {/* Center spacer */}
+      <div className="flex-1" />
 
       {/* Right side - User menu and other controls */}
       {children && <div className="flex items-center gap-2 sm:gap-3">{children}</div>}

@@ -8,7 +8,6 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { Send, CircleStop, Upload } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
-import TeamSelector from './TeamSelector';
 import SearchEngineSelector from './SearchEngineSelector';
 import ModelSelector, {
   Model,
@@ -1086,16 +1085,6 @@ export default function ChatArea({
                           engines={searchEngines}
                         />
                       )}
-                      {teams.length > 0 && (
-                        <TeamSelector
-                          selectedTeam={selectedTeam}
-                          setSelectedTeam={handleTeamChange}
-                          teams={teams}
-                          disabled={hasMessages}
-                          isLoading={isTeamsLoading}
-                          currentMode={taskType}
-                        />
-                      )}
                       {selectedTeam && (
                         <ModelSelector
                           selectedModel={selectedModel}
@@ -1216,6 +1205,7 @@ export default function ChatArea({
                 onTeamSelect={handleTeamChange}
                 currentMode={taskType}
                 isLoading={isTeamsLoading}
+                isTeamsLoading={isTeamsLoading}
               />
             </div>
           </div>
@@ -1319,16 +1309,6 @@ export default function ChatArea({
                         onSelectEngine={handleSearchEngineChange}
                         disabled={isLoading || isStreaming}
                         engines={searchEngines}
-                      />
-                    )}
-                    {teams.length > 0 && (
-                      <TeamSelector
-                        selectedTeam={selectedTeam}
-                        setSelectedTeam={handleTeamChange}
-                        teams={teams}
-                        disabled={hasMessages}
-                        isLoading={isTeamsLoading}
-                        currentMode={taskType}
                       />
                     )}
                     {selectedTeam && (

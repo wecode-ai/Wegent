@@ -10,7 +10,16 @@ import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { Search, Plus, X, PanelLeftClose, PanelLeftOpen, MessageSquare, Code, BookOpen } from 'lucide-react';
+import {
+  Search,
+  Plus,
+  X,
+  PanelLeftClose,
+  PanelLeftOpen,
+  MessageSquare,
+  Code,
+  BookOpen,
+} from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
@@ -18,6 +27,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import MobileSidebar from '@/features/layout/MobileSidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
@@ -40,7 +50,6 @@ export default function TaskSidebar({
   const {
     tasks,
     loadMore,
-    hasMore,
     loadingMore,
     searchTerm,
     setSearchTerm,
@@ -53,6 +62,8 @@ export default function TaskSidebar({
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
+  const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Custom debounce
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -98,6 +109,25 @@ export default function TaskSidebar({
     setSearchTerm('');
     searchTasks('');
   };
+
+  // Open search dialog
+  const handleOpenSearchDialog = () => {
+    setIsSearchDialogOpen(true);
+  };
+
+  // Close search dialog
+  const handleCloseSearchDialog = () => {
+    setIsSearchDialogOpen(false);
+  };
+
+  // Focus input when dialog opens
+  useEffect(() => {
+    if (isSearchDialogOpen && searchInputRef.current) {
+      setTimeout(() => {
+        searchInputRef.current?.focus();
+      }, 100);
+    }
+  }, [isSearchDialogOpen]);
 
   // Get navigation buttons based on current page type
   const getNavigationButtons = () => {
@@ -201,7 +231,7 @@ export default function TaskSidebar({
                     variant="ghost"
                     size="icon"
                     onClick={onToggleCollapsed}
-                    className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover"
+                    className="h-8 w-8 p-0 text-text-muted hover:text-text-primary hover:bg-hover rounded-xl"
                     aria-label={isCollapsed ? t('sidebar.expand') : t('sidebar.collapse')}
                   >
                     {isCollapsed ? (
@@ -229,14 +259,16 @@ export default function TaskSidebar({
                 <Button
                   variant="ghost"
                   onClick={handleNewAgentClick}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded"
-                  aria-label={t('tasks.new_task')}
+                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
+                  aria-label={
+                    pageType === 'chat' ? t('tasks.new_conversation') : t('tasks.new_task')
+                  }
                 >
                   <Plus className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
-                <p>{t('tasks.new_task')}</p>
+                <p>{pageType === 'chat' ? t('tasks.new_conversation') : t('tasks.new_task')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -244,16 +276,16 @@ export default function TaskSidebar({
           <Button
             variant="ghost"
             onClick={handleNewAgentClick}
-            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover"
+            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
             size="sm"
           >
             <Plus className="h-4 w-4 mr-0.5" />
-            {t('tasks.new_task')}
+            {pageType === 'chat' ? t('tasks.new_conversation') : t('tasks.new_task')}
           </Button>
         )}
       </div>
 
-      {/* Search */}
+      {/* Search Button */}
       <div className="px-1 mb-0">
         {isCollapsed ? (
           <TooltipProvider>
@@ -261,39 +293,84 @@ export default function TaskSidebar({
               <TooltipTrigger asChild>
                 <Button
                   variant="ghost"
-                  onClick={onToggleCollapsed}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded"
-                  aria-label={t('tasks.search_placeholder')}
+                  onClick={handleOpenSearchDialog}
+                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
+                  aria-label={
+                    pageType === 'chat'
+                      ? t('tasks.search_placeholder_chat')
+                      : t('tasks.search_placeholder')
+                  }
                 >
                   <Search className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
-                <p>{t('tasks.search_placeholder')}</p>
+                <p>
+                  {pageType === 'chat'
+                    ? t('tasks.search_placeholder_chat')
+                    : t('tasks.search_placeholder')}
+                </p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
         ) : (
-          <div className="relative group">
-            <Search className="absolute left-2.5 top-1/2 transform -translate-y-1/2 h-3.5 w-3.5 text-text-muted" />
+          <Button
+            variant="ghost"
+            onClick={handleOpenSearchDialog}
+            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
+            size="sm"
+          >
+            <Search className="h-4 w-4 mr-0.5" />
+            {pageType === 'chat'
+              ? t('tasks.search_placeholder_chat')
+              : t('tasks.search_placeholder')}
+          </Button>
+        )}
+      </div>
+
+      {/* Search Dialog */}
+      <Dialog open={isSearchDialogOpen} onOpenChange={setIsSearchDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>
+              {pageType === 'chat'
+                ? t('tasks.search_placeholder_chat')
+                : t('tasks.search_placeholder')}
+            </DialogTitle>
+          </DialogHeader>
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-text-muted" />
             <input
+              ref={searchInputRef}
               type="text"
               value={localSearchTerm}
               onChange={handleSearchChange}
-              placeholder={t('tasks.search_placeholder')}
-              className="w-full pl-8 pr-8 py-1.5 bg-transparent group-hover:bg-hover border border-transparent group-hover:border-border rounded text-sm text-text-primary placeholder:text-text-primary focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent focus:bg-hover cursor-text"
+              placeholder={
+                pageType === 'chat'
+                  ? t('tasks.search_placeholder_chat')
+                  : t('tasks.search_placeholder')
+              }
+              className="w-full pl-10 pr-10 py-2 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
+              onKeyDown={e => {
+                if (e.key === 'Enter') {
+                  handleCloseSearchDialog();
+                }
+              }}
             />
             {localSearchTerm && (
               <button
                 onClick={handleClearSearch}
-                className="absolute right-2 top-1/2 transform -translate-y-1/2"
+                className="absolute right-3 top-1/2 transform -translate-y-1/2"
               >
-                <X className="h-3.5 w-3.5 text-text-muted hover:text-text-primary" />
+                <X className="h-4 w-4 text-text-muted hover:text-text-primary" />
               </button>
             )}
           </div>
-        )}
-      </div>
+          {localSearchTerm && (
+            <p className="text-xs text-text-muted mt-2">{t('tasks.press_enter_to_search')}</p>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* Mark All As Read Button - hide in collapsed mode */}
       {!isCollapsed && totalUnreadCount > 0 && (
@@ -310,28 +387,32 @@ export default function TaskSidebar({
       {/* Navigation Buttons - hide in collapsed mode */}
       {!isCollapsed && navigationButtons.length > 0 && (
         <div className="px-1 mb-2">
-          <div className="border-t border-border pt-2">
-            {navigationButtons.map(btn => (
-              <Button
-                key={btn.path}
-                variant="ghost"
-                onClick={() => router.push(btn.path)}
-                className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover mb-0.5"
-                size="sm"
-              >
-                <btn.icon className="h-4 w-4 mr-2" />
-                {btn.label}
-              </Button>
-            ))}
-          </div>
+          {navigationButtons.map(btn => (
+            <Button
+              key={btn.path}
+              variant="ghost"
+              onClick={() => router.push(btn.path)}
+              className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
+              size="sm"
+            >
+              <btn.icon className="h-4 w-4 mr-0.5" />
+              {btn.label}
+            </Button>
+          ))}
         </div>
       )}
 
       {/* Tasks Section */}
       <div
-        className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar`}
+        className={`flex-1 ${isCollapsed ? 'px-0' : 'pl-2 pr-1'} pt-2 overflow-y-auto task-list-scrollbar border-t border-border`}
         ref={scrollRef}
       >
+        {/* History Title */}
+        {!isCollapsed && !isSearchResult && (
+          <div className="px-1 pb-2 text-xs font-medium text-text-muted">
+            {t('tasks.history_title')}
+          </div>
+        )}
         {isSearching ? (
           <div className="text-center py-8 text-xs text-text-muted">{t('tasks.searching')}</div>
         ) : tasks.length === 0 ? (
@@ -351,9 +432,6 @@ export default function TaskSidebar({
         )}
         {loadingMore && (
           <div className="text-center py-2 text-xs text-text-muted">{t('tasks.loading')}</div>
-        )}
-        {!isSearchResult && !hasMore && tasks.length > 0 && (
-          <div className="text-center py-2 text-xs text-text-muted">{t('tasks.no_more_tasks')}</div>
         )}
       </div>
 
