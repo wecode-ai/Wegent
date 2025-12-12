@@ -7,18 +7,19 @@
 Database migration script to encrypt existing plain text git tokens
 """
 
-import sys
-import os
 import logging
+import os
+import sys
 from typing import List
 
 # Add parent directory to path to import app modules
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from app.core.config import settings
 from shared.utils.crypto import encrypt_git_token, is_token_encrypted
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from app.core.config import settings
 from app.models.user import User
 
 logging.basicConfig(level=logging.INFO)

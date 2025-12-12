@@ -36,6 +36,16 @@ hiddenimports += collect_submodules('cryptography')
 hiddenimports += collect_submodules('requests')
 hiddenimports += collect_submodules('pymysql')
 
+# OpenTelemetry packages
+hiddenimports += collect_submodules('opentelemetry')
+hiddenimports += collect_submodules('opentelemetry.sdk')
+hiddenimports += collect_submodules('opentelemetry.exporter')
+hiddenimports += collect_submodules('opentelemetry.instrumentation')
+hiddenimports += collect_submodules('opentelemetry.instrumentation.fastapi')
+hiddenimports += collect_submodules('opentelemetry.instrumentation.httpx')
+hiddenimports += collect_submodules('opentelemetry.instrumentation.requests')
+hiddenimports += collect_submodules('opentelemetry.instrumentation.system_metrics')
+
 # Collect shared module submodules
 if os.path.exists(shared_path):
     hiddenimports += collect_submodules('shared')

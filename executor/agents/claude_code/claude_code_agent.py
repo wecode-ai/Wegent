@@ -30,12 +30,23 @@ from shared.status import TaskStatus
 from shared.models.task import ThinkingStep, ExecutionResult
 from shared.utils.crypto import is_token_encrypted, decrypt_git_token
 from shared.utils.sensitive_data_masker import mask_sensitive_data
+from shared.telemetry.decorators import trace_async, add_span_event
 
 from executor.utils.mcp_utils import extract_mcp_servers_config
 from executor.tasks.task_state_manager import TaskStateManager, TaskState
 from executor.tasks.resource_manager import ResourceManager
 
 logger = setup_logger("claude_code_agent")
+
+
+def _extract_claude_agent_attributes(self, *args, **kwargs) -> Dict[str, Any]:
+    """Extract trace attributes from ClaudeCodeAgent instance."""
+    return {
+        "task.id": str(self.task_id),
+        "task.subtask_id": str(self.subtask_id),
+        "agent.type": "ClaudeCode",
+        "agent.session_id": str(self.session_id),
+    }
 
 
 def _generate_claude_code_user_id() -> str:
@@ -660,6 +671,11 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             return self._handle_execution_error(e, "Claude Code Agent execution")
 
+    @trace_async(
+        span_name="claude_code_execute_async",
+        tracer_name="executor.agents.claude_code",
+        extract_attributes=_extract_claude_agent_attributes
+    )
     async def execute_async(self) -> TaskStatus:
         """
         Execute Claude Code Agent task asynchronously
@@ -681,6 +697,10 @@ class ClaudeCodeAgent(Agent):
             self.state_manager.report_progress(
                 60, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}"
             )
+            
+            # Add trace event for state manager initialization
+            add_span_event("state_manager_initialized")
+            
             return await self._async_execute()
         except Exception as e:
             return self._handle_execution_error(e, "Claude Code Agent async execution")
