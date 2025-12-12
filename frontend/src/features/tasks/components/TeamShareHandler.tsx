@@ -241,7 +241,7 @@ export default function TeamShareHandler({
         </Button>
         <Button
           onClick={handleConfirmJoin}
-          variant="default"
+          variant="primary"
           size="sm"
           disabled={!!isSelfShare || isJoining}
           style={{ flex: 1 }}

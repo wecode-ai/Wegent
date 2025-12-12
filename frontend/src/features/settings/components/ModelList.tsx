@@ -528,8 +528,8 @@ const ModelList: React.FC<ModelListProps> = ({ scope, groupName, groupRoleMap, o
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t('actions.cancel')}</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDelete} className="bg-error hover:bg-error/90">
-              {t('actions.delete')}
+            <AlertDialogAction onClick={handleDelete} asChild>
+              <Button variant="destructive">{t('actions.delete')}</Button>
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

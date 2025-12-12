@@ -539,7 +539,7 @@ export default function TaskShareHandler({ onTaskCopied }: TaskShareHandlerProps
         </Button>
         <Button
           onClick={handleConfirmCopy}
-          variant="default"
+          variant="primary"
           size="sm"
           disabled={
             !!isSelfShare ||
