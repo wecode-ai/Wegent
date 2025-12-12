@@ -25,15 +25,18 @@ class ModelAdapter:
         """
         Convert Kind (Model) to Model-like dictionary
         """
-        # Extract config from json.spec.modelConfig
+        # Extract config and displayName from json
         config = {}
+        display_name = None
         if isinstance(kind.json, dict):
             model_crd = Model.model_validate(kind.json)
             config = model_crd.spec.modelConfig
+            display_name = model_crd.metadata.displayName
 
         return {
             "id": kind.id,
             "name": kind.name,
+            "displayName": display_name,
             "config": config,
             "is_active": kind.is_active,
             "created_at": kind.created_at,
