@@ -14,6 +14,7 @@ type TopNavigationProps = {
   activePage?: 'chat' | 'code' | 'wiki' | 'dashboard';
   variant?: 'with-sidebar' | 'standalone';
   showLogo?: boolean;
+  title?: string;
   children?: React.ReactNode;
   onMobileSidebarToggle?: () => void;
 };
@@ -21,6 +22,7 @@ type TopNavigationProps = {
 export default function TopNavigation({
   variant = 'standalone',
   showLogo = false,
+  title,
   children,
   onMobileSidebarToggle,
 }: TopNavigationProps) {
@@ -36,7 +38,7 @@ export default function TopNavigation({
 
   return (
     <div className="relative flex items-center justify-between px-4 sm:px-6 py-2 sm:py-3 min-h-[44px] bg-base">
-      {/* Left side - Mobile sidebar toggle and Logo */}
+      {/* Left side - Mobile sidebar toggle, Logo, and Title */}
       <div className="flex items-center gap-3">
         {showHamburgerMenu && (
           <button
@@ -62,6 +64,8 @@ export default function TopNavigation({
             {!isMobile && <span className="text-lg font-semibold text-text-primary">Wegent</span>}
           </div>
         )}
+
+        {title && <h1 className="text-xl font-semibold text-text-primary">{title}</h1>}
       </div>
 
       {/* Center spacer */}

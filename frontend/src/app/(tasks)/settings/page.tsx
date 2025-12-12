@@ -4,7 +4,7 @@
 
 'use client';
 
-import { Suspense, useState, useEffect, useMemo } from 'react';
+import { Suspense, useState, useEffect, useMemo, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
@@ -16,7 +16,6 @@ import { GroupManager } from '@/features/settings/components/groups/GroupManager
 import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope';
 import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope';
 import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope';
-import SkillList from '@/features/settings/components/skills/SkillList';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
@@ -51,10 +50,16 @@ function SettingsContent() {
       return (tabMap[tab] || tab) as SettingsTabId;
     }
 
-    return 'personal-models';
+    // Default to personal-team (智能体) as the entry module
+    return 'personal-team';
   };
 
   const [activeTab, setActiveTab] = useState<SettingsTabId>(getInitialTab);
+
+  // Selected group state for group scope
+  const [selectedGroup, setSelectedGroup] = useState<string | null>(() => {
+    return searchParams.get('group') || null;
+  });
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -71,7 +76,7 @@ function SettingsContent() {
   }, []);
 
   const handleToggleCollapsed = () => {
-    setIsCollapsed((prev) => {
+    setIsCollapsed(prev => {
       const newValue = !prev;
       localStorage.setItem('task-sidebar-collapsed', String(newValue));
       return newValue;
@@ -87,8 +92,25 @@ function SettingsContent() {
       : tab.startsWith('group-')
         ? 'groups'
         : tab;
-    router.replace(`?section=${section}&tab=${tab}`);
+    const groupParam = selectedGroup ? `&group=${encodeURIComponent(selectedGroup)}` : '';
+    router.replace(`?section=${section}&tab=${tab}${groupParam}`);
   };
+
+  // Handle group change
+  const handleGroupChange = useCallback(
+    (groupName: string | null) => {
+      setSelectedGroup(groupName);
+      // Update URL with group parameter
+      const section = activeTab.startsWith('personal-')
+        ? 'personal'
+        : activeTab.startsWith('group-')
+          ? 'groups'
+          : activeTab;
+      const groupParam = groupName ? `&group=${encodeURIComponent(groupName)}` : '';
+      router.replace(`?section=${section}&tab=${activeTab}${groupParam}`);
+    },
+    [activeTab, router]
+  );
 
   // Render content based on active tab
   const currentComponent = useMemo(() => {
@@ -102,21 +124,38 @@ function SettingsContent() {
       case 'group-manager':
         return <GroupManager />;
       case 'group-models':
-        return <ModelListWithScope scope="group" />;
+        return (
+          <ModelListWithScope
+            scope="group"
+            selectedGroup={selectedGroup}
+            onGroupChange={setSelectedGroup}
+          />
+        );
       case 'group-shells':
-        return <ShellListWithScope scope="group" />;
+        return (
+          <ShellListWithScope
+            scope="group"
+            selectedGroup={selectedGroup}
+            onGroupChange={setSelectedGroup}
+          />
+        );
       case 'group-team':
-        return <TeamListWithScope scope="group" />;
-      case 'skills':
-        return <SkillList />;
+        return (
+          <TeamListWithScope
+            scope="group"
+            selectedGroup={selectedGroup}
+            onGroupChange={setSelectedGroup}
+          />
+        );
       case 'integrations':
         return <GitHubIntegration />;
       case 'general':
         return <NotificationSettings />;
       default:
-        return <ModelListWithScope scope="personal" />;
+        // Default to personal-team (智能体)
+        return <TeamListWithScope scope="personal" />;
     }
-  }, [activeTab]);
+  }, [activeTab, selectedGroup]);
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
@@ -137,18 +176,22 @@ function SettingsContent() {
         <TopNavigation
           activePage="dashboard"
           variant="with-sidebar"
+          title={t('settings.title')}
           onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
         >
           {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
         {/* Tab navigation */}
-        <SettingsTabNav activeTab={activeTab} onTabChange={handleTabChange} />
+        <SettingsTabNav
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          selectedGroup={selectedGroup}
+          onGroupChange={handleGroupChange}
+        />
 
         {/* Settings content area */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6">
-          {currentComponent}
-        </div>
+        <div className="flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6">{currentComponent}</div>
       </div>
     </div>
   );

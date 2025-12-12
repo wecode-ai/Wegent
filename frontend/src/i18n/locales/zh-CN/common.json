@@ -350,6 +350,7 @@
     "open_from_git": "Git"
   },
   "settings": {
+    "title": "设置",
     "integrations": "集成",
     "bot": "机器人",
     "team": "智能体",

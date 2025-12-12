@@ -350,6 +350,7 @@
     "open_from_git": "Git"
   },
   "settings": {
+    "title": "Settings",
     "integrations": "Integrations",
     "bot": "Bot",
     "team": "Team",
