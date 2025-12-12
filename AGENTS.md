@@ -356,23 +356,24 @@ The pre-commit hook performs:
 wegent/
 ├── backend/              # FastAPI backend
 │   ├── app/
-│   │   ├── api/          # Route handlers (auth, bots, models, shells, teams, tasks, chat, git, executors, dify, quota, admin)
+│   │   ├── api/          # Route handlers (auth, bots, models, shells, teams, tasks, chat, git, executors, dify, quota, admin, groups)
 │   │   ├── core/         # Config, security, cache, YAML init
-│   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, PublicModel, PublicShell, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
-│   │   ├── schemas/      # Pydantic schemas & CRD definitions
-│   │   ├── services/     # Business logic (chat/, adapters/, search/, kind.py, repository.py)
+│   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, Namespace, NamespaceMember, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
+│   │   ├── schemas/      # Pydantic schemas & CRD definitions (namespace.py, namespace_member.py)
+│   │   ├── services/     # Business logic (chat/, adapters/, search/, kind.py, repository.py, group_service.py, group_permission.py)
 │   │   └── repository/   # Git providers (GitHub, GitLab, Gitee, Gerrit)
 │   ├── alembic/          # Database migrations
 │   └── init_data/        # YAML initialization data
 ├── frontend/             # Next.js frontend
 │   └── src/
 │       ├── app/          # Pages: /, /login, /settings, /chat, /code, /tasks, /shared/task, /admin
-│       ├── apis/         # API clients (client.ts + module-specific, admin.ts)
+│       ├── apis/         # API clients (client.ts + module-specific, admin.ts, groups.ts)
 │       ├── components/   # UI components (ui/ for shadcn, common/)
 │       ├── features/     # Feature modules (common, layout, login, settings, tasks, theme, onboarding, admin)
+│       │   └── settings/components/groups/  # Group management components
 │       ├── hooks/        # Custom hooks (useChatStream, useTranslation, useAttachment, useStreamingRecovery)
 │       ├── i18n/         # Internationalization (en, zh-CN)
-│       └── types/        # TypeScript types
+│       └── types/        # TypeScript types (group.ts, api.ts)
 ├── executor/             # Task executor (runs in Docker)
 │   ├── agents/           # ClaudeCode, Agno, Dify, ImageValidator
 │   ├── callback/         # Progress callback handlers
@@ -521,7 +522,7 @@ git commit -m "chore: merge alembic heads"
 
 **Key directories:**
 - `src/app/` - App Router pages
-- `src/features/settings/` - Models, Teams, Bots, Shells, Skills management
+- `src/features/settings/` - Models, Teams, Bots, Shells, Skills, Groups management
 - `src/features/tasks/` - Chat interface, Workbench, streaming
 - `src/apis/` - API client modules
 
@@ -535,6 +536,8 @@ git commit -m "chore: merge alembic heads"
 - Streaming chat with recovery (`useStreamingRecovery`)
 - PDF export (`ExportPdfButton`, `pdf-generator.ts`)
 - Task/Team sharing (`TaskShareModal`, `TeamShareModal`)
+- Group management (`GroupManager`, `GroupMembersDialog`)
+- Resource scoping (personal, group, all)
 - Dify integration (`DifyAppSelector`, `DifyParamsForm`)
 - Web search integration (Globe icon toggle in chat interface)
 
@@ -587,8 +590,14 @@ git commit -m "chore: merge alembic heads"
 
 | Type | Description | Storage |
 |------|-------------|---------|
-| **Public** | System-provided, shared across users | `public_models` table |
-| **User** | User-defined private models | `kinds` table (kind='Model') |
+| **Public** | System-provided models, shared across all users | `kinds` table (user_id=0, namespace='default') |
+| **User** | User-defined private models | `kinds` table (user_id=xxx, namespace='default') |
+| **Group** | Group-shared models | `kinds` table (user_id=xxx, namespace!=default) |
+
+**Note:**
+- Group resources use `user_id=xxx`, `namespace!=default` (user_id represents who created the group resource)
+- Public models migrated from `public_models` table to `kinds` table with `user_id=0` marker (kind='Model')
+- Public shells also migrated to `kinds` table with `user_id=0` marker (kind='Shell')
 
 ### Model Resolution Order
 
@@ -632,6 +641,7 @@ spec:
 |--------|---------|
 | `/api/auth` | Authentication (login, OIDC) |
 | `/api/users` | User management |
+| `/api/groups` | Group (Namespace) management (CRUD, members, permissions) |
 | `/api/bots` | Bot CRUD |
 | `/api/models` | Model management (unified, test-connection, compatible) |
 | `/api/shells` | Shell management (unified, validate-image) |
@@ -665,6 +675,22 @@ spec:
 | `/public-models/{model_id}` | PUT | Update public model |
 | `/public-models/{model_id}` | DELETE | Delete public model |
 | `/stats` | GET | Get system statistics |
+
+### Group API Endpoints (`/api/groups`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/` | GET | List all groups where user is a member |
+| `/` | POST | Create new group |
+| `/{group_name:path}` | GET | Get group details |
+| `/{group_name:path}` | PUT | Update group info |
+| `/{group_name:path}` | DELETE | Delete group |
+| `/{group_name:path}/members` | GET | List group members |
+| `/{group_name:path}/members` | POST | Add member to group |
+| `/{group_name:path}/members/{member_id}` | GET | Get member details |
+| `/{group_name:path}/members/{member_id}` | PUT | Update member role |
+| `/{group_name:path}/members/{member_id}` | DELETE | Remove member from group |
+| `/{group_name:path}/permissions` | GET | Check user permissions in group |
 
 ### Executor Manager Routes
 
@@ -712,6 +738,72 @@ The `role` column was added via migration `b2c3d4e5f6a7_add_role_to_users.py`:
 - Users with `user_name='admin'` are automatically set to `role='admin'`
 
 ---
+
+## 📦 Group (Namespace) Management
+
+**Groups (Namespaces) provide resource organization and collaboration for Bots, Models, Shells, and Teams.**
+
+### Overview
+
+Groups are organizational units that allow users to:
+- **Organize resources**: Group related Bots, Models, Shells, and Teams together
+- **Collaborate**: Share resources with team members via group membership
+- **Hierarchical structure**: Support nested groups (e.g., `parent/child/grandchild`)
+
+### Group Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Unique identifier, immutable (supports hierarchical format: `aaa/bbb/ccc`) |
+| `display_name` | string | Human-readable name (optional, mutable) |
+| `owner_user_id` | int | Group creator and owner |
+| `visibility` | enum | Access level: `private`, `internal`, `public` (default: `public`, currently not enforced) |
+| `description` | string | Group description |
+| `is_active` | bool | Group status |
+| `member_count` | int | Number of members in the group |
+| `resource_count` | int | Number of resources in the group |
+
+### Group Roles & Permissions
+
+| Role | Permissions |
+|------|-------------|
+| **Owner** | Full control: manage group, members, and all resources |
+| **Maintainer** | Manage resources, add/remove members (except Owner) |
+| **Developer** | Create and edit resources, view members |
+| **Reporter** | Read-only access to resources |
+
+### Hierarchical Groups
+
+Groups support up to 5 levels of nesting using `/` separator:
+- Format: `parent/child/grandchild`
+- Example: `ai-team/models/production`
+- Permissions: Inherited from parent groups
+- Max depth: 5 levels (0-4 slashes)
+
+### Resource Scopes
+
+When querying resources (Bots, Models, Shells, Teams), you can specify a scope:
+
+| Scope | Description | API Parameter |
+|-------|-------------|---------------|
+| `personal` | Only user's own resources | `scope=personal` |
+| `group` | Resources from a specific group | `scope=group&group_name=<name>` |
+| `all` | All accessible resources (personal + shared + public) | `scope=all` (default) |
+
+### Frontend Components
+
+**Location:** `frontend/src/features/settings/components/groups/`
+
+| Component | Purpose |
+|-----------|---------|
+| `GroupManager` | Main group list and management interface |
+| `CreateGroupDialog` | Create new group dialog |
+| `EditGroupDialog` | Edit group details |
+| `DeleteGroupConfirmDialog` | Confirm group deletion |
+| `GroupMembersDialog` | Manage group members and roles |
+| `GroupSelector` | Dropdown selector for resource creation |
+| `BotListWithScope`, `ModelListWithScope`, `ShellListWithScope`, `TeamListWithScope` | Resource lists with group filtering |
+
 
 ## 🔒 Security
 
