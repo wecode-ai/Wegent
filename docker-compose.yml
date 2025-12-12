@@ -71,6 +71,11 @@ services:
       INIT_DATA_ENABLED: "True"
       MAX_UPLOAD_FILE_SIZE_MB: 50
       MAX_EXTRACTED_TEXT_LENGTH: 1000000
+      # OpenTelemetry Configuration (uncomment to enable)
+      # OTEL_ENABLED: "true"
+      # OTEL_SERVICE_NAME: "wegent-backend"
+      # OTEL_EXPORTER_OTLP_ENDPOINT: "http://localhost:4317"
+      # OTEL_TRACES_SAMPLER_ARG: "1.0"
     depends_on:
       mysql:
         condition: service_healthy
@@ -117,6 +122,11 @@ services:
       - EXECUTOR_PORT_RANGE_MIN=10001
       - EXECUTOR_PORT_RANGE_MAX=10100
       - EXECUTOR_WORKSPCE=${HOME}/wecode-bot
+      # OpenTelemetry Configuration (uncomment to enable)
+      # - OTEL_ENABLED=true
+      # - OTEL_SERVICE_NAME=wegent-executor-manager
+      # - OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317
+      # - OTEL_TRACES_SAMPLER_ARG=1.0
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:

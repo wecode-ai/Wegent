@@ -2,14 +2,16 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import jwt  # PyJWT
 import time
-import requests
-from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
-from shared.logger import setup_logger
-from executor_manager.config import config
 from functools import lru_cache
+from typing import Any, Dict, Optional
+
+import jwt  # PyJWT
+import requests
+from shared.logger import setup_logger
+
+from executor_manager.config import config
 
 logger = setup_logger(__name__)
 

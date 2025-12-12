@@ -14,7 +14,6 @@ Configuration module, stores application configuration parameters
 # API Configuration
 import os
 
-
 TASK_API_DOMAIN = os.getenv("TASK_API_DOMAIN", "http://localhost:8000")
 
 # Task fetch parameters
@@ -55,3 +54,7 @@ GITHUB_PRIVATE_KEY = os.getenv("GITHUB_PRIVATE_KEY")
 EXECUTOR_DISPATCHER_MODE = os.getenv("EXECUTOR_DISPATCHER_MODE", "docker")
 EXECUTOR_CONFIG = os.getenv("EXECUTOR_CONFIG", "{\"docker\":\"executor_manager.executors.docker.DockerExecutor\"}")
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
+
+# OpenTelemetry configuration is centralized in shared/telemetry/config.py
+# Use: from shared.telemetry.config import get_otel_config
+# All OTEL_* environment variables are read from there

@@ -34,4 +34,8 @@ CUSTOM_INSTRUCTION_FILES = os.getenv(
     ".cursorrules,.windsurfrules"
 ).split(",")
 
+# OpenTelemetry configuration is centralized in shared/telemetry/config.py
+# Use: from shared.telemetry.config import get_otel_config
+# All OTEL_* environment variables are read from there
+
 CUSTOM_CONFIG = load_custom_config()

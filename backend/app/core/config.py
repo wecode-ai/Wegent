@@ -135,6 +135,10 @@ class Settings(BaseSettings):
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
 
+    # OpenTelemetry configuration is centralized in shared/telemetry/config.py
+    # Use: from shared.telemetry.config import get_otel_config
+    # All OTEL_* environment variables are read from there
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

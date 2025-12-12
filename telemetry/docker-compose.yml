@@ -1,0 +1,108 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# OpenTelemetry Observability Stack
+# This file contains the observability infrastructure services.
+#
+# Usage:
+#   cd telemetry
+#   docker-compose up -d
+#
+# Or from project root:
+#   docker-compose -f telemetry/docker-compose.yml up -d
+#
+# Services included:
+# - Elasticsearch: Long-term storage for traces, metrics, and logs
+# - Kibana: Query and dashboard visualization
+# - Jaeger: Trace visualization and service dependency graph
+# - OpenTelemetry Collector: Receives and exports telemetry data
+#
+# Access URLs:
+# - Jaeger UI: http://localhost:16686
+# - Kibana: http://localhost:5601
+# - Elasticsearch: http://localhost:9200
+
+services:
+  # Elasticsearch for OpenTelemetry data storage
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: wegent-elasticsearch
+    restart: always
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    networks:
+      - wegent-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  # Kibana for visualization and querying
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.11.0
+    container_name: wegent-kibana
+    restart: always
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - wegent-network
+
+  # Jaeger for trace visualization
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: wegent-jaeger
+    restart: always
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"   # Jaeger UI
+      - "14250:14250"   # gRPC (for collector)
+    networks:
+      - wegent-network
+
+  # OpenTelemetry Collector
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.91.0
+    container_name: wegent-otel-collector
+    restart: always
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    environment:
+      - ELASTICSEARCH_ENDPOINT=http://elasticsearch:9200
+      - DEPLOYMENT_ENVIRONMENT=development
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otel-collector-config.yaml:ro
+    ports:
+      - "4317:4317"     # OTLP gRPC
+      - "4318:4318"     # OTLP HTTP
+      - "8888:8888"     # Prometheus metrics (collector self-metrics)
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    networks:
+      - wegent-network
+
+volumes:
+  es_data:
+    driver: local
+
+networks:
+  wegent-network:
+    driver: bridge
+    external: true
+    name: wegent-network

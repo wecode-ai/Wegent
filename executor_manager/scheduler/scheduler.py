@@ -10,33 +10,33 @@
 Scheduler module, responsible for periodic task execution
 """
 
-from executor_manager.executors.dispatcher import ExecutorDispatcher
-from shared.logger import setup_logger
-
 import os
 import time
-from datetime import datetime
-from apscheduler.schedulers.background import BackgroundScheduler
+
+import pytz
 from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.jobstores.memory import MemoryJobStore
+from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-import pytz
-from executor_manager.config.config import (
-    EXECUTOR_DISPATCHER_MODE,
-    TASK_FETCH_INTERVAL,
-    SCHEDULER_SLEEP_TIME,
-    OFFLINE_TASK_EVENING_HOURS,
-    OFFLINE_TASK_MORNING_HOURS
-)
+from shared.logger import setup_logger
+from shared.telemetry.decorators import (add_span_event, set_span_attribute,
+                                         trace_sync)
+
 from executor_manager.clients.task_api_client import TaskApiClient
+from executor_manager.config.config import (EXECUTOR_DISPATCHER_MODE,
+                                            OFFLINE_TASK_EVENING_HOURS,
+                                            OFFLINE_TASK_MORNING_HOURS,
+                                            SCHEDULER_SLEEP_TIME,
+                                            TASK_FETCH_INTERVAL)
+from executor_manager.executors.dispatcher import ExecutorDispatcher
 from executor_manager.tasks.task_processor import TaskProcessor
 
-# Setup logger
 logger = setup_logger(__name__)
+
 
 class TaskScheduler:
     """Task scheduler class, responsible for periodic task fetching and processing"""
-    
+
     def __init__(self):
         """Initialize scheduler"""
         self.api_client = TaskApiClient()
@@ -44,105 +44,173 @@ class TaskScheduler:
         self.running = False
         self.max_concurrent_tasks = int(os.getenv("MAX_CONCURRENT_TASKS", "30"))
         self.max_offline_concurrent_tasks = int(os.getenv("MAX_OFFLINE_CONCURRENT_TASKS", "10"))
-        
+
         # Configure APScheduler
-        jobstores = {
-            'default': MemoryJobStore()
-        }
-        executors = {
-            'default': ThreadPoolExecutor(20)  # Use thread pool executor with max 20 threads
-        }
+        jobstores = {"default": MemoryJobStore()}
+        executors = {"default": ThreadPoolExecutor(20)}
         job_defaults = {
-            'coalesce': False,    # Whether to merge executions
-            'max_instances': 3,   # Maximum instances of the same task
-            'misfire_grace_time': 60  # Grace period for missed task executions (seconds)
+            "coalesce": False,
+            "max_instances": 3,
+            "misfire_grace_time": 60,
         }
-        # Get timezone from environment variable or default to Asia/Shanghai
-        timezone_str = os.getenv('TZ', 'Asia/Shanghai')
+
+        timezone_str = os.getenv("TZ", "Asia/Shanghai")
         try:
             timezone = pytz.timezone(timezone_str)
         except pytz.UnknownTimeZoneError:
             logger.warning(f"Unknown timezone: {timezone_str}, falling back to Asia/Shanghai")
-            timezone = pytz.timezone('Asia/Shanghai')
-        
-        # Create background scheduler with timezone
+            timezone = pytz.timezone("Asia/Shanghai")
+
         self.scheduler = BackgroundScheduler(
             jobstores=jobstores,
             executors=executors,
             job_defaults=job_defaults,
-            timezone=timezone
+            timezone=timezone,
         )
 
+    @trace_sync(
+        span_name="fetch_online_tasks",
+        tracer_name="executor_manager.scheduler",
+        attributes={"task.type": "online", "scheduler.job": "fetch_online_tasks"},
+    )
     def fetch_online_and_process_tasks(self):
-        """Fetch and process tasks"""
-        
-        executor_count_result = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_executor_count("aigc.weibo.com/task-type=online")
-        
+        """Fetch and process online tasks"""
+        executor_count_result = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_executor_count(
+            "aigc.weibo.com/task-type=online"
+        )
+
         if executor_count_result["status"] != "success":
-            logger.error(f"Failed to get pod count: {executor_count_result.get('error_msg', 'Unknown error')}")
+            error_msg = executor_count_result.get("error_msg", "Unknown error")
+            logger.error(f"Failed to get pod count: {error_msg}")
+            set_span_attribute("error", True)
+            set_span_attribute("error.message", error_msg)
             return False
-        
+
         running_executor_num = executor_count_result.get("running", 0)
         logger.info(f"Online tasks status: {running_executor_num} running pods, {self.max_concurrent_tasks} max concurrent tasks")
-        
+
+        set_span_attribute("executor.running_count", running_executor_num)
+        set_span_attribute("executor.max_concurrent", self.max_concurrent_tasks)
+
         available_slots = min(10, self.max_concurrent_tasks - running_executor_num)
-        
+
         if available_slots <= 0:
             logger.info("No available slots for new tasks, skipping fetch")
+            set_span_attribute("task.skipped", True)
+            set_span_attribute("task.skip_reason", "no_available_slots")
             return True
-        
+
         self.api_client.update_fetch_params(limit=available_slots)
         logger.info(f"Fetching up to {available_slots} online tasks")
-        
+        set_span_attribute("task.fetch_limit", available_slots)
+
         success, result = self.api_client.fetch_tasks()
         logger.info(f"Online tasks fetch result: success={success}, data={result}")
-        if success:
-            self.task_processor.process_tasks(result["tasks"])
-        return success
-    
 
+        if success:
+            tasks = result.get("tasks", [])
+            set_span_attribute("task.fetched_count", len(tasks))
+            self.task_processor.process_tasks(tasks)
+        else:
+            set_span_attribute("error", True)
+            set_span_attribute("task.fetch_success", False)
+
+        return success
+
+    @trace_sync(
+        span_name="fetch_offline_tasks",
+        tracer_name="executor_manager.scheduler",
+        attributes={"task.type": "offline", "scheduler.job": "fetch_offline_tasks"},
+    )
     def fetch_offline_and_process_tasks(self):
         """Fetch and process offline tasks"""
-        
-        executor_count_result = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_executor_count("aigc.weibo.com/task-type=offline")
-        
+        executor_count_result = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_executor_count(
+            "aigc.weibo.com/task-type=offline"
+        )
+
         if executor_count_result["status"] != "success":
-            logger.error(f"Failed to get pod count: {executor_count_result.get('error_msg', 'Unknown error')}")
+            error_msg = executor_count_result.get("error_msg", "Unknown error")
+            logger.error(f"Failed to get pod count: {error_msg}")
+            set_span_attribute("error", True)
+            set_span_attribute("error.message", error_msg)
             return False
-        
+
         running_executor_num = executor_count_result.get("running", 0)
         logger.info(f"Offline tasks status: {running_executor_num} running pods, {self.max_offline_concurrent_tasks} max concurrent tasks")
-        
+
+        set_span_attribute("executor.running_count", running_executor_num)
+        set_span_attribute("executor.max_concurrent", self.max_offline_concurrent_tasks)
+
         available_slots = min(10, self.max_offline_concurrent_tasks - running_executor_num)
-        
+
         if available_slots <= 0:
             logger.info("No available slots for new offline tasks, skipping fetch")
+            set_span_attribute("task.skipped", True)
+            set_span_attribute("task.skip_reason", "no_available_slots")
             return True
-    
+
         self.api_client.update_offline_fetch_params(limit=available_slots)
         logger.info(f"Fetching up to {available_slots} offline tasks")
-        
+        set_span_attribute("task.fetch_limit", available_slots)
+
         success, result = self.api_client.fetch_offline_tasks()
         logger.info(f"Offline tasks fetch result: success={success}, data={result}")
+
         if success:
-            self.task_processor.process_tasks(result["tasks"])
+            tasks = result.get("tasks", [])
+            set_span_attribute("task.fetched_count", len(tasks))
+            self.task_processor.process_tasks(tasks)
+        else:
+            set_span_attribute("error", True)
+            set_span_attribute("task.fetch_success", False)
+
         return success
+
+    @trace_sync(
+        span_name="fetch_subtasks",
+        tracer_name="executor_manager.scheduler",
+        attributes={"task.type": "subtask", "scheduler.job": "fetch_subtasks"},
+    )
     def fetch_subtasks(self):
-        current_tasks = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_current_task_ids("aigc.weibo.com/team-mode=pipeline")
+        """Fetch subtasks for pipeline tasks"""
+        current_tasks = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE).get_current_task_ids(
+            "aigc.weibo.com/team-mode=pipeline"
+        )
         logger.info(f"Current task ids: {current_tasks}")
-        if current_tasks.get("task_ids") and len(current_tasks.get("task_ids")) > 0:
-            task_ids = current_tasks.get("task_ids")
+
+        task_ids = current_tasks.get("task_ids", [])
+        set_span_attribute("task.current_pipeline_count", len(task_ids) if task_ids else 0)
+
+        if task_ids and len(task_ids) > 0:
             batch_size = 10
-            
+
             for i in range(0, len(task_ids), batch_size):
-                batch_task_ids = task_ids[i:i+batch_size]
-                logger.info(f"Fetching subtasks batch {i//batch_size + 1}, task_ids: {batch_task_ids}")
-                
+                batch_task_ids = task_ids[i : i + batch_size]
+                batch_num = i // batch_size + 1
+                logger.info(f"Fetching subtasks batch {batch_num}, task_ids: {batch_task_ids}")
+
                 success, result = self.api_client.fetch_subtasks(",".join(batch_task_ids))
                 if success:
-                    self.task_processor.process_tasks(result["tasks"])
+                    tasks = result.get("tasks", [])
+                    add_span_event(
+                        "subtask_batch_fetched",
+                        {
+                            "batch.number": batch_num,
+                            "batch.task_ids": ",".join(batch_task_ids),
+                            "batch.fetched_count": len(tasks),
+                        },
+                    )
+                    self.task_processor.process_tasks(tasks)
                 else:
-                    logger.error(f"Failed to fetch subtasks batch {i//batch_size + 1}: {result}")
+                    logger.error(f"Failed to fetch subtasks batch {batch_num}: {result}")
+                    add_span_event(
+                        "subtask_batch_failed",
+                        {
+                            "batch.number": batch_num,
+                            "batch.task_ids": ",".join(batch_task_ids),
+                            "error": str(result),
+                        },
+                    )
 
     def setup_schedule(self):
         """Setup schedule plan"""
