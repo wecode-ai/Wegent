@@ -10,8 +10,8 @@ This document introduces the core concepts of the Wegent platform to help you un
 
 | Code/CRD Level | UI Display | Description |
 |----------------|------------|-------------|
-| **Team** | **Agent** (zh: 智能体) | The user-facing AI agent that executes tasks |
-| **Bot** | **Bot** (zh: 机器人) | A building block component that makes up a Team |
+| **Team** | **Agent** | The user-facing AI agent that executes tasks |
+| **Bot** | **Bot** | A building block component that makes up a Team |
 
 **Simple Understanding:**
 - **Bot** = A configured AI worker unit (includes prompt, runtime, model)
