@@ -1,70 +1,113 @@
 #!/usr/bin/env node
 
 // SPDX-FileCopyrightText: 2025 WeCode, Inc.
-//
 // SPDX-License-Identifier: Apache-2.0
 
 /**
  * Download fonts script for PDF generation
- * Downloads CJK fonts at build time to avoid storing large font files in the repository
+ * - Supports mirror fallback
+ * - Supports skip via env
+ * - Shows progress & timeout
+ * - Atomic write with temp file
  */
 
 const https = require('https')
+const http = require('http')
 const fs = require('fs')
 const path = require('path')
 
-// Font configuration
-// minSize is used to verify the download is complete (not interrupted)
-// Source Han Sans SC VF is approximately 25MB
+/* =========================
+ * Environment switches
+ * ========================= */
+if (process.env.SKIP_FONT_DOWNLOAD === '1') {
+  console.log('🚫 Skip font download (SKIP_FONT_DOWNLOAD=1)')
+  process.exit(0)
+}
+
+/* =========================
+ * Font configuration
+ * ========================= */
 const FONTS = [
   {
     name: 'SourceHanSansSC-VF.ttf',
-    url: 'https://github.com/adobe-fonts/source-han-sans/raw/release/Variable/TTF/SourceHanSansSC-VF.ttf',
     description: 'Source Han Sans SC Variable (CJK support for PDF)',
-    minSize: 20 * 1024 * 1024, // 20MB minimum - actual file is ~25MB
+    minSize: 20 * 1024 * 1024, // 20MB
+    urls: [
+      // 🚀 镜像优先（国内 / 亚洲更快）
+      'https://ghproxy.com/https://raw.githubusercontent.com/adobe-fonts/source-han-sans/release/Variable/TTF/SourceHanSansSC-VF.ttf',
+      // 官方地址 fallback
+      'https://raw.githubusercontent.com/adobe-fonts/source-han-sans/release/Variable/TTF/SourceHanSansSC-VF.ttf',
+    ],
   },
 ]
 
 const FONTS_DIR = path.join(__dirname, '..', 'public', 'fonts')
+const DOWNLOAD_TIMEOUT = 30_000 // 30s
 
-/**
- * Download a file from URL with redirect support
- * Downloads to a temp file first, then renames on success to ensure atomicity
- */
+/* =========================
+ * Utilities
+ * ========================= */
+function formatSize(bytes) {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function isFontComplete(filePath, minSize) {
+  if (!fs.existsSync(filePath)) return false
+  const { size } = fs.statSync(filePath)
+  return !minSize || size >= minSize
+}
+
+/* =========================
+ * Core download logic
+ * ========================= */
 function downloadFile(url, destPath, maxRedirects = 5) {
   const tempPath = destPath + '.downloading'
-  
+  const protocol = url.startsWith('https') ? https : http
+
   return new Promise((resolve, reject) => {
     if (maxRedirects <= 0) {
       reject(new Error('Too many redirects'))
       return
     }
 
-    const protocol = url.startsWith('https') ? https : require('http')
+    const req = protocol.get(url, (res) => {
+      // Redirect support
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        console.log(`  ↪ Redirect: ${res.headers.location}`)
+        return downloadFile(res.headers.location, destPath, maxRedirects - 1)
+          .then(resolve)
+          .catch(reject)
+      }
 
-    protocol
-      .get(url, (response) => {
-        // Handle redirects
-        if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-          console.log(`  Redirecting to: ${response.headers.location}`)
-          downloadFile(response.headers.location, destPath, maxRedirects - 1)
-            .then(resolve)
-            .catch(reject)
-          return
+      if (res.statusCode !== 200) {
+        reject(new Error(`HTTP ${res.statusCode}`))
+        return
+      }
+
+      const total = Number(res.headers['content-length'] || 0)
+      let downloaded = 0
+
+      const fileStream = fs.createWriteStream(tempPath)
+
+      res.on('data', (chunk) => {
+        downloaded += chunk.length
+        if (total) {
+          process.stdout.write(
+            `\r  ${(downloaded / 1024 / 1024).toFixed(1)} / ${(total / 1024 / 1024).toFixed(1)} MB`
+          )
         }
+      })
 
-        if (response.statusCode !== 200) {
-          reject(new Error(`Failed to download: HTTP ${response.statusCode}`))
-          return
-        }
+      res.on('end', () => {
+        process.stdout.write('\n')
+      })
 
-        // Download to temp file first
-        const fileStream = fs.createWriteStream(tempPath)
-        response.pipe(fileStream)
+      res.pipe(fileStream)
 
-        fileStream.on('finish', () => {
-          fileStream.close()
-          // Rename temp file to final destination on success
+      fileStream.on('finish', () => {
+        fileStream.close(() => {
           try {
             fs.renameSync(tempPath, destPath)
             resolve()
@@ -73,45 +116,46 @@ function downloadFile(url, destPath, maxRedirects = 5) {
             reject(err)
           }
         })
-
-        fileStream.on('error', (err) => {
-          fs.unlink(tempPath, () => {}) // Delete partial temp file
-          reject(err)
-        })
       })
-      .on('error', (err) => {
-        fs.unlink(tempPath, () => {}) // Delete partial temp file
+
+      fileStream.on('error', (err) => {
+        fs.unlink(tempPath, () => {})
         reject(err)
       })
+    })
+
+    req.setTimeout(DOWNLOAD_TIMEOUT, () => {
+      req.destroy(new Error('Download timeout'))
+    })
+
+    req.on('error', (err) => {
+      fs.unlink(tempPath, () => {})
+      reject(err)
+    })
   })
 }
 
-/**
- * Check if font file exists and is complete (not a partial download)
- */
-function isFontComplete(filePath, minSize) {
-  if (!fs.existsSync(filePath)) {
-    return false
+async function downloadWithFallback(urls, destPath) {
+  let lastError
+  for (const url of urls) {
+    try {
+      console.log(`  🌐 Try: ${url}`)
+      await downloadFile(url, destPath)
+      return
+    } catch (err) {
+      console.warn(`  ⚠ Failed: ${err.message}`)
+      lastError = err
+    }
   }
-  
-  const stats = fs.statSync(filePath)
-  
-  // Check if file meets minimum size requirement
-  if (minSize && stats.size < minSize) {
-    return false
-  }
-  
-  // File exists and is large enough
-  return true
+  throw lastError
 }
 
-/**
- * Main function to download all fonts
- */
+/* =========================
+ * Main
+ * ========================= */
 async function main() {
   console.log('📦 Downloading fonts for PDF generation...\n')
 
-  // Create fonts directory if it doesn't exist
   if (!fs.existsSync(FONTS_DIR)) {
     fs.mkdirSync(FONTS_DIR, { recursive: true })
     console.log(`Created directory: ${FONTS_DIR}\n`)
@@ -123,70 +167,48 @@ async function main() {
     const destPath = path.join(FONTS_DIR, font.name)
     const tempPath = destPath + '.downloading'
 
-    // Clean up any incomplete downloads from previous runs
     if (fs.existsSync(tempPath)) {
-      console.log(`  Removing incomplete download: ${font.name}.downloading`)
       fs.unlinkSync(tempPath)
     }
 
-    // Skip if font already exists and is complete
     if (isFontComplete(destPath, font.minSize)) {
-      const stats = fs.statSync(destPath)
-      console.log(`✓ ${font.name} already exists (${formatSize(stats.size)})`)
+      const { size } = fs.statSync(destPath)
+      console.log(`✓ ${font.name} already exists (${formatSize(size)})\n`)
       continue
     }
 
-    // Remove incomplete file if it exists but is too small
     if (fs.existsSync(destPath)) {
-      const stats = fs.statSync(destPath)
-      console.log(`  Removing incomplete file: ${font.name} (${formatSize(stats.size)} < ${formatSize(font.minSize)})`)
       fs.unlinkSync(destPath)
     }
 
-    console.log(`⬇ Downloading ${font.name}...`)
+    console.log(`⬇ Downloading ${font.name}`)
     console.log(`  ${font.description}`)
-    console.log(`  URL: ${font.url}`)
 
     try {
-      await downloadFile(font.url, destPath)
-      const stats = fs.statSync(destPath)
-      
-      // Verify download is complete
-      if (font.minSize && stats.size < font.minSize) {
-        throw new Error(`Downloaded file is too small (${formatSize(stats.size)} < ${formatSize(font.minSize)})`)
+      await downloadWithFallback(font.urls, destPath)
+
+      const { size } = fs.statSync(destPath)
+      if (font.minSize && size < font.minSize) {
+        throw new Error(`File too small (${formatSize(size)})`)
       }
-      
-      console.log(`✓ Downloaded ${font.name} (${formatSize(stats.size)})\n`)
-    } catch (error) {
-      // Clean up failed download
-      if (fs.existsSync(destPath)) {
-        fs.unlinkSync(destPath)
-      }
-      console.error(`✗ Failed to download ${font.name}: ${error.message}`)
-      console.error(`  PDF CJK support may be limited.\n`)
+
+      console.log(`✓ Downloaded ${font.name} (${formatSize(size)})\n`)
+    } catch (err) {
+      if (fs.existsSync(destPath)) fs.unlinkSync(destPath)
+      console.error(`✗ Failed to download ${font.name}: ${err.message}`)
+      console.error('  PDF CJK support may be limited.\n')
       hasErrors = true
     }
   }
 
   if (hasErrors) {
-    console.log('\n⚠ Some fonts failed to download. PDF export may have limited CJK support.')
-    // Don't exit with error code - font download failure shouldn't break the build
+    console.log('⚠ Some fonts failed to download. Build continues.')
   } else {
-    console.log('\n✅ All fonts downloaded successfully!')
+    console.log('✅ All fonts downloaded successfully!')
   }
 }
 
-/**
- * Format file size for display
- */
-function formatSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-}
-
-// Run main function
-main().catch((error) => {
-  console.error('Error:', error.message)
+main().catch((err) => {
+  console.error('Fatal error:', err.message)
   process.exit(1)
 })

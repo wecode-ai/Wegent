@@ -9,6 +9,11 @@ e2e/.auth/
 playwright-report/
 test-results/
 e2e-results.json
+e2e-results.xml
+
+# Coverage
+.nyc_output/
+coverage-e2e/
 
 # Fonts (downloaded at build time)
 public/fonts/*.ttf

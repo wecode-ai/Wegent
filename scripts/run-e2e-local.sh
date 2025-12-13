@@ -86,8 +86,24 @@ else
     STARTED_DOCKER=false
 fi
 
-# Step 2: Start Backend
-echo -e "\n${YELLOW}Step 2: Starting Backend...${NC}"
+# Step 2: Install shared module
+echo -e "\n${YELLOW}Step 2: Installing shared module...${NC}"
+cd "$PROJECT_ROOT/shared"
+
+# Check if uv is installed
+if ! command -v uv &> /dev/null; then
+    echo "Installing uv..."
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    source $HOME/.cargo/env
+fi
+
+echo "Installing shared module..."
+uv venv 2>/dev/null || true
+source .venv/bin/activate 2>/dev/null || true
+uv pip install -e .
+
+# Step 3: Start Backend
+echo -e "\n${YELLOW}Step 3: Starting Backend...${NC}"
 cd "$PROJECT_ROOT/backend"
 
 # Set environment variables for backend
@@ -99,24 +115,22 @@ export INIT_DATA_ENABLED="True"
 export INIT_DATA_DIR="$PROJECT_ROOT/backend/init_data"
 export PYTHONPATH="$PROJECT_ROOT"
 
-# Check if uv is installed
-if ! command -v uv &> /dev/null; then
-    echo "Installing uv..."
-    curl -LsSf https://astral.sh/uv/install.sh | sh
-    source $HOME/.cargo/env
-fi
-
 # Sync dependencies
 echo "Syncing backend dependencies..."
 uv sync
+
+# Install shared module in backend venv
+echo "Installing shared module in backend venv..."
+source .venv/bin/activate
+uv pip install -e ../shared
 
 # Start backend in background (output to log file)
 echo "Starting backend server (logs: $BACKEND_LOG)..."
 uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 > "$BACKEND_LOG" 2>&1 &
 BACKEND_PID=$!
 
-# Step 3: Start Frontend
-echo -e "\n${YELLOW}Step 3: Starting Frontend...${NC}"
+# Step 4: Start Frontend
+echo -e "\n${YELLOW}Step 4: Starting Frontend...${NC}"
 cd "$PROJECT_ROOT/frontend"
 
 # Set environment variables for frontend
@@ -139,8 +153,8 @@ echo "Starting frontend in dev mode (logs: $FRONTEND_LOG)..."
 npm run dev > "$FRONTEND_LOG" 2>&1 &
 FRONTEND_PID=$!
 
-# Step 4: Wait for services to be ready
-echo -e "\n${YELLOW}Step 4: Waiting for services to be ready...${NC}"
+# Step 5: Wait for services to be ready
+echo -e "\n${YELLOW}Step 5: Waiting for services to be ready...${NC}"
 
 echo "Waiting for backend..."
 for i in {1..60}; do
@@ -170,8 +184,8 @@ for i in {1..30}; do
     sleep 2
 done
 
-# Step 5: Run E2E tests
-echo -e "\n${YELLOW}Step 5: Running E2E tests...${NC}"
+# Step 6: Run E2E tests
+echo -e "\n${YELLOW}Step 6: Running E2E tests...${NC}"
 cd "$PROJECT_ROOT/frontend"
 
 export E2E_BASE_URL="http://localhost:3000"
