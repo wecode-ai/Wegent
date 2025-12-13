@@ -87,6 +87,7 @@ class PublicModelResponse(BaseModel):
     id: int
     name: str
     namespace: str
+    display_name: Optional[str] = None
     model_json: dict = Field(..., alias="json", serialization_alias="json")
     is_active: bool
     created_at: datetime
