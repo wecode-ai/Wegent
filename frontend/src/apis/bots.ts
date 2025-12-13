@@ -4,8 +4,8 @@
 
 import { apiClient } from './client';
 import { Bot, PaginationParams, SuccessMessage } from '../types/api';
+import type { CheckRunningTasksResponse } from './common';
 
-// Bot Request/Response Types
 // Bot Request/Response Types
 export interface CreateBotRequest {
   name: string;
@@ -32,7 +32,6 @@ export interface BotListResponse {
   items: Bot[];
 }
 
-// Bot Services
 // Bot Services
 export const botApis = {
   async getBots(
@@ -63,7 +62,12 @@ export const botApis = {
     return apiClient.put(`/bots/${id}`, data);
   },
 
-  async deleteBot(id: number): Promise<SuccessMessage> {
-    return apiClient.delete(`/bots/${id}`);
+  async deleteBot(id: number, force: boolean = false): Promise<SuccessMessage> {
+    const queryParams = force ? '?force=true' : '';
+    return apiClient.delete(`/bots/${id}${queryParams}`);
+  },
+
+  async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
+    return apiClient.get(`/bots/${id}/running-tasks`);
   },
 };

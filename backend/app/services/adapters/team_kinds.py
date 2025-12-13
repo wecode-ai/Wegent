@@ -856,10 +856,91 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         return self._convert_to_team_dict(team, db, user_id)
 
-    def delete_with_user(self, db: Session, *, team_id: int, user_id: int) -> None:
+    def _get_running_tasks_for_team(
+        self, db: Session, team_name: str, team_namespace: str
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all running tasks for a team.
+
+        Args:
+            db: Database session
+            team_name: Team name
+            team_namespace: Team namespace
+
+        Returns:
+            List of running task info dictionaries
+        """
+        # Get all active tasks
+        all_tasks = (
+            db.query(Kind).filter(Kind.kind == "Task", Kind.is_active == True).all()
+        )
+
+        running_tasks = []
+        for task in all_tasks:
+            task_crd = Task.model_validate(task.json)
+            if (
+                task_crd.spec.teamRef.name == team_name
+                and task_crd.spec.teamRef.namespace == team_namespace
+            ):
+                if task_crd.status and task_crd.status.status in ["PENDING", "RUNNING"]:
+                    running_tasks.append(
+                        {
+                            "task_id": task.id,
+                            "task_name": task.name,
+                            "task_title": task_crd.spec.title,
+                            "status": task_crd.status.status,
+                        }
+                    )
+
+        return running_tasks
+
+    def check_running_tasks(
+        self, db: Session, *, team_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Check if a team has any running tasks.
+
+        Args:
+            db: Database session
+            team_id: Team ID to check
+            user_id: User ID
+
+        Returns:
+            Dictionary with has_running_tasks flag and list of running tasks
+        """
+        team = (
+            db.query(Kind)
+            .filter(Kind.id == team_id, Kind.kind == "Team", Kind.is_active == True)
+            .first()
+        )
+
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        team_name = team.name
+        team_namespace = team.namespace
+
+        # Get running tasks for this team
+        running_tasks = self._get_running_tasks_for_team(db, team_name, team_namespace)
+
+        return {
+            "has_running_tasks": len(running_tasks) > 0,
+            "running_tasks_count": len(running_tasks),
+            "running_tasks": running_tasks,
+        }
+
+    def delete_with_user(
+        self, db: Session, *, team_id: int, user_id: int, force: bool = False
+    ) -> None:
         """
         Delete user Team.
         For group teams, user must have Developer+ permission.
+
+        Args:
+            db: Database session
+            team_id: Team ID to delete
+            user_id: User ID
+            force: If True, force delete even if there are running tasks
         """
         from app.schemas.namespace import GroupRole
         from app.services.group_permission import check_group_permission
@@ -910,24 +991,19 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
                 # Personal team but wrong owner
                 raise HTTPException(status_code=403, detail="Access denied")
 
-        # Check if team is referenced in any PENDING or RUNNING task
-        tasks = db.query(Kind).filter(Kind.kind == "Task", Kind.is_active == True).all()
-
         team_name = team.name
         team_namespace = team.namespace
 
-        # Check if any task references this team with status PENDING or RUNNING
-        for task in tasks:
-            task_crd = Task.model_validate(task.json)
-            if (
-                task_crd.spec.teamRef.name == team_name
-                and task_crd.spec.teamRef.namespace == team_namespace
-            ):
-                if task_crd.status and task_crd.status.status in ["PENDING", "RUNNING"]:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Team '{team_name}' is being used in a {task_crd.status.status} task. Please wait for task completion or cancel it first.",
-                    )
+        # Check if team has running tasks (unless force delete)
+        if not force:
+            running_tasks = self._get_running_tasks_for_team(
+                db, team_name, team_namespace
+            )
+            if running_tasks:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Team '{team_name}' has {len(running_tasks)} running task(s). Use force=true to delete anyway.",
+                )
 
         # delete share team
         db.query(SharedTeam).filter(

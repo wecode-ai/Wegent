@@ -4,6 +4,7 @@
 
 import { apiClient } from './client';
 import type { TeamBot, Team, PaginationParams } from '@/types/api';
+import type { CheckRunningTasksResponse } from './common';
 
 // Team Request/Response Types
 export interface CreateTeamRequest {
@@ -88,8 +89,9 @@ export const teamApis = {
   async createTeam(data: CreateTeamRequest): Promise<Team> {
     return apiClient.post('/teams', data);
   },
-  async deleteTeam(id: number): Promise<void> {
-    await apiClient.delete(`/teams/${id}`);
+  async deleteTeam(id: number, force: boolean = false): Promise<void> {
+    const queryParams = force ? '?force=true' : '';
+    await apiClient.delete(`/teams/${id}${queryParams}`);
   },
   async updateTeam(id: number, data: CreateTeamRequest): Promise<Team> {
     return apiClient.put(`/teams/${id}`, data);
@@ -105,5 +107,8 @@ export const teamApis = {
   },
   async getTeamInputParameters(teamId: number): Promise<TeamInputParametersResponse> {
     return apiClient.get(`/teams/${teamId}/input-parameters`);
+  },
+  async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
+    return apiClient.get(`/teams/${id}/running-tasks`);
   },
 };
