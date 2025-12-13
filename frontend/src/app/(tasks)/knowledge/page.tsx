@@ -134,11 +134,7 @@ export default function KnowledgePage() {
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
       {/* Collapsed sidebar floating buttons */}
       {isCollapsed && !isMobile && (
-        <CollapsedSidebarButtons
-          onExpand={handleToggleCollapsed}
-          onNewTask={handleNewTask}
-          hasCompletedTask={false}
-        />
+        <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
       )}
 
       {/* Responsive resizable sidebar */}

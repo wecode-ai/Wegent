@@ -52,6 +52,7 @@ export interface AdminPublicModel {
   id: number;
   name: string;
   namespace: string;
+  display_name: string | null;
   json: Record<string, unknown>;
   is_active: boolean;
   created_at: string;

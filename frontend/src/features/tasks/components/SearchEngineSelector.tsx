@@ -25,6 +25,8 @@ interface SearchEngineSelectorProps {
   onSelectEngine: (engine: string) => void;
   disabled?: boolean;
   engines: SearchEngine[];
+  /** When true, hide engine name and show only icon (for responsive collapse) */
+  compact?: boolean;
 }
 
 export default function SearchEngineSelector({

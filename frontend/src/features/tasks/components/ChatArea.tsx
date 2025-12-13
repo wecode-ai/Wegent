@@ -51,6 +51,12 @@ const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 // Threshold for combined team name + model name length to trigger compact quota mode
 const COMPACT_QUOTA_NAME_THRESHOLD = 22;
 
+// Responsive collapse thresholds based on container width
+// Level 1: Collapse quota to icon mode (priority)
+const COLLAPSE_QUOTA_THRESHOLD = 520;
+// Level 2: Collapse selectors with text to icon-only mode
+const COLLAPSE_SELECTORS_THRESHOLD = 420;
+
 // Slogan Display Component - shows above input when no messages
 function SloganDisplay({ slogan }: { slogan: ChatSloganItem | null }) {
   const { i18n } = useTranslation();
@@ -265,6 +271,36 @@ export default function ChatArea({
   const [floatingMetrics, setFloatingMetrics] = useState({ width: 0, left: 0 });
   const [inputHeight, setInputHeight] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Responsive collapse state for input controls
+  // Track container width to determine collapse level
+  const inputControlsRef = useRef<HTMLDivElement>(null);
+  const [controlsContainerWidth, setControlsContainerWidth] = useState<number>(0);
+
+  // Observe container width changes for responsive collapse
+  useEffect(() => {
+    const element = inputControlsRef.current;
+    if (!element) return;
+
+    const resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setControlsContainerWidth(entry.contentRect.width);
+      }
+    });
+
+    resizeObserver.observe(element);
+    // Initial measurement
+    setControlsContainerWidth(element.clientWidth);
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  // Determine collapse levels based on container width
+  // Priority: 1. Collapse quota first, 2. Then collapse selectors to icon-only mode
+  const shouldCollapseQuota =
+    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_QUOTA_THRESHOLD;
+  const shouldCollapseSelectors =
+    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
 
   // New: Get selectedTask to determine if there are messages
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
@@ -497,13 +533,17 @@ export default function ChatArea({
   }, [selectedTeam, isMobile]);
 
   // Determine if compact quota mode should be used (icon only)
-  // On mobile, when combined team + model name exceeds threshold, use compact mode
+  // Priority: 1. Collapse quota first when container width is insufficient
+  // Fallback: On mobile, when combined team + model name exceeds threshold, use compact mode
   const shouldUseCompactQuota = React.useMemo(() => {
+    // Priority 1: Container width-based collapse (responsive to actual space)
+    if (shouldCollapseQuota) return true;
+    // Fallback: Mobile name-length based logic
     if (!isMobile) return false;
     const teamNameLength = selectedTeam?.name?.trim().length || 0;
     const modelNameLength = selectedModel?.name?.trim().length || 0;
     return teamNameLength + modelNameLength > COMPACT_QUOTA_NAME_THRESHOLD;
-  }, [isMobile, selectedTeam?.name, selectedModel?.name]);
+  }, [shouldCollapseQuota, isMobile, selectedTeam?.name, selectedModel?.name]);
 
   // Check if model selection is required but not fulfilled
   // For legacy teams without predefined models, user MUST select a model before sending
@@ -1155,6 +1195,7 @@ export default function ChatArea({
                   {/* Team Selector and Send Button - always show */}
                   <div
                     className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
+                    ref={inputControlsRef}
                   >
                     <div
                       className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
@@ -1183,6 +1224,7 @@ export default function ChatArea({
                           onSelectEngine={handleSearchEngineChange}
                           disabled={isLoading || isStreaming}
                           engines={searchEngines}
+                          compact={shouldCollapseSelectors}
                         />
                       )}
                       {/* Clarification Toggle Button - only show for chat shell */}
@@ -1201,6 +1243,7 @@ export default function ChatArea({
                           setForceOverride={setForceOverride}
                           selectedTeam={selectedTeam}
                           disabled={hasMessages || isLoading}
+                          compact={shouldCollapseSelectors}
                         />
                       )}
                       {/* Repository and Branch Selectors - inside input box */}
@@ -1211,6 +1254,7 @@ export default function ChatArea({
                             handleRepoChange={setSelectedRepo}
                             disabled={hasMessages}
                             selectedTaskDetail={selectedTaskDetail}
+                            compact={shouldCollapseSelectors}
                           />
 
                           {selectedRepo && (
@@ -1219,6 +1263,7 @@ export default function ChatArea({
                               selectedBranch={selectedBranch}
                               handleBranchChange={setSelectedBranch}
                               disabled={hasMessages}
+                              compact={shouldCollapseSelectors}
                             />
                           )}
                         </>
@@ -1427,6 +1472,7 @@ export default function ChatArea({
                         onSelectEngine={handleSearchEngineChange}
                         disabled={isLoading || isStreaming}
                         engines={searchEngines}
+                        compact={shouldCollapseSelectors}
                       />
                     )}
                     {/* Clarification Toggle Button - only show for chat shell */}
@@ -1445,6 +1491,7 @@ export default function ChatArea({
                         setForceOverride={setForceOverride}
                         selectedTeam={selectedTeam}
                         disabled={hasMessages || isLoading}
+                        compact={shouldCollapseSelectors}
                       />
                     )}
                     {/* Repository and Branch Selectors - inside input box */}
@@ -1455,6 +1502,7 @@ export default function ChatArea({
                           handleRepoChange={setSelectedRepo}
                           disabled={hasMessages}
                           selectedTaskDetail={selectedTaskDetail}
+                          compact={shouldCollapseSelectors}
                         />
 
                         {selectedRepo && (
@@ -1463,6 +1511,7 @@ export default function ChatArea({
                             selectedBranch={selectedBranch}
                             handleBranchChange={setSelectedBranch}
                             disabled={hasMessages}
+                            compact={shouldCollapseSelectors}
                           />
                         )}
                       </>

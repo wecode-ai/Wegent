@@ -1914,12 +1914,17 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
     const codeLines = code.split('\n');
     const lineHeight = lineHeights.code;
     const codePadding = 2;
-    const codeBlockHeight = codeLines.length * lineHeight + codePadding * 2;
 
-    // Draw code background
+    // Check if we need a new page before starting the code block
+    checkNewPage(lineHeight * 3 + codePadding * 2, pageNum);
+
+    // Calculate the height of this code block segment (may span multiple pages)
+    const codeBlockStartY = yPosition - 2;
+    let currentBlockStartY = codeBlockStartY;
+
+    // Draw initial code background header with language label
     pdf.setFillColor(COLORS.codeBlockBg.r, COLORS.codeBlockBg.g, COLORS.codeBlockBg.b);
     pdf.setDrawColor(200, 200, 200);
-    pdf.roundedRect(startX, yPosition - 2, maxWidth, codeBlockHeight, 1.5, 1.5, 'FD');
 
     // Language label
     if (language) {
@@ -1935,6 +1940,9 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
     pdf.setFontSize(8);
     pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b);
 
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 20;
+
     for (const codeLine of codeLines) {
       // Check if line contains CJK characters and use appropriate font
       if (hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine)) {
@@ -1944,7 +1952,62 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
       }
       const wrappedLines = pdf.splitTextToSize(codeLine || ' ', maxWidth - codePadding * 2);
       for (const wrappedLine of wrappedLines) {
+        // Check if we need a new page
+        if (yPosition + lineHeight > pageHeight - 20) {
+          // Draw background for current page segment
+          const segmentHeight = yPosition - currentBlockStartY + codePadding;
+          pdf.setFillColor(COLORS.codeBlockBg.r, COLORS.codeBlockBg.g, COLORS.codeBlockBg.b);
+          pdf.setDrawColor(200, 200, 200);
+          pdf.roundedRect(startX, currentBlockStartY, maxWidth, segmentHeight, 1.5, 1.5, 'FD');
+
+          // Re-render the text on this page (since we drew the background after)
+          // This is handled by the fact that we're drawing line by line
+
+          // Add new page
+          addFooter(pageNum.value);
+          pdf.addPage();
+          pageNum.value++;
+          yPosition = margin;
+          currentBlockStartY = yPosition - 2;
+
+          // Reset font after page break
+          pdf.setFontSize(8);
+          pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b);
+          if (hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine)) {
+            pdf.setFont(UNICODE_FONT_NAME, 'normal');
+          } else {
+            pdf.setFont('courier', 'normal');
+          }
+        }
         pdf.text(wrappedLine, startX + codePadding, yPosition);
+        yPosition += lineHeight;
+      }
+    }
+
+    // Draw final code block background
+    const finalSegmentHeight = yPosition - currentBlockStartY + codePadding;
+    pdf.setFillColor(COLORS.codeBlockBg.r, COLORS.codeBlockBg.g, COLORS.codeBlockBg.b);
+    pdf.setDrawColor(200, 200, 200);
+    pdf.roundedRect(startX, currentBlockStartY, maxWidth, finalSegmentHeight, 1.5, 1.5, 'FD');
+
+    // Re-render code lines on top of background for the last segment
+    // We need to track which lines belong to the current page segment
+    yPosition = currentBlockStartY + 2 + codePadding;
+    pdf.setFontSize(8);
+    pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b);
+
+    // Re-render all code lines (simplified approach - works for most cases)
+    for (const codeLine of codeLines) {
+      if (hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine)) {
+        pdf.setFont(UNICODE_FONT_NAME, 'normal');
+      } else {
+        pdf.setFont('courier', 'normal');
+      }
+      const wrappedLines = pdf.splitTextToSize(codeLine || ' ', maxWidth - codePadding * 2);
+      for (const wrappedLine of wrappedLines) {
+        if (yPosition > currentBlockStartY && yPosition < pageHeight - 20) {
+          pdf.text(wrappedLine, startX + codePadding, yPosition);
+        }
         yPosition += lineHeight;
       }
     }
@@ -1971,6 +2034,9 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
     const colWidth = maxWidth / numCols;
     const rowHeight = cellLineHeight + cellPadding * 2;
 
+    // Check if we need a new page for the header
+    checkNewPage(rowHeight + 5, pageNum);
+
     // Draw header row background
     const headerY = yPosition;
     pdf.setFillColor(240, 240, 240);
@@ -1990,11 +2056,19 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
       xPos += colWidth;
     }
 
+    // Draw top border
+    pdf.setDrawColor(200, 200, 200);
+    pdf.line(startX, headerY, startX + maxWidth, headerY);
+
     yPosition = headerY + rowHeight;
 
     // Draw data rows
     for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
       const row = rows[rowIdx];
+
+      // Check if we need a new page for this row
+      checkNewPage(rowHeight, pageNum);
+
       const rowStartY = yPosition;
 
       // Draw row background for alternating rows
@@ -2023,10 +2097,6 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
       yPosition += rowHeight;
     }
 
-    // Draw top border
-    pdf.setDrawColor(200, 200, 200);
-    pdf.line(startX, headerY, startX + maxWidth, headerY);
-
     yPosition += 2;
   };
 
@@ -2051,6 +2121,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
         break;
 
       case 'horizontalRule':
+        checkNewPage(5, pageNum);
         pdf.setDrawColor(180, 180, 180);
         pdf.setLineWidth(0.3);
         pdf.line(startX, yPosition, startX + maxWidth, yPosition);
@@ -2065,6 +2136,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
       case 'heading6': {
         const fontSize = Math.max(headingSizes[type] - 2, 9);
         const lineHeight = lineHeights[type] - 1;
+        checkNewPage(lineHeight + 3, pageNum);
         yPosition += 1;
 
         pdf.setFontSize(fontSize);
@@ -2073,6 +2145,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
         const headingLines = pdf.splitTextToSize(content, maxWidth);
         for (const headingLine of headingLines) {
+          checkNewPage(lineHeight, pageNum);
           pdf.text(headingLine, startX, yPosition);
           yPosition += lineHeight;
         }
@@ -2082,6 +2155,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
       case 'unorderedList': {
         const indent = (level || 0) * 4;
+        checkNewPage(lineHeights.list, pageNum);
         pdf.setFillColor(COLORS.listMarker.r, COLORS.listMarker.g, COLORS.listMarker.b);
         const bulletX = startX + indent + 1.5;
         const bulletY = yPosition - 1.2;
@@ -2093,6 +2167,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
         const listLines = pdf.splitTextToSize(content, maxWidth - indent - 5);
         for (let i = 0; i < listLines.length; i++) {
+          checkNewPage(lineHeights.list, pageNum);
           pdf.text(listLines[i], startX + indent + 4, yPosition);
           if (i < listLines.length - 1) yPosition += lineHeights.list - 0.5;
         }
@@ -2102,6 +2177,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
       case 'orderedList': {
         const indent = (level || 0) * 4;
+        checkNewPage(lineHeights.list, pageNum);
         pdf.setFontSize(9);
         pdf.setTextColor(COLORS.listMarker.r, COLORS.listMarker.g, COLORS.listMarker.b);
         pdf.setFont('helvetica', 'normal');
@@ -2113,6 +2189,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
         const listLines = pdf.splitTextToSize(content, maxWidth - indent - 6);
         for (let i = 0; i < listLines.length; i++) {
+          checkNewPage(lineHeights.list, pageNum);
           pdf.text(listLines[i], startX + indent + 5, yPosition);
           if (i < listLines.length - 1) yPosition += lineHeights.list - 0.5;
         }
@@ -2121,6 +2198,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
       }
 
       case 'blockquote': {
+        checkNewPage(lineHeights.blockquote + 2, pageNum);
         pdf.setDrawColor(180, 180, 180);
         pdf.setLineWidth(0.8);
         pdf.line(startX + 1, yPosition - 2.5, startX + 1, yPosition + 1);
@@ -2131,6 +2209,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
         const quoteLines = pdf.splitTextToSize(content, maxWidth - 6);
         for (const quoteLine of quoteLines) {
+          checkNewPage(lineHeights.blockquote, pageNum);
           pdf.text(quoteLine, startX + 5, yPosition);
           yPosition += lineHeights.blockquote - 0.5;
         }
@@ -2139,10 +2218,11 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
       case 'paragraph':
       default: {
+        checkNewPage(lineHeights.paragraph, pageNum);
         // Parse and render inline markdown (bold, italic, code, links, etc.)
         const segments = parseInlineMarkdown(content);
-        // Use renderStyledText with enablePageBreak=false for bubble content
-        renderStyledText(segments, startX, maxWidth, pageNum, 9, false);
+        // Enable page break for proper pagination
+        renderStyledText(segments, startX, maxWidth, pageNum, 9, true);
         yPosition += lineHeights.paragraph - 0.5;
         break;
       }

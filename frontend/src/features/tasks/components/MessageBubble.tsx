@@ -169,7 +169,7 @@ const MessageBubble = memo(
   }: MessageBubbleProps) {
     const bubbleBaseClasses = 'relative w-full p-5 pb-10 text-text-primary';
     const bubbleTypeClasses =
-      msg.type === 'user' ? 'rounded-2xl border border-border bg-muted shadow-sm' : '';
+      msg.type === 'user' ? 'group rounded-2xl border border-border bg-muted shadow-sm' : '';
     const isUserMessage = msg.type === 'user';
 
     const formatTimestamp = (timestamp: number | undefined) => {
@@ -882,10 +882,10 @@ const MessageBubble = memo(
             )}
             {/* Show incomplete notice for completed but incomplete messages */}
             {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
-            {/* Show copy button for user messages - always visible */}
+            {/* Show copy button for user messages - visible on hover */}
             {isUserMessage && (
-              <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
-                <CopyButton content={msg.content} className="h-8 w-8 hover:bg-muted opacity-100" />
+              <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                <CopyButton content={msg.content} className="h-8 w-8 hover:bg-muted" />
               </div>
             )}
           </div>

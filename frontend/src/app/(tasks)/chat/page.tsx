@@ -4,7 +4,7 @@
 
 'use client';
 
-import { Suspense, useState, useEffect, useRef } from 'react';
+import { Suspense, useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
@@ -34,7 +34,7 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for refreshing task list
-  const { refreshTasks, tasks } = useTaskContext();
+  const { refreshTasks } = useTaskContext();
 
   // Chat stream context
   const { clearAllStreams } = useChatStreamContext();
@@ -49,10 +49,6 @@ export default function ChatPage() {
   const searchParams = useSearchParams();
   const hasShareId = !!searchParams.get('share_id');
 
-  // Track completed tasks for notification dot
-  const [hasCompletedTask, setHasCompletedTask] = useState(false);
-  const prevTasksRef = useRef<typeof tasks>([]);
-
   // Check for pending task share from public page (after login)
   useEffect(() => {
     const pendingToken = localStorage.getItem('pendingTaskShare');
@@ -63,25 +59,6 @@ export default function ChatPage() {
       router.push(`/chat?taskShare=${pendingToken}`);
     }
   }, [router]);
-
-  // Monitor task completion for notification dot
-  useEffect(() => {
-    if (prevTasksRef.current.length > 0) {
-      const completedStatuses = ['COMPLETED', 'SUCCESS'];
-      const newlyCompleted = tasks.some(task => {
-        const prevTask = prevTasksRef.current.find(t => t.id === task.id);
-        return (
-          completedStatuses.includes(task.status) &&
-          prevTask &&
-          !completedStatuses.includes(prevTask.status)
-        );
-      });
-      if (newlyCompleted) {
-        setHasCompletedTask(true);
-      }
-    }
-    prevTasksRef.current = tasks;
-  }, [tasks]);
 
   // Mobile detection
   const isMobile = useIsMobile();
@@ -126,10 +103,6 @@ export default function ChatPage() {
     setIsCollapsed(prev => {
       const newValue = !prev;
       localStorage.setItem('task-sidebar-collapsed', String(newValue));
-      // Clear notification dot when expanding sidebar
-      if (prev && hasCompletedTask) {
-        setHasCompletedTask(false);
-      }
       return newValue;
     });
   };
@@ -168,11 +141,7 @@ export default function ChatPage() {
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Collapsed sidebar floating buttons */}
         {isCollapsed && !isMobile && (
-          <CollapsedSidebarButtons
-            onExpand={handleToggleCollapsed}
-            onNewTask={handleNewTask}
-            hasCompletedTask={hasCompletedTask}
-          />
+          <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
         )}
         {/* Responsive resizable sidebar */}
         <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
