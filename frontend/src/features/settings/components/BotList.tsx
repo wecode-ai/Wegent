@@ -10,7 +10,14 @@ import { PencilIcon, TrashIcon, DocumentDuplicateIcon } from '@heroicons/react/2
 import { RiRobot2Line } from 'react-icons/ri';
 import LoadingState from '@/features/common/LoadingState';
 import { Bot } from '@/types/api';
-import { fetchBotsList, deleteBot, isPredefinedModel, getModelFromConfig } from '../services/bots';
+import {
+  fetchBotsList,
+  deleteBot,
+  isPredefinedModel,
+  getModelFromConfig,
+  checkBotRunningTasks,
+} from '../services/bots';
+import { CheckRunningTasksResponse } from '@/apis/common';
 import BotEdit from './BotEdit';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -40,7 +47,10 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
   const [editingBotId, setEditingBotId] = useState<number | null>(null);
   const [cloningBot, setCloningBot] = useState<Bot | null>(null);
   const [deleteConfirmVisible, setDeleteConfirmVisible] = useState(false);
+  const [forceDeleteConfirmVisible, setForceDeleteConfirmVisible] = useState(false);
   const [botToDelete, setBotToDelete] = useState<number | null>(null);
+  const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null);
+  const [isCheckingTasks, setIsCheckingTasks] = useState(false);
   const isEditing = editingBotId !== null;
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
@@ -82,7 +92,7 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
       });
       return;
     }
-    
+
     setCloningBot(null);
     setEditingBotId(0); // Use 0 to mark new creation
   };
@@ -102,9 +112,29 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
     setCloningBot(null);
   };
 
-  const handleDeleteBot = (botId: number) => {
+  const handleDeleteBot = async (botId: number) => {
     setBotToDelete(botId);
-    setDeleteConfirmVisible(true);
+    setIsCheckingTasks(true);
+
+    try {
+      // Check if bot has running tasks
+      const result = await checkBotRunningTasks(botId);
+      setRunningTasksInfo(result);
+
+      if (result.has_running_tasks) {
+        // Show force delete confirmation dialog
+        setForceDeleteConfirmVisible(true);
+      } else {
+        // Show normal delete confirmation dialog
+        setDeleteConfirmVisible(true);
+      }
+    } catch (e) {
+      // If check fails, show normal delete dialog
+      console.error('Failed to check running tasks:', e);
+      setDeleteConfirmVisible(true);
+    } finally {
+      setIsCheckingTasks(false);
+    }
   };
 
   const handleConfirmDelete = async () => {
@@ -115,6 +145,25 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
       setBotsSorted(prev => prev.filter(b => b.id !== botToDelete));
       setDeleteConfirmVisible(false);
       setBotToDelete(null);
+      setRunningTasksInfo(null);
+    } catch (e) {
+      const errorMessage = e instanceof Error && e.message ? e.message : t('bots.delete');
+      toast({
+        variant: 'destructive',
+        title: errorMessage,
+      });
+    }
+  };
+
+  const handleForceDelete = async () => {
+    if (!botToDelete) return;
+
+    try {
+      await deleteBot(botToDelete, true);
+      setBotsSorted(prev => prev.filter(b => b.id !== botToDelete));
+      setForceDeleteConfirmVisible(false);
+      setBotToDelete(null);
+      setRunningTasksInfo(null);
     } catch (e) {
       const errorMessage = e instanceof Error && e.message ? e.message : t('bots.delete');
       toast({
@@ -126,7 +175,9 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
 
   const handleCancelDelete = () => {
     setDeleteConfirmVisible(false);
+    setForceDeleteConfirmVisible(false);
     setBotToDelete(null);
+    setRunningTasksInfo(null);
   };
 
   return (
@@ -223,6 +274,7 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
                                 variant="ghost"
                                 size="icon"
                                 onClick={() => handleDeleteBot(bot?.id)}
+                                disabled={isCheckingTasks}
                                 title={t('bots.delete')}
                                 className="h-8 w-8 hover:text-error"
                               >
@@ -265,6 +317,53 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
             </Button>
             <Button variant="destructive" onClick={handleConfirmDelete}>
               {t('common.confirm')}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Force delete confirmation dialog for running tasks */}
+      <Dialog open={forceDeleteConfirmVisible} onOpenChange={setForceDeleteConfirmVisible}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t('bots.force_delete_confirm_title')}</DialogTitle>
+            <DialogDescription>
+              <div className="space-y-3">
+                <p>
+                  {t('bots.force_delete_confirm_message', {
+                    count: runningTasksInfo?.running_tasks_count || 0,
+                  })}
+                </p>
+                {runningTasksInfo && runningTasksInfo.running_tasks.length > 0 && (
+                  <div className="bg-muted p-3 rounded-md">
+                    <p className="font-medium text-sm mb-2">{t('bots.running_tasks_list')}</p>
+                    <ul className="text-sm space-y-1">
+                      {runningTasksInfo.running_tasks.slice(0, 5).map(task => (
+                        <li key={task.task_id} className="text-text-muted">
+                          • {task.task_title || task.task_name} ({task.status})
+                        </li>
+                      ))}
+                      {runningTasksInfo.running_tasks.length > 5 && (
+                        <li className="text-text-muted">
+                          ...{' '}
+                          {t('bots.and_more_tasks', {
+                            count: runningTasksInfo.running_tasks.length - 5,
+                          })}
+                        </li>
+                      )}
+                    </ul>
+                  </div>
+                )}
+                <p className="text-error text-sm">{t('bots.force_delete_warning')}</p>
+              </div>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={handleCancelDelete}>
+              {t('common.cancel')}
+            </Button>
+            <Button variant="destructive" onClick={handleForceDelete}>
+              {t('bots.force_delete')}
             </Button>
           </DialogFooter>
         </DialogContent>

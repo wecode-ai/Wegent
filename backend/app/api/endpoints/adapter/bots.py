@@ -101,9 +101,25 @@ def update_bot(
 @router.delete("/{bot_id}")
 def delete_bot(
     bot_id: int,
+    force: bool = Query(False, description="Force delete even if bot has running tasks"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Delete Bot or deactivate if used in teams"""
-    bot_kinds_service.delete_with_user(db=db, bot_id=bot_id, user_id=current_user.id)
+    bot_kinds_service.delete_with_user(
+        db=db, bot_id=bot_id, user_id=current_user.id, force=force
+    )
     return {"message": "Bot deleted successfully"}
+
+
+@router.get("/{bot_id}/running-tasks")
+def check_bot_running_tasks(
+    bot_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Check if bot has any running tasks"""
+    result = bot_kinds_service.check_running_tasks(
+        db=db, bot_id=bot_id, user_id=current_user.id
+    )
+    return result
