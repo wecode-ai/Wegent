@@ -9,6 +9,7 @@ import { Send, CircleStop, Upload } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import SearchEngineSelector from './SearchEngineSelector';
+import ClarificationToggle from './ClarificationToggle';
 import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
@@ -135,6 +136,9 @@ export default function ChatArea({
   const [selectedSearchEngine, setSelectedSearchEngine] = useState<string | null>(null);
   const [isWebSearchFeatureEnabled, setIsWebSearchFeatureEnabled] = useState(false);
   const [searchEngines, setSearchEngines] = useState<SearchEngine[]>([]);
+
+  // Clarification toggle state (session-level, not persisted)
+  const [enableClarification, setEnableClarification] = useState(false);
 
   // Welcome config state for dynamic placeholder
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
@@ -735,6 +739,7 @@ export default function ChatArea({
             attachment_id: attachmentState.attachment?.id,
             enable_web_search: enableWebSearch,
             search_engine: selectedSearchEngine || undefined,
+            enable_clarification: enableClarification,
           },
           {
             pendingUserMessage: message,
@@ -1241,6 +1246,14 @@ export default function ChatArea({
                           compact={shouldCollapseSelectors}
                         />
                       )}
+                      {/* Clarification Toggle Button - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <ClarificationToggle
+                          enabled={enableClarification}
+                          onToggle={setEnableClarification}
+                          disabled={isLoading || isStreaming}
+                        />
+                      )}
                       {selectedTeam && (
                         <ModelSelector
                           selectedModel={selectedModel}
@@ -1479,6 +1492,14 @@ export default function ChatArea({
                         disabled={isLoading || isStreaming}
                         engines={searchEngines}
                         compact={shouldCollapseSelectors}
+                      />
+                    )}
+                    {/* Clarification Toggle Button - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <ClarificationToggle
+                        enabled={enableClarification}
+                        onToggle={setEnableClarification}
+                        disabled={isLoading || isStreaming}
                       />
                     )}
                     {selectedTeam && (

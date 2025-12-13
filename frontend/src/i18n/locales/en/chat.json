@@ -191,6 +191,10 @@
     "disable": "Disable web search",
     "select_engine": "Select search engine"
   },
+  "clarification_toggle": {
+    "enable": "Enable clarification mode",
+    "disable": "Disable clarification mode"
+  },
   "streaming_wait": {
     "thinking": "Thinking",
     "analyzing": "Analyzing in depth",
