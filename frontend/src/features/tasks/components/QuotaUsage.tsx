@@ -3,10 +3,12 @@ import { Coins } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Spinner } from '@/components/ui/spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 
 import { quotaApis, QuotaData } from '@/apis/quota';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useToast } from '@/hooks/use-toast';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 
 type QuotaUsageProps = {
   className?: string;
@@ -17,6 +19,7 @@ type QuotaUsageProps = {
 export default function QuotaUsage({ className, compact = false }: QuotaUsageProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
+  const isMobile = useIsMobile();
   const [quota, setQuota] = useState<QuotaData | null>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -111,27 +114,47 @@ export default function QuotaUsage({ className, compact = false }: QuotaUsagePro
       </div>
     </div>
   );
-
-  // Compact mode: show only icon with tooltip
+  // Compact mode: show only icon
+  // On mobile: use Popover (click to show)
+  // On desktop: use Tooltip (hover to show)
   if (compact) {
+    const iconButton = (
+      <Button
+        variant="ghost"
+        size="icon"
+        className={`h-6 w-6 flex-shrink-0 ${className ?? ''}`}
+        style={{
+          padding: 0,
+        }}
+      >
+        <Coins className="w-4 h-4 text-text-muted hover:text-text-primary" />
+      </Button>
+    );
+
+    const contentElement = (
+      <div className="text-xs">
+        <div className="mb-1">{brief}</div>
+        {detail}
+      </div>
+    );
+
+    // On mobile, use Popover for click-to-show behavior
+    if (isMobile) {
+      return (
+        <Popover>
+          <PopoverTrigger asChild>{iconButton}</PopoverTrigger>
+          <PopoverContent side="bottom" className="w-auto p-3">
+            {contentElement}
+          </PopoverContent>
+        </Popover>
+      );
+    }
+
+    // On desktop, use Tooltip for hover behavior
     return (
       <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant="ghost"
-            size="icon"
-            className={`h-6 w-6 flex-shrink-0 ${className ?? ''}`}
-            style={{
-              padding: 0,
-            }}
-          >
-            <Coins className="w-4 h-4 text-text-muted hover:text-text-primary" />
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent side="bottom">
-          <div className="text-xs mb-1">{brief}</div>
-          {detail}
-        </TooltipContent>
+        <TooltipTrigger asChild>{iconButton}</TooltipTrigger>
+        <TooltipContent side="bottom">{contentElement}</TooltipContent>
       </Tooltip>
     );
   }
