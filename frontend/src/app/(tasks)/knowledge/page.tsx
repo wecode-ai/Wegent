@@ -137,7 +137,6 @@ export default function KnowledgePage() {
         <CollapsedSidebarButtons
           onExpand={handleToggleCollapsed}
           onNewTask={handleNewTask}
-          hasCompletedTask={false}
         />
       )}
 
