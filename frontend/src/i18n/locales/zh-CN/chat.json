@@ -191,6 +191,10 @@
     "disable": "禁用联网搜索",
     "select_engine": "选择搜索引擎"
   },
+  "clarification_toggle": {
+    "enable": "启用需求澄清模式",
+    "disable": "禁用需求澄清模式"
+  },
   "streaming_wait": {
     "thinking": "正在思考",
     "analyzing": "正在深入分析",

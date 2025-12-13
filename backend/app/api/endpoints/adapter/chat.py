@@ -47,6 +47,8 @@ class StreamChatRequest(BaseModel):
     # Web search toggle
     enable_web_search: bool = False  # Enable web search for this message
     search_engine: Optional[str] = None  # Search engine to use
+    # Clarification mode toggle
+    enable_clarification: bool = False  # Enable clarification mode for this message
     # Git info (optional, for record keeping)
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -552,6 +554,53 @@ async def stream_chat(
 
     # Get system prompt
     system_prompt = get_bot_system_prompt(db, bot, team.user_id, first_member.prompt)
+
+    # Append clarification mode instructions if enabled
+    if request.enable_clarification:
+        clarification_prompt = """
+
+## Clarification Mode
+
+When you receive a user request that is ambiguous or lacks important details, ask targeted clarification questions before proceeding with the task.
+
+**Output Format:**
+When asking clarification questions, output them in the following Markdown format:
+
+```markdown
+## 🤔 需求澄清问题 (Clarification Questions)
+
+### Q1: [Question text]
+**Type**: single_choice
+**Options**:
+- [✓] `value` - Label text (recommended)
+- [ ] `value` - Label text
+
+### Q2: [Question text]
+**Type**: multiple_choice
+**Options**:
+- [✓] `value` - Label text (recommended)
+- [ ] `value` - Label text
+- [ ] `value` - Label text
+
+### Q3: [Question text]
+**Type**: text_input
+```
+
+**Guidelines:**
+- Ask 3-5 focused questions per round
+- Use `single_choice` for yes/no or mutually exclusive options
+- Use `multiple_choice` for features that can be combined
+- Use `text_input` for open-ended requirements
+- Mark recommended options with `[✓]` and `(recommended)`
+- After receiving answers, either ask follow-up questions or proceed with the task
+- Wrap the entire question section in a markdown code block (```markdown ... ```)
+
+**Question Types:**
+- `single_choice`: User selects ONE option
+- `multiple_choice`: User can select MULTIPLE options
+- `text_input`: Free text input (no options needed)
+"""
+        system_prompt = system_prompt + clarification_prompt
 
     # Build data_sources for placeholder replacement in DEFAULT_HEADERS
     # This mirrors the executor's member_builder.py logic
