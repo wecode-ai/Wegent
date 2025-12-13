@@ -109,14 +109,16 @@ graph LR
 
 ### 🎯 Key Concepts
 
+> **📖 Terminology Note**: In code, `Team` corresponds to "**智能体 (Agent)**" in the Chinese UI, and `Bot` corresponds to "**机器人 (Bot)**" in the Chinese UI. Users interact with "Teams" (智能体) to execute tasks, while "Bots" (机器人) are the building blocks that make up Teams.
+
 - **👻 Ghost**: The "soul" of an agent - defines personality, capabilities, and behavior patterns
 - **🧠 Model**: AI model configuration - defines environment variables and model parameters
 - **🐚 Shell**: The "executable" - A program capable of launching an agent
-- **🤖 Bot**: A complete agent instance combining Ghost + Shell + Model
-- **👥 Team**: Composed of multiple Bots + Collaboration Model, defining how agents work together
+- **🤖 Bot (机器人)**: A complete agent instance combining Ghost + Shell + Model
+- **👥 Team (智能体)**: Composed of multiple Bots + Collaboration Model - the user-facing AI agent
 - **🤝 Collaboration**: Defines the interaction patterns between Bots in a Team (like Workflow)
 - **💼 Workspace**: Isolated work environments for tasks and projects
-- **🎯 Task**: Executable units of work assigned to teams
+- **🎯 Task**: Executable units of work assigned to Teams (智能体)
 
 > 💡 **Detailed YAML Configuration Documentation**:
 - [Complete YAML configuration examples and field descriptions](docs/en/reference/yaml-specification.md)
