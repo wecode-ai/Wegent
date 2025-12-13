@@ -32,6 +32,20 @@ export interface BotListResponse {
   items: Bot[];
 }
 
+export interface RunningTaskInfo {
+  task_id: number;
+  task_name: string;
+  task_title: string;
+  status: string;
+  team_name: string;
+}
+
+export interface CheckRunningTasksResponse {
+  has_running_tasks: boolean;
+  running_tasks_count: number;
+  running_tasks: RunningTaskInfo[];
+}
+
 // Bot Services
 // Bot Services
 export const botApis = {
@@ -63,7 +77,12 @@ export const botApis = {
     return apiClient.put(`/bots/${id}`, data);
   },
 
-  async deleteBot(id: number): Promise<SuccessMessage> {
-    return apiClient.delete(`/bots/${id}`);
+  async deleteBot(id: number, force: boolean = false): Promise<SuccessMessage> {
+    const queryParams = force ? '?force=true' : '';
+    return apiClient.delete(`/bots/${id}${queryParams}`);
+  },
+
+  async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
+    return apiClient.get(`/bots/${id}/running-tasks`);
   },
 };

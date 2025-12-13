@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { botApis } from '@/apis/bots';
+import { botApis, CheckRunningTasksResponse } from '@/apis/bots';
 import { Bot, PaginationParams } from '@/types/api';
 import { CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
 
@@ -44,9 +44,20 @@ export async function updateBot(id: number, data: UpdateBotRequest): Promise<Bot
 
 /**
  * Delete Bot
+ * @param id - Bot ID
+ * @param force - Force delete even if bot has running tasks
  */
-export async function deleteBot(id: number): Promise<void> {
-  await botApis.deleteBot(id);
+export async function deleteBot(id: number, force: boolean = false): Promise<void> {
+  await botApis.deleteBot(id, force);
+}
+
+/**
+ * Check if bot has running tasks
+ * @param id - Bot ID
+ * @returns Running tasks info
+ */
+export async function checkBotRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
+  return await botApis.checkRunningTasks(id);
 }
 /**
  * Check if the agent config is for a predefined model.
