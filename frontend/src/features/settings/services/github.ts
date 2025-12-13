@@ -33,6 +33,8 @@ export async function saveGitToken(
       detectedType = 'gitlab';
     } else if (git_domain.includes('gitee')) {
       detectedType = 'gitee';
+    } else if (git_domain.includes('gitea')) {
+      detectedType = 'gitea';
     } else if (git_domain.includes('gerrit')) {
       detectedType = 'gerrit';
     }
