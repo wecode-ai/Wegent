@@ -57,16 +57,19 @@ const COLLAPSE_QUOTA_THRESHOLD = 520;
 const COLLAPSE_SELECTORS_THRESHOLD = 420;
 
 // Slogan Display Component - shows above input when no messages
+// Always renders a container with fixed height to prevent layout shift when switching tabs
 function SloganDisplay({ slogan }: { slogan: ChatSloganItem | null }) {
   const { i18n } = useTranslation();
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
   const sloganText = slogan ? (currentLang === 'zh' ? slogan.zh : slogan.en) : '';
 
-  if (!sloganText) return null;
-
+  // Always render the container to maintain consistent layout height
+  // This prevents the chat input from "jumping" when switching between /chat and /code tabs
   return (
-    <div className="text-center mb-10">
-      <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">{sloganText}</h1>
+    <div className="text-center mb-10 min-h-[2.25rem] sm:min-h-[2.5rem]">
+      {sloganText && (
+        <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">{sloganText}</h1>
+      )}
     </div>
   );
 }
@@ -189,6 +192,11 @@ export default function ChatArea({
     fetchWelcomeConfig();
   }, []);
 
+  // Use refs to store the random indices, ensuring they stay stable across taskType changes
+  // This prevents the "jitter" effect when switching between /chat and /code tabs
+  const sloganRandomIndexRef = useRef<number | null>(null);
+  const tipRandomIndexRef = useRef<number | null>(null);
+
   // Get random slogan for display - memoized to prevent re-randomization on re-renders
   // Filter slogans by taskType: show slogans that match the current mode or are for 'both' modes
   const randomSlogan = useMemo<ChatSloganItem | null>(() => {
@@ -205,8 +213,13 @@ export default function ChatArea({
       return null;
     }
 
-    const randomIndex = Math.floor(Math.random() * filteredSlogans.length);
-    return filteredSlogans[randomIndex];
+    // Use stable random index: only generate once per session
+    if (sloganRandomIndexRef.current === null) {
+      sloganRandomIndexRef.current = Math.floor(Math.random() * filteredSlogans.length);
+    }
+    // Ensure index is within bounds (in case filtered list changed)
+    const index = sloganRandomIndexRef.current % filteredSlogans.length;
+    return filteredSlogans[index];
   }, [welcomeConfig?.slogans, taskType]);
 
   // Get random tip for placeholder - memoized to prevent re-randomization on re-renders
@@ -225,8 +238,13 @@ export default function ChatArea({
       return null;
     }
 
-    const randomIndex = Math.floor(Math.random() * filteredTips.length);
-    return filteredTips[randomIndex];
+    // Use stable random index: only generate once per session
+    if (tipRandomIndexRef.current === null) {
+      tipRandomIndexRef.current = Math.floor(Math.random() * filteredTips.length);
+    }
+    // Ensure index is within bounds (in case filtered list changed)
+    const index = tipRandomIndexRef.current % filteredTips.length;
+    return filteredTips[index];
   }, [welcomeConfig?.tips, taskType]);
 
   const handleSearchEngineChange = useCallback((engine: string) => {
@@ -1115,8 +1133,9 @@ export default function ChatArea({
           >
             {/* Floating Input Area */}
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
-              {/* Slogan Display - show above input when no messages */}
-              {randomSlogan && <SloganDisplay slogan={randomSlogan} />}
+              {/* Slogan Display - always render to maintain consistent layout height */}
+              {/* This prevents the chat input from "jumping" when switching between /chat and /code tabs */}
+              <SloganDisplay slogan={randomSlogan} />
               <div className="w-full">
                 {/* External API Parameters Input - only show for Dify teams */}
                 {selectedTeam && selectedTeam.agent_type === 'dify' && (
