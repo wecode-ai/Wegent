@@ -77,10 +77,56 @@ jobs:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           REDIS_URL: redis://localhost:6379/0
           SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
         run: |
           source .venv/bin/activate
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-          sleep 10
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          echo $! > backend.pid
+          sleep 15
+
+      - name: Verify backend is running
+        working-directory: ./backend
+        run: |
+          if [ -f backend.pid ]; then
+            PID=$(cat backend.pid)
+            if ps -p $PID > /dev/null; then
+              echo "Backend process is running (PID: $PID)"
+            else
+              echo "Backend process is not running!"
+              echo "=== Backend logs ==="
+              cat backend.log || echo "No log file found"
+              exit 1
+            fi
+          else
+            echo "Backend PID file not found!"
+            exit 1
+          fi
+
+      - name: Test backend health
+        run: |
+          echo "Testing backend health endpoint..."
+          for i in {1..10}; do
+            if curl -f http://localhost:8000/api/docs > /dev/null 2>&1; then
+              echo "Backend is responding!"
+              exit 0
+            fi
+            echo "Attempt $i failed, waiting 3 seconds..."
+            sleep 3
+          done
+          echo "Backend health check failed after 10 attempts"
+          exit 1
+
+      - name: Check backend logs on failure
+        if: failure()
+        working-directory: ./backend
+        run: |
+          if [ -f backend.log ]; then
+            echo "=== Backend logs ==="
+            cat backend.log
+          fi
 
       - name: Install frontend dependencies
         working-directory: ./frontend
@@ -138,6 +184,14 @@ jobs:
         with:
           name: playwright-screenshots
           path: frontend/e2e/screenshots/
+          retention-days: 7
+
+      - name: Upload backend logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs-e2e
+          path: backend/backend.log
           retention-days: 7
 
   api-tests:
@@ -201,10 +255,56 @@ jobs:
           DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
           REDIS_URL: redis://localhost:6379/0
           SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "false"
         run: |
           source .venv/bin/activate
-          uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-          sleep 10
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          echo $! > backend.pid
+          sleep 15
+
+      - name: Verify backend is running
+        working-directory: ./backend
+        run: |
+          if [ -f backend.pid ]; then
+            PID=$(cat backend.pid)
+            if ps -p $PID > /dev/null; then
+              echo "Backend process is running (PID: $PID)"
+            else
+              echo "Backend process is not running!"
+              echo "=== Backend logs ==="
+              cat backend.log || echo "No log file found"
+              exit 1
+            fi
+          else
+            echo "Backend PID file not found!"
+            exit 1
+          fi
+
+      - name: Test backend health
+        run: |
+          echo "Testing backend health endpoint..."
+          for i in {1..10}; do
+            if curl -f http://localhost:8000/api/docs > /dev/null 2>&1; then
+              echo "Backend is responding!"
+              exit 0
+            fi
+            echo "Attempt $i failed, waiting 3 seconds..."
+            sleep 3
+          done
+          echo "Backend health check failed after 10 attempts"
+          exit 1
+
+      - name: Check backend logs on failure
+        if: failure()
+        working-directory: ./backend
+        run: |
+          if [ -f backend.log ]; then
+            echo "=== Backend logs ==="
+            cat backend.log
+          fi
 
       - name: Install frontend dependencies
         working-directory: ./frontend
@@ -231,3 +331,11 @@ jobs:
           name: api-test-results
           path: frontend/playwright-report/
           retention-days: 14
+
+      - name: Upload backend logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs-api
+          path: backend/backend.log
+          retention-days: 7
