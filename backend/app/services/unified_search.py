@@ -99,10 +99,12 @@ class UnifiedSearchService:
             text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
         )
 
-        # Filter by task_type if specified
+        # Filter by task_type if specified (task_type is stored in metadata.labels.taskType)
         if task_type:
             query = query.filter(
-                text(f"JSON_EXTRACT(json, '$.spec.task_type') = '{task_type}'")
+                text(
+                    f"JSON_EXTRACT(json, '$.metadata.labels.taskType') = '{task_type}'"
+                )
             )
 
         # Date filters
@@ -123,13 +125,21 @@ class UnifiedSearchService:
                 task_crd = Task.model_validate(task.json)
                 title = task_crd.spec.title or ""
                 prompt = task_crd.spec.prompt or ""
-                git_repo = task_crd.spec.workspace.git_repo if task_crd.spec.workspace else ""
+                # workspaceRef is a reference to workspace, get its name for search
+                workspace_ref_name = (
+                    task_crd.spec.workspaceRef.name
+                    if task_crd.spec.workspaceRef
+                    else ""
+                )
 
-                # Match against title, prompt, or git_repo
+                # Match against title, prompt, or workspace name
                 if (
                     keyword_lower in title.lower()
                     or keyword_lower in prompt.lower()
-                    or (git_repo and keyword_lower in git_repo.lower())
+                    or (
+                        workspace_ref_name
+                        and keyword_lower in workspace_ref_name.lower()
+                    )
                 ):
                     matched_tasks.append((task, task_crd))
             except Exception as e:
@@ -144,8 +154,16 @@ class UnifiedSearchService:
         for task, task_crd in paginated_tasks:
             title = task_crd.spec.title or ""
             prompt = task_crd.spec.prompt or ""
-            current_task_type = task_crd.spec.task_type or "chat"
-            git_repo = task_crd.spec.workspace.git_repo if task_crd.spec.workspace else ""
+            # task_type is stored in metadata.labels.taskType, not in spec
+            current_task_type = (
+                task_crd.metadata.labels.get("taskType", "chat")
+                if task_crd.metadata.labels
+                else "chat"
+            )
+            # workspaceRef is a reference, not the actual workspace data
+            workspace_ref_name = (
+                task_crd.spec.workspaceRef.name if task_crd.spec.workspaceRef else ""
+            )
 
             # Generate snippet from prompt
             snippet = self._generate_snippet(prompt, keyword)
@@ -169,8 +187,10 @@ class UnifiedSearchService:
                     updated_at=task.updated_at,
                     metadata={
                         "task_type": current_task_type,
-                        "git_repo": git_repo,
-                        "status": task_crd.status.status if task_crd.status else "PENDING",
+                        "workspace": workspace_ref_name,
+                        "status": (
+                            task_crd.status.status if task_crd.status else "PENDING"
+                        ),
                     },
                 )
             )
@@ -213,7 +233,10 @@ class UnifiedSearchService:
                 name = team_crd.metadata.name or ""
                 description = team_crd.spec.description or ""
 
-                if keyword_lower in name.lower() or keyword_lower in description.lower():
+                if (
+                    keyword_lower in name.lower()
+                    or keyword_lower in description.lower()
+                ):
                     matched_teams.append((team, team_crd))
             except Exception as e:
                 logger.warning(f"Failed to parse team {team.id}: {e}")
@@ -241,7 +264,9 @@ class UnifiedSearchService:
                     created_at=team.created_at,
                     updated_at=team.updated_at,
                     metadata={
-                        "collaboration_model": team_crd.spec.collaborationModel if team_crd.spec else None,
+                        "collaboration_model": (
+                            team_crd.spec.collaborationModel if team_crd.spec else None
+                        ),
                     },
                 )
             )
@@ -290,15 +315,16 @@ class UnifiedSearchService:
                         description,
                         project.created_at,
                         project.updated_at,
-                        {"source_type": project.source_type, "source_url": project.source_url},
+                        {
+                            "source_type": project.source_type,
+                            "source_url": project.source_url,
+                        },
                     )
                 )
 
         # Search in wiki contents via generations
         generations = (
-            db.query(WikiGeneration)
-            .filter(WikiGeneration.user_id == user_id)
-            .all()
+            db.query(WikiGeneration).filter(WikiGeneration.user_id == user_id).all()
         )
 
         generation_ids = [g.id for g in generations]
@@ -309,7 +335,9 @@ class UnifiedSearchService:
             )
 
             if date_from:
-                content_query = content_query.filter(WikiContent.created_at >= date_from)
+                content_query = content_query.filter(
+                    WikiContent.created_at >= date_from
+                )
             if date_to:
                 content_query = content_query.filter(WikiContent.created_at <= date_to)
 
@@ -319,7 +347,10 @@ class UnifiedSearchService:
                 title = content.title or ""
                 text_content = content.content or ""
 
-                if keyword_lower in title.lower() or keyword_lower in text_content.lower():
+                if (
+                    keyword_lower in title.lower()
+                    or keyword_lower in text_content.lower()
+                ):
                     matched_items.append(
                         (
                             "content",
@@ -328,14 +359,25 @@ class UnifiedSearchService:
                             text_content,
                             content.created_at,
                             content.created_at,
-                            {"generation_id": content.generation_id, "type": content.type},
+                            {
+                                "generation_id": content.generation_id,
+                                "type": content.type,
+                            },
                         )
                     )
 
         total = len(matched_items)
         paginated_items = matched_items[offset : offset + limit]
 
-        for item_type, item_id, title, content, created_at, updated_at, metadata in paginated_items:
+        for (
+            item_type,
+            item_id,
+            title,
+            content,
+            created_at,
+            updated_at,
+            metadata,
+        ) in paginated_items:
             snippet = self._generate_snippet(content, keyword)
 
             results.append(
@@ -388,7 +430,12 @@ class UnifiedSearchService:
                 except ValueError:
                     pass
         else:
-            search_types = {SearchType.CHAT, SearchType.CODE, SearchType.KNOWLEDGE, SearchType.TEAMS}
+            search_types = {
+                SearchType.CHAT,
+                SearchType.CODE,
+                SearchType.KNOWLEDGE,
+                SearchType.TEAMS,
+            }
 
         all_results: List[SearchResultItem] = []
         facets = SearchFacets()

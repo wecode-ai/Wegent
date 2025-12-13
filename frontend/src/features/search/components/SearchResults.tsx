@@ -2,19 +2,18 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useMemo } from 'react'
-import { useRouter } from 'next/navigation'
-import { useTranslation } from 'react-i18next'
-import { MessageSquare, Code, BookOpen, Users } from 'lucide-react'
-import { cn } from '@/lib/utils'
-import { SearchResultItem, SearchType } from '../types'
-import { Badge } from '@/components/ui/badge'
+import { useRouter } from 'next/navigation';
+import { useTranslation } from 'react-i18next';
+import { MessageSquare, Code, BookOpen, Users } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { SearchResultItem, SearchType } from '../types';
+import { Badge } from '@/components/ui/badge';
 
 interface SearchResultItemProps {
-  item: SearchResultItem
-  keyword: string
+  item: SearchResultItem;
+  keyword: string;
 }
 
 const TYPE_ICONS: Record<SearchType, React.ComponentType<{ className?: string }>> = {
@@ -22,20 +21,20 @@ const TYPE_ICONS: Record<SearchType, React.ComponentType<{ className?: string }>
   code: Code,
   knowledge: BookOpen,
   teams: Users,
-}
+};
 
 const TYPE_COLORS: Record<SearchType, string> = {
   chat: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   code: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
   knowledge: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
   teams: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
-}
+};
 
 function highlightText(text: string, keyword: string): React.ReactNode {
-  if (!keyword) return text
+  if (!keyword) return text;
 
-  const regex = new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  const parts = text.split(regex)
+  const regex = new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+  const parts = text.split(regex);
 
   return parts.map((part, index) =>
     regex.test(part) ? (
@@ -45,49 +44,53 @@ function highlightText(text: string, keyword: string): React.ReactNode {
     ) : (
       part
     )
-  )
+  );
 }
 
 function formatDate(dateString: string | null): string {
-  if (!dateString) return ''
-  const date = new Date(dateString)
+  if (!dateString) return '';
+  const date = new Date(dateString);
   return date.toLocaleDateString(undefined, {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
     minute: '2-digit',
-  })
+  });
 }
 
 function SearchResultItemComponent({ item, keyword }: SearchResultItemProps) {
-  const { t } = useTranslation()
-  const router = useRouter()
-  const Icon = TYPE_ICONS[item.type]
+  const { t } = useTranslation();
+  const router = useRouter();
+  const Icon = TYPE_ICONS[item.type];
 
   const handleClick = () => {
     switch (item.type) {
       case 'chat':
-        router.push(`/chat?task=${item.id}`)
-        break
+        router.push(`/chat?taskId=${item.id}`);
+        break;
       case 'code':
-        router.push(`/code?task=${item.id}`)
-        break
+        router.push(`/code?taskId=${item.id}`);
+        break;
       case 'knowledge':
         // knowledge items have id format: "project_123" or "content_456"
-        const [itemType, itemId] = item.id.split('_')
+        const [itemType, itemId] = item.id.split('_');
         if (itemType === 'project') {
-          router.push(`/knowledge?project=${itemId}`)
+          router.push(`/knowledge?project=${itemId}`);
         } else {
-          const generationId = item.metadata?.generation_id
-          router.push(`/knowledge?generation=${generationId}&content=${itemId}`)
+          const generationId = item.metadata?.generation_id;
+          router.push(`/knowledge?generation=${generationId}&content=${itemId}`);
         }
-        break
+        break;
       case 'teams':
-        router.push(`/settings/teams?id=${item.id}`)
-        break
+        // Navigate to chat page with teamId to start a new conversation with this team
+        // Use bind_mode from metadata to determine target page (chat or code)
+        const bindMode = item.metadata?.bind_mode as string[] | undefined;
+        const targetPage = bindMode?.length === 1 ? bindMode[0] : 'chat';
+        router.push(`/${targetPage}?teamId=${item.id}`);
+        break;
     }
-  }
+  };
 
   return (
     <div
@@ -95,10 +98,10 @@ function SearchResultItemComponent({ item, keyword }: SearchResultItemProps) {
       className="p-4 bg-surface border border-border rounded-lg hover:border-primary/50 hover:shadow-sm cursor-pointer transition-all"
       role="button"
       tabIndex={0}
-      onKeyDown={(e) => {
+      onKeyDown={e => {
         if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault()
-          handleClick()
+          e.preventDefault();
+          handleClick();
         }
       }}
     >
@@ -143,23 +146,23 @@ function SearchResultItemComponent({ item, keyword }: SearchResultItemProps) {
         </div>
       </div>
     </div>
-  )
+  );
 }
 
 interface SearchResultsProps {
-  items: SearchResultItem[]
-  keyword: string
-  isLoading?: boolean
-  total?: number
+  items: SearchResultItem[];
+  keyword: string;
+  isLoading?: boolean;
+  total?: number;
 }
 
 export function SearchResults({ items, keyword, isLoading, total }: SearchResultsProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation();
 
   if (isLoading) {
     return (
       <div className="space-y-3">
-        {[1, 2, 3].map((i) => (
+        {[1, 2, 3].map(i => (
           <div key={i} className="p-4 bg-surface border border-border rounded-lg animate-pulse">
             <div className="flex gap-3">
               <div className="w-16 h-6 bg-muted rounded" />
@@ -172,23 +175,21 @@ export function SearchResults({ items, keyword, isLoading, total }: SearchResult
           </div>
         ))}
       </div>
-    )
+    );
   }
 
   if (items.length === 0) {
-    return null
+    return null;
   }
 
   return (
     <div className="space-y-3">
       {total !== undefined && (
-        <p className="text-sm text-text-secondary">
-          {t('search.results', { count: total })}
-        </p>
+        <p className="text-sm text-text-secondary">{t('search.results', { count: total })}</p>
       )}
-      {items.map((item) => (
+      {items.map(item => (
         <SearchResultItemComponent key={`${item.type}-${item.id}`} item={item} keyword={keyword} />
       ))}
     </div>
-  )
+  );
 }

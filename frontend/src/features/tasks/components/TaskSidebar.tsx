@@ -23,7 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
   setIsMobileSidebarOpen: (open: boolean) => void;
-  pageType?: 'chat' | 'code' | 'knowledge';
+  pageType?: 'chat' | 'code' | 'knowledge' | 'search';
   isCollapsed?: boolean;
   onToggleCollapsed?: () => void;
 }
@@ -276,10 +276,14 @@ export default function TaskSidebar({
                 <Button
                   variant="ghost"
                   onClick={handleOpenSearchDialog}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
+                  className={`w-full justify-center p-2 h-auto min-h-[44px] rounded-xl ${
+                    pageType === 'search'
+                      ? 'bg-primary/10 text-primary'
+                      : 'text-text-primary hover:bg-hover'
+                  }`}
                   aria-label={t('search.title')}
                 >
-                  <Search className="h-4 w-4" />
+                  <Search className={`h-4 w-4 ${pageType === 'search' ? 'text-primary' : ''}`} />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
@@ -291,10 +295,14 @@ export default function TaskSidebar({
           <Button
             variant="ghost"
             onClick={handleOpenSearchDialog}
-            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
+            className={`w-full justify-start px-2 py-1.5 h-8 text-sm rounded-xl transition-colors ${
+              pageType === 'search'
+                ? 'bg-primary/10 text-primary font-medium'
+                : 'text-text-primary hover:bg-hover'
+            }`}
             size="sm"
           >
-            <Search className="h-4 w-4 mr-0.5" />
+            <Search className={`h-4 w-4 mr-0.5 ${pageType === 'search' ? 'text-primary' : ''}`} />
             {t('search.title')}
           </Button>
         )}

@@ -11,7 +11,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery';
 
 type TopNavigationProps = {
-  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard';
+  activePage?: 'chat' | 'code' | 'wiki' | 'dashboard' | 'search';
   variant?: 'with-sidebar' | 'standalone';
   showLogo?: boolean;
   title?: string;
