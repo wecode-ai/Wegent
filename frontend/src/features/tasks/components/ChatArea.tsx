@@ -676,8 +676,9 @@ export default function ChatArea({
     [isLoading, isStreaming, attachmentState.attachment, handleFileSelect, selectedTeam]
   );
 
-  const handleSendMessage = async () => {
-    const message = taskInputMessage.trim();
+  // Core message sending logic - can be called directly with a message or use taskInputMessage
+  const handleSendMessage = async (overrideMessage?: string) => {
+    const message = overrideMessage?.trim() || taskInputMessage.trim();
     if (!message && !shouldHideChatInput) return;
 
     // Check if attachment is ready
@@ -990,6 +991,23 @@ export default function ChatArea({
       scrollToBottom();
     }
   }, [isStreaming, scrollToBottom]);
+  // Callback for child components (e.g., ClarificationForm) to send messages directly
+  // This ensures all chat options (web search, clarification mode, model, etc.) are properly included
+  // Reuses handleSendMessage to avoid code duplication
+  const handleSendMessageFromChild = useCallback(
+    async (content: string) => {
+      // Combine the content from child component with any existing input text
+      const existingInput = taskInputMessage.trim();
+      const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content;
+
+      // Clear the input field immediately
+      setTaskInputMessage('');
+
+      // Reuse handleSendMessage with the combined message
+      await handleSendMessage(combinedMessage);
+    },
+    [taskInputMessage, handleSendMessage]
+  );
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -1123,6 +1141,7 @@ export default function ChatArea({
               onContentChange={handleMessagesContentChange}
               streamingSubtaskId={streamingSubtaskId}
               onShareButtonRender={onShareButtonRender}
+              onSendMessage={handleSendMessageFromChild}
             />
           </div>
         </div>
@@ -1347,7 +1366,7 @@ export default function ChatArea({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={handleSendMessage}
+                                onClick={() => handleSendMessage()}
                                 disabled={
                                   isLoading ||
                                   isStreaming ||
@@ -1595,7 +1614,7 @@ export default function ChatArea({
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={handleSendMessage}
+                              onClick={() => handleSendMessage()}
                               disabled={
                                 isLoading ||
                                 isStreaming ||

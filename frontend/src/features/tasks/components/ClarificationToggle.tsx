@@ -5,7 +5,7 @@
 'use client';
 
 import React from 'react';
-import { Lightbulb } from 'lucide-react';
+import { MessageCircleQuestion } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useTranslation } from '@/hooks/useTranslation';
 import { cn } from '@/lib/utils';
@@ -50,7 +50,7 @@ export default function ClarificationToggle({
                 : 'text-text-muted hover:bg-surface hover:text-text-primary'
             )}
           >
-            <Lightbulb className="h-4 w-4" />
+            <MessageCircleQuestion className="h-4 w-4" />
           </Button>
         </TooltipTrigger>
         <TooltipContent side="top">

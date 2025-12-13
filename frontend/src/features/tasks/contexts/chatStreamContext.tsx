@@ -72,7 +72,8 @@ interface ChatStreamContextType {
   clearAllStreams: () => void;
 }
 
-const ChatStreamContext = createContext<ChatStreamContextType | undefined>(undefined);
+// Export the context for components that need optional access (e.g., ClarificationForm)
+export const ChatStreamContext = createContext<ChatStreamContextType | undefined>(undefined);
 
 /**
  * Default stream state
