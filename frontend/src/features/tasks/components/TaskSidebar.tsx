@@ -103,7 +103,8 @@ export default function TaskSidebar({
 
   // Open search dialog
   const handleOpenSearchDialog = () => {
-    setIsSearchDialogOpen(true);
+    // Navigate to global search page instead of opening dialog
+    router.push('/search');
   };
 
   // Close search dialog
@@ -266,7 +267,7 @@ export default function TaskSidebar({
         )}
       </div>
 
-      {/* Search Button - always shows "Search Conversation" */}
+      {/* Search Button - navigate to global search */}
       <div className="px-1 mb-0">
         {isCollapsed ? (
           <TooltipProvider>
@@ -276,13 +277,13 @@ export default function TaskSidebar({
                   variant="ghost"
                   onClick={handleOpenSearchDialog}
                   className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
-                  aria-label={t('tasks.search_placeholder_chat')}
+                  aria-label={t('search.title')}
                 >
                   <Search className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="right">
-                <p>{t('tasks.search_placeholder_chat')}</p>
+                <p>{t('search.title')}</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -294,7 +295,7 @@ export default function TaskSidebar({
             size="sm"
           >
             <Search className="h-4 w-4 mr-0.5" />
-            {t('tasks.search_placeholder_chat')}
+            {t('search.title')}
           </Button>
         )}
       </div>

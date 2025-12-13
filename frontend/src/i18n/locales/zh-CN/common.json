@@ -972,5 +972,37 @@
         "cannotLeave": "无法直接离开群组（需先转让Owner）"
       }
     }
+  },
+  "search": {
+    "title": "搜索",
+    "placeholder": "搜索对话、代码、知识库、智能体...",
+    "searching": "搜索中...",
+    "no_results": "未找到相关内容",
+    "no_results_hint": "尝试不同的关键词或筛选条件",
+    "searched_for": "搜索 \"{{query}}\"",
+    "results": "找到 {{count}} 条结果",
+    "showing_of": "显示 {{showing}} / {{total}} 条结果",
+    "types": {
+      "all": "全部",
+      "chat": "对话",
+      "code": "编码",
+      "knowledge": "知识库",
+      "teams": "智能体"
+    },
+    "sort": {
+      "relevance": "相关度",
+      "newest": "最新优先",
+      "oldest": "最早优先"
+    },
+    "sort_label": "排序：",
+    "date_label": "时间：",
+    "date": {
+      "all": "全部时间",
+      "day": "最近一天",
+      "week": "最近一周",
+      "month": "最近一月",
+      "custom": "自定义范围"
+    },
+    "shortcut_hint": "可随时搜索"
   }
 }
