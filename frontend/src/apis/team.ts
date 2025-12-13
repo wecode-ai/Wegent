@@ -4,6 +4,7 @@
 
 import { apiClient } from './client';
 import type { TeamBot, Team, PaginationParams } from '@/types/api';
+import type { CheckRunningTasksResponse } from './common';
 
 // Team Request/Response Types
 export interface CreateTeamRequest {
@@ -55,19 +56,6 @@ export interface TeamInputParametersResponse {
     hint?: string;
   }>;
   app_mode?: string; // Dify app mode: 'chat', 'chatflow', 'workflow', 'completion', 'agent'
-}
-
-export interface RunningTaskInfo {
-  task_id: number;
-  task_name: string;
-  task_title: string;
-  status: string;
-}
-
-export interface CheckRunningTasksResponse {
-  has_running_tasks: boolean;
-  running_tasks_count: number;
-  running_tasks: RunningTaskInfo[];
 }
 
 export const teamApis = {

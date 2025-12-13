@@ -4,8 +4,8 @@
 
 import { apiClient } from './client';
 import { Bot, PaginationParams, SuccessMessage } from '../types/api';
+import type { CheckRunningTasksResponse } from './common';
 
-// Bot Request/Response Types
 // Bot Request/Response Types
 export interface CreateBotRequest {
   name: string;
@@ -32,21 +32,6 @@ export interface BotListResponse {
   items: Bot[];
 }
 
-export interface RunningTaskInfo {
-  task_id: number;
-  task_name: string;
-  task_title: string;
-  status: string;
-  team_name: string;
-}
-
-export interface CheckRunningTasksResponse {
-  has_running_tasks: boolean;
-  running_tasks_count: number;
-  running_tasks: RunningTaskInfo[];
-}
-
-// Bot Services
 // Bot Services
 export const botApis = {
   async getBots(

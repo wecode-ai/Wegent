@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { teamApis, TeamShareResponse, CreateTeamRequest, CheckRunningTasksResponse } from '@/apis/team';
+import { teamApis, TeamShareResponse, CreateTeamRequest } from '@/apis/team';
+import { CheckRunningTasksResponse } from '@/apis/common';
 import { Team } from '@/types/api';
 
 /**

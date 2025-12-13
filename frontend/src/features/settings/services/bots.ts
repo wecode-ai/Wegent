@@ -2,7 +2,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import { botApis, CheckRunningTasksResponse } from '@/apis/bots';
+import { botApis } from '@/apis/bots';
+import { CheckRunningTasksResponse } from '@/apis/common';
 import { Bot, PaginationParams } from '@/types/api';
 import { CreateBotRequest, UpdateBotRequest } from '@/apis/bots';
 
@@ -89,30 +90,30 @@ export const getModelFromConfig = (config: Record<string, unknown>): string => {
   * @param config The agent configuration object.
   * @returns The model type ('public', 'user', or 'group'), or undefined if not specified.
   */
- export const getModelTypeFromConfig = (
-   config: Record<string, unknown>
- ): 'public' | 'user' | 'group' | undefined => {
-   if (!config) return undefined;
-   const modelType = config.bind_model_type as string | undefined;
-   if (modelType === 'public' || modelType === 'user' || modelType === 'group') {
-     return modelType;
-   }
-   return undefined;
- };
- 
- /**
-  * Create a predefined model configuration with type.
-  * @param modelName The model name.
-  * @param modelType The model type ('public', 'user', or 'group').
-  * @returns The agent configuration object.
-  */
- export const createPredefinedModelConfig = (
-   modelName: string,
-   modelType?: 'public' | 'user' | 'group'
- ): Record<string, unknown> => {
-   const config: Record<string, unknown> = { bind_model: modelName };
-   if (modelType) {
-     config.bind_model_type = modelType;
-   }
-   return config;
- };
+export const getModelTypeFromConfig = (
+  config: Record<string, unknown>
+): 'public' | 'user' | 'group' | undefined => {
+  if (!config) return undefined;
+  const modelType = config.bind_model_type as string | undefined;
+  if (modelType === 'public' || modelType === 'user' || modelType === 'group') {
+    return modelType;
+  }
+  return undefined;
+};
+
+/**
+ * Create a predefined model configuration with type.
+ * @param modelName The model name.
+ * @param modelType The model type ('public', 'user', or 'group').
+ * @returns The agent configuration object.
+ */
+export const createPredefinedModelConfig = (
+  modelName: string,
+  modelType?: 'public' | 'user' | 'group'
+): Record<string, unknown> => {
+  const config: Record<string, unknown> = { bind_model: modelName };
+  if (modelType) {
+    config.bind_model_type = modelType;
+  }
+  return config;
+};

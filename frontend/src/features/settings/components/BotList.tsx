@@ -10,8 +10,14 @@ import { PencilIcon, TrashIcon, DocumentDuplicateIcon } from '@heroicons/react/2
 import { RiRobot2Line } from 'react-icons/ri';
 import LoadingState from '@/features/common/LoadingState';
 import { Bot } from '@/types/api';
-import { fetchBotsList, deleteBot, isPredefinedModel, getModelFromConfig, checkBotRunningTasks } from '../services/bots';
-import { CheckRunningTasksResponse } from '@/apis/bots';
+import {
+  fetchBotsList,
+  deleteBot,
+  isPredefinedModel,
+  getModelFromConfig,
+  checkBotRunningTasks,
+} from '../services/bots';
+import { CheckRunningTasksResponse } from '@/apis/common';
 import BotEdit from './BotEdit';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -86,7 +92,7 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
       });
       return;
     }
-    
+
     setCloningBot(null);
     setEditingBotId(0); // Use 0 to mark new creation
   };
@@ -323,19 +329,26 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
             <DialogTitle>{t('bots.force_delete_confirm_title')}</DialogTitle>
             <DialogDescription>
               <div className="space-y-3">
-                <p>{t('bots.force_delete_confirm_message', { count: runningTasksInfo?.running_tasks_count || 0 })}</p>
+                <p>
+                  {t('bots.force_delete_confirm_message', {
+                    count: runningTasksInfo?.running_tasks_count || 0,
+                  })}
+                </p>
                 {runningTasksInfo && runningTasksInfo.running_tasks.length > 0 && (
                   <div className="bg-muted p-3 rounded-md">
                     <p className="font-medium text-sm mb-2">{t('bots.running_tasks_list')}</p>
                     <ul className="text-sm space-y-1">
-                      {runningTasksInfo.running_tasks.slice(0, 5).map((task) => (
+                      {runningTasksInfo.running_tasks.slice(0, 5).map(task => (
                         <li key={task.task_id} className="text-text-muted">
                           • {task.task_title || task.task_name} ({task.status})
                         </li>
                       ))}
                       {runningTasksInfo.running_tasks.length > 5 && (
                         <li className="text-text-muted">
-                          ... {t('bots.and_more_tasks', { count: runningTasksInfo.running_tasks.length - 5 })}
+                          ...{' '}
+                          {t('bots.and_more_tasks', {
+                            count: runningTasksInfo.running_tasks.length - 5,
+                          })}
                         </li>
                       )}
                     </ul>

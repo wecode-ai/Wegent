@@ -19,7 +19,7 @@ import {
 } from '@heroicons/react/24/outline';
 import { Bot, Team } from '@/types/api';
 import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams';
-import { CheckRunningTasksResponse } from '@/apis/team';
+import { CheckRunningTasksResponse } from '@/apis/common';
 import { fetchBotsList } from '../services/bots';
 import TeamEditDialog from './TeamEditDialog';
 import BotList from './BotList';
