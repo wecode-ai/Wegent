@@ -499,10 +499,30 @@ const MessageBubble = memo(
       content: string
     ): { data: ClarificationData; prefixText: string; suffixText: string } | null => {
       // Flexible header detection for clarification questions
-      // Matches: ## 💬 智能追问, ## Smart Follow-up Questions, ## 🤔 需求澄清问题, ## Clarification Questions, etc.
-      const clarificationHeaderRegex =
-        /#{1,6}\s*(?:💬\s*)?(?:智能追问|smart\s*follow[- ]?up(?:\s*questions?)?)|#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
-      const headerMatch = content.match(clarificationHeaderRegex);
+      // Two regex patterns to support both old and new formats:
+      // Old format: ## 💬 智能追问 (Smart Follow-up Questions)
+      // New format: ## 🤔 需求澄清问题 (Clarification Questions)
+      const smartFollowUpRegex =
+        /#{1,6}\s*(?:💬\s*)?(?:智能追问|smart\s*follow[- ]?up(?:\s*questions?)?)/im;
+      const clarificationQuestionsRegex =
+        /#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
+
+      // Try both patterns
+      const smartFollowUpMatch = content.match(smartFollowUpRegex);
+      const clarificationMatch = content.match(clarificationQuestionsRegex);
+
+      // Use the first match found (prefer the one that appears earlier in content)
+      let headerMatch: RegExpMatchArray | null = null;
+      if (smartFollowUpMatch && clarificationMatch) {
+        // Both matched, use the one that appears first
+        headerMatch =
+          smartFollowUpMatch.index! <= clarificationMatch.index!
+            ? smartFollowUpMatch
+            : clarificationMatch;
+      } else {
+        headerMatch = smartFollowUpMatch || clarificationMatch;
+      }
+
       if (!headerMatch) {
         return null;
       }

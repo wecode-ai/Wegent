@@ -676,8 +676,9 @@ export default function ChatArea({
     [isLoading, isStreaming, attachmentState.attachment, handleFileSelect, selectedTeam]
   );
 
-  const handleSendMessage = async () => {
-    const message = taskInputMessage.trim();
+  // Core message sending logic - can be called directly with a message or use taskInputMessage
+  const handleSendMessage = async (overrideMessage?: string) => {
+    const message = overrideMessage?.trim() || taskInputMessage.trim();
     if (!message && !shouldHideChatInput) return;
 
     // Check if attachment is ready
@@ -990,9 +991,9 @@ export default function ChatArea({
       scrollToBottom();
     }
   }, [isStreaming, scrollToBottom]);
-
   // Callback for child components (e.g., ClarificationForm) to send messages directly
   // This ensures all chat options (web search, clarification mode, model, etc.) are properly included
+  // Reuses handleSendMessage to avoid code duplication
   const handleSendMessageFromChild = useCallback(
     async (content: string) => {
       // Combine the content from child component with any existing input text
@@ -1002,118 +1003,10 @@ export default function ChatArea({
       // Clear the input field immediately
       setTaskInputMessage('');
 
-      // Directly send the message using the same logic as handleSendMessage
-      // but with the provided content instead of reading from state
-      if (!combinedMessage.trim()) return;
-
-      setIsLoading(true);
-      setError('');
-
-      if (isChatShell(selectedTeam)) {
-        // Set local pending state for immediate UI feedback
-        setLocalPendingMessage(combinedMessage);
-        setLocalPendingAttachment(attachmentState.attachment || null);
-        resetAttachment();
-
-        const modelId =
-          selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
-
-        try {
-          const immediateTaskId = selectedTaskDetail?.id || -Date.now();
-          if (!selectedTaskDetail?.id) {
-            setStreamingTaskId(immediateTaskId);
-          }
-
-          const tempTaskId = await contextStartStream(
-            {
-              message: combinedMessage,
-              team_id: selectedTeam?.id ?? 0,
-              task_id: selectedTaskDetail?.id,
-              model_id: modelId,
-              force_override_bot_model: forceOverride,
-              attachment_id: attachmentState.attachment?.id,
-              enable_web_search: enableWebSearch,
-              search_engine: selectedSearchEngine || undefined,
-              enable_clarification: enableClarification,
-            },
-            {
-              pendingUserMessage: combinedMessage,
-              pendingAttachment: attachmentState.attachment,
-              immediateTaskId: immediateTaskId,
-              onTaskIdResolved: realTaskId => {
-                setStreamingTaskId(realTaskId);
-                refreshTasks();
-              },
-              onComplete: async (completedTaskId, _subtaskId) => {
-                refreshTasks();
-                if (completedTaskId && !selectedTaskDetail?.id) {
-                  const params = new URLSearchParams(Array.from(searchParams.entries()));
-                  params.set('taskId', String(completedTaskId));
-                  router.push(`?${params.toString()}`);
-                  try {
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    await refreshSelectedTaskDetail(false);
-                  } catch (error) {
-                    console.error('Failed to refresh task detail after stream:', error);
-                  } finally {
-                    contextResetStream(completedTaskId);
-                    setStreamingTaskId(null);
-                  }
-                } else if (selectedTaskDetail?.id) {
-                  try {
-                    await refreshSelectedTaskDetail(false);
-                  } catch (error) {
-                    console.error('Failed to refresh task detail after stream:', error);
-                  } finally {
-                    contextResetStream(completedTaskId);
-                    setStreamingTaskId(null);
-                  }
-                }
-              },
-              onError: error => {
-                resetStreamingState();
-                toast({
-                  variant: 'destructive',
-                  title: error.message,
-                });
-              },
-            }
-          );
-
-          if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
-            setStreamingTaskId(tempTaskId);
-          }
-          setTimeout(() => scrollToBottom(true), 0);
-        } catch (err) {
-          toast({
-            variant: 'destructive',
-            title: (err as Error)?.message || 'Failed to start chat stream',
-          });
-        }
-        setIsLoading(false);
-      }
+      // Reuse handleSendMessage with the combined message
+      await handleSendMessage(combinedMessage);
     },
-    [
-      taskInputMessage,
-      selectedTeam,
-      selectedModel,
-      selectedTaskDetail,
-      forceOverride,
-      attachmentState.attachment,
-      enableWebSearch,
-      selectedSearchEngine,
-      enableClarification,
-      contextStartStream,
-      contextResetStream,
-      refreshTasks,
-      refreshSelectedTaskDetail,
-      resetStreamingState,
-      resetAttachment,
-      scrollToBottom,
-      searchParams,
-      router,
-      toast,
-    ]
+    [taskInputMessage, handleSendMessage]
   );
 
   useEffect(() => {
@@ -1473,7 +1366,7 @@ export default function ChatArea({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={handleSendMessage}
+                                onClick={() => handleSendMessage()}
                                 disabled={
                                   isLoading ||
                                   isStreaming ||
@@ -1721,7 +1614,7 @@ export default function ChatArea({
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={handleSendMessage}
+                              onClick={() => handleSendMessage()}
                               disabled={
                                 isLoading ||
                                 isStreaming ||
