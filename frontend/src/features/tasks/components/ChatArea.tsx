@@ -9,6 +9,7 @@ import { Send, CircleStop, Upload } from 'lucide-react';
 import MessagesArea from './MessagesArea';
 import ChatInput from './ChatInput';
 import SearchEngineSelector from './SearchEngineSelector';
+import ClarificationToggle from './ClarificationToggle';
 import ModelSelector, {
   Model,
   DEFAULT_MODEL_NAME,
@@ -51,17 +52,26 @@ const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 // Threshold for combined team name + model name length to trigger compact quota mode
 const COMPACT_QUOTA_NAME_THRESHOLD = 22;
 
+// Responsive collapse thresholds based on container width
+// Level 1: Collapse quota to icon mode (priority)
+const COLLAPSE_QUOTA_THRESHOLD = 520;
+// Level 2: Collapse selectors with text to icon-only mode
+const COLLAPSE_SELECTORS_THRESHOLD = 420;
+
 // Slogan Display Component - shows above input when no messages
+// Always renders a container with fixed height to prevent layout shift when switching tabs
 function SloganDisplay({ slogan }: { slogan: ChatSloganItem | null }) {
   const { i18n } = useTranslation();
   const currentLang = i18n.language?.startsWith('zh') ? 'zh' : 'en';
   const sloganText = slogan ? (currentLang === 'zh' ? slogan.zh : slogan.en) : '';
 
-  if (!sloganText) return null;
-
+  // Always render the container to maintain consistent layout height
+  // This prevents the chat input from "jumping" when switching between /chat and /code tabs
   return (
-    <div className="text-center mb-10">
-      <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">{sloganText}</h1>
+    <div className="text-center mb-10 min-h-[2.25rem] sm:min-h-[2.5rem]">
+      {sloganText && (
+        <h1 className="text-2xl sm:text-3xl font-semibold text-text-primary">{sloganText}</h1>
+      )}
     </div>
   );
 }
@@ -128,6 +138,9 @@ export default function ChatArea({
   const [isWebSearchFeatureEnabled, setIsWebSearchFeatureEnabled] = useState(false);
   const [searchEngines, setSearchEngines] = useState<SearchEngine[]>([]);
 
+  // Clarification toggle state (session-level, not persisted)
+  const [enableClarification, setEnableClarification] = useState(false);
+
   // Welcome config state for dynamic placeholder
   const [welcomeConfig, setWelcomeConfig] = useState<WelcomeConfigResponse | null>(null);
   // Load search engine preference from localStorage and fetch available engines
@@ -184,6 +197,11 @@ export default function ChatArea({
     fetchWelcomeConfig();
   }, []);
 
+  // Use refs to store the random indices, ensuring they stay stable across taskType changes
+  // This prevents the "jitter" effect when switching between /chat and /code tabs
+  const sloganRandomIndexRef = useRef<number | null>(null);
+  const tipRandomIndexRef = useRef<number | null>(null);
+
   // Get random slogan for display - memoized to prevent re-randomization on re-renders
   // Filter slogans by taskType: show slogans that match the current mode or are for 'both' modes
   const randomSlogan = useMemo<ChatSloganItem | null>(() => {
@@ -200,8 +218,13 @@ export default function ChatArea({
       return null;
     }
 
-    const randomIndex = Math.floor(Math.random() * filteredSlogans.length);
-    return filteredSlogans[randomIndex];
+    // Use stable random index: only generate once per session
+    if (sloganRandomIndexRef.current === null) {
+      sloganRandomIndexRef.current = Math.floor(Math.random() * filteredSlogans.length);
+    }
+    // Ensure index is within bounds (in case filtered list changed)
+    const index = sloganRandomIndexRef.current % filteredSlogans.length;
+    return filteredSlogans[index];
   }, [welcomeConfig?.slogans, taskType]);
 
   // Get random tip for placeholder - memoized to prevent re-randomization on re-renders
@@ -220,8 +243,13 @@ export default function ChatArea({
       return null;
     }
 
-    const randomIndex = Math.floor(Math.random() * filteredTips.length);
-    return filteredTips[randomIndex];
+    // Use stable random index: only generate once per session
+    if (tipRandomIndexRef.current === null) {
+      tipRandomIndexRef.current = Math.floor(Math.random() * filteredTips.length);
+    }
+    // Ensure index is within bounds (in case filtered list changed)
+    const index = tipRandomIndexRef.current % filteredTips.length;
+    return filteredTips[index];
   }, [welcomeConfig?.tips, taskType]);
 
   const handleSearchEngineChange = useCallback((engine: string) => {
@@ -262,6 +290,36 @@ export default function ChatArea({
   const [floatingMetrics, setFloatingMetrics] = useState({ width: 0, left: 0 });
   const [inputHeight, setInputHeight] = useState(0);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Responsive collapse state for input controls
+  // Track container width to determine collapse level
+  const inputControlsRef = useRef<HTMLDivElement>(null);
+  const [controlsContainerWidth, setControlsContainerWidth] = useState<number>(0);
+
+  // Observe container width changes for responsive collapse
+  useEffect(() => {
+    const element = inputControlsRef.current;
+    if (!element) return;
+
+    const resizeObserver = new ResizeObserver(entries => {
+      for (const entry of entries) {
+        setControlsContainerWidth(entry.contentRect.width);
+      }
+    });
+
+    resizeObserver.observe(element);
+    // Initial measurement
+    setControlsContainerWidth(element.clientWidth);
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  // Determine collapse levels based on container width
+  // Priority: 1. Collapse quota first, 2. Then collapse selectors to icon-only mode
+  const shouldCollapseQuota =
+    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_QUOTA_THRESHOLD;
+  const shouldCollapseSelectors =
+    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
 
   // New: Get selectedTask to determine if there are messages
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
@@ -494,13 +552,17 @@ export default function ChatArea({
   }, [selectedTeam, isMobile]);
 
   // Determine if compact quota mode should be used (icon only)
-  // On mobile, when combined team + model name exceeds threshold, use compact mode
+  // Priority: 1. Collapse quota first when container width is insufficient
+  // Fallback: On mobile, when combined team + model name exceeds threshold, use compact mode
   const shouldUseCompactQuota = React.useMemo(() => {
+    // Priority 1: Container width-based collapse (responsive to actual space)
+    if (shouldCollapseQuota) return true;
+    // Fallback: Mobile name-length based logic
     if (!isMobile) return false;
     const teamNameLength = selectedTeam?.name?.trim().length || 0;
     const modelNameLength = selectedModel?.name?.trim().length || 0;
     return teamNameLength + modelNameLength > COMPACT_QUOTA_NAME_THRESHOLD;
-  }, [isMobile, selectedTeam?.name, selectedModel?.name]);
+  }, [shouldCollapseQuota, isMobile, selectedTeam?.name, selectedModel?.name]);
 
   // Check if model selection is required but not fulfilled
   // For legacy teams without predefined models, user MUST select a model before sending
@@ -615,8 +677,9 @@ export default function ChatArea({
     [isLoading, isStreaming, attachmentState.attachment, handleFileSelect, selectedTeam]
   );
 
-  const handleSendMessage = async () => {
-    const message = taskInputMessage.trim();
+  // Core message sending logic - can be called directly with a message or use taskInputMessage
+  const handleSendMessage = async (overrideMessage?: string) => {
+    const message = overrideMessage?.trim() || taskInputMessage.trim();
     if (!message && !shouldHideChatInput) return;
 
     // Check if attachment is ready
@@ -678,6 +741,7 @@ export default function ChatArea({
             attachment_id: attachmentState.attachment?.id,
             enable_web_search: enableWebSearch,
             search_engine: selectedSearchEngine || undefined,
+            enable_clarification: enableClarification,
           },
           {
             pendingUserMessage: message,
@@ -928,6 +992,23 @@ export default function ChatArea({
       scrollToBottom();
     }
   }, [isStreaming, scrollToBottom]);
+  // Callback for child components (e.g., ClarificationForm) to send messages directly
+  // This ensures all chat options (web search, clarification mode, model, etc.) are properly included
+  // Reuses handleSendMessage to avoid code duplication
+  const handleSendMessageFromChild = useCallback(
+    async (content: string) => {
+      // Combine the content from child component with any existing input text
+      const existingInput = taskInputMessage.trim();
+      const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content;
+
+      // Clear the input field immediately
+      setTaskInputMessage('');
+
+      // Reuse handleSendMessage with the combined message
+      await handleSendMessage(combinedMessage);
+    },
+    [taskInputMessage, handleSendMessage]
+  );
 
   useEffect(() => {
     const container = scrollContainerRef.current;
@@ -1061,6 +1142,7 @@ export default function ChatArea({
               onContentChange={handleMessagesContentChange}
               streamingSubtaskId={streamingSubtaskId}
               onShareButtonRender={onShareButtonRender}
+              onSendMessage={handleSendMessageFromChild}
             />
           </div>
         </div>
@@ -1076,8 +1158,9 @@ export default function ChatArea({
           >
             {/* Floating Input Area */}
             <div ref={floatingInputRef} className="w-full max-w-4xl mx-auto px-4 sm:px-6">
-              {/* Slogan Display - show above input when no messages */}
-              {randomSlogan && <SloganDisplay slogan={randomSlogan} />}
+              {/* Slogan Display - always render to maintain consistent layout height */}
+              {/* This prevents the chat input from "jumping" when switching between /chat and /code tabs */}
+              <SloganDisplay slogan={randomSlogan} />
               <div className="w-full">
                 {/* External API Parameters Input - only show for Dify teams */}
                 {selectedTeam && selectedTeam.agent_type === 'dify' && (
@@ -1151,6 +1234,7 @@ export default function ChatArea({
                   {/* Team Selector and Send Button - always show */}
                   <div
                     className={`flex items-center justify-between px-3 gap-2 ${shouldHideChatInput ? 'py-3' : 'pb-0.5'}`}
+                    ref={inputControlsRef}
                   >
                     <div
                       className="flex-1 min-w-0 overflow-hidden flex items-center gap-3"
@@ -1179,6 +1263,15 @@ export default function ChatArea({
                           onSelectEngine={handleSearchEngineChange}
                           disabled={isLoading || isStreaming}
                           engines={searchEngines}
+                          compact={shouldCollapseSelectors}
+                        />
+                      )}
+                      {/* Clarification Toggle Button - only show for chat shell */}
+                      {isChatShell(selectedTeam) && (
+                        <ClarificationToggle
+                          enabled={enableClarification}
+                          onToggle={setEnableClarification}
+                          disabled={isLoading || isStreaming}
                         />
                       )}
                       {selectedTeam && (
@@ -1189,6 +1282,7 @@ export default function ChatArea({
                           setForceOverride={setForceOverride}
                           selectedTeam={selectedTeam}
                           disabled={hasMessages || isLoading}
+                          compact={shouldCollapseSelectors}
                         />
                       )}
                       {/* Repository and Branch Selectors - inside input box */}
@@ -1199,6 +1293,7 @@ export default function ChatArea({
                             handleRepoChange={setSelectedRepo}
                             disabled={hasMessages}
                             selectedTaskDetail={selectedTaskDetail}
+                            compact={shouldCollapseSelectors}
                           />
 
                           {selectedRepo && (
@@ -1207,6 +1302,7 @@ export default function ChatArea({
                               selectedBranch={selectedBranch}
                               handleBranchChange={setSelectedBranch}
                               disabled={hasMessages}
+                              compact={shouldCollapseSelectors}
                             />
                           )}
                         </>
@@ -1271,7 +1367,7 @@ export default function ChatArea({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                onClick={handleSendMessage}
+                                onClick={() => handleSendMessage()}
                                 disabled={
                                   isLoading ||
                                   isStreaming ||
@@ -1415,6 +1511,15 @@ export default function ChatArea({
                         onSelectEngine={handleSearchEngineChange}
                         disabled={isLoading || isStreaming}
                         engines={searchEngines}
+                        compact={shouldCollapseSelectors}
+                      />
+                    )}
+                    {/* Clarification Toggle Button - only show for chat shell */}
+                    {isChatShell(selectedTeam) && (
+                      <ClarificationToggle
+                        enabled={enableClarification}
+                        onToggle={setEnableClarification}
+                        disabled={isLoading || isStreaming}
                       />
                     )}
                     {selectedTeam && (
@@ -1425,6 +1530,7 @@ export default function ChatArea({
                         setForceOverride={setForceOverride}
                         selectedTeam={selectedTeam}
                         disabled={hasMessages || isLoading}
+                        compact={shouldCollapseSelectors}
                       />
                     )}
                     {/* Repository and Branch Selectors - inside input box */}
@@ -1435,6 +1541,7 @@ export default function ChatArea({
                           handleRepoChange={setSelectedRepo}
                           disabled={hasMessages}
                           selectedTaskDetail={selectedTaskDetail}
+                          compact={shouldCollapseSelectors}
                         />
 
                         {selectedRepo && (
@@ -1443,6 +1550,7 @@ export default function ChatArea({
                             selectedBranch={selectedBranch}
                             handleBranchChange={setSelectedBranch}
                             disabled={hasMessages}
+                            compact={shouldCollapseSelectors}
                           />
                         )}
                       </>
@@ -1507,7 +1615,7 @@ export default function ChatArea({
                             <Button
                               variant="ghost"
                               size="icon"
-                              onClick={handleSendMessage}
+                              onClick={() => handleSendMessage()}
                               disabled={
                                 isLoading ||
                                 isStreaming ||

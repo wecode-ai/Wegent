@@ -46,6 +46,8 @@ interface RepositorySelectorProps {
   selectedTaskDetail?: TaskDetail | null;
   /** When true, the selector will take full width of its container */
   fullWidth?: boolean;
+  /** When true, display only icon without text (for responsive collapse) */
+  compact?: boolean;
 }
 
 export default function RepositorySelector({
@@ -54,6 +56,7 @@ export default function RepositorySelector({
   disabled,
   selectedTaskDetail,
   fullWidth = false,
+  compact = false,
 }: RepositorySelectorProps) {
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -416,7 +419,108 @@ export default function RepositorySelector({
   }, [repos, selectedRepo]);
 
   // Tooltip content for repository selector
-  const tooltipContent = t('repos.repository_tooltip', '选择代码仓库');
+  // In compact mode, show selected repo name in tooltip
+  const tooltipContent =
+    compact && selectedRepo
+      ? `${t('repos.repository_tooltip', '选择代码仓库')}: ${selectedRepo.git_repo}`
+      : t('repos.repository_tooltip', '选择代码仓库');
+
+  // In compact mode, only show the icon button
+  if (compact) {
+    return (
+      <div className="flex items-center min-w-0" data-tour="repo-selector">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                disabled={disabled || loading}
+                className={cn(
+                  'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                  'transition-colors',
+                  'text-text-muted hover:text-text-primary hover:bg-muted',
+                  loading ? 'animate-pulse' : '',
+                  'focus:outline-none focus:ring-0',
+                  'disabled:cursor-not-allowed disabled:opacity-50'
+                )}
+                onClick={() => {
+                  const trigger = document.querySelector(
+                    '[data-repo-trigger]'
+                  ) as HTMLButtonElement;
+                  trigger?.click();
+                }}
+              >
+                <FiGithub className="w-4 h-4 flex-shrink-0" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{tooltipContent}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        {/* Hidden SearchableSelect for popover functionality */}
+        <div className="hidden">
+          <SearchableSelect
+            value={selectedRepo?.git_repo_id.toString()}
+            onValueChange={handleChange}
+            onSearchChange={handleSearchChange}
+            disabled={disabled || loading}
+            placeholder={t('branches.select_repository')}
+            searchPlaceholder={t('branches.search_repository')}
+            items={selectItems}
+            loading={loading}
+            error={error}
+            emptyText={t('branches.select_repository')}
+            noMatchText={t('branches.no_match')}
+            contentClassName="max-w-[280px]"
+            footer={
+              <div className="border-t border-border bg-base flex items-center justify-between px-2.5 py-2 text-xs text-text-secondary">
+                <div
+                  className="cursor-pointer group flex items-center space-x-2 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
+                  onClick={handleIntegrationClick}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleIntegrationClick();
+                    }
+                  }}
+                >
+                  <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                  <span className="font-medium group-hover:text-text-primary">
+                    {t('branches.configure_integration')}
+                  </span>
+                </div>
+                <div
+                  className="cursor-pointer flex items-center gap-1.5 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1.5 py-0.5"
+                  onClick={e => {
+                    e.stopPropagation();
+                    handleRefreshCache();
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  title={t('branches.load_more')}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleRefreshCache();
+                    }
+                  }}
+                >
+                  <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+                  <span className="text-xs">
+                    {isRefreshing ? t('branches.refreshing') : t('actions.refresh')}
+                  </span>
+                </div>
+              </div>
+            }
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
