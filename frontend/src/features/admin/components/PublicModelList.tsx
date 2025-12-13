@@ -242,6 +242,11 @@ const PublicModelList: React.FC = () => {
     return (env?.model_id as string) || 'N/A';
   };
 
+  const getDisplayName = (model: AdminPublicModel): string => {
+    // Use display_name from API response if available, otherwise fall back to name
+    return model.display_name || model.name;
+  };
+
   return (
     <div className="space-y-3">
       {/* Header */}
@@ -281,7 +286,7 @@ const PublicModelList: React.FC = () => {
                     <div className="flex flex-col justify-center min-w-0 flex-1">
                       <div className="flex items-center space-x-2 min-w-0">
                         <h3 className="text-base font-medium text-text-primary truncate">
-                          {model.name}
+                          {getDisplayName(model)}
                         </h3>
                         <Tag variant="info">{getModelProvider(model.json)}</Tag>
                         {model.is_active ? (
@@ -291,6 +296,10 @@ const PublicModelList: React.FC = () => {
                         )}
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-xs text-text-muted">
+                        <span>
+                          {t('public_models.form.name')}: {model.name}
+                        </span>
+                        <span>•</span>
                         <span>
                           {t('public_models.model_id')}: {getModelId(model.json)}
                         </span>
