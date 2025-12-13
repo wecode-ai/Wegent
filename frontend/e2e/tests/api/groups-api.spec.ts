@@ -7,7 +7,7 @@ test.describe('API - Groups', () => {
   let apiClient: ApiClient;
   let testGroupName: string;
 
-  test.beforeAll(async ({ request }) => {
+  test.beforeEach(async ({ request }) => {
     apiClient = createApiClient(request);
     const response = await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
     expect(response.status).toBe(200);
