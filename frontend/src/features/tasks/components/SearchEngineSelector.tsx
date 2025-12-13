@@ -110,12 +110,9 @@ export default function SearchEngineSelector({
       <DropdownMenu>
         <DropdownMenuTrigger asChild disabled={disabled}>
           <div
-            className="h-8 pl-1.5 pr-2 flex items-center justify-center rounded-r-lg hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
-            title={t('web_search.select_engine')}
+            className="h-8 px-1.5 flex items-center justify-center rounded-r-lg hover:bg-black/5 dark:hover:bg-white/5 cursor-pointer"
+            title={currentEngine?.display_name || t('web_search.select_engine')}
           >
-            <span className="text-xs font-medium mr-1 max-w-[60px] truncate">
-              {currentEngine?.display_name || 'Search'}
-            </span>
             <ChevronDown className="h-3 w-3 opacity-70" />
           </div>
         </DropdownMenuTrigger>
