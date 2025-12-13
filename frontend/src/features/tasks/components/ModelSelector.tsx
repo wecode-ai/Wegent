@@ -161,10 +161,18 @@ export default function ModelSelector({
     }
   }, [t]);
 
-  // Filter models by compatible provider when team is selected
+  // Filter models by compatible provider when team is selected, and sort by display name
   const filteredModels = useMemo(() => {
-    if (!compatibleProvider) return models;
-    return models.filter(model => model.provider === compatibleProvider);
+    let result = models;
+    if (compatibleProvider) {
+      result = models.filter(model => model.provider === compatibleProvider);
+    }
+    // Sort by display name (displayName or name) alphabetically
+    return result.slice().sort((a, b) => {
+      const displayA = getModelDisplayText(a).toLowerCase();
+      const displayB = getModelDisplayText(b).toLowerCase();
+      return displayA.localeCompare(displayB);
+    });
   }, [models, compatibleProvider]);
 
   // Reset selected model when team changes and current selection is not compatible
@@ -356,8 +364,9 @@ export default function ModelSelector({
   // Check if model selection is required (for legacy teams without predefined models)
   const isModelRequired = !showDefaultOption && !selectedModel;
 
-  // Get bound model names from team bots for display
-  const getBoundModelNames = useCallback((): string[] => {
+  // Get bound model display names from team bots for display
+  // Returns displayName if available, otherwise falls back to model name
+  const getBoundModelDisplayNames = useCallback((): string[] => {
     if (!selectedTeam?.bots || selectedTeam.bots.length === 0) {
       return [];
     }
@@ -365,10 +374,14 @@ export default function ModelSelector({
       .map(botInfo => {
         const config = botInfo.bot?.agent_config;
         if (!config) return '';
-        return getModelFromConfig(config as Record<string, unknown>);
+        const modelName = getModelFromConfig(config as Record<string, unknown>);
+        if (!modelName) return '';
+        // Try to find the model in the loaded models list to get displayName
+        const foundModel = models.find(m => m.name === modelName);
+        return foundModel?.displayName || modelName;
       })
       .filter(Boolean);
-  }, [selectedTeam?.bots]);
+  }, [selectedTeam?.bots, models]);
 
   // Get display text for trigger
   const getTriggerDisplayText = () => {
@@ -383,16 +396,17 @@ export default function ModelSelector({
       return t('task_submit.select_model', '选择模型');
     }
     if (selectedModel.name === DEFAULT_MODEL_NAME) {
-      const defaultLabel = t('task_submit.default_model', '默认');
-      const boundModelNames = getBoundModelNames();
+      const boundModelDisplayNames = getBoundModelDisplayNames();
 
-      if (boundModelNames.length === 1) {
-        return `${defaultLabel} (${boundModelNames[0]})`;
-      } else if (boundModelNames.length > 1) {
-        // Multiple bots - show first model name + count of others
-        return `${defaultLabel} (${boundModelNames[0]} +${boundModelNames.length - 1})`;
+      if (boundModelDisplayNames.length === 1) {
+        // Single bot - show model displayName directly without "default" label
+        return boundModelDisplayNames[0];
+      } else if (boundModelDisplayNames.length > 1) {
+        // Multiple bots - show first model displayName + count of others
+        return `${boundModelDisplayNames[0]} +${boundModelDisplayNames.length - 1}`;
       }
-      return defaultLabel;
+      // Fallback to default label when no bound models found
+      return t('task_submit.default_model', '默认');
     }
     const displayText = getModelDisplayText(selectedModel);
     if (forceOverride && !isMixedTeam) {
@@ -503,6 +517,11 @@ export default function ModelSelector({
                           <div className="flex flex-col min-w-0 flex-1">
                             <span className="font-medium text-xs text-text-secondary">
                               {t('task_submit.default_model', '默认')}
+                              {getBoundModelDisplayNames().length > 0 && (
+                                <span className="text-text-muted ml-1">
+                                  ({getBoundModelDisplayNames().join(', ')})
+                                </span>
+                              )}
                             </span>
                             <span className="text-[10px] text-text-muted">
                               {t('task_submit.use_bot_model', '使用 Bot 预设模型')}
