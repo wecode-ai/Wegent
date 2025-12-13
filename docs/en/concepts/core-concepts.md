@@ -8,14 +8,14 @@ This document introduces the core concepts of the Wegent platform to help you un
 
 > **Important:** Please note the distinction between code-level terminology and user interface display names.
 
-| Code/CRD Level | UI Display (Chinese) | UI Display (English) | Description |
-|----------------|---------------------|---------------------|-------------|
-| **Team** | **智能体** | **Agent** | The user-facing AI agent that executes tasks |
-| **Bot** | **机器人** | **Bot** | A building block component that makes up a Team |
+| Code/CRD Level | UI Display | Description |
+|----------------|------------|-------------|
+| **Team** | **Agent** (zh: 智能体) | The user-facing AI agent that executes tasks |
+| **Bot** | **Bot** (zh: 机器人) | A building block component that makes up a Team |
 
 **Simple Understanding:**
-- **Bot (机器人)** = A configured AI worker unit (includes prompt, runtime, model)
-- **Team (智能体)** = A "working team" composed of one or more Bots - this is what users interact with to execute tasks
+- **Bot** = A configured AI worker unit (includes prompt, runtime, model)
+- **Team** = A "working team" composed of one or more Bots - this is what users interact with to execute tasks
 
 ---
 
@@ -25,16 +25,16 @@ Wegent is built on Kubernetes-style declarative API and CRD (Custom Resource Def
 
 ### Core Resource Types
 
-| Icon | Code Name | UI Name (zh-CN) | Description | Analogy |
-|------|-----------|-----------------|-------------|---------|
-| 👻 | **Ghost** | - | The "soul" of an agent | Defines personality and capabilities |
-| 🧠 | **Model** | 模型 | AI model configuration | Brain configuration parameters |
-| 🐚 | **Shell** | 执行器 | Runtime environment | Executable program container |
-| 🤖 | **Bot** | **机器人** | Agent building block | Ghost + Shell + Model |
-| 👥 | **Team** | **智能体** | User-facing agent | Combination of multiple Bots |
-| 🤝 | **Collaboration** | 协作模式 | Collaboration mode | Interaction pattern between Bots |
-| 💼 | **Workspace** | 工作空间 | Work environment | Isolated code workspace |
-| 🎯 | **Task** | 任务 | Task | Work unit assigned to Team (智能体) |
+| Icon | Code Name | Description | Analogy |
+|------|-----------|-------------|---------|
+| 👻 | **Ghost** | The "soul" of an agent | Defines personality and capabilities |
+| 🧠 | **Model** | AI model configuration | Brain configuration parameters |
+| 🐚 | **Shell** | Runtime environment | Executable program container |
+| 🤖 | **Bot** | Agent building block | Ghost + Shell + Model |
+| 👥 | **Team** | User-facing agent | Combination of multiple Bots |
+| 🤝 | **Collaboration** | Collaboration mode | Interaction pattern between Bots |
+| 💼 | **Workspace** | Work environment | Isolated code workspace |
+| 🎯 | **Task** | Task | Work unit assigned to a Team |
 
 ---
 
