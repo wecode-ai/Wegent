@@ -48,8 +48,6 @@ import { useAttachment } from '@/hooks/useAttachment';
 import { chatApis, SearchEngine } from '@/apis/chat';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
-// Threshold for combined team name + model name length to trigger compact quota mode
-const COMPACT_QUOTA_NAME_THRESHOLD = 22;
 
 // Responsive collapse thresholds based on container width
 // Level 1: Collapse quota to icon mode (priority)
@@ -551,17 +549,15 @@ export default function ChatArea({
   }, [selectedTeam, isMobile]);
 
   // Determine if compact quota mode should be used (icon only)
-  // Priority: 1. Collapse quota first when container width is insufficient
-  // Fallback: On mobile, when combined team + model name exceeds threshold, use compact mode
+  // Priority: 1. On mobile, always use compact mode to save space
+  // Priority: 2. Collapse quota first when container width is insufficient
   const shouldUseCompactQuota = React.useMemo(() => {
-    // Priority 1: Container width-based collapse (responsive to actual space)
+    // Priority 1: On mobile, always use compact mode
+    if (isMobile) return true;
+    // Priority 2: Container width-based collapse (responsive to actual space)
     if (shouldCollapseQuota) return true;
-    // Fallback: Mobile name-length based logic
-    if (!isMobile) return false;
-    const teamNameLength = selectedTeam?.name?.trim().length || 0;
-    const modelNameLength = selectedModel?.name?.trim().length || 0;
-    return teamNameLength + modelNameLength > COMPACT_QUOTA_NAME_THRESHOLD;
-  }, [shouldCollapseQuota, isMobile, selectedTeam?.name, selectedModel?.name]);
+    return false;
+  }, [isMobile, shouldCollapseQuota]);
 
   // Check if model selection is required but not fulfilled
   // For legacy teams without predefined models, user MUST select a model before sending
