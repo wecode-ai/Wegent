@@ -91,7 +91,7 @@ jobs:
           ALGORITHM: HS256
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
-          INIT_DATA_ENABLED: "false"
+          INIT_DATA_ENABLED: "true"
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
@@ -280,7 +280,7 @@ jobs:
           ALGORITHM: HS256
           ENVIRONMENT: development
           DB_AUTO_MIGRATE: "false"
-          INIT_DATA_ENABLED: "false"
+          INIT_DATA_ENABLED: "true"
         run: |
           source .venv/bin/activate
           nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
