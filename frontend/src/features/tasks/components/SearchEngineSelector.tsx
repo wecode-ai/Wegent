@@ -36,7 +36,6 @@ export default function SearchEngineSelector({
   onSelectEngine,
   disabled = false,
   engines,
-  compact = false,
 }: SearchEngineSelectorProps) {
   const { t } = useTranslation('chat');
 

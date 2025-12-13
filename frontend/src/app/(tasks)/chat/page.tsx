@@ -141,10 +141,7 @@ export default function ChatPage() {
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Collapsed sidebar floating buttons */}
         {isCollapsed && !isMobile && (
-          <CollapsedSidebarButtons
-            onExpand={handleToggleCollapsed}
-            onNewTask={handleNewTask}
-          />
+          <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
         )}
         {/* Responsive resizable sidebar */}
         <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>

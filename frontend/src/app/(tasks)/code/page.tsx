@@ -177,10 +177,7 @@ export default function CodePage() {
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Collapsed sidebar floating buttons */}
         {isCollapsed && !isMobile && (
-          <CollapsedSidebarButtons
-            onExpand={handleToggleCollapsed}
-            onNewTask={handleNewTask}
-          />
+          <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
         )}
         {/* Responsive resizable sidebar - fixed, not affected by right panel */}
         <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>

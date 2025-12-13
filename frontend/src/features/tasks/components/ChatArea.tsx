@@ -278,7 +278,7 @@ export default function ChatArea({
     const element = inputControlsRef.current;
     if (!element) return;
 
-    const resizeObserver = new ResizeObserver((entries) => {
+    const resizeObserver = new ResizeObserver(entries => {
       for (const entry of entries) {
         setControlsContainerWidth(entry.contentRect.width);
       }
@@ -293,8 +293,10 @@ export default function ChatArea({
 
   // Determine collapse levels based on container width
   // Priority: 1. Collapse quota first, 2. Then collapse selectors to icon-only mode
-  const shouldCollapseQuota = controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_QUOTA_THRESHOLD;
-  const shouldCollapseSelectors = controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
+  const shouldCollapseQuota =
+    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_QUOTA_THRESHOLD;
+  const shouldCollapseSelectors =
+    controlsContainerWidth > 0 && controlsContainerWidth < COLLAPSE_SELECTORS_THRESHOLD;
 
   // New: Get selectedTask to determine if there are messages
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =

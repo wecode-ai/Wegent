@@ -160,9 +160,10 @@ export default function BranchSelector({
 
   // Tooltip content for branch selector
   // In compact mode, show selected branch name in tooltip
-  const tooltipContent = compact && selectedBranch
-    ? `${t('repos.branch_tooltip', '选择分支')}: ${selectedBranch.name}${selectedBranch.default ? ' (default)' : ''}`
-    : t('repos.branch_tooltip', '选择分支');
+  const tooltipContent =
+    compact && selectedBranch
+      ? `${t('repos.branch_tooltip', '选择分支')}: ${selectedBranch.name}${selectedBranch.default ? ' (default)' : ''}`
+      : t('repos.branch_tooltip', '选择分支');
 
   // In compact mode, only show the icon button
   if (compact) {

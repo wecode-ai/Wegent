@@ -426,7 +426,11 @@ async def list_public_models(
                 id=model.id,
                 name=model.name,
                 namespace=model.namespace,
-                display_name=get_display_name(model) if get_display_name(model) != model.name else None,
+                display_name=(
+                    get_display_name(model)
+                    if get_display_name(model) != model.name
+                    else None
+                ),
                 model_json=model.json,
                 is_active=model.is_active,
                 created_at=model.created_at,

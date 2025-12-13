@@ -420,9 +420,10 @@ export default function RepositorySelector({
 
   // Tooltip content for repository selector
   // In compact mode, show selected repo name in tooltip
-  const tooltipContent = compact && selectedRepo
-    ? `${t('repos.repository_tooltip', '选择代码仓库')}: ${selectedRepo.git_repo}`
-    : t('repos.repository_tooltip', '选择代码仓库');
+  const tooltipContent =
+    compact && selectedRepo
+      ? `${t('repos.repository_tooltip', '选择代码仓库')}: ${selectedRepo.git_repo}`
+      : t('repos.repository_tooltip', '选择代码仓库');
 
   // In compact mode, only show the icon button
   if (compact) {
@@ -443,7 +444,9 @@ export default function RepositorySelector({
                   'disabled:cursor-not-allowed disabled:opacity-50'
                 )}
                 onClick={() => {
-                  const trigger = document.querySelector('[data-repo-trigger]') as HTMLButtonElement;
+                  const trigger = document.querySelector(
+                    '[data-repo-trigger]'
+                  ) as HTMLButtonElement;
                   trigger?.click();
                 }}
               >

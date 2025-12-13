@@ -420,12 +420,16 @@ export default function ModelSelector({
 
   // Tooltip content for model selector
   // In compact mode, show selected model name in tooltip
-  const tooltipContent = compact && selectedModel
-    ? `${t('task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${getTriggerDisplayText()}`
-    : t('task_submit.model_tooltip', '选择用于对话的 AI 模型');
+  const tooltipContent =
+    compact && selectedModel
+      ? `${t('task_submit.model_tooltip', '选择用于对话的 AI 模型')}: ${getTriggerDisplayText()}`
+      : t('task_submit.model_tooltip', '选择用于对话的 AI 模型');
 
   return (
-    <div className="flex items-center min-w-0" style={{ maxWidth: compact ? 'auto' : (isMobile ? 200 : 260) }}>
+    <div
+      className="flex items-center min-w-0"
+      style={{ maxWidth: compact ? 'auto' : isMobile ? 200 : 260 }}
+    >
       <Popover open={isOpen} onOpenChange={setIsOpen}>
         <TooltipProvider>
           <Tooltip>
@@ -449,7 +453,9 @@ export default function ModelSelector({
                   )}
                 >
                   <Brain className="h-4 w-4 flex-shrink-0" />
-                  {!compact && <span className="truncate text-xs min-w-0">{getTriggerDisplayText()}</span>}
+                  {!compact && (
+                    <span className="truncate text-xs min-w-0">{getTriggerDisplayText()}</span>
+                  )}
                 </button>
               </PopoverTrigger>
             </TooltipTrigger>
