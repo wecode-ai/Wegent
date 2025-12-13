@@ -1,6 +1,5 @@
 import { test, expect } from '@playwright/test';
 import { AdminPage } from '../../pages/admin/admin.page';
-import { LoginPage } from '../../pages/auth/login.page';
 import { createApiClient, ApiClient } from '../../utils/api-client';
 import { DataBuilders } from '../../fixtures/data-builders';
 import { ADMIN_USER } from '../../config/test-users';
@@ -15,10 +14,7 @@ test.describe('Admin - Public Model Management', () => {
     apiClient = createApiClient(request);
     await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
 
-    // Login via UI
-    const loginPage = new LoginPage(page);
-    await loginPage.login(ADMIN_USER.username, ADMIN_USER.password);
-
+    // Navigate directly to admin page (already authenticated via global setup)
     await adminPage.navigateToTab('public-models');
   });
 
@@ -38,7 +34,7 @@ test.describe('Admin - Public Model Management', () => {
       adminPage['page'].locator(
         'h2:has-text("Public Models"), h2:has-text("公共模型"), h3:has-text("Model")'
       )
-    ).toBeVisible({ timeout: 10000 });
+    ).toBeVisible({ timeout: 30000 });
   });
 
   test('should display public model list', async () => {

@@ -1,4 +1,4 @@
-import { defineConfig, devices } from '@playwright/test'
+import { defineConfig, devices } from '@playwright/test';
 
 /**
  * Playwright configuration for Wegent E2E testing
@@ -7,9 +7,9 @@ import { defineConfig, devices } from '@playwright/test'
 export default defineConfig({
   testDir: './e2e/tests',
 
-  /* Run tests sequentially to avoid data conflicts */
+  /* Run tests in parallel within same file, but limit workers to avoid data conflicts */
   fullyParallel: false,
-  workers: 1,
+  workers: process.env.CI ? 2 : 3,
 
   /* Fail the build on CI if you accidentally left test.only in the source code */
   forbidOnly: !!process.env.CI,
@@ -138,4 +138,4 @@ export default defineConfig({
   //   url: 'http://localhost:3000',
   //   reuseExistingServer: !process.env.CI,
   // },
-})
+});

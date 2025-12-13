@@ -17,6 +17,8 @@ export class AdminPage extends BasePage {
 
   async navigateToTab(tab: 'users' | 'public-models' | 'system-config'): Promise<void> {
     await this.goto(`/admin?tab=${tab}`);
+    // Wait for network to be idle instead of fixed timeout
+    await this.page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
   }
 
   // Tab navigation

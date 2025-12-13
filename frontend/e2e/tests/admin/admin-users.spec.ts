@@ -15,10 +15,7 @@ test.describe('Admin - User Management', () => {
     apiClient = createApiClient(request);
     await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
 
-    // Login via UI
-    const loginPage = new LoginPage(page);
-    await loginPage.login(ADMIN_USER.username, ADMIN_USER.password);
-
+    // Navigate directly to admin page (already authenticated via global setup)
     await adminPage.navigateToTab('users');
   });
 
