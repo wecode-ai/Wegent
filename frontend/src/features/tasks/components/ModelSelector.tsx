@@ -161,10 +161,18 @@ export default function ModelSelector({
     }
   }, [t]);
 
-  // Filter models by compatible provider when team is selected
+  // Filter models by compatible provider when team is selected, and sort by display name
   const filteredModels = useMemo(() => {
-    if (!compatibleProvider) return models;
-    return models.filter(model => model.provider === compatibleProvider);
+    let result = models;
+    if (compatibleProvider) {
+      result = models.filter(model => model.provider === compatibleProvider);
+    }
+    // Sort by display name (displayName or name) alphabetically
+    return result.slice().sort((a, b) => {
+      const displayA = getModelDisplayText(a).toLowerCase();
+      const displayB = getModelDisplayText(b).toLowerCase();
+      return displayA.localeCompare(displayB);
+    });
   }, [models, compatibleProvider]);
 
   // Reset selected model when team changes and current selection is not compatible
@@ -509,6 +517,11 @@ export default function ModelSelector({
                           <div className="flex flex-col min-w-0 flex-1">
                             <span className="font-medium text-xs text-text-secondary">
                               {t('task_submit.default_model', '默认')}
+                              {getBoundModelDisplayNames().length > 0 && (
+                                <span className="text-text-muted ml-1">
+                                  ({getBoundModelDisplayNames().join(', ')})
+                                </span>
+                              )}
                             </span>
                             <span className="text-[10px] text-text-muted">
                               {t('task_submit.use_bot_model', '使用 Bot 预设模型')}
