@@ -4,7 +4,7 @@
 
 'use client';
 
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import '@/features/common/scrollbar.css';
 import { AiOutlineTeam } from 'react-icons/ai';
 import { RiRobot2Line } from 'react-icons/ri';
@@ -15,6 +15,7 @@ import {
   DocumentDuplicateIcon,
   ChatBubbleLeftEllipsisIcon,
   ShareIcon,
+  CodeBracketIcon,
 } from '@heroicons/react/24/outline';
 import { Bot, Team } from '@/types/api';
 import { fetchTeamsList, deleteTeam, shareTeam } from '../services/teams';
@@ -45,6 +46,9 @@ interface TeamListProps {
   groupName?: string;
 }
 
+// Mode filter type
+type ModeFilter = 'all' | 'chat' | 'code';
+
 export default function TeamList({ scope = 'personal', groupName }: TeamListProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
@@ -61,6 +65,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
   const [_deletingId, setDeletingId] = useState<number | null>(null);
   const [botListVisible, setBotListVisible] = useState(false);
   const [editDialogOpen, setEditDialogOpen] = useState(false);
+  const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
   const router = useRouter();
 
   const setTeamsSorted = useCallback<React.Dispatch<React.SetStateAction<Team[]>>>(
@@ -152,11 +157,38 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
     setPrefillTeam(null);
   };
 
+  // Get target page based on team's bind_mode and current filter
+  const getTargetPage = (team: Team): 'chat' | 'code' => {
+    const bindMode = team.bind_mode || ['chat', 'code'];
+    // If team only supports one mode, use that
+    if (bindMode.length === 1) {
+      return bindMode[0];
+    }
+    // If team supports both, use current filter (default to 'chat' if filter is 'all')
+    if (modeFilter !== 'all') {
+      return modeFilter;
+    }
+    // Default to 'chat' when filter is 'all' and team supports both
+    return 'chat';
+  };
+
   const handleChatTeam = (team: Team) => {
     const params = new URLSearchParams();
     params.set('teamId', String(team.id));
-    router.push(`/chat?${params.toString()}`);
+    const targetPage = getTargetPage(team);
+    router.push(`/${targetPage}?${params.toString()}`);
   };
+
+  // Filter teams based on mode filter
+  const filteredTeams = useMemo(() => {
+    if (modeFilter === 'all') {
+      return teams;
+    }
+    return teams.filter(team => {
+      const bindMode = team.bind_mode || ['chat', 'code'];
+      return bindMode.includes(modeFilter);
+    });
+  }, [teams, modeFilter]);
 
   const handleDelete = (teamId: number) => {
     setTeamToDelete(teamId);
@@ -231,13 +263,51 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
           <p className="text-sm text-text-muted mb-1">{t('teams.description')}</p>
         </div>
         <div className="bg-base border border-border rounded-md p-2 w-full max-w-full overflow-hidden max-h-[70vh] flex flex-col overflow-y-auto custom-scrollbar">
+          {/* Mode filter tabs */}
+          <div className="flex items-center gap-1 mb-3 pb-2 border-b border-border">
+            <button
+              type="button"
+              onClick={() => setModeFilter('all')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                modeFilter === 'all'
+                  ? 'bg-primary text-white'
+                  : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
+              }`}
+            >
+              {t('teams.filter_all')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setModeFilter('chat')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                modeFilter === 'chat'
+                  ? 'bg-primary text-white'
+                  : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
+              }`}
+            >
+              <ChatBubbleLeftEllipsisIcon className="w-4 h-4" />
+              {t('teams.filter_chat')}
+            </button>
+            <button
+              type="button"
+              onClick={() => setModeFilter('code')}
+              className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                modeFilter === 'code'
+                  ? 'bg-primary text-white'
+                  : 'bg-muted text-text-secondary hover:text-text-primary hover:bg-hover'
+              }`}
+            >
+              <CodeBracketIcon className="w-4 h-4" />
+              {t('teams.filter_code')}
+            </button>
+          </div>
           {isLoading ? (
             <LoadingState fullScreen={false} message={t('teams.loading')} />
           ) : (
             <>
               <div className="flex-1 overflow-y-auto overflow-x-hidden custom-scrollbar space-y-3 p-1">
-                {teams.length > 0 ? (
-                  teams.map(team => (
+                {filteredTeams.length > 0 ? (
+                  filteredTeams.map(team => (
                     <Card
                       key={team.id}
                       className="p-3 sm:p-4 bg-base hover:bg-hover transition-colors overflow-hidden"
@@ -309,10 +379,18 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                             variant="ghost"
                             size="icon"
                             onClick={() => handleChatTeam(team)}
-                            title={t('teams.chat')}
+                            title={
+                              getTargetPage(team) === 'code'
+                                ? t('teams.go_to_code')
+                                : t('teams.go_to_chat')
+                            }
                             className="h-7 w-7 sm:h-8 sm:w-8"
                           >
-                            <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            {getTargetPage(team) === 'code' ? (
+                              <CodeBracketIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            ) : (
+                              <ChatBubbleLeftEllipsisIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                            )}
                           </Button>
                           {shouldShowEditDelete(team) && (
                             <Button

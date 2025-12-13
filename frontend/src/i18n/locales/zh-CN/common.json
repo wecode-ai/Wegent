@@ -211,6 +211,11 @@
     "group_required_message": "在群组模式下创建智能体时必须先选择一个群组",
     "share_instructions_content1": "复制链接发送给其他人，他们可以通过链接使用你分享的智能体来直接完成任务。 ",
     "share_instructions_content2": "智能体共享后，你仍然可以管理和编辑这个智能体，其他人可以应用最新的智能体配置但不能编辑智能体设置。",
+    "filter_all": "全部",
+    "filter_chat": "聊天",
+    "filter_code": "编码",
+    "go_to_chat": "去聊天",
+    "go_to_code": "去编码",
     "share": {
       "title": "智能体分享",
       "confirm_message": "确定要使用 {{userName}} 的 {{teamName}} 执行任务吗？",

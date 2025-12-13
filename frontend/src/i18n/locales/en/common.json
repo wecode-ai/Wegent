@@ -211,6 +211,11 @@
     "group_required_message": "When creating an agent in group mode, a group must be selected first",
     "share_instructions_content1": "Copy and send this link to others, they can use your shared team to complete tasks directly through the link.",
     "share_instructions_content2": "After sharing the team, you can still manage and edit this team, and others can apply the latest team configuration but cannot edit the team settings.",
+    "filter_all": "All",
+    "filter_chat": "Chat",
+    "filter_code": "Code",
+    "go_to_chat": "Go to Chat",
+    "go_to_code": "Go to Code",
     "share": {
       "title": "Team Share",
       "confirm_message": "Do you want to use {{userName}}'s {{teamName}} to execute tasks?",
