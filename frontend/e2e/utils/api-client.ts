@@ -89,13 +89,20 @@ export class ApiClient {
   /**
    * Login to the application
    */
-  async login(username: string, password: string): Promise<ApiResponse<{ token: string }>> {
-    const response = await this.call<{ token: string }>('POST', '/api/auth/login', {
-      user_name: username,
-      password,
-    });
-    if (response.data?.token) {
-      this.setToken(response.data.token);
+  async login(
+    username: string,
+    password: string
+  ): Promise<ApiResponse<{ access_token: string; token_type: string }>> {
+    const response = await this.call<{ access_token: string; token_type: string }>(
+      'POST',
+      '/api/auth/login',
+      {
+        user_name: username,
+        password,
+      }
+    );
+    if (response.data?.access_token) {
+      this.setToken(response.data.access_token);
     }
     return response;
   }
