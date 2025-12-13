@@ -845,12 +845,105 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
 
         return self._convert_to_bot_dict(bot, ghost, shell, model, return_agent_config)
 
-    def delete_with_user(self, db: Session, *, bot_id: int, user_id: int) -> None:
+    def _get_teams_using_bot(
+        self, db: Session, bot_name: str, bot_namespace: str, user_id: int
+    ) -> List[Kind]:
         """
-        Delete user Bot and related components.
+        Get all teams that reference this bot.
 
-        Note: Shell is not deleted because it's now a reference to user's custom shell
-        or public shell, not a dedicated shell for this bot.
+        Args:
+            db: Database session
+            bot_name: Bot name
+            bot_namespace: Bot namespace
+            user_id: User ID
+
+        Returns:
+            List of teams that reference this bot
+        """
+        teams = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user_id, Kind.kind == "Team", Kind.is_active == True
+            )
+            .all()
+        )
+
+        teams_using_bot = []
+        for team in teams:
+            team_crd = Team.model_validate(team.json)
+            for member in team_crd.spec.members:
+                if (
+                    member.botRef.name == bot_name
+                    and member.botRef.namespace == bot_namespace
+                ):
+                    teams_using_bot.append(team)
+                    break
+
+        return teams_using_bot
+
+    def _get_running_tasks_for_teams(
+        self, db: Session, teams: List[Kind]
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all running tasks for the given teams.
+
+        Args:
+            db: Database session
+            teams: List of teams to check
+
+        Returns:
+            List of running task info dictionaries
+        """
+        from app.schemas.kind import Task
+
+        if not teams:
+            return []
+
+        # Get all active tasks
+        all_tasks = (
+            db.query(Kind).filter(Kind.kind == "Task", Kind.is_active == True).all()
+        )
+
+        running_tasks = []
+        for team in teams:
+            team_name = team.name
+            team_namespace = team.namespace
+
+            for task in all_tasks:
+                task_crd = Task.model_validate(task.json)
+                if (
+                    task_crd.spec.teamRef.name == team_name
+                    and task_crd.spec.teamRef.namespace == team_namespace
+                ):
+                    if task_crd.status and task_crd.status.status in [
+                        "PENDING",
+                        "RUNNING",
+                    ]:
+                        running_tasks.append(
+                            {
+                                "task_id": task.id,
+                                "task_name": task.name,
+                                "task_title": task_crd.spec.title,
+                                "status": task_crd.status.status,
+                                "team_name": team_name,
+                            }
+                        )
+
+        return running_tasks
+
+    def check_running_tasks(
+        self, db: Session, *, bot_id: int, user_id: int
+    ) -> Dict[str, Any]:
+        """
+        Check if a bot has any running tasks (through teams that use this bot).
+
+        Args:
+            db: Database session
+            bot_id: Bot ID to check
+            user_id: User ID
+
+        Returns:
+            Dictionary with has_running_tasks flag and list of running tasks
         """
         bot = (
             db.query(Kind)
@@ -866,30 +959,76 @@ class BotKindsService(BaseService[Kind, BotCreate, BotUpdate]):
         if not bot:
             raise HTTPException(status_code=404, detail="Bot not found")
 
-        # Check if bot is referenced in any team
-        teams = (
+        bot_name = bot.name
+        bot_namespace = bot.namespace
+
+        # Get teams that use this bot
+        teams_using_bot = self._get_teams_using_bot(
+            db, bot_name, bot_namespace, user_id
+        )
+
+        # Get running tasks for those teams
+        running_tasks = self._get_running_tasks_for_teams(db, teams_using_bot)
+
+        return {
+            "has_running_tasks": len(running_tasks) > 0,
+            "running_tasks_count": len(running_tasks),
+            "running_tasks": running_tasks,
+        }
+
+    def delete_with_user(
+        self, db: Session, *, bot_id: int, user_id: int, force: bool = False
+    ) -> None:
+        """
+        Delete user Bot and related components.
+
+        Note: Shell is not deleted because it's now a reference to user's custom shell
+        or public shell, not a dedicated shell for this bot.
+
+        Args:
+            db: Database session
+            bot_id: Bot ID to delete
+            user_id: User ID
+            force: If True, force delete even if there are running tasks
+        """
+        bot = (
             db.query(Kind)
             .filter(
-                Kind.user_id == user_id, Kind.kind == "Team", Kind.is_active == True
+                Kind.id == bot_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Bot",
+                Kind.is_active == True,
             )
-            .all()
+            .first()
         )
+
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found")
 
         bot_name = bot.name
         bot_namespace = bot.namespace
 
-        # Check if each team references this bot
-        for team in teams:
-            team_crd = Team.model_validate(team.json)
-            for member in team_crd.spec.members:
-                if (
-                    member.botRef.name == bot_name
-                    and member.botRef.namespace == bot_namespace
-                ):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Bot '{bot_name}' is being used in team '{team.name}'. Please remove it from the team first.",
-                    )
+        # Get teams that use this bot
+        teams_using_bot = self._get_teams_using_bot(
+            db, bot_name, bot_namespace, user_id
+        )
+
+        # Check for running tasks if not force delete
+        if not force:
+            running_tasks = self._get_running_tasks_for_teams(db, teams_using_bot)
+            if running_tasks:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Bot '{bot_name}' has {len(running_tasks)} running task(s). Use force=true to delete anyway.",
+                )
+
+        # Check if bot is referenced in any team (still prevent delete if used in teams)
+        if teams_using_bot and not force:
+            team_names = [t.name for t in teams_using_bot]
+            raise HTTPException(
+                status_code=400,
+                detail=f"Bot '{bot_name}' is being used in team(s): {', '.join(team_names)}. Please remove it from the team(s) first.",
+            )
 
         # Get related components (only ghost needs to be deleted)
         ghost, shell, model = self._get_bot_components(db, bot, user_id)

@@ -797,8 +797,8 @@ export default function MessagesArea({
                     </div>
                   )}
                   <div className="text-sm break-all">{pendingUserMessage}</div>
-                  {/* Copy button for pending user message */}
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
+                  {/* Copy button for pending user message - visible on hover */}
+                  <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                     <Button
                       variant="ghost"
                       size="icon"
@@ -809,7 +809,7 @@ export default function MessagesArea({
                           console.error('Failed to copy text: ', err);
                         }
                       }}
-                      className="h-8 w-8 hover:bg-muted opacity-100"
+                      className="h-8 w-8 hover:bg-muted"
                       title="Copy"
                     >
                       <Copy className="h-4 w-4 text-text-muted" />
