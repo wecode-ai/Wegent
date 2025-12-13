@@ -978,5 +978,37 @@
         "cannotLeave": "Cannot leave group directly (must transfer ownership first)"
       }
     }
+  },
+  "search": {
+    "title": "Search",
+    "placeholder": "Search conversations, code, knowledge, teams...",
+    "searching": "Searching...",
+    "no_results": "No results found",
+    "no_results_hint": "Try different keywords or filters",
+    "searched_for": "Searched for \"{{query}}\"",
+    "results": "{{count}} results found",
+    "showing_of": "Showing {{showing}} of {{total}} results",
+    "types": {
+      "all": "All",
+      "chat": "Conversations",
+      "code": "Code",
+      "knowledge": "Knowledge",
+      "teams": "Teams"
+    },
+    "sort": {
+      "relevance": "Relevance",
+      "newest": "Newest first",
+      "oldest": "Oldest first"
+    },
+    "sort_label": "Sort:",
+    "date_label": "Time:",
+    "date": {
+      "all": "All time",
+      "day": "Last 24 hours",
+      "week": "Last 7 days",
+      "month": "Last 30 days",
+      "custom": "Custom range"
+    },
+    "shortcut_hint": "to search from anywhere"
   }
 }

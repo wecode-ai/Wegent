@@ -7,6 +7,7 @@
 import { UserProvider } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
+import { GlobalSearchShortcut } from '@/features/search';
 
 /**
  * Shared layout for chat and code pages to reuse TaskContextProvider and ChatStreamProvider
@@ -17,7 +18,10 @@ export default function TasksLayout({ children }: { children: React.ReactNode })
   return (
     <UserProvider>
       <TaskContextProvider>
-        <ChatStreamProvider>{children}</ChatStreamProvider>
+        <ChatStreamProvider>
+          <GlobalSearchShortcut />
+          {children}
+        </ChatStreamProvider>
       </TaskContextProvider>
     </UserProvider>
   );
