@@ -719,7 +719,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         model_crd = Model.model_validate(model.json)
                         agent_config = model_crd.spec.modelConfig
 
-                # Get Shell data from kinds table
+                # Get Shell data from kinds table (first check user's shells, then public shells)
                 shell = (
                     db.query(Kind)
                     .filter(
@@ -731,6 +731,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     )
                     .first()
                 )
+                if not shell:
+                    # If not found in user's shells, check public shells (user_id = 0)
+                    shell = (
+                        db.query(Kind)
+                        .filter(
+                            Kind.user_id == 0,
+                            Kind.kind == "Shell",
+                            Kind.name == bot_crd.spec.shellRef.name,
+                            Kind.is_active == True,
+                        )
+                        .first()
+                    )
                 if shell and shell.json:
                     shell_crd = Shell.model_validate(shell.json)
                     shell_type = shell_crd.spec.shellType

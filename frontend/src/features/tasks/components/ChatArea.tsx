@@ -991,6 +991,131 @@ export default function ChatArea({
     }
   }, [isStreaming, scrollToBottom]);
 
+  // Callback for child components (e.g., ClarificationForm) to send messages directly
+  // This ensures all chat options (web search, clarification mode, model, etc.) are properly included
+  const handleSendMessageFromChild = useCallback(
+    async (content: string) => {
+      // Combine the content from child component with any existing input text
+      const existingInput = taskInputMessage.trim();
+      const combinedMessage = existingInput ? `${content}\n\n---\n\n${existingInput}` : content;
+
+      // Clear the input field immediately
+      setTaskInputMessage('');
+
+      // Directly send the message using the same logic as handleSendMessage
+      // but with the provided content instead of reading from state
+      if (!combinedMessage.trim()) return;
+
+      setIsLoading(true);
+      setError('');
+
+      if (isChatShell(selectedTeam)) {
+        // Set local pending state for immediate UI feedback
+        setLocalPendingMessage(combinedMessage);
+        setLocalPendingAttachment(attachmentState.attachment || null);
+        resetAttachment();
+
+        const modelId =
+          selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
+
+        try {
+          const immediateTaskId = selectedTaskDetail?.id || -Date.now();
+          if (!selectedTaskDetail?.id) {
+            setStreamingTaskId(immediateTaskId);
+          }
+
+          const tempTaskId = await contextStartStream(
+            {
+              message: combinedMessage,
+              team_id: selectedTeam?.id ?? 0,
+              task_id: selectedTaskDetail?.id,
+              model_id: modelId,
+              force_override_bot_model: forceOverride,
+              attachment_id: attachmentState.attachment?.id,
+              enable_web_search: enableWebSearch,
+              search_engine: selectedSearchEngine || undefined,
+              enable_clarification: enableClarification,
+            },
+            {
+              pendingUserMessage: combinedMessage,
+              pendingAttachment: attachmentState.attachment,
+              immediateTaskId: immediateTaskId,
+              onTaskIdResolved: realTaskId => {
+                setStreamingTaskId(realTaskId);
+                refreshTasks();
+              },
+              onComplete: async (completedTaskId, _subtaskId) => {
+                refreshTasks();
+                if (completedTaskId && !selectedTaskDetail?.id) {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()));
+                  params.set('taskId', String(completedTaskId));
+                  router.push(`?${params.toString()}`);
+                  try {
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    await refreshSelectedTaskDetail(false);
+                  } catch (error) {
+                    console.error('Failed to refresh task detail after stream:', error);
+                  } finally {
+                    contextResetStream(completedTaskId);
+                    setStreamingTaskId(null);
+                  }
+                } else if (selectedTaskDetail?.id) {
+                  try {
+                    await refreshSelectedTaskDetail(false);
+                  } catch (error) {
+                    console.error('Failed to refresh task detail after stream:', error);
+                  } finally {
+                    contextResetStream(completedTaskId);
+                    setStreamingTaskId(null);
+                  }
+                }
+              },
+              onError: error => {
+                resetStreamingState();
+                toast({
+                  variant: 'destructive',
+                  title: error.message,
+                });
+              },
+            }
+          );
+
+          if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+            setStreamingTaskId(tempTaskId);
+          }
+          setTimeout(() => scrollToBottom(true), 0);
+        } catch (err) {
+          toast({
+            variant: 'destructive',
+            title: (err as Error)?.message || 'Failed to start chat stream',
+          });
+        }
+        setIsLoading(false);
+      }
+    },
+    [
+      taskInputMessage,
+      selectedTeam,
+      selectedModel,
+      selectedTaskDetail,
+      forceOverride,
+      attachmentState.attachment,
+      enableWebSearch,
+      selectedSearchEngine,
+      enableClarification,
+      contextStartStream,
+      contextResetStream,
+      refreshTasks,
+      refreshSelectedTaskDetail,
+      resetStreamingState,
+      resetAttachment,
+      scrollToBottom,
+      searchParams,
+      router,
+      toast,
+    ]
+  );
+
   useEffect(() => {
     const container = scrollContainerRef.current;
     if (!container) return;
@@ -1123,6 +1248,7 @@ export default function ChatArea({
               onContentChange={handleMessagesContentChange}
               streamingSubtaskId={streamingSubtaskId}
               onShareButtonRender={onShareButtonRender}
+              onSendMessage={handleSendMessageFromChild}
             />
           </div>
         </div>
