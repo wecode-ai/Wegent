@@ -76,6 +76,7 @@ export default defineConfig({
     },
     {
       name: 'chromium',
+      testIgnore: /api\/.*\.spec\.ts/, // Exclude API tests from chromium project
       use: {
         ...devices['Desktop Chrome'],
         storageState: './e2e/.auth/user.json',

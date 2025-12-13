@@ -1,5 +1,4 @@
 import { test, expect } from '@playwright/test';
-import { LoginPage } from '../../pages/auth/login.page';
 import { createApiClient, ApiClient } from '../../utils/api-client';
 import { ADMIN_USER } from '../../config/test-users';
 
@@ -9,13 +8,12 @@ test.describe('Task Sharing', () => {
 
   test.beforeEach(async ({ page, request }) => {
     apiClient = createApiClient(request);
+    // Login via API for API client operations only
     await apiClient.login(ADMIN_USER.username, ADMIN_USER.password);
-
-    const loginPage = new LoginPage(page);
-    await loginPage.login(ADMIN_USER.username, ADMIN_USER.password);
+    // Page is already authenticated via global setup storageState
 
     await page.goto('/chat');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
   });
 
   test.afterEach(async () => {
@@ -26,7 +24,7 @@ test.describe('Task Sharing', () => {
   });
 
   test('should have share button in task menu', async ({ page }) => {
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
 
     const taskItem = page.locator('[data-testid="task-item"], .task-item').first();
 
@@ -45,7 +43,7 @@ test.describe('Task Sharing', () => {
   });
 
   test('should open share modal when clicking share button', async ({ page }) => {
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
 
     const taskItem = page.locator('[data-testid="task-item"], .task-item').first();
 
@@ -71,7 +69,7 @@ test.describe('Task Sharing', () => {
   });
 
   test('should display share link in modal', async ({ page }) => {
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
 
     const taskItem = page.locator('[data-testid="task-item"], .task-item').first();
 
@@ -97,7 +95,7 @@ test.describe('Task Sharing', () => {
   });
 
   test('should have copy button in share modal', async ({ page }) => {
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
 
     const taskItem = page.locator('[data-testid="task-item"], .task-item').first();
 

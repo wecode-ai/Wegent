@@ -17,8 +17,10 @@ export class AdminPage extends BasePage {
 
   async navigateToTab(tab: 'users' | 'public-models' | 'system-config'): Promise<void> {
     await this.goto(`/admin?tab=${tab}`);
-    // Wait for network to be idle instead of fixed timeout
-    await this.page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {});
+    // Wait for DOM to be ready
+    await this.page.waitForLoadState('domcontentloaded');
+    // Additional wait for content to render
+    await this.page.waitForTimeout(1000);
   }
 
   // Tab navigation
@@ -59,32 +61,39 @@ export class AdminPage extends BasePage {
     password?: string;
     role?: 'admin' | 'user';
   }): Promise<void> {
-    // Fill username
-    const usernameInput = this.page.locator('input[placeholder*="user"], input#user_name').first();
+    // Fill username - use the actual input id from UserList.tsx
+    const usernameInput = this.page
+      .locator('input#username, input[placeholder*="user"], input#user_name')
+      .first();
     await usernameInput.fill(data.username);
 
-    // Fill email if provided
+    // Fill password if provided - use the actual input id from UserList.tsx
+    if (data.password) {
+      const passwordInput = this.page.locator('input#password, input[type="password"]').first();
+      if (await passwordInput.isVisible().catch(() => false)) {
+        await passwordInput.fill(data.password);
+      }
+    }
+
+    // Fill email if provided - use the actual input id from UserList.tsx
     if (data.email) {
-      const emailInput = this.page.locator('input[type="email"], input#email').first();
+      const emailInput = this.page.locator('input#email, input[type="email"]').first();
       if (await emailInput.isVisible()) {
         await emailInput.fill(data.email);
       }
     }
 
-    // Fill password if provided
-    if (data.password) {
-      const passwordInput = this.page.locator('input[type="password"]').first();
-      if (await passwordInput.isVisible()) {
-        await passwordInput.fill(data.password);
-      }
-    }
-
-    // Select role if provided
+    // Select role if provided - role selector is the last combobox in the form
+    // (first is auth_source selector)
     if (data.role) {
-      const roleSelect = this.page.locator('[role="combobox"]').first();
+      const roleSelect = this.page.locator('[role="combobox"]').last();
       if (await roleSelect.isVisible()) {
         await roleSelect.click();
-        await this.page.click(`[role="option"]:has-text("${data.role}")`);
+        // Wait for dropdown to open
+        await this.page.waitForTimeout(300);
+        // Role options display as "User" or "Admin" (capitalized)
+        const roleText = data.role.charAt(0).toUpperCase() + data.role.slice(1);
+        await this.page.click(`[role="option"]:has-text("${roleText}")`);
       }
     }
   }
@@ -168,25 +177,23 @@ export class AdminPage extends BasePage {
 
   async fillPublicModelForm(data: {
     name: string;
-    displayName?: string;
+    namespace?: string;
     config: string;
   }): Promise<void> {
-    // Fill model name
-    const nameInput = this.page.locator('input[placeholder*="model"], input#name').first();
+    // Fill model name - use the actual input id from PublicModelList.tsx
+    const nameInput = this.page.locator('input#name, input[placeholder*="model"]').first();
     await nameInput.fill(data.name);
 
-    // Fill display name if provided
-    if (data.displayName) {
-      const displayNameInput = this.page
-        .locator('input[placeholder*="display"], input#display_name')
-        .first();
-      if (await displayNameInput.isVisible()) {
-        await displayNameInput.fill(data.displayName);
+    // Fill namespace if provided - use the actual input id from PublicModelList.tsx
+    if (data.namespace) {
+      const namespaceInput = this.page.locator('input#namespace').first();
+      if (await namespaceInput.isVisible()) {
+        await namespaceInput.fill(data.namespace);
       }
     }
 
-    // Fill config JSON
-    const configTextarea = this.page.locator('textarea').first();
+    // Fill config JSON - use the actual textarea id from PublicModelList.tsx
+    const configTextarea = this.page.locator('textarea#config, textarea').first();
     await configTextarea.fill(data.config);
   }
 

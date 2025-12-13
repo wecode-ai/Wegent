@@ -14,7 +14,10 @@ export abstract class BasePage {
   }
 
   async waitForPageLoad(): Promise<void> {
-    await this.page.waitForLoadState('networkidle');
+    // Use domcontentloaded instead of networkidle to avoid timeout issues in CI
+    await this.page.waitForLoadState('domcontentloaded');
+    // Add a small delay to allow for initial rendering
+    await this.page.waitForTimeout(500);
   }
 
   // Loading states
@@ -158,9 +161,11 @@ export abstract class BasePage {
     await element.scrollIntoViewIfNeeded();
   }
 
-  // Wait for network idle
+  // Wait for network idle - use with caution as it can timeout in CI
   async waitForNetworkIdle(): Promise<void> {
-    await this.page.waitForLoadState('networkidle');
+    await this.page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => {
+      // Fallback to domcontentloaded if networkidle times out
+    });
   }
 
   // Get all text content from elements matching selector
