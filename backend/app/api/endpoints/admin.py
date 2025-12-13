@@ -392,13 +392,32 @@ async def list_public_models(
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Get list of all public models with pagination
+    Get list of all public models with pagination, sorted by displayName
     """
     query = db.query(Kind).filter(
         Kind.user_id == 0, Kind.kind == "Model", Kind.namespace == "default"
     )
     total = query.count()
-    models = query.offset((page - 1) * limit).limit(limit).all()
+    models = query.all()
+
+    # Helper function to extract displayName from json
+    def get_display_name(model: Kind) -> str:
+        """Extract displayName from model json, fallback to name"""
+        if model.json and isinstance(model.json, dict):
+            metadata = model.json.get("metadata", {})
+            if isinstance(metadata, dict):
+                display_name = metadata.get("displayName")
+                if display_name:
+                    return display_name
+        return model.name
+
+    # Sort models by displayName (case-insensitive)
+    sorted_models = sorted(models, key=lambda m: get_display_name(m).lower())
+
+    # Apply pagination after sorting
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    paginated_models = sorted_models[start_idx:end_idx]
 
     return PublicModelListResponse(
         total=total,
@@ -407,12 +426,17 @@ async def list_public_models(
                 id=model.id,
                 name=model.name,
                 namespace=model.namespace,
+                display_name=(
+                    get_display_name(model)
+                    if get_display_name(model) != model.name
+                    else None
+                ),
                 model_json=model.json,
                 is_active=model.is_active,
                 created_at=model.created_at,
                 updated_at=model.updated_at,
             )
-            for model in models
+            for model in paginated_models
         ],
     )
 

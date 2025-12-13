@@ -60,6 +60,8 @@ export interface StreamChatRequest {
   enable_web_search?: boolean;
   /** Search engine to use (when web search is enabled) */
   search_engine?: string;
+  /** Enable clarification mode for this message */
+  enable_clarification?: boolean;
   /** Git info for record keeping (optional) */
   git_url?: string;
   git_repo?: string;

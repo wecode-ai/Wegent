@@ -27,6 +27,8 @@ interface BranchSelectorProps {
   disabled: boolean;
   // Optional: pass task detail directly instead of using context
   taskDetail?: TaskDetail | null;
+  /** When true, display only icon without text (for responsive collapse) */
+  compact?: boolean;
 }
 
 export default function BranchSelector({
@@ -35,6 +37,7 @@ export default function BranchSelector({
   handleBranchChange,
   disabled,
   taskDetail,
+  compact = false,
 }: BranchSelectorProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
@@ -156,7 +159,64 @@ export default function BranchSelector({
   };
 
   // Tooltip content for branch selector
-  const tooltipContent = t('repos.branch_tooltip', '选择分支');
+  // In compact mode, show selected branch name in tooltip
+  const tooltipContent =
+    compact && selectedBranch
+      ? `${t('repos.branch_tooltip', '选择分支')}: ${selectedBranch.name}${selectedBranch.default ? ' (default)' : ''}`
+      : t('repos.branch_tooltip', '选择分支');
+
+  // In compact mode, only show the icon button
+  if (compact) {
+    return (
+      <div className="flex items-center min-w-0">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                disabled={disabled || showError || showNoBranch || showLoading}
+                className={cn(
+                  'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                  'transition-colors',
+                  'text-text-muted hover:text-text-primary hover:bg-muted',
+                  showLoading ? 'animate-pulse' : '',
+                  'focus:outline-none focus:ring-0',
+                  'disabled:cursor-not-allowed disabled:opacity-50'
+                )}
+                onClick={() => {
+                  const trigger = document.querySelector(
+                    '[data-branch-trigger]'
+                  ) as HTMLButtonElement;
+                  trigger?.click();
+                }}
+              >
+                <FiGitBranch className="w-4 h-4 flex-shrink-0" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{tooltipContent}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        {/* Hidden SearchableSelect for popover functionality */}
+        <div className="hidden">
+          <SearchableSelect
+            value={selectedBranch?.name}
+            onValueChange={handleChange}
+            disabled={disabled || showError || showNoBranch || showLoading}
+            placeholder={t('branches.select_branch')}
+            searchPlaceholder={t('branches.search_branch')}
+            items={selectItems}
+            loading={showLoading}
+            error={showError ? error : null}
+            emptyText={showNoBranch ? t('branches.no_branch') : t('branches.select_branch')}
+            noMatchText={t('branches.no_match')}
+            contentClassName="max-w-[260px]"
+          />
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center min-w-0">

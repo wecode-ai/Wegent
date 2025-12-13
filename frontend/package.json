@@ -19,6 +19,8 @@
     "e2e:debug": "playwright test --debug",
     "e2e:headed": "playwright test --headed",
     "e2e:report": "playwright show-report",
+    "e2e:coverage": "playwright test && nyc report --reporter=html --reporter=text --reporter=lcov",
+    "e2e:coverage:report": "nyc report --reporter=html --reporter=text --reporter=lcov",
     "e2e:local": "bash ../scripts/run-e2e-local.sh",
     "e2e:local:ui": "bash ../scripts/run-e2e-local.sh ui",
     "e2e:local:debug": "bash ../scripts/run-e2e-local.sh debug",
@@ -73,6 +75,7 @@
     "zod": "^4.1.12"
   },
   "devDependencies": {
+    "@istanbuljs/nyc-config-typescript": "^1.0.2",
     "@playwright/test": "^1.57.0",
     "@testing-library/jest-dom": "^6.1.0",
     "@testing-library/react": "^16.0.0",
@@ -91,6 +94,7 @@
     "jest-environment-jsdom": "^29.7.0",
     "lint-staged": "^15.2.11",
     "msw": "^2.10.5",
+    "nyc": "^17.1.0",
     "postcss": "^8.5.0",
     "prettier": "^3.4.2",
     "tailwindcss": "^3.4.16",

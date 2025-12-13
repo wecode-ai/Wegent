@@ -1,0 +1,67 @@
+version: '3.8'
+
+# Docker Compose configuration for E2E testing environment
+# Usage: docker-compose -f docker-compose.e2e.yml up -d
+
+services:
+  mysql-test:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: test123
+      MYSQL_DATABASE: wegent_e2e
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - mysql-e2e-data:/var/lib/mysql
+
+  redis-test:
+    image: redis:7-alpine
+    ports:
+      - "6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  backend-test:
+    build:
+      context: ./backend
+      dockerfile: ../docker/backend/Dockerfile
+    environment:
+      DATABASE_URL: mysql+pymysql://root:test123@mysql-test:3306/wegent_e2e
+      REDIS_URL: redis://redis-test:6379/0
+      SECRET_KEY: test-secret-key-for-e2e
+      ENVIRONMENT: test
+    ports:
+      - "8001:8000"
+    depends_on:
+      mysql-test:
+        condition: service_healthy
+      redis-test:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend-test:
+    build:
+      context: ./frontend
+      dockerfile: ../docker/frontend/Dockerfile
+    environment:
+      NEXT_PUBLIC_API_URL: http://backend-test:8000
+    ports:
+      - "3001:3000"
+    depends_on:
+      backend-test:
+        condition: service_healthy
+
+volumes:
+  mysql-e2e-data:

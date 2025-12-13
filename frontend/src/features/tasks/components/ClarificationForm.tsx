@@ -5,26 +5,32 @@
 'use client';
 
 import { useState, useEffect, useMemo, useContext } from 'react';
-import { Send } from 'lucide-react';
+import { Send, Code, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import type { ClarificationData, ClarificationAnswer } from '@/types/api';
 import ClarificationQuestion from './ClarificationQuestion';
 import { useTranslation } from '@/hooks/useTranslation';
-import { sendMessage } from '../service/messageService';
 import { TaskContext } from '../contexts/taskContext';
+import { ChatStreamContext } from '../contexts/chatStreamContext';
 import { useToast } from '@/hooks/use-toast';
 
 interface ClarificationFormProps {
   data: ClarificationData;
   taskId: number;
   currentMessageIndex: number;
+  /** Raw markdown content for display when toggling to raw view */
+  rawContent?: string;
+  /** Callback when user submits the clarification form, passes the formatted markdown answer */
+  onSubmit?: (formattedAnswer: string) => void;
 }
 
 export default function ClarificationForm({
   data,
   taskId,
   currentMessageIndex,
+  rawContent,
+  onSubmit,
 }: ClarificationFormProps) {
   const { t } = useTranslation('chat');
   const { toast } = useToast();
@@ -32,18 +38,23 @@ export default function ClarificationForm({
   // Use context directly - it will be undefined if not within TaskContextProvider (e.g., shared task page)
   const taskContext = useContext(TaskContext);
   const selectedTaskDetail = taskContext?.selectedTaskDetail ?? null;
-  const refreshSelectedTaskDetail = taskContext?.refreshSelectedTaskDetail ?? null;
+
+  // Get isTaskStreaming from ChatStreamContext to check if task is currently streaming
+  // Use useContext directly to avoid throwing error when outside ChatStreamProvider
+  const chatStreamContext = useContext(ChatStreamContext);
+  const isTaskStreaming = chatStreamContext?.isTaskStreaming ?? null;
 
   const [answers, setAnswers] = useState<
     Map<string, { answer_type: 'choice' | 'custom'; value: string | string[] }>
   >(new Map());
-  const [isSubmitting, setIsSubmitting] = useState(false);
   // Track if user has interacted with the form to prevent re-initialization
   const [hasUserInteracted, setHasUserInteracted] = useState(false);
   // Track validation errors for each question
   const [validationErrors, setValidationErrors] = useState<Set<string>>(new Set());
   // Track additional input value (fixed custom input box)
   const [additionalInput, setAdditionalInput] = useState('');
+  // Toggle raw content view
+  const [showRawContent, setShowRawContent] = useState(false);
 
   // Check if this clarification has been answered
   // Check if there's a USER message after this clarification's message index
@@ -239,139 +250,114 @@ export default function ClarificationForm({
       }
     });
 
-    setIsSubmitting(true);
-
-    try {
-      // Extract team, repo, and branch info from selectedTaskDetail
-      const team = selectedTaskDetail?.team || null;
-      const repo = selectedTaskDetail?.git_repo
-        ? {
-            git_repo_id: selectedTaskDetail.git_repo_id || 0,
-            name: selectedTaskDetail.git_repo,
-            git_repo: selectedTaskDetail.git_repo,
-            git_url: selectedTaskDetail.git_url || '',
-            git_domain: selectedTaskDetail.git_domain || '',
-            private: false, // Default value, actual value unknown from task detail
-            type: (selectedTaskDetail.git_domain?.includes('github')
-              ? 'github'
-              : selectedTaskDetail.git_domain?.includes('gitlab')
-                ? 'gitlab'
-                : 'gitee') as 'github' | 'gitlab' | 'gitee',
-          }
-        : null;
-      const branch = selectedTaskDetail?.branch_name
-        ? {
-            name: selectedTaskDetail.branch_name,
-            protected: false, // Default value, actual value unknown from task detail
-            default: false,
-          }
-        : null;
-
-      // Send answer as Markdown string
-      const result = await sendMessage({
-        message: markdownAnswer,
-        team: team,
-        repo: repo,
-        branch: branch,
-        task_id: taskId,
-      });
-
-      if (result.error) {
-        toast({
-          variant: 'destructive',
-          title: result.error,
-        });
-      } else {
-        toast({
-          title: t('clarification.submitted') || 'Answers submitted successfully',
-        });
-        // Refresh task detail to get new messages
-        if (refreshSelectedTaskDetail) {
-          setTimeout(() => {
-            refreshSelectedTaskDetail();
-          }, 1000);
-        }
-      }
-    } catch (error) {
+    // Call the onSubmit callback with the formatted markdown answer
+    // The parent component (ChatArea) will handle the actual sending logic
+    // This ensures all chat options (web search, clarification mode, model, etc.) are properly included
+    if (onSubmit) {
+      onSubmit(markdownAnswer);
+    } else {
+      // Fallback: show a warning if no onSubmit callback is provided
       toast({
         variant: 'destructive',
         title: t('clarification.submit_failed') || 'Failed to submit answers',
+        description: 'No submit handler provided',
       });
-      console.error('Submit clarification answers error:', error);
-    } finally {
-      setIsSubmitting(false);
     }
   };
 
   return (
-    <div className="space-y-4 p-4 rounded-lg border border-purple-500/30 bg-purple-500/5">
-      <div className="flex items-center gap-2 mb-4">
-        <span className="text-lg">🤔</span>
-        <h3 className="text-base font-semibold text-purple-400">
-          {t('clarification.title') || 'Spec Clarification'}
-        </h3>
+    <div className="space-y-4 p-4 rounded-lg border border-primary/30 bg-primary/5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-lg">💬</span>
+          <h3 className="text-base font-semibold text-primary">
+            {t('clarification.title') || 'Spec Clarification'}
+          </h3>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => setShowRawContent(!showRawContent)}
+          className="text-xs text-text-secondary hover:text-text-primary"
+        >
+          {showRawContent ? (
+            <>
+              <FileText className="w-3.5 h-3.5 mr-1.5" />
+              {t('clarification.show_form') || 'Show Form'}
+            </>
+          ) : (
+            <>
+              <Code className="w-3.5 h-3.5 mr-1.5" />
+              {t('clarification.show_raw') || 'Show Raw'}
+            </>
+          )}
+        </Button>
       </div>
 
-      <div className="space-y-4">
-        {data.questions.map(question => {
-          const hasError = validationErrors.has(question.question_id);
-          return (
-            <div
-              key={question.question_id}
-              className={`p-3 rounded bg-surface/50 border transition-colors ${
-                hasError ? 'border-red-500 bg-red-500/5 animate-pulse' : 'border-border'
-              }`}
-            >
-              {hasError && (
-                <div className="mb-2 text-xs text-red-400 flex items-center gap-1">
-                  <span>⚠️</span>
-                  <span>{t('clarification.required_field') || '此问题必须回答'}</span>
-                </div>
-              )}
-              <ClarificationQuestion
-                question={question}
-                answer={answers.get(question.question_id) || null}
-                onChange={answer => handleAnswerChange(question.question_id, answer)}
-                readonly={isSubmitted}
-              />
-            </div>
-          );
-        })}
-
-        {/* Fixed additional input box */}
+      {showRawContent ? (
         <div className="p-3 rounded bg-surface/50 border border-border">
-          <div className="space-y-3">
-            <div className="text-sm font-medium text-text-primary">
-              {t('clarification.additional_thoughts') || '其他想法或补充说明'}
+          <pre className="text-xs text-text-secondary overflow-auto max-h-96 whitespace-pre-wrap break-words font-mono">
+            {rawContent || JSON.stringify(data, null, 2)}
+          </pre>
+        </div>
+      ) : (
+        <>
+          <div className="space-y-4">
+            {data.questions.map(question => {
+              const hasError = validationErrors.has(question.question_id);
+              return (
+                <div
+                  key={question.question_id}
+                  className={`p-3 rounded bg-surface/50 border transition-colors ${
+                    hasError ? 'border-red-500 bg-red-500/5 animate-pulse' : 'border-border'
+                  }`}
+                >
+                  {hasError && (
+                    <div className="mb-2 text-xs text-red-400 flex items-center gap-1">
+                      <span>⚠️</span>
+                      <span>{t('clarification.required_field') || '此问题必须回答'}</span>
+                    </div>
+                  )}
+                  <ClarificationQuestion
+                    question={question}
+                    answer={answers.get(question.question_id) || null}
+                    onChange={answer => handleAnswerChange(question.question_id, answer)}
+                    readonly={isSubmitted}
+                  />
+                </div>
+              );
+            })}
+
+            {/* Fixed additional input box */}
+            <div className="p-3 rounded bg-surface/50 border border-border">
+              <div className="space-y-3">
+                <div className="text-sm font-medium text-text-primary">
+                  {t('clarification.additional_thoughts') || '其他想法或补充说明'}
+                </div>
+                <Textarea
+                  value={additionalInput}
+                  onChange={e => setAdditionalInput(e.target.value)}
+                  placeholder={
+                    t('clarification.additional_placeholder') ||
+                    '在此输入其他想法、补充需求或特殊说明...'
+                  }
+                  disabled={isSubmitted}
+                  rows={3}
+                  className="w-full"
+                />
+              </div>
             </div>
-            <Textarea
-              value={additionalInput}
-              onChange={e => setAdditionalInput(e.target.value)}
-              placeholder={
-                t('clarification.additional_placeholder') ||
-                '在此输入其他想法、补充需求或特殊说明...'
-              }
-              disabled={isSubmitted}
-              rows={3}
-              className="w-full"
-            />
           </div>
-        </div>
-      </div>
 
-      {!isSubmitted && (
-        <div className="flex justify-end pt-2">
-          <Button variant="secondary" onClick={handleSubmit} disabled={isSubmitting} size="lg">
-            <Send className="w-4 h-4 mr-2" />
-            {t('clarification.submit_answers') || 'Submit Answers'}
-          </Button>
-        </div>
-      )}
-
-      {isSubmitted && (
-        <div className="text-sm text-green-400 text-center py-2">
-          ✓ {t('clarification.form_submitted') || 'Form submitted. Waiting for response...'}
-        </div>
+          {!isSubmitted && !(isTaskStreaming && isTaskStreaming(taskId)) && (
+            <div className="flex justify-end pt-2">
+              <Button variant="secondary" onClick={handleSubmit} size="lg">
+                <Send className="w-4 h-4 mr-2" />
+                {t('clarification.submit_answers') || 'Submit Answers'}
+              </Button>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

@@ -101,7 +101,9 @@ def update_bot(
 @router.delete("/{bot_id}")
 def delete_bot(
     bot_id: int,
-    force: bool = Query(False, description="Force delete even if bot has running tasks"),
+    force: bool = Query(
+        False, description="Force delete even if bot has running tasks"
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
