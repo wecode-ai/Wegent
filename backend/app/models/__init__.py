@@ -10,6 +10,7 @@ from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
 from app.models.shared_team import SharedTeam
 from app.models.skill_binary import SkillBinary
+from app.models.subscription import Subscription, SubscriptionItem, SubscriptionRun
 from app.models.subtask import Subtask
 from app.models.system_config import SystemConfig
 
@@ -26,4 +27,7 @@ __all__ = [
     "SystemConfig",
     "Namespace",
     "NamespaceMember",
+    "Subscription",
+    "SubscriptionItem",
+    "SubscriptionRun",
 ]

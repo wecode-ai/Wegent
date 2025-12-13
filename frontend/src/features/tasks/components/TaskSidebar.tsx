@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { Search, Plus, X, PanelLeftClose, PanelLeftOpen, Code, BookOpen } from 'lucide-react';
+import { Search, Plus, X, PanelLeftClose, PanelLeftOpen, Code, BookOpen, Rss } from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
@@ -23,7 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
   setIsMobileSidebarOpen: (open: boolean) => void;
-  pageType?: 'chat' | 'code' | 'knowledge';
+  pageType?: 'chat' | 'code' | 'knowledge' | 'feed';
   isCollapsed?: boolean;
   onToggleCollapsed?: () => void;
 }
@@ -134,6 +134,12 @@ export default function TaskSidebar({
       icon: BookOpen,
       path: paths.wiki.getHref(),
       isActive: pageType === 'knowledge',
+    },
+    {
+      label: t('navigation.feed'),
+      icon: Rss,
+      path: '/feed',
+      isActive: pageType === 'feed',
     },
   ];
 

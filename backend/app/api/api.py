@@ -10,6 +10,7 @@ from app.api.endpoints import (
     oidc,
     quota,
     repository,
+    subscriptions,
     users,
     wiki,
 )
@@ -52,5 +53,8 @@ api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]
+)
+api_router.include_router(
+    subscriptions.router, prefix="/subscriptions", tags=["subscriptions"]
 )
 api_router.include_router(k_router)
