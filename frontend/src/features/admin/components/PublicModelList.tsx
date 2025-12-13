@@ -71,7 +71,8 @@ const PublicModelList: React.FC = () => {
   const fetchModels = useCallback(async () => {
     setLoading(true);
     try {
-      const response = await adminApis.getPublicModels(page, 20);
+      // Use a larger limit to display all public models without pagination
+      const response = await adminApis.getPublicModels(page, 100);
       setModels(response.items);
       setTotal(response.total);
     } catch (_error) {
