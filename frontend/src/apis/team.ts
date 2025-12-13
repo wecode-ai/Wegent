@@ -57,6 +57,19 @@ export interface TeamInputParametersResponse {
   app_mode?: string; // Dify app mode: 'chat', 'chatflow', 'workflow', 'completion', 'agent'
 }
 
+export interface RunningTaskInfo {
+  task_id: number;
+  task_name: string;
+  task_title: string;
+  status: string;
+}
+
+export interface CheckRunningTasksResponse {
+  has_running_tasks: boolean;
+  running_tasks_count: number;
+  running_tasks: RunningTaskInfo[];
+}
+
 export const teamApis = {
   /**
    * Get teams list
@@ -88,8 +101,9 @@ export const teamApis = {
   async createTeam(data: CreateTeamRequest): Promise<Team> {
     return apiClient.post('/teams', data);
   },
-  async deleteTeam(id: number): Promise<void> {
-    await apiClient.delete(`/teams/${id}`);
+  async deleteTeam(id: number, force: boolean = false): Promise<void> {
+    const queryParams = force ? '?force=true' : '';
+    await apiClient.delete(`/teams/${id}${queryParams}`);
   },
   async updateTeam(id: number, data: CreateTeamRequest): Promise<Team> {
     return apiClient.put(`/teams/${id}`, data);
@@ -105,5 +119,8 @@ export const teamApis = {
   },
   async getTeamInputParameters(teamId: number): Promise<TeamInputParametersResponse> {
     return apiClient.get(`/teams/${teamId}/input-parameters`);
+  },
+  async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
+    return apiClient.get(`/teams/${id}/running-tasks`);
   },
 };

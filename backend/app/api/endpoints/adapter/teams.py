@@ -138,11 +138,27 @@ def update_team(
 @router.delete("/{team_id}")
 def delete_team(
     team_id: int,
+    force: bool = Query(False, description="Force delete even if team has running tasks"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
-    team_kinds_service.delete_with_user(db=db, team_id=team_id, user_id=current_user.id)
+    team_kinds_service.delete_with_user(
+        db=db, team_id=team_id, user_id=current_user.id, force=force
+    )
     return {"message": "Team deactivated successfully"}
+
+
+@router.get("/{team_id}/running-tasks")
+def check_team_running_tasks(
+    team_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Check if team has any running tasks"""
+    result = team_kinds_service.check_running_tasks(
+        db=db, team_id=team_id, user_id=current_user.id
+    )
+    return result
 
 
 @router.post("/{team_id}/share", response_model=TeamShareResponse)
