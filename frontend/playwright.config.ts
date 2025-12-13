@@ -19,8 +19,16 @@ export default defineConfig({
 
   /* Reporter to use */
   reporter: process.env.CI
-    ? [['json', { outputFile: 'e2e-results.json' }], ['html', { open: 'never' }]]
+    ? [
+        ['list'],
+        ['json', { outputFile: 'e2e-results.json' }],
+        ['html', { open: 'never' }],
+        ['junit', { outputFile: 'e2e-results.xml' }],
+      ]
     : [['html', { open: 'never' }], ['list']],
+
+  /* Output directory for test artifacts */
+  outputDir: 'test-results',
 
   /* Shared settings for all the projects below */
   use: {
@@ -28,13 +36,30 @@ export default defineConfig({
     baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
 
     /* Collect trace when retrying the failed test */
-    trace: 'retain-on-failure',
+    trace: {
+      mode: 'retain-on-failure',
+      snapshots: true,
+      screenshots: true,
+      sources: true,
+    },
 
     /* Capture screenshot only on failure */
     screenshot: 'only-on-failure',
 
     /* Record video only on failure */
     video: 'retain-on-failure',
+
+    /* Test ID attribute for locators */
+    testIdAttribute: 'data-testid',
+
+    /* Viewport size */
+    viewport: { width: 1280, height: 720 },
+
+    /* Action timeout */
+    actionTimeout: 15000,
+
+    /* Navigation timeout */
+    navigationTimeout: 30000,
   },
 
   /* Configure projects for major browsers */
@@ -57,6 +82,35 @@ export default defineConfig({
       },
       dependencies: ['setup'],
     },
+    /* API tests - no browser needed, no setup dependency */
+    {
+      name: 'api',
+      testMatch: /api\/.*\.spec\.ts/,
+      use: {
+        // API tests don't need a browser
+        baseURL: process.env.E2E_API_URL || 'http://localhost:8000',
+      },
+    },
+    /* Performance tests */
+    {
+      name: 'performance',
+      testMatch: /performance\/.*\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: './e2e/.auth/user.json',
+      },
+      dependencies: ['setup'],
+    },
+    /* Visual regression tests */
+    {
+      name: 'visual',
+      testMatch: /visual\/.*\.spec\.ts/,
+      use: {
+        ...devices['Desktop Chrome'],
+        storageState: './e2e/.auth/user.json',
+      },
+      dependencies: ['setup'],
+    },
   ],
 
   /* Timeout for each test */
@@ -65,7 +119,18 @@ export default defineConfig({
   /* Timeout for each expect assertion */
   expect: {
     timeout: 10000,
+    /* Visual comparison options */
+    toHaveScreenshot: {
+      maxDiffPixels: 100,
+      threshold: 0.2,
+    },
+    toMatchSnapshot: {
+      maxDiffPixelRatio: 0.1,
+    },
   },
+
+  /* Snapshot path template */
+  snapshotPathTemplate: '{testDir}/__snapshots__/{testFilePath}/{arg}{ext}',
 
   /* Run local dev server before starting the tests (optional for CI) */
   // webServer: {
