@@ -90,6 +90,91 @@ AI_VERIFIED=1 git push
 
 ---
 
+## 📖 Terminology: Team vs Bot (IMPORTANT - Avoid Confusion!)
+
+**⚠️ CRITICAL: AI coding agents MUST understand the distinction between code-level terms and UI-level terms to avoid confusion when writing code or documentation.**
+
+### Terminology Mapping Table
+
+| Code/CRD Level (English) | Frontend UI (Chinese) | Frontend UI (English) | Description |
+|--------------------------|----------------------|----------------------|-------------|
+| **Team** | **智能体** | **Agent** | The user-facing AI agent that executes tasks |
+| **Bot** | **机器人** | **Bot/Robot** | A building block component that makes up a Team |
+
+### Conceptual Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Team (Code) = 智能体 (UI)                                       │
+│  ├── What users see and interact with in the frontend           │
+│  ├── Contains one or more Bots with collaboration modes         │
+│  └── Executes Tasks assigned by users                           │
+├─────────────────────────────────────────────────────────────────┤
+│  Bot (Code) = 机器人 (UI)                                        │
+│  ├── A component/building block of a Team                       │
+│  ├── Combines: Ghost (prompt) + Shell (runtime) + Model (LLM)   │
+│  └── Users configure Bots, then assemble them into Teams        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Relationship
+
+```
+Bot = Ghost (灵魂/提示词) + Shell (运行环境) + Model (AI模型)
+Team = Bot(s) + Collaboration Mode (协作模式)
+Task = Team + Workspace (代码仓库)
+```
+
+**In simple terms:**
+- **Bot (机器人)**: The "worker" - a configured AI unit with specific capabilities
+- **Team (智能体)**: The "team of workers" - one or more Bots working together to complete user tasks
+
+### Correct Usage Examples
+
+**✅ CORRECT:**
+```typescript
+// When referring to what users see in the UI
+"用户创建了一个新的智能体" // User created a new Team (智能体)
+"配置机器人的提示词"      // Configure the Bot's (机器人) prompt
+
+// When writing code/API comments
+"Create a new Team resource"     // CRD level - use "Team"
+"Bot references Ghost and Shell" // CRD level - use "Bot"
+```
+
+**❌ INCORRECT (Common Mistakes):**
+```typescript
+// DON'T mix up the terms
+"用户创建了一个新的团队"   // WRONG - "团队" is not used, should be "智能体"
+"创建机器人来执行任务"    // WRONG - Tasks are executed by Teams (智能体), not Bots (机器人) directly
+
+// DON'T confuse code-level and UI-level terms
+"The agent contains multiple teams" // WRONG - should be "Team contains multiple Bots"
+```
+
+### File/Component Naming Convention
+
+| Domain | Naming Pattern | Example |
+|--------|---------------|---------|
+| API Routes | Use CRD names | `/api/teams`, `/api/bots` |
+| Database/Models | Use CRD names | `Team`, `Bot` |
+| Frontend i18n keys | Use CRD names | `teams.title`, `bots.title` |
+| Frontend i18n values (zh-CN) | Use UI terms | `"智能体列表"`, `"机器人"` |
+| Frontend i18n values (en) | Can use either | `"Agents"` or `"Teams"` |
+
+### Quick Reference for AI Agents
+
+When writing code or documentation, always ask:
+1. **Am I writing code/API?** → Use `Team` and `Bot` (CRD names)
+2. **Am I writing user-facing Chinese text?** → Use `智能体` and `机器人`
+3. **Am I writing user-facing English text?** → Use `Agent`/`Team` and `Bot`
+
+**Remember:**
+- `Team` in code = `智能体` in Chinese UI = What users interact with
+- `Bot` in code = `机器人` in Chinese UI = Building blocks that make up a Team
+
+---
+
 ## 🚀 Quick Start
 
 ```bash
@@ -400,30 +485,32 @@ wegent/
 
 ## 🔧 CRD Architecture (Kubernetes-inspired)
 
+> **📖 Terminology Note:** See [Terminology: Team vs Bot](#-terminology-team-vs-bot-important---avoid-confusion) section for the distinction between code-level terms (Team, Bot) and UI-level terms (智能体, 机器人).
+
 ### Resource Hierarchy
 
 ```
 Ghost (system prompt + MCP servers + skills)
    ↓
-Bot (Ghost + Shell + optional Model)
+Bot (Ghost + Shell + optional Model)           ← UI: 机器人 (Bot)
    ↓
-Team (multiple Bots with roles)
+Team (multiple Bots with roles)                ← UI: 智能体 (Agent) - What users interact with
    ↓
 Task (Team + Workspace) → Subtasks (messages/steps)
 ```
 
 ### CRD Definitions (apiVersion: agent.wecode.io/v1)
 
-| Kind | Purpose | Key Spec Fields |
-|------|---------|-----------------|
-| **Ghost** | System prompt & tools | `systemPrompt`, `mcpServers`, `skills` |
-| **Model** | LLM configuration | `modelConfig`, `isCustomConfig`, `protocol` |
-| **Shell** | Execution environment | `shellType`, `supportModel`, `baseImage`, `baseShellRef` |
-| **Bot** | Agent unit | `ghostRef`, `shellRef`, `modelRef`, `agent_config` |
-| **Team** | Agent group | `members[{botRef, prompt, role}]`, `collaborationModel` |
-| **Task** | Execution unit | `title`, `prompt`, `teamRef`, `workspaceRef` |
-| **Workspace** | Git repository | `repository{gitUrl, gitRepo, branchName, gitDomain}` |
-| **Skill** | Claude Code skill | `description`, `version`, `author`, `tags` |
+| Kind | Purpose | UI Name (zh-CN) | Key Spec Fields |
+|------|---------|-----------------|-----------------|
+| **Ghost** | System prompt & tools | - | `systemPrompt`, `mcpServers`, `skills` |
+| **Model** | LLM configuration | 模型 | `modelConfig`, `isCustomConfig`, `protocol` |
+| **Shell** | Execution environment | 执行器 | `shellType`, `supportModel`, `baseImage`, `baseShellRef` |
+| **Bot** | Agent building block | **机器人** | `ghostRef`, `shellRef`, `modelRef`, `agent_config` |
+| **Team** | User-facing agent | **智能体** | `members[{botRef, prompt, role}]`, `collaborationModel` |
+| **Task** | Execution unit | 任务 | `title`, `prompt`, `teamRef`, `workspaceRef` |
+| **Workspace** | Git repository | 工作空间 | `repository{gitUrl, gitRepo, branchName, gitDomain}` |
+| **Skill** | Claude Code skill | 技能 | `description`, `version`, `author`, `tags` |
 
 ### Shell Types
 

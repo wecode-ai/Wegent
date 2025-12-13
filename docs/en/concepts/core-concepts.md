@@ -4,22 +4,37 @@ This document introduces the core concepts of the Wegent platform to help you un
 
 ---
 
+## ⚠️ Terminology Note: Team vs Bot
+
+> **Important:** Please note the distinction between code-level terminology and user interface display names.
+
+| Code/CRD Level | UI Display | Description |
+|----------------|------------|-------------|
+| **Team** | **Agent** | The user-facing AI agent that executes tasks |
+| **Bot** | **Bot** | A building block component that makes up a Team |
+
+**Simple Understanding:**
+- **Bot** = A configured AI worker unit (includes prompt, runtime, model)
+- **Team** = A "working team" composed of one or more Bots - this is what users interact with to execute tasks
+
+---
+
 ## 📋 Concept Overview
 
 Wegent is built on Kubernetes-style declarative API and CRD (Custom Resource Definition) design patterns, providing a standardized framework for creating and managing AI agent ecosystems.
 
 ### Core Resource Types
 
-| Icon | Concept | Description | Analogy |
-|------|---------|-------------|---------|
+| Icon | Code Name | Description | Analogy |
+|------|-----------|-------------|---------|
 | 👻 | **Ghost** | The "soul" of an agent | Defines personality and capabilities |
 | 🧠 | **Model** | AI model configuration | Brain configuration parameters |
 | 🐚 | **Shell** | Runtime environment | Executable program container |
-| 🤖 | **Bot** | Complete agent instance | Ghost + Shell + Model |
-| 👥 | **Team** | Collaborative team | Combination of multiple Bots |
+| 🤖 | **Bot** | Agent building block | Ghost + Shell + Model |
+| 👥 | **Team** | User-facing agent | Combination of multiple Bots |
 | 🤝 | **Collaboration** | Collaboration mode | Interaction pattern between Bots |
 | 💼 | **Workspace** | Work environment | Isolated code workspace |
-| 🎯 | **Task** | Task | Work unit assigned to Team |
+| 🎯 | **Task** | Task | Work unit assigned to a Team |
 
 ---
 
