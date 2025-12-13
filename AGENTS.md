@@ -324,12 +324,20 @@ export function TaskFormModal() {
 }
 ```
 
-**Component organization**:
+**Component Organization:**
 ```
 frontend/src/components/
-├── ui/              # shadcn/ui pure UI components (Button, Input, Dialog, etc.)
-├── common/          # Shared business components (EmptyState, LoadingSpinner, etc.)
-└── [feature]/       # Feature-specific components (only if not reusable)
+├── ui/              # shadcn/ui pure UI components (28 components)
+│                    # Button, Card, Badge, Tag, Dialog, Drawer, Input, Select, etc.
+└── common/          # Shared business components
+                     # ResourceListItem, UnifiedAddButton
+
+frontend/src/features/
+├── layout/          # Layout components (TopNavigation, UserMenu, MobileSidebar)
+├── tasks/           # Chat/Code task components (ChatArea, MessageBubble, Workbench)
+├── settings/        # Settings page components (BotList, ModelList, TeamList, etc.)
+├── admin/           # Admin panel components
+└── [other]/         # Feature-specific components
 ```
 
 ---
@@ -338,40 +346,189 @@ frontend/src/components/
 
 ### Color System - Calm UI Philosophy
 
-**Design principles:** Low saturation + low contrast, minimal shadows, generous whitespace, mint blue (`#14B8A6`) as primary accent.
+**Design principles:** Low saturation + low contrast, minimal shadows, generous whitespace, teal (`#14B8A6`) as primary accent.
 
-**Core CSS variables:**
+**Light Theme CSS Variables:**
 ```css
-/* Backgrounds: --color-bg-base, --color-bg-surface, --color-bg-muted, --color-bg-hover */
-/* Text: --color-text-primary, --color-text-secondary, --color-text-muted */
-/* Borders: --color-border, --color-border-strong */
-/* Theme: --color-primary (#14B8A6), --color-error, --color-link */
+--color-bg-base: 255 255 255;          /* White - page background */
+--color-bg-surface: 247 247 248;       /* Light gray - cards, panels */
+--color-bg-muted: 242 242 242;         /* Muted gray - secondary surfaces */
+--color-bg-hover: 224 224 224;         /* Hover states */
+--color-border: 224 224 224;           /* Default borders */
+--color-border-strong: 192 192 192;    /* Emphasized borders */
+--color-text-primary: 26 26 26;        /* Primary text */
+--color-text-secondary: 102 102 102;   /* Secondary text */
+--color-text-muted: 160 160 160;       /* Muted/placeholder text */
+--color-text-inverted: 255 255 255;    /* White text on dark backgrounds */
+--color-primary: 20 184 166;           /* Teal primary (#14B8A6) */
+--color-success: 20 184 166;           /* Same as primary */
+--color-error: 239 68 68;              /* Red (#EF4444) */
+--color-warning: 245 158 11;           /* Orange (#F59E0B) */
+--color-link: 85 185 247;              /* Blue links */
+--color-code-bg: 246 248 250;          /* Code block background */
+--radius: 0.5rem;                      /* Base border radius (8px) */
 ```
 
-**Tailwind usage:**
+**Dark Theme Variables:** (`[data-theme='dark']`)
+```css
+--color-bg-base: 14 15 15;             /* Near black */
+--color-bg-surface: 26 28 28;          /* Dark surface */
+--color-bg-muted: 33 36 36;            /* Dark muted */
+--color-bg-hover: 42 45 45;            /* Dark hover */
+--color-text-primary: 236 236 236;     /* Light text */
+--color-text-secondary: 212 212 212;   /* Secondary light text */
+```
+
+**Tailwind Usage:**
 ```jsx
-className="bg-base text-text-primary"        // Page background
-className="bg-surface border-border"         // Card
-className="bg-primary text-white"            // Primary button
+// Page background
+className="bg-base text-text-primary"
+
+// Card/Panel
+className="bg-surface border-border rounded-lg"
+
+// Primary button
+className="bg-primary text-white"
+
+// Secondary/Ghost elements
+className="bg-muted text-text-secondary"
 ```
 
-### Spacing & Typography
+### Typography
 
-- Spacing: `p-2` (8px), `p-4` (16px), `p-6` (24px), `gap-3` (12px)
-- Border radius: `rounded-2xl` (16px), `rounded-lg` (12px), `rounded-md` (6px)
-- Typography: H1 `text-xl font-semibold`, H2 `text-lg font-semibold`, Body `text-sm`
+| Element | Tailwind Classes |
+|---------|------------------|
+| H1 | `text-xl font-semibold` |
+| H2 | `text-lg font-semibold` |
+| H3 (Card Title) | `text-base font-semibold` |
+| Body | `text-sm` (14px) |
+| Small/Muted | `text-xs text-text-muted` |
+
+**Font Stack:** System fonts (`-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `Roboto`, etc.)
+
+### Spacing & Border Radius
+
+**Spacing:**
+- `p-2` (8px), `p-3` (12px), `p-4` (16px), `p-6` (24px)
+- `gap-2` (8px), `gap-3` (12px), `gap-4` (16px)
+
+**Border Radius:** Based on `--radius: 0.5rem` (8px)
+- `rounded-lg` → `var(--radius)` (8px)
+- `rounded-md` → `calc(var(--radius) - 2px)` (6px)
+- `rounded-sm` → `calc(var(--radius) - 4px)` (4px)
+- `rounded-full` → pills/avatars
 
 ### Component Library (shadcn/ui)
 
 **Location:** `frontend/src/components/ui/`
 
-**Core components:** Button (variants: default/secondary/ghost/outline/link), Card, Input, Dialog, Drawer, Select, SearchableSelect, Switch, Checkbox, RadioGroup, Badge, Tag, Alert, Toast, Tooltip, Form (react-hook-form + zod), Transfer, Progress, Spinner
+**UI Components (28 components):**
 
-**Example:**
+| Component | Key Features |
+|-----------|--------------|
+| **Button** | Variants: `default`, `primary`, `secondary`, `outline`, `ghost`, `link`, `destructive`. Sizes: `default` (h-10), `sm` (h-9), `lg` (h-11), `icon` (h-10 w-10) |
+| **Card** | Variants: `default`, `elevated`, `ghost`. Padding: `none`, `sm` (p-3), `default` (p-4), `lg` (p-6) |
+| **Badge** | Status indicators. Variants: `default`, `success`, `error`, `warning`, `info`, `secondary`. Sizes: `default` (h-5), `sm` (h-4), `lg` (h-6) |
+| **Tag** | Closable labels. Variants: `default`, `success`, `error`, `warning`, `info` |
+| **Spinner** | Loading indicator. Sizes: `sm` (h-4), `md` (h-6), `lg` (h-8). Props: `text`, `center` |
+| **Dialog** | Modal with overlay, animations, close button |
+| **Drawer** | Slide-out panel |
+| **Select** | Radix-based dropdown |
+| **SearchableSelect** | Select with search filtering |
+| **Input** | Standard text input with focus ring |
+| **Textarea** | Multi-line text input |
+| **Form** | React Hook Form + Zod validation integration |
+| **Switch** | Toggle switch |
+| **Checkbox** | Checkbox input |
+| **RadioGroup** | Radio button group |
+| **Toast/Toaster** | Notification system |
+| **Tooltip** | Hover information |
+| **Popover** | Click-triggered overlay |
+| **Progress** | Progress bar |
+| **Transfer** | Dual-list selection |
+| **Alert** | Alert messages |
+| **AlertDialog** | Confirmation dialogs |
+| **Accordion** | Collapsible sections |
+| **Command** | Command palette |
+| **Dropdown** | Dropdown menu |
+| **Label** | Form labels |
+| **ScrollArea** | Custom scrollable area |
+
+**Button Examples:**
 ```jsx
 import { Button } from '@/components/ui/button'
-<Button variant="default">Save</Button>
+
+<Button variant="primary">Save</Button>
+<Button variant="default">Cancel</Button>
 <Button variant="ghost" size="icon"><PencilIcon className="w-4 h-4" /></Button>
+<Button variant="destructive">Delete</Button>
+```
+
+### Common Components
+
+**Location:** `frontend/src/components/common/`
+
+| Component | Purpose |
+|-----------|---------|
+| **ResourceListItem** | Unified display for Bot, Model, Shell list items with icon, name, description, tags, public badge |
+| **UnifiedAddButton** | Standard "Add" button for creating new resources |
+
+### Layout Components
+
+**Location:** `frontend/src/features/layout/`
+
+| Component | Purpose |
+|-----------|---------|
+| **TopNavigation** | Top bar with logo, hamburger menu (mobile), title, and right-side actions |
+| **UserMenu** | User dropdown with docs, theme toggle, admin link, logout |
+| **MobileSidebar** | Headless UI Dialog-based slide-out sidebar for mobile |
+| **DocsButton** | Documentation link button |
+| **GithubStarButton** | GitHub star button |
+| **WorkbenchToggle** | Toggle for workbench panel |
+
+### Responsive Design
+
+**Breakpoints:**
+- Mobile: `max-width: 767px`
+- Tablet: `768px - 1023px`
+- Desktop: `min-width: 1024px`
+
+**Media Query Hooks:** (`src/features/layout/hooks/useMediaQuery.ts`)
+```tsx
+const isMobile = useIsMobile();   // max-width: 767px
+const isDesktop = useIsDesktop(); // min-width: 1024px
+```
+
+**Mobile Utilities:**
+- `smart-h-screen` → `height: min(100vh, 100dvh)` for better mobile compatibility
+- `touch-target` → `min-height: 44px; min-width: 44px` for touch-friendly elements
+- `scrollbar-hide` → Hide scrollbar while keeping functionality
+
+### CSS Animations
+
+**Available Animations:**
+| Class | Description |
+|-------|-------------|
+| `progress-bar-animated` | Shimmer effect for progress bars |
+| `progress-bar-shimmer` | Minimal shimmer effect |
+| `thinking-text-flow` | Gradient text animation for AI thinking state |
+| `animate-fade-in` | Fade in with slight upward movement |
+| `animate-slide-down` | Slide down and fade in |
+| `ripple-effect` | Touch feedback ripple |
+| `animate-pulse-dot` | Pulsing notification dot |
+
+**Animation Delays:** `animation-delay-200`, `animation-delay-400`
+
+### Toast Notifications
+
+Custom styled using CSS variables:
+```css
+.Toastify__toast {
+  background-color: rgb(var(--color-bg-surface));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 6px;
+  font-size: 14px;
+}
 ```
 
 ---
@@ -451,14 +608,31 @@ wegent/
 │   └── init_data/        # YAML initialization data
 ├── frontend/             # Next.js frontend
 │   └── src/
-│       ├── app/          # Pages: /, /login, /settings, /chat, /code, /tasks, /shared/task, /admin
-│       ├── apis/         # API clients (client.ts + module-specific, admin.ts, groups.ts)
-│       ├── components/   # UI components (ui/ for shadcn, common/)
-│       ├── features/     # Feature modules (common, layout, login, settings, tasks, theme, onboarding, admin)
-│       │   └── settings/components/groups/  # Group management components
+│       ├── app/          # App Router pages
+│       │   ├── (tasks)/  # Route group: /chat, /code, /settings, /knowledge (shared contexts)
+│       │   ├── admin/    # Admin panel
+│       │   ├── login/    # Login pages (password, OIDC)
+│       │   ├── shared/   # Public shared task page
+│       │   ├── tasks/    # Tasks management
+│       │   └── api/      # API routes (chat/stream, chat/cancel)
+│       ├── apis/         # API clients (client.ts + module-specific)
+│       ├── components/
+│       │   ├── ui/       # shadcn/ui components (28 components)
+│       │   └── common/   # Shared business components (ResourceListItem, UnifiedAddButton)
+│       ├── features/
+│       │   ├── admin/    # Admin panel components
+│       │   ├── common/   # Shared contexts (UserContext), scrollbar styles
+│       │   ├── knowledge/# Knowledge/Wiki feature
+│       │   ├── layout/   # Layout components (TopNavigation, UserMenu, MobileSidebar)
+│       │   ├── login/    # Login feature components
+│       │   ├── onboarding/# Onboarding tour
+│       │   ├── settings/ # Settings management (Bots, Models, Shells, Teams, Skills, Groups)
+│       │   ├── tasks/    # Chat/Code interface, Workbench, streaming
+│       │   └── theme/    # Theme provider and toggle
 │       ├── hooks/        # Custom hooks (useChatStream, useTranslation, useAttachment, useStreamingRecovery)
 │       ├── i18n/         # Internationalization (en, zh-CN)
-│       └── types/        # TypeScript types (group.ts, api.ts)
+│       ├── lib/          # Utility functions (cn)
+│       └── types/        # TypeScript types
 ├── executor/             # Task executor (runs in Docker)
 │   ├── agents/           # ClaudeCode, Agno, Dify, ImageValidator
 │   ├── callback/         # Progress callback handlers
@@ -605,22 +779,38 @@ git commit -m "chore: merge alembic heads"
 
 ### Frontend
 
-**Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, i18next
+**Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, Headless UI, i18next
 
-**Key directories:**
+**Key Directories:**
 - `src/app/` - App Router pages
-- `src/features/settings/` - Models, Teams, Bots, Shells, Skills, Groups management
-- `src/features/tasks/` - Chat interface, Workbench, streaming
+- `src/app/(tasks)/` - Route group wrapping `/chat`, `/code`, `/settings`, `/knowledge` with shared contexts
+- `src/components/ui/` - shadcn/ui base components (28 components)
+- `src/components/common/` - Shared business components
+- `src/features/` - Feature-specific modules
 - `src/apis/` - API client modules
 
-**Route Groups:** `(tasks)` wraps `/chat` and `/code` with shared contexts (UserProvider, TaskContextProvider, ChatStreamProvider)
+**State Management (Context-based):**
 
-**State Management:** Context-based (UserContext, TaskContext, ChatStreamContext, ThemeContext)
+| Context | Location | Purpose |
+|---------|----------|---------|
+| `UserContext` | `features/common/UserContext.tsx` | User auth state, login/logout |
+| `TaskContext` | `features/tasks/contexts/taskContext.tsx` | Task list, pagination, search |
+| `ChatStreamContext` | `features/tasks/contexts/chatStreamContext.tsx` | Streaming chat state |
+| `ThemeContext` | `features/theme/ThemeProvider.tsx` | Theme (light/dark) |
 
-**API Routes:** `/api/chat/stream` proxies SSE to backend (required for streaming)
+**Route Group Layout:** (`src/app/(tasks)/layout.tsx`)
+```tsx
+<UserProvider>
+  <TaskContextProvider>
+    <ChatStreamProvider>
+      {children}
+    </ChatStreamProvider>
+  </TaskContextProvider>
+</UserProvider>
+```
 
-**Key features:**
-- Streaming chat with recovery (`useStreamingRecovery`)
+**Key Features:**
+- Streaming chat with recovery (`useStreamingRecovery` hook)
 - PDF export (`ExportPdfButton`, `pdf-generator.ts`)
 - Task/Team sharing (`TaskShareModal`, `TeamShareModal`)
 - Group management (`GroupManager`, `GroupMembersDialog`)
@@ -628,7 +818,11 @@ git commit -m "chore: merge alembic heads"
 - Dify integration (`DifyAppSelector`, `DifyParamsForm`)
 - Web search integration (Globe icon toggle in chat interface)
 
-**Key environment variables:**
+**API Routes:**
+- `/api/chat/stream` - Proxies SSE to backend (required for streaming)
+- `/api/chat/cancel` - Cancel streaming chat
+
+**Environment Variables:**
 - `NEXT_PUBLIC_API_URL` - Backend API URL
 - `NEXT_PUBLIC_LOGIN_MODE` - Authentication mode ('password', 'oidc', 'all')
 
