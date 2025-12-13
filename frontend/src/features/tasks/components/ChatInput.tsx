@@ -224,6 +224,7 @@ export default function ChatInput({
         onCompositionStart={handleCompositionStart}
         onCompositionEnd={handleCompositionEnd}
         onFocus={handleFocus}
+        data-testid="message-input"
         className={`w-full py-2 bg-transparent custom-scrollbar text-text-primary text-base focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
         style={{
           minHeight,
