@@ -59,9 +59,20 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      - name: Install shared module
+        working-directory: ./shared
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e .
+
       - name: Install backend dependencies
         working-directory: ./backend
-        run: uv sync
+        run: |
+          uv sync
+          # Install shared module in backend venv
+          source .venv/bin/activate
+          uv pip install -e ../shared
 
       - name: Run database migrations
         working-directory: ./backend
@@ -237,9 +248,20 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      - name: Install shared module
+        working-directory: ./shared
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e .
+
       - name: Install backend dependencies
         working-directory: ./backend
-        run: uv sync
+        run: |
+          uv sync
+          # Install shared module in backend venv
+          source .venv/bin/activate
+          uv pip install -e ../shared
 
       - name: Run database migrations
         working-directory: ./backend
