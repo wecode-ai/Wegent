@@ -50,11 +50,11 @@ export function MobileSidebar({ isOpen, onClose, children, title }: MobileSideba
               <Transition.Child
                 as={Fragment}
                 enter="ease-out duration-300 delay-100"
-                enterFrom="opacity-0 scale-75"
-                enterTo="opacity-100 scale-100"
+                enterFrom="opacity-0"
+                enterTo="opacity-100"
                 leave="ease-in duration-200"
-                leaveFrom="opacity-100 scale-100"
-                leaveTo="opacity-0 scale-75"
+                leaveFrom="opacity-100"
+                leaveTo="opacity-0"
               >
                 <div className="absolute left-full top-0 flex w-16 justify-center pt-5">
                   <button
