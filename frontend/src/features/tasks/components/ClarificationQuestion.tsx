@@ -82,7 +82,7 @@ export default function ClarificationQuestion({
               >
                 {option.label}
                 {option.recommended && (
-                  <span className="ml-2 text-xs text-blue-400">
+                  <span className="ml-2 text-xs text-primary">
                     ({t('clarification.recommended') || 'Recommended'})
                   </span>
                 )}
@@ -120,7 +120,7 @@ export default function ClarificationQuestion({
               >
                 {option.label}
                 {option.recommended && (
-                  <span className="ml-2 text-xs text-blue-400">
+                  <span className="ml-2 text-xs text-primary">
                     ({t('clarification.recommended') || 'Recommended'})
                   </span>
                 )}

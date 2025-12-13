@@ -138,7 +138,9 @@ def update_team(
 @router.delete("/{team_id}")
 def delete_team(
     team_id: int,
-    force: bool = Query(False, description="Force delete even if team has running tasks"),
+    force: bool = Query(
+        False, description="Force delete even if team has running tasks"
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):

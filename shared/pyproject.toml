@@ -2,11 +2,14 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "wegent-shared"
 version = "1.0.0"
 description = "Wegent Shared Utilities and Models"
-readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0.1",
@@ -33,6 +36,12 @@ dev = [
     "pytest-cov>=7.0.0",
     "pytest-mock>=3.15.1",
 ]
+
+[tool.setuptools]
+packages = ["shared", "shared.models", "shared.telemetry", "shared.telemetry.context", "shared.telemetry.metrics", "shared.utils"]
+
+[tool.setuptools.package-dir]
+shared = "."
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

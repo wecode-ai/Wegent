@@ -51,6 +51,7 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
   const [botToDelete, setBotToDelete] = useState<number | null>(null);
   const [runningTasksInfo, setRunningTasksInfo] = useState<CheckRunningTasksResponse | null>(null);
   const [isCheckingTasks, setIsCheckingTasks] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const isEditing = editingBotId !== null;
 
   const setBotsSorted = useCallback<React.Dispatch<React.SetStateAction<Bot[]>>>(
@@ -140,6 +141,7 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
   const handleConfirmDelete = async () => {
     if (!botToDelete) return;
 
+    setIsDeleting(true);
     try {
       await deleteBot(botToDelete);
       setBotsSorted(prev => prev.filter(b => b.id !== botToDelete));
@@ -152,12 +154,15 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
         variant: 'destructive',
         title: errorMessage,
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
   const handleForceDelete = async () => {
     if (!botToDelete) return;
 
+    setIsDeleting(true);
     try {
       await deleteBot(botToDelete, true);
       setBotsSorted(prev => prev.filter(b => b.id !== botToDelete));
@@ -170,6 +175,8 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
         variant: 'destructive',
         title: errorMessage,
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -305,25 +312,57 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
       </div>
 
       {/* Delete confirmation dialog */}
-      <Dialog open={deleteConfirmVisible} onOpenChange={setDeleteConfirmVisible}>
+      <Dialog
+        open={deleteConfirmVisible}
+        onOpenChange={open => !open && !isDeleting && setDeleteConfirmVisible(false)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('bots.delete_confirm_title')}</DialogTitle>
             <DialogDescription>{t('bots.delete_confirm_message')}</DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="secondary" onClick={handleCancelDelete}>
+            <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
               {t('common.cancel')}
             </Button>
-            <Button variant="destructive" onClick={handleConfirmDelete}>
-              {t('common.confirm')}
+            <Button variant="destructive" onClick={handleConfirmDelete} disabled={isDeleting}>
+              {isDeleting ? (
+                <div className="flex items-center">
+                  <svg
+                    className="animate-spin -ml-1 mr-2 h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  {t('actions.deleting')}
+                </div>
+              ) : (
+                t('common.confirm')
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
       {/* Force delete confirmation dialog for running tasks */}
-      <Dialog open={forceDeleteConfirmVisible} onOpenChange={setForceDeleteConfirmVisible}>
+      <Dialog
+        open={forceDeleteConfirmVisible}
+        onOpenChange={open => !open && !isDeleting && setForceDeleteConfirmVisible(false)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t('bots.force_delete_confirm_title')}</DialogTitle>
@@ -359,11 +398,37 @@ export default function BotList({ scope = 'personal', groupName }: BotListProps)
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
-            <Button variant="secondary" onClick={handleCancelDelete}>
+            <Button variant="secondary" onClick={handleCancelDelete} disabled={isDeleting}>
               {t('common.cancel')}
             </Button>
-            <Button variant="destructive" onClick={handleForceDelete}>
-              {t('bots.force_delete')}
+            <Button variant="destructive" onClick={handleForceDelete} disabled={isDeleting}>
+              {isDeleting ? (
+                <div className="flex items-center">
+                  <svg
+                    className="animate-spin -ml-1 mr-2 h-4 w-4"
+                    xmlns="http://www.w3.org/2000/svg"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                  >
+                    <circle
+                      className="opacity-25"
+                      cx="12"
+                      cy="12"
+                      r="10"
+                      stroke="currentColor"
+                      strokeWidth="4"
+                    ></circle>
+                    <path
+                      className="opacity-75"
+                      fill="currentColor"
+                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                    ></path>
+                  </svg>
+                  {t('actions.deleting')}
+                </div>
+              ) : (
+                t('bots.force_delete')
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>

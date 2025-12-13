@@ -6,6 +6,24 @@
 
 import React, { useState, useEffect, useRef, ReactNode } from 'react';
 
+// Helper function to get initial width from localStorage
+const getInitialWidth = (
+  storageKey: string,
+  defaultWidth: number,
+  minWidth: number,
+  maxWidth: number
+): number => {
+  if (typeof window === 'undefined') return defaultWidth;
+  const savedWidth = localStorage.getItem(storageKey);
+  if (savedWidth) {
+    const width = parseInt(savedWidth, 10);
+    if (width >= minWidth && width <= maxWidth) {
+      return width;
+    }
+  }
+  return defaultWidth;
+};
+
 interface ResizableSidebarProps {
   children: ReactNode;
   minWidth?: number;
@@ -28,11 +46,21 @@ export default function ResizableSidebar({
   const COLLAPSED_WIDTH = 0;
   const AUTO_COLLAPSE_THRESHOLD = 80;
 
-  const [sidebarWidth, setSidebarWidth] = useState(defaultWidth);
+  // Use lazy initialization to get width from localStorage immediately
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    getInitialWidth(storageKey, defaultWidth, minWidth, maxWidth)
+  );
   const [isResizing, setIsResizing] = useState(false);
+  // Track if initial render is complete to enable transitions
+  const [isInitialized, setIsInitialized] = useState(false);
   const sidebarRef = useRef<HTMLDivElement>(null);
-  const widthRef = useRef(defaultWidth);
-  const lastExpandedWidthRef = useRef(defaultWidth);
+  const widthRef = useRef(sidebarWidth);
+  const lastExpandedWidthRef = useRef(sidebarWidth);
+
+  // Mark as initialized after first render
+  useEffect(() => {
+    setIsInitialized(true);
+  }, []);
 
   // Keep widthRef in sync with sidebarWidth
   useEffect(() => {
@@ -50,17 +78,6 @@ export default function ResizableSidebar({
       setSidebarWidth(lastExpandedWidthRef.current);
     }
   }, [isCollapsed]);
-
-  // Load saved width from localStorage
-  useEffect(() => {
-    const savedWidth = localStorage.getItem(storageKey);
-    if (savedWidth) {
-      const width = parseInt(savedWidth, 10);
-      if (width >= minWidth && width <= maxWidth) {
-        setSidebarWidth(width);
-      }
-    }
-  }, [storageKey, minWidth, maxWidth]);
 
   // Save width to localStorage
   const saveWidth = React.useCallback(
@@ -120,7 +137,7 @@ export default function ResizableSidebar({
 
   return (
     <div
-      className={`hidden lg:flex relative transition-all duration-200 ${isCollapsed ? '' : 'border-r border-border'}`}
+      className={`hidden lg:flex relative ${isInitialized ? 'transition-all duration-200' : ''} ${isCollapsed ? '' : 'border-r border-border'}`}
       style={{ width: `${sidebarWidth}px`, overflow: isCollapsed ? 'hidden' : 'visible' }}
     >
       {/* Sidebar content container - hidden when collapsed */}

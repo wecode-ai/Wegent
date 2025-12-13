@@ -109,14 +109,16 @@ graph LR
 
 ### 🎯 Key Concepts
 
+> **📖 Terminology Note**: In code, `Team` corresponds to "Agent" in the UI, and `Bot` corresponds to "Bot" in the UI. Users interact with Teams to execute tasks, while Bots are the building blocks that make up Teams.
+
 - **👻 Ghost**: The "soul" of an agent - defines personality, capabilities, and behavior patterns
 - **🧠 Model**: AI model configuration - defines environment variables and model parameters
 - **🐚 Shell**: The "executable" - A program capable of launching an agent
 - **🤖 Bot**: A complete agent instance combining Ghost + Shell + Model
-- **👥 Team**: Composed of multiple Bots + Collaboration Model, defining how agents work together
+- **👥 Team**: Composed of multiple Bots + Collaboration Model - the user-facing AI agent
 - **🤝 Collaboration**: Defines the interaction patterns between Bots in a Team (like Workflow)
 - **💼 Workspace**: Isolated work environments for tasks and projects
-- **🎯 Task**: Executable units of work assigned to teams
+- **🎯 Task**: Executable units of work assigned to Teams
 
 > 💡 **Detailed YAML Configuration Documentation**:
 - [Complete YAML configuration examples and field descriptions](docs/en/reference/yaml-specification.md)
