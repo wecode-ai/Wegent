@@ -476,7 +476,6 @@
     "platform_gerrit": "Gerrit",
     "domain": "Platform Domain",
     "username": "Username",
-    "username_placeholder": "Gerrit username",
     "token": {
       "title": "Personal Access Token",
       "title_gerrit": "HTTP password",
@@ -495,7 +494,8 @@
       "gitea": {
         "title": "How to get your Gitea token:",
         "step2": "2. Click \"Generate new token\"",
-        "step3": "3. Select appropriate scopes and copy the generated token"
+        "step3": "3. Select appropriate scopes and copy the generated token",
+        "step4": "⚠️ Note: Token must have 'user' permission enabled (for fetching user info)"
       },
       "gitlab": {
         "title": "How to get your GitLab token:",

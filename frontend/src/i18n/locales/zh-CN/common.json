@@ -476,7 +476,6 @@
     "platform_gerrit": "Gerrit",
     "domain": "平台域名",
     "username": "用户名",
-    "username_placeholder": "Gerrit 用户名",
     "token": {
       "title": "个人访问令牌",
       "title_gerrit": "HTTP password",
@@ -495,7 +494,8 @@
       "gitea": {
         "title": "如何获取 Gitea Token：",
         "step2": "2. 点击 \"Generate new token\"",
-        "step3": "3. 选择权限范围并复制生成的 Token"
+        "step3": "3. 选择权限范围并复制生成的 Token",
+        "step4": "⚠️ 注意：Token 必须勾选 user 权限（用于获取用户信息）"
       },
       "gitlab": {
         "title": "如何获取 GitLab 令牌：",

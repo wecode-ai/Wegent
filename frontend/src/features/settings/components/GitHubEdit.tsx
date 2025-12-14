@@ -272,11 +272,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               type="text"
               value={username}
               onChange={e => setUsername(e.target.value)}
-              placeholder={
-                isGerrit
-                  ? (t('github.username_placeholder') || 'Gerrit username')
-                  : (t('github.username_placeholder') || 'Gitea username')
-              }
+              placeholder={t('github.username') || 'Username'}
               className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
           </div>
@@ -310,9 +306,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 ? t('github.howto.github.title')
                 : isGitea
                   ? t('github.howto.gitea.title') || 'How to get your Gitea token:'
-                : isGerrit
-                  ? t('github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
-                  : t('github.howto.gitlab.title')}
+                  : isGerrit
+                    ? t('github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
+                    : t('github.howto.gitlab.title')}
             </strong>
           </p>
           {type === 'github' ? (
@@ -341,13 +337,16 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
-                  title={giteaSettingsLink || 'https://gitea.example.com/user/settings/applications'}
+                  title={
+                    giteaSettingsLink || 'https://gitea.example.com/user/settings/applications'
+                  }
                 >
                   {giteaSettingsLink || 'https://gitea.example.com/user/settings/applications'}
                 </a>
               </p>
               <p className="text-xs text-text-muted mb-2">{t('github.howto.gitea.step2')}</p>
-              <p className="text-xs text-text-muted">{t('github.howto.gitea.step3')}</p>
+              <p className="text-xs text-text-muted mb-2">{t('github.howto.gitea.step3')}</p>
+              <p className="text-xs text-warning">{t('github.howto.gitea.step4')}</p>
             </>
           ) : isGerrit ? (
             <>
