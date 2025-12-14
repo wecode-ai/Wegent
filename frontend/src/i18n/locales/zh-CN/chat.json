@@ -136,7 +136,9 @@
     "payload_too_large": "内容过长：对话历史或附件超出限制，请开始新对话或减小附件大小"
   },
   "clarification": {
-    "title": "需求规范澄清 (Spec Clarification)",
+    "title": "智能追问 (Smart Follow-up)",
+    "show_raw": "显示原文",
+    "show_form": "显示表单",
     "recommended": "推荐",
     "custom_input": "自定义输入",
     "back_to_choices": "返回选项",
@@ -190,6 +192,10 @@
     "enable": "启用联网搜索",
     "disable": "禁用联网搜索",
     "select_engine": "选择搜索引擎"
+  },
+  "clarification_toggle": {
+    "enable": "启用智能追问模式",
+    "disable": "禁用智能追问模式"
   },
   "streaming_wait": {
     "thinking": "正在思考",

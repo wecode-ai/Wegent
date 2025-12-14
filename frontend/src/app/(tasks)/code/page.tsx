@@ -4,7 +4,7 @@
 
 'use client';
 
-import { Suspense, useState, useEffect, useMemo, useRef } from 'react';
+import { Suspense, useState, useEffect, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
@@ -43,7 +43,7 @@ export default function CodePage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for workbench data
-  const { selectedTaskDetail, tasks } = useTaskContext();
+  const { selectedTaskDetail } = useTaskContext();
 
   // Chat stream context
   const { clearAllStreams } = useChatStreamContext();
@@ -53,29 +53,6 @@ export default function CodePage() {
 
   // User state for git token check
   const { user } = useUser();
-
-  // Track completed tasks for notification dot
-  const [hasCompletedTask, setHasCompletedTask] = useState(false);
-  const prevTasksRef = useRef<typeof tasks>([]);
-
-  // Monitor task completion for notification dot
-  useEffect(() => {
-    if (prevTasksRef.current.length > 0) {
-      const completedStatuses = ['COMPLETED', 'SUCCESS'];
-      const newlyCompleted = tasks.some(task => {
-        const prevTask = prevTasksRef.current.find(t => t.id === task.id);
-        return (
-          completedStatuses.includes(task.status) &&
-          prevTask &&
-          !completedStatuses.includes(prevTask.status)
-        );
-      });
-      if (newlyCompleted) {
-        setHasCompletedTask(true);
-      }
-    }
-    prevTasksRef.current = tasks;
-  }, [tasks]);
 
   // Mobile sidebar state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
@@ -165,10 +142,6 @@ export default function CodePage() {
     setIsCollapsed(prev => {
       const newValue = !prev;
       localStorage.setItem('task-sidebar-collapsed', String(newValue));
-      // Clear notification dot when expanding sidebar
-      if (prev && hasCompletedTask) {
-        setHasCompletedTask(false);
-      }
       return newValue;
     });
   };
@@ -204,11 +177,7 @@ export default function CodePage() {
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
         {/* Collapsed sidebar floating buttons */}
         {isCollapsed && !isMobile && (
-          <CollapsedSidebarButtons
-            onExpand={handleToggleCollapsed}
-            onNewTask={handleNewTask}
-            hasCompletedTask={hasCompletedTask}
-          />
+          <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
         )}
         {/* Responsive resizable sidebar - fixed, not affected by right panel */}
         <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>

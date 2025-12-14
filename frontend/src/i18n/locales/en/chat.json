@@ -136,7 +136,9 @@
     "payload_too_large": "Content too large: conversation history or attachment exceeds limit, please start a new conversation or reduce attachment size"
   },
   "clarification": {
-    "title": "Spec Clarification",
+    "title": "Smart Follow-up",
+    "show_raw": "Show Raw",
+    "show_form": "Show Form",
     "recommended": "Recommended",
     "custom_input": "Custom Input",
     "back_to_choices": "Back to Choices",
@@ -190,6 +192,10 @@
     "enable": "Enable web search",
     "disable": "Disable web search",
     "select_engine": "Select search engine"
+  },
+  "clarification_toggle": {
+    "enable": "Enable smart follow-up mode",
+    "disable": "Disable smart follow-up mode"
   },
   "streaming_wait": {
     "thinking": "Thinking",

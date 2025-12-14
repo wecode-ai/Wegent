@@ -14,7 +14,7 @@ import type {
   GitBranch,
   Attachment,
 } from '@/types/api';
-import { Copy, Share2, FileText, ChevronDown, Download } from 'lucide-react';
+import { Share2, FileText, ChevronDown, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -28,7 +28,6 @@ import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { useMultipleStreamingRecovery, type RecoveryState } from '@/hooks/useStreamingRecovery';
 import MessageBubble, { type Message } from './MessageBubble';
-import AttachmentPreview from './AttachmentPreview';
 import TaskShareModal from './TaskShareModal';
 import { taskApis } from '@/apis/tasks';
 import { type SelectableMessage } from './ExportPdfButton';
@@ -55,6 +54,8 @@ interface RecoveredMessageBubbleProps {
   selectedBranch?: GitBranch | null;
   theme: 'light' | 'dark';
   t: (key: string) => string;
+  /** Generic callback when a component inside the message bubble wants to send a message */
+  onSendMessage?: (content: string) => void;
 }
 
 function RecoveredMessageBubble({
@@ -67,6 +68,7 @@ function RecoveredMessageBubble({
   selectedBranch,
   theme,
   t,
+  onSendMessage,
 }: RecoveredMessageBubbleProps) {
   // Use typewriter effect for recovered content that is still streaming
   const displayContent = useTypewriter(recovery.content || '');
@@ -90,6 +92,7 @@ function RecoveredMessageBubble({
       selectedBranch={selectedBranch}
       theme={theme}
       t={t}
+      onSendMessage={onSendMessage}
     />
   );
 }
@@ -112,6 +115,8 @@ interface MessagesAreaProps {
   onContentChange?: () => void;
   /** Current streaming subtask ID (for deduplication) */
   streamingSubtaskId?: number | null;
+  /** Generic callback when a component inside the message bubble wants to send a message */
+  onSendMessage?: (content: string) => void;
 }
 
 export default function MessagesArea({
@@ -125,6 +130,7 @@ export default function MessagesArea({
   onContentChange,
   streamingSubtaskId,
   onShareButtonRender,
+  onSendMessage,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
@@ -761,6 +767,7 @@ export default function MessagesArea({
                   selectedBranch={selectedBranch}
                   theme={theme as 'light' | 'dark'}
                   t={t}
+                  onSendMessage={onSendMessage}
                 />
               );
             }
@@ -777,47 +784,31 @@ export default function MessagesArea({
                 selectedBranch={selectedBranch}
                 theme={theme as 'light' | 'dark'}
                 t={t}
+                onSendMessage={onSendMessage}
               />
             );
           })}
 
           {/* Pending user message (optimistic update) - only show if not already in displayMessages */}
+          {/* Use MessageBubble to ensure proper rendering of special formats like ClarificationAnswerSummary */}
           {pendingUserMessage && !isPendingMessageAlreadyDisplayed && (
-            <div className="flex justify-end">
-              <div className="flex max-w-[75%] w-auto flex-col gap-3 items-end">
-                <div className="relative group w-full p-5 pb-10 rounded-2xl border border-border text-text-primary shadow-sm bg-muted">
-                  {/* Show pending attachment */}
-                  {pendingAttachment && (
-                    <div className="flex flex-wrap gap-2 mb-3">
-                      <AttachmentPreview
-                        attachment={pendingAttachment}
-                        compact={false}
-                        showDownload={false}
-                      />
-                    </div>
-                  )}
-                  <div className="text-sm break-all">{pendingUserMessage}</div>
-                  {/* Copy button for pending user message */}
-                  <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      onClick={async () => {
-                        try {
-                          await navigator.clipboard.writeText(pendingUserMessage);
-                        } catch (err) {
-                          console.error('Failed to copy text: ', err);
-                        }
-                      }}
-                      className="h-8 w-8 hover:bg-muted opacity-100"
-                      title="Copy"
-                    >
-                      <Copy className="h-4 w-4 text-text-muted" />
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
+            <MessageBubble
+              key="pending-user-message"
+              msg={{
+                type: 'user',
+                content: pendingUserMessage,
+                timestamp: Date.now(),
+                attachments: pendingAttachment ? [pendingAttachment] : undefined,
+              }}
+              index={displayMessages.length}
+              selectedTaskDetail={selectedTaskDetail}
+              selectedTeam={selectedTeam}
+              selectedRepo={selectedRepo}
+              selectedBranch={selectedBranch}
+              theme={theme as 'light' | 'dark'}
+              t={t}
+              onSendMessage={onSendMessage}
+            />
           )}
 
           {/* Streaming AI response - use MessageBubble component for consistency */}
@@ -845,6 +836,7 @@ export default function MessagesArea({
                 theme={theme as 'light' | 'dark'}
                 t={t}
                 isWaiting={Boolean(isStreaming && !streamingContent)}
+                onSendMessage={onSendMessage}
               />
             )}
         </div>

@@ -19,6 +19,7 @@ import {
   Ban,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import ThinkingComponent from './ThinkingComponent';
 import ClarificationForm from './ClarificationForm';
@@ -59,11 +60,11 @@ export interface Message {
 const CopyButton = ({
   content,
   className,
-  title,
+  tooltip,
 }: {
   content: string;
   className?: string;
-  title?: string;
+  tooltip?: string;
 }) => {
   const [copied, setCopied] = useState(false);
 
@@ -94,13 +95,12 @@ const CopyButton = ({
     }
   };
 
-  return (
+  const button = (
     <Button
       variant="ghost"
       size="icon"
       onClick={handleCopy}
       className={className ?? 'h-8 w-8 hover:bg-muted'}
-      title={title || 'Copy'}
     >
       {copied ? (
         <Check className="h-4 w-4 text-green-500" />
@@ -109,6 +109,17 @@ const CopyButton = ({
       )}
     </Button>
   );
+
+  if (tooltip) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>{button}</TooltipTrigger>
+        <TooltipContent>{copied ? 'Copied!' : tooltip}</TooltipContent>
+      </Tooltip>
+    );
+  }
+
+  return button;
 };
 
 // Bubble toolbar: supports copy button and extensible tool buttons
@@ -153,6 +164,8 @@ export interface MessageBubbleProps {
   t: (key: string) => string;
   /** Whether to show waiting indicator (streaming but no content yet) */
   isWaiting?: boolean;
+  /** Generic callback when a component inside the message bubble wants to send a message (e.g., ClarificationForm) */
+  onSendMessage?: (content: string) => void;
 }
 
 const MessageBubble = memo(
@@ -166,10 +179,11 @@ const MessageBubble = memo(
     theme,
     t,
     isWaiting,
+    onSendMessage,
   }: MessageBubbleProps) {
-    const bubbleBaseClasses = 'relative w-full p-5 pb-10 text-text-primary';
+    const bubbleBaseClasses = `relative w-full p-5 text-text-primary ${msg.type === 'user' ? 'overflow-visible' : 'pb-10'}`;
     const bubbleTypeClasses =
-      msg.type === 'user' ? 'rounded-2xl border border-border bg-muted shadow-sm' : '';
+      msg.type === 'user' ? 'group rounded-2xl border border-border bg-surface shadow-sm' : '';
     const isUserMessage = msg.type === 'user';
 
     const formatTimestamp = (timestamp: number | undefined) => {
@@ -439,6 +453,7 @@ const MessageBubble = memo(
           return (
             <ClarificationAnswerSummary
               data={{ type: 'clarification_answer', answers: answerPayload }}
+              rawContent={message.content}
             />
           );
         }
@@ -476,23 +491,47 @@ const MessageBubble = memo(
         );
       });
     };
-
     // Helper function to parse Markdown clarification questions
     // Supports flexible formats: with/without code blocks, emoji variations, different header levels
     // Extracts content between the header and the last ``` (or end of content if no valid closing ```)
-    const parseMarkdownClarification = (content: string): ClarificationData | null => {
+    // Returns: { data: ClarificationData, prefixText: string, suffixText: string } | null
+    const parseMarkdownClarification = (
+      content: string
+    ): { data: ClarificationData; prefixText: string; suffixText: string } | null => {
       // Flexible header detection for clarification questions
-      // Matches: ## 🤔 需求澄清问题, ## Clarification Questions, ### 澄清问题, # 需求澄清, etc.
-      const clarificationHeaderRegex =
+      // Two regex patterns to support both old and new formats:
+      // Old format: ## 💬 智能追问 (Smart Follow-up Questions)
+      // New format: ## 🤔 需求澄清问题 (Clarification Questions)
+      const smartFollowUpRegex =
+        /#{1,6}\s*(?:💬\s*)?(?:智能追问|smart\s*follow[- ]?up(?:\s*questions?)?)/im;
+      const clarificationQuestionsRegex =
         /#{1,6}\s*(?:🤔\s*)?(?:需求)?(?:澄清问题?|clarification\s*questions?)/im;
-      const headerMatch = content.match(clarificationHeaderRegex);
+
+      // Try both patterns
+      const smartFollowUpMatch = content.match(smartFollowUpRegex);
+      const clarificationMatch = content.match(clarificationQuestionsRegex);
+
+      // Use the first match found (prefer the one that appears earlier in content)
+      let headerMatch: RegExpMatchArray | null = null;
+      if (smartFollowUpMatch && clarificationMatch) {
+        // Both matched, use the one that appears first
+        headerMatch =
+          smartFollowUpMatch.index! <= clarificationMatch.index!
+            ? smartFollowUpMatch
+            : clarificationMatch;
+      } else {
+        headerMatch = smartFollowUpMatch || clarificationMatch;
+      }
+
       if (!headerMatch) {
         return null;
       }
 
       // Find the position of the header and extract everything from the header onwards
       const headerIndex = headerMatch.index!;
+      const prefixText = content.substring(0, headerIndex).trim();
       let actualContent = content.substring(headerIndex);
+      let suffixText = '';
 
       // Find the last ``` in the content
       const lastCodeBlockMarkerIndex = actualContent.lastIndexOf('\n```');
@@ -503,8 +542,13 @@ const MessageBubble = memo(
         const linesAfterMarker = contentAfterMarker.split('\n').filter(line => line.trim() !== '');
 
         if (linesAfterMarker.length <= 2) {
-          // Valid closing ```, extract content before it
+          // Valid closing ```, extract content before it and save content after as potential suffix
+          const potentialSuffix = contentAfterMarker.trim();
           actualContent = actualContent.substring(0, lastCodeBlockMarkerIndex).trim();
+          // If there's content after the closing ```, save it as suffix
+          if (potentialSuffix) {
+            suffixText = potentialSuffix;
+          }
         }
         // If the ``` is too far from the end, keep the full content
       }
@@ -516,6 +560,9 @@ const MessageBubble = memo(
       const questionRegex =
         /(?:^|\n)(?:#{1,6}\s*)?(?:\*\*)?Q?(\d+)(?:\*\*)?[:.：]\s*(.*?)(?=\n(?:#{1,6}\s*)?(?:\*\*)?(?:Q?\d+|Type|类型)|\n\*\*(?:Type|类型)\*\*|$)/gi;
       const matches = Array.from(actualContent.matchAll(questionRegex));
+
+      // Track the end position of the last successfully parsed question
+      let lastParsedEndIndex = 0;
 
       for (const match of matches) {
         try {
@@ -560,13 +607,17 @@ const MessageBubble = memo(
               question_text: questionText,
               question_type: 'text_input',
             });
+            lastParsedEndIndex = endIndex;
           } else {
             const options: ClarificationData['questions'][0]['options'] = [];
+            // Track the end position of the last option within this question block
+            let lastOptionEndInBlock = 0;
 
             // Flexible option detection
             // Matches: - [✓] `value` - Label, - [x] value - Label, - [ ] `value` - Label, - `value` - Label
+            // The lookahead matches: next option line, bold text, header, empty line, or end of string
             const optionRegex =
-              /- \[([✓xX* ]?)\]\s*`?([^`\n-]+)`?\s*-\s*(.*?)(?=\n-|\n\*\*|\n#{1,6}|$)/g;
+              /- \[([✓xX* ]?)\]\s*`?([^`\n-]+)`?\s*-\s*([^\n]*)(?=\n-|\n\*\*|\n#{1,6}|\n\n|\n?$)/g;
             let optionMatch;
 
             while ((optionMatch = optionRegex.exec(questionBlock)) !== null) {
@@ -585,13 +636,16 @@ const MessageBubble = memo(
                   label: label || value,
                   recommended: isRecommended,
                 });
+                // Update the end position of the last option
+                lastOptionEndInBlock = optionMatch.index + optionMatch[0].length;
               }
             }
 
             // Fallback: try simpler option format without checkbox
             // Matches: - `value` - Label, - value - Label
             if (options.length === 0) {
-              const simpleOptionRegex = /-\s*`?([^`\n-]+)`?\s*-\s*(.*?)(?=\n-|\n\*\*|\n#{1,6}|$)/g;
+              const simpleOptionRegex =
+                /-\s*`?([^`\n-]+)`?\s*-\s*([^\n]*)(?=\n-|\n\*\*|\n#{1,6}|\n\n|\n?$)/g;
               let simpleMatch;
 
               while ((simpleMatch = simpleOptionRegex.exec(questionBlock)) !== null) {
@@ -610,6 +664,8 @@ const MessageBubble = memo(
                     label: label || value,
                     recommended: isRecommended,
                   });
+                  // Update the end position of the last option
+                  lastOptionEndInBlock = simpleMatch.index + simpleMatch[0].length;
                 }
               }
             }
@@ -621,6 +677,9 @@ const MessageBubble = memo(
                 question_type: questionType,
                 options,
               });
+              // Use the actual end position of the last option, not the entire question block
+              // This allows us to capture any text after the last option as suffix
+              lastParsedEndIndex = startIndex + lastOptionEndInBlock;
             }
           }
         } catch {
@@ -631,9 +690,24 @@ const MessageBubble = memo(
 
       if (questions.length === 0) return null;
 
+      // Extract suffix text: content after the last successfully parsed question
+      // Only extract from actualContent if we haven't already extracted suffix from after the code block
+      if (!suffixText && lastParsedEndIndex > 0 && lastParsedEndIndex < actualContent.length) {
+        const extractedSuffix = actualContent.substring(lastParsedEndIndex).trim();
+        // Clean up suffix text: remove leading closing code block markers if present
+        const cleanedSuffix = extractedSuffix.replace(/^```\s*\n?/, '').trim();
+        if (cleanedSuffix) {
+          suffixText = cleanedSuffix;
+        }
+      }
+
       return {
-        type: 'clarification',
-        questions,
+        data: {
+          type: 'clarification',
+          questions,
+        },
+        prefixText,
+        suffixText,
       };
     };
 
@@ -696,7 +770,6 @@ const MessageBubble = memo(
         final_prompt: promptContent,
       };
     };
-
     const renderAiMessage = (message: Message, messageIndex: number) => {
       const content = message.content ?? '';
 
@@ -709,15 +782,61 @@ const MessageBubble = memo(
             contentToParse = result;
           }
         }
-
         const markdownClarification = parseMarkdownClarification(contentToParse);
         if (markdownClarification) {
+          const { data, prefixText, suffixText } = markdownClarification;
+          // Debug log for suffix text
+          console.log('[ClarificationForm] Parsed result:', {
+            questionsCount: data.questions.length,
+            prefixTextLength: prefixText.length,
+            suffixText: suffixText,
+            suffixTextLength: suffixText.length,
+            contentToParse: contentToParse,
+            contentLength: contentToParse.length,
+          });
           return (
-            <ClarificationForm
-              data={markdownClarification}
-              taskId={selectedTaskDetail?.id || 0}
-              currentMessageIndex={messageIndex}
-            />
+            <div className="space-y-4">
+              {/* Render prefix text (content before the clarification form) */}
+              {prefixText && (
+                <MarkdownEditor.Markdown
+                  source={prefixText}
+                  style={{ background: 'transparent' }}
+                  wrapperElement={{ 'data-color-mode': theme }}
+                  components={{
+                    a: ({ href, children, ...props }) => (
+                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                        {children}
+                      </a>
+                    ),
+                  }}
+                />
+              )}
+              {/* Render the clarification form */}
+              <ClarificationForm
+                data={data}
+                taskId={selectedTaskDetail?.id || 0}
+                currentMessageIndex={messageIndex}
+                rawContent={contentToParse}
+                onSubmit={onSendMessage}
+              />
+              {/* Render suffix text (content after the clarification form that couldn't be parsed) */}
+              {suffixText && (
+                <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
+                  <MarkdownEditor.Markdown
+                    source={suffixText}
+                    style={{ background: 'transparent' }}
+                    wrapperElement={{ 'data-color-mode': theme }}
+                    components={{
+                      a: ({ href, children, ...props }) => (
+                        <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                          {children}
+                        </a>
+                      ),
+                    }}
+                  />
+                </div>
+              )}
+            </div>
           );
         }
 
@@ -795,15 +914,105 @@ const MessageBubble = memo(
     };
 
     // Render recovered content with typewriter effect (content is already processed by RecoveredMessageBubble)
+    // Also handles clarification form parsing for streaming content
     const renderRecoveredContent = () => {
       if (!msg.recoveredContent || msg.subtaskStatus !== 'RUNNING') return null;
 
+      const contentToRender = msg.recoveredContent;
+
+      // Try to parse clarification format from recovered/streaming content
+      // This ensures clarification forms are rendered correctly during streaming
+      const markdownClarification = parseMarkdownClarification(contentToRender);
+      if (markdownClarification) {
+        const { data, prefixText, suffixText } = markdownClarification;
+        return (
+          <div className="space-y-4">
+            {/* Render prefix text (content before the clarification form) */}
+            {prefixText && (
+              <MarkdownEditor.Markdown
+                source={prefixText}
+                style={{ background: 'transparent' }}
+                wrapperElement={{ 'data-color-mode': theme }}
+                components={{
+                  a: ({ href, children, ...props }) => (
+                    <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                      {children}
+                    </a>
+                  ),
+                }}
+              />
+            )}
+            {/* Render the clarification form */}
+            <ClarificationForm
+              data={data}
+              taskId={selectedTaskDetail?.id || 0}
+              currentMessageIndex={index}
+              rawContent={contentToRender}
+              onSubmit={onSendMessage}
+            />
+            {/* Render suffix text (content after the clarification form that couldn't be parsed) */}
+            {suffixText && (
+              <div className="mt-4 p-3 rounded-lg border border-border bg-surface/50">
+                <MarkdownEditor.Markdown
+                  source={suffixText}
+                  style={{ background: 'transparent' }}
+                  wrapperElement={{ 'data-color-mode': theme }}
+                  components={{
+                    a: ({ href, children, ...props }) => (
+                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                        {children}
+                      </a>
+                    ),
+                  }}
+                />
+              </div>
+            )}
+            {/* Show copy and download buttons */}
+            <BubbleTools
+              contentToCopy={contentToRender}
+              tools={[
+                {
+                  key: 'download',
+                  title: t('messages.download') || 'Download',
+                  icon: <Download className="h-4 w-4 text-text-muted" />,
+                  onClick: () => {
+                    const blob = new Blob([contentToRender], {
+                      type: 'text/plain;charset=utf-8',
+                    });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'message.md';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  },
+                },
+              ]}
+            />
+          </div>
+        );
+      }
+
+      // Try to parse final prompt format
+      const markdownFinalPrompt = parseMarkdownFinalPrompt(contentToRender);
+      if (markdownFinalPrompt) {
+        return (
+          <FinalPromptMessage
+            data={markdownFinalPrompt}
+            selectedTeam={selectedTeam}
+            selectedRepo={selectedRepo}
+            selectedBranch={selectedBranch}
+          />
+        );
+      }
+
+      // Default: render as markdown
       return (
         <div className="space-y-2">
-          {msg.recoveredContent ? (
+          {contentToRender ? (
             <>
               <MarkdownEditor.Markdown
-                source={msg.recoveredContent}
+                source={contentToRender}
                 style={{ background: 'transparent' }}
                 wrapperElement={{ 'data-color-mode': theme }}
                 components={{
@@ -816,14 +1025,14 @@ const MessageBubble = memo(
               />
               {/* Show copy and download buttons during streaming */}
               <BubbleTools
-                contentToCopy={msg.recoveredContent}
+                contentToCopy={contentToRender}
                 tools={[
                   {
                     key: 'download',
                     title: t('messages.download') || 'Download',
                     icon: <Download className="h-4 w-4 text-text-muted" />,
                     onClick: () => {
-                      const blob = new Blob([msg.recoveredContent || ''], {
+                      const blob = new Blob([contentToRender], {
                         type: 'text/plain;charset=utf-8',
                       });
                       const url = URL.createObjectURL(blob);
@@ -882,10 +1091,14 @@ const MessageBubble = memo(
             )}
             {/* Show incomplete notice for completed but incomplete messages */}
             {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
-            {/* Show copy button for user messages - always visible */}
+            {/* Show copy button for user messages - visible on hover */}
             {isUserMessage && (
-              <div className="absolute bottom-2 left-2 flex items-center gap-1 z-10">
-                <CopyButton content={msg.content} className="h-8 w-8 hover:bg-muted opacity-100" />
+              <div className="absolute -bottom-8 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                <CopyButton
+                  content={msg.content}
+                  className="h-6 w-6 hover:bg-muted"
+                  tooltip={t('actions.copy') || 'Copy'}
+                />
               </div>
             )}
           </div>

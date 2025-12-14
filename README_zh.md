@@ -109,14 +109,16 @@ graph LR
 
 ### 🎯 核心概念
 
+> **📖 术语说明**：代码中的 `Team` 对应用户界面的"**智能体**"，`Bot` 对应用户界面的"**机器人**"。用户通过创建"智能体"来执行任务，而"机器人"是组成智能体的基础组件。
+
 - **👻 Ghost**：智能体的"灵魂" - 定义个性、能力和行为模式
 - **🧠 Model**：AI 模型配置 - 定义环境变量和模型参数
 - **🐚 Shell**："可执行程序" - 能够启动智能体的程序
-- **🤖 Bot**：完整的智能体实例，结合了 Ghost + Shell + Model
-- **👥 Team**：由多个 Bot + 协作模型组成，定义智能体如何协同工作
+- **🤖 Bot (机器人)**：完整的智能体实例，结合了 Ghost + Shell + Model
+- **👥 Team (智能体)**：由多个 Bot + 协作模型组成，用户直接使用的 AI 助手
 - **🤝 Collaboration**：定义团队中 Bot 之间的交互模式（类似工作流）
 - **💼 Workspace**：用于任务和项目的隔离工作环境
-- **🎯 Task**：分配给团队的可执行工作单元
+- **🎯 Task**：分配给智能体(Team)的可执行工作单元
 
 > 💡 **详细的 YAML 配置文档**:
 - [完整的 YAML 配置示例和字段说明](docs/zh/reference/yaml-specification.md)
@@ -324,12 +326,27 @@ wegent/
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+            <br />
+            <sub><b>Xuemin</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
     </td>
+    <td align="center">
+        <a href="https://github.com/johnny0120">
+            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+            <br />
+            <sub><b>johnny0120</b></sub>
+        </a>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
