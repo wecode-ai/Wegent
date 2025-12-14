@@ -431,7 +431,7 @@ export function QuickAccessCards({
                         <CheckIcon
                           className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'opacity-100 text-primary' : 'opacity-0'}`}
                         />
-                        <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
+                        <TeamIconDisplay iconId={team.icon} size="sm" className="flex-shrink-0 text-text-muted" />
                         <span className="flex-1 text-sm font-medium truncate" title={team.name}>
                           {team.name}
                         </span>
