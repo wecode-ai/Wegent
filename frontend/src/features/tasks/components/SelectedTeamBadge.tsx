@@ -6,7 +6,7 @@
 
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import type { Team } from '@/types/api';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 
 interface SelectedTeamBadgeProps {
@@ -43,24 +43,19 @@ export function SelectedTeamBadge({
     </div>
   );
 
-  // If no description, just render the badge without popover
-  if (!team.description) {
-    return badgeContent;
-  }
+  // Tooltip content: prioritize description, fallback to name
+  const tooltipText = team.description || team.name;
 
   return (
-    <Popover>
-      <PopoverTrigger asChild>
-        <button type="button" className="cursor-pointer">
-          {badgeContent}
-        </button>
-      </PopoverTrigger>
-      <PopoverContent className="w-auto max-w-[300px] p-3 text-sm" side="top" align="start">
-        <div className="space-y-1">
-          <div className="font-medium text-text-primary">{team.name}</div>
-          <div className="text-text-secondary">{team.description}</div>
-        </div>
-      </PopoverContent>
-    </Popover>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className="cursor-default">{badgeContent}</div>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="start" className="max-w-[300px]">
+          <p>{tooltipText}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
