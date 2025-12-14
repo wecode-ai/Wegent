@@ -412,39 +412,6 @@ export default function TaskSidebar({
         )}
       </div>
 
-      {/* Search Button - always shows "Search Conversation" */}
-      <div className="px-1 mb-0">
-        {isCollapsed ? (
-          <TooltipProvider>
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  onClick={handleOpenSearchDialog}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
-                  aria-label={t('tasks.search_placeholder_chat')}
-                >
-                  <Search className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>{t('tasks.search_placeholder_chat')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : (
-          <Button
-            variant="ghost"
-            onClick={handleOpenSearchDialog}
-            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
-            size="sm"
-          >
-            <Search className="h-4 w-4 mr-0.5" />
-            {t('tasks.search_placeholder_chat')}
-          </Button>
-        )}
-      </div>
-
       {/* Search Dialog - shows search input and results list */}
       <Dialog
         open={isSearchDialogOpen}
@@ -612,7 +579,25 @@ export default function TaskSidebar({
         {/* History Title or Search Result Header */}
         {!isCollapsed && !isSearchResult && (
           <div className="px-1 pb-2 text-xs font-medium text-text-muted flex items-center justify-between">
-            <span>{t('tasks.history_title')}</span>
+            <div className="flex items-center gap-1">
+              <span>{t('tasks.history_title')}</span>
+              <TooltipProvider>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleOpenSearchDialog}
+                      className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
+                      aria-label={t('tasks.search_placeholder_chat')}
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>{t('tasks.search_placeholder_chat')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             {/* Mark All As Read Button - show only when there are unread tasks */}
             {totalUnreadCount > 0 && (
               <button
@@ -622,6 +607,27 @@ export default function TaskSidebar({
                 {t('tasks.mark_all_read')} ({totalUnreadCount})
               </button>
             )}
+          </div>
+        )}
+        {/* Search Button for collapsed mode */}
+        {isCollapsed && !isSearchResult && (
+          <div className="px-1 pb-2 flex justify-center">
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleOpenSearchDialog}
+                    className="p-1 text-text-muted hover:text-text-primary transition-colors rounded hover:bg-hover"
+                    aria-label={t('tasks.search_placeholder_chat')}
+                  >
+                    <Search className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>{t('tasks.search_placeholder_chat')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         )}
         {!isCollapsed && isSearchResult && (
