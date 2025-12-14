@@ -215,11 +215,11 @@ export default function ChatInput({
       >
         {/* Inner content wrapper with badge and text */}
         <div className="relative">
-          {/* Badge - floated left so text wraps around it */}
+          {/* Badge - positioned absolutely so it doesn't affect text flow */}
           {badge && (
             <span
               ref={badgeRef}
-              className="float-left mr-2 mt-2 pointer-events-auto"
+              className="absolute left-0 top-2 pointer-events-auto z-10"
               style={{ userSelect: 'none' }}
             >
               {badge}
@@ -241,6 +241,9 @@ export default function ChatInput({
               minHeight,
               whiteSpace: 'pre-wrap',
               wordBreak: 'break-word',
+              // Use text-indent for first line to leave space for badge
+              // Subsequent lines will start from the left edge
+              textIndent: badge ? `${badgeWidth}px` : 0,
             }}
             suppressContentEditableWarning
           />
