@@ -227,10 +227,13 @@ test.describe('Tasks Page - Task Management', () => {
     await page.reload();
     await page.waitForLoadState('domcontentloaded');
 
-    // Select team
-    const teamSelector = page.locator('[role="combobox"]').first();
+    // Select team using the data-tour attribute to avoid selecting model selector
+    // The team selector has data-tour="team-selector" attribute
+    const teamSelectorContainer = page.locator('[data-tour="team-selector"]');
+    const teamSelector = teamSelectorContainer.locator('[role="combobox"]');
+
     if (await teamSelector.isVisible({ timeout: 5000 }).catch(() => false)) {
-      await teamSelector.click();
+      await teamSelector.click({ force: true });
       await page.waitForTimeout(500);
 
       const teamOption = page.locator(`[role="option"]:has-text("${testTeamName}")`);
