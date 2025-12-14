@@ -374,6 +374,7 @@
     "delete_task": "删除任务",
     "searching": "搜索中...",
     "press_enter_to_search": "按 Enter 键搜索",
+    "search_hint": "输入关键词搜索对话",
     "clear_search": "清除",
     "mark_all_read": "全部标记为已读",
     "open_from": "<> Code",
