@@ -484,9 +484,10 @@ const MessageBubble = memo(
           return <React.Fragment key={idx}>{renderProgressBar(status, progress)}</React.Fragment>;
         }
 
+        // Use non-breaking space for empty lines to preserve line height
         return (
-          <div key={idx} className="text-sm break-all">
-            {line}
+          <div key={idx} className="text-sm break-all min-h-[1.25em]">
+            {line || '\u00A0'}
           </div>
         );
       });
