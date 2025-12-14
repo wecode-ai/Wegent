@@ -16,6 +16,7 @@ import {
   ChatBubbleLeftEllipsisIcon,
   ShareIcon,
   CodeBracketIcon,
+  LinkSlashIcon,
 } from '@heroicons/react/24/outline';
 import { Bot, Team } from '@/types/api';
 import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams';
@@ -504,7 +505,11 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                               title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
                               className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
                             >
-                              <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              {isSharedTeam(team) ? (
+                                <LinkSlashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              ) : (
+                                <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              )}
                             </Button>
                           )}
                         </div>
