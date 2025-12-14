@@ -191,17 +191,6 @@ export default function ChatInput({
 
   return (
     <div className="w-full relative" data-tour="task-input">
-      {/* Badge - positioned absolutely, not editable */}
-      {badge && (
-        <span
-          ref={badgeRef}
-          className="absolute left-0 top-2 z-10 pointer-events-auto"
-          style={{ userSelect: 'none' }}
-        >
-          {badge}
-        </span>
-      )}
-
       {/* Placeholder - shown when empty */}
       {showPlaceholder && (
         <div
@@ -215,28 +204,48 @@ export default function ChatInput({
         </div>
       )}
 
-      {/* Editable content area */}
+      {/* Scrollable container that includes both badge and editable content */}
       <div
-        ref={editableRef}
-        contentEditable={!disabled}
-        onInput={handleInput}
-        onKeyDown={handleKeyDown}
-        onCompositionStart={handleCompositionStart}
-        onCompositionEnd={handleCompositionEnd}
-        onFocus={handleFocus}
-        data-testid="message-input"
-        className={`w-full py-2 bg-transparent custom-scrollbar text-text-primary text-base focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+        className="w-full custom-scrollbar"
         style={{
           minHeight,
           maxHeight,
           overflowY: 'auto',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-word',
-          // Use text-indent for first line to make room for badge
-          textIndent: badge ? `${badgeWidth}px` : '0',
         }}
-        suppressContentEditableWarning
-      />
+      >
+        {/* Inner content wrapper with badge and text */}
+        <div className="relative">
+          {/* Badge - floated left so text wraps around it */}
+          {badge && (
+            <span
+              ref={badgeRef}
+              className="float-left mr-2 mt-2 pointer-events-auto"
+              style={{ userSelect: 'none' }}
+            >
+              {badge}
+            </span>
+          )}
+
+          {/* Editable content area */}
+          <div
+            ref={editableRef}
+            contentEditable={!disabled}
+            onInput={handleInput}
+            onKeyDown={handleKeyDown}
+            onCompositionStart={handleCompositionStart}
+            onCompositionEnd={handleCompositionEnd}
+            onFocus={handleFocus}
+            data-testid="message-input"
+            className={`w-full py-2 bg-transparent text-text-primary text-base focus:outline-none ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
+            style={{
+              minHeight,
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+            }}
+            suppressContentEditableWarning
+          />
+        </div>
+      </div>
     </div>
   );
 }
