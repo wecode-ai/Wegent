@@ -9,6 +9,7 @@ import '@/features/common/scrollbar.css';
 import { Button } from '@/components/ui/button';
 import { PencilIcon, TrashIcon } from '@heroicons/react/24/outline';
 import { FiGithub, FiGitlab, FiGitBranch } from 'react-icons/fi';
+import { SiGitea } from 'react-icons/si';
 import GitHubEdit from './GitHubEdit';
 import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 import LoadingState from '@/features/common/LoadingState';
@@ -119,6 +120,8 @@ export default function GitHubIntegration() {
                     <div className="flex items-center space-x-2 w-0 flex-1 min-w-0">
                       {info.type === 'gitlab' || info.type === 'gitee' ? (
                         <FiGitlab className="w-4 h-4 text-text-primary" />
+                      ) : info.type === 'gitea' ? (
+                        <SiGitea className="w-4 h-4 text-text-primary" />
                       ) : info.type === 'gerrit' ? (
                         <FiGitBranch className="w-4 h-4 text-text-primary" />
                       ) : (

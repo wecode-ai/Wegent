@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
 from app.models.user import User
+from app.repository.gitea_provider import GiteaProvider
 from app.repository.gitee_provider import GiteeProvider
 from app.repository.github_provider import GitHubProvider
 from app.repository.gitlab_provider import GitLabProvider
@@ -153,6 +154,13 @@ class RepositoryJobService(BaseService[Kind, None, None]):
                         f"[repository_job] Successfully updated Gitee repository cache for user {user.user_name}, domain {git_domain}, took {elapsed:.2f} seconds"
                     )
                     success = True
+                elif git_type == "gitea":
+                    await self._update_gitea_repositories(user, git_token, git_domain)
+                    elapsed = time.time() - start_time
+                    logger.info(
+                        f"[repository_job] Successfully updated Gitea repository cache for user {user.user_name}, domain {git_domain}, took {elapsed:.2f} seconds"
+                    )
+                    success = True
                 else:
                     logger.warning(
                         f"Unsupported git provider type: {git_type}, user {user.user_name}"
@@ -212,6 +220,23 @@ class RepositoryJobService(BaseService[Kind, None, None]):
         provider = GiteeProvider()
         logger.info(
             f"[repository_job] Starting to update Gitee repository cache for user {user.user_name}, domain {git_domain}"
+        )
+        await provider._fetch_all_repositories_async(user, git_token, git_domain)
+
+    async def _update_gitea_repositories(
+        self, user: User, git_token: str, git_domain: str
+    ) -> None:
+        """
+        Update Gitea repositories cache for a user
+
+        Args:
+            user: User object
+            git_token: Gitea token
+            git_domain: Gitea domain
+        """
+        provider = GiteaProvider()
+        logger.info(
+            f"[repository_job] Starting to update Gitea repository cache for user {user.user_name}, domain {git_domain}"
         )
         await provider._fetch_all_repositories_async(user, git_token, git_domain)
 

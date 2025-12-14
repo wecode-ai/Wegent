@@ -28,6 +28,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
     ) -> List[Dict[str, Any]]:
         """Validate git info fields and tokens"""
         from app.repository.gerrit_provider import GerritProvider
+        from app.repository.gitea_provider import GiteaProvider
         from app.repository.gitee_provider import GiteeProvider
         from app.repository.github_provider import GitHubProvider
         from app.repository.gitlab_provider import GitLabProvider
@@ -37,6 +38,7 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             "github": GitHubProvider(),
             "gitlab": GitLabProvider(),
             "gitee": GiteeProvider(),
+            "gitea": GiteaProvider(),
             "gerrit": GerritProvider(),
         }
 

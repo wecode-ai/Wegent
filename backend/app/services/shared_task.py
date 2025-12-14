@@ -195,6 +195,8 @@ class SharedTaskService:
                                 git_type = "gitlab"
                             elif "gitee" in repo.gitDomain.lower():
                                 git_type = "gitee"
+                            elif "gitea" in repo.gitDomain.lower():
+                                git_type = "gitea"
                 except Exception as e:
                     logger.warning(f"Failed to extract workspace info: {e}")
                     pass  # Use defaults if extraction fails
