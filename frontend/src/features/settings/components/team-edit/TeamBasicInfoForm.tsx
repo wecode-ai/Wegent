@@ -8,6 +8,7 @@ import React from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useTranslation } from '@/hooks/useTranslation';
+import { TeamIconPicker } from '../teams/TeamIconPicker';
 
 interface TeamBasicInfoFormProps {
   name: string;
@@ -16,6 +17,8 @@ interface TeamBasicInfoFormProps {
   setDescription: (description: string) => void;
   bindMode: ('chat' | 'code')[];
   setBindMode: (bindMode: ('chat' | 'code')[]) => void;
+  icon?: string | null;
+  setIcon?: (icon: string) => void;
 }
 
 export default function TeamBasicInfoForm({
@@ -25,24 +28,31 @@ export default function TeamBasicInfoForm({
   setDescription,
   bindMode,
   setBindMode,
+  icon,
+  setIcon,
 }: TeamBasicInfoFormProps) {
   const { t } = useTranslation('common');
 
   return (
     <div className="space-y-4">
-      {/* Team Name and Bind Mode - Two columns */}
+      {/* Team Name with Icon and Bind Mode - Grid layout */}
       <div className="grid grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="teamName" className="text-sm font-medium">
             {t('team.name')} <span className="text-red-400">*</span>
           </Label>
-          <Input
-            id="teamName"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder={t('team.name_placeholder')}
-            className="bg-base"
-          />
+          <div className="flex items-center gap-2">
+            {setIcon && (
+              <TeamIconPicker value={icon} onChange={setIcon} />
+            )}
+            <Input
+              id="teamName"
+              value={name}
+              onChange={e => setName(e.target.value)}
+              placeholder={t('team.name_placeholder')}
+              className="bg-base flex-1"
+            />
+          </div>
         </div>
 
         {/* Bind Mode */}

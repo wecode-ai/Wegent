@@ -168,6 +168,11 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if description is not None:
             spec["description"] = description
 
+        # Handle icon - get from obj_in directly
+        icon = getattr(obj_in, "icon", None)
+        if icon is not None:
+            spec["icon"] = icon
+
         # Create Team JSON
         team_json = {
             "kind": "Team",
@@ -846,6 +851,10 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         if "description" in update_data:
             team_crd.spec.description = update_data["description"]
 
+        # Handle icon update
+        if "icon" in update_data:
+            team_crd.spec.icon = update_data["icon"]
+
         # Save the updated team CRD
         team.json = team_crd.model_dump(mode="json")
         team.updated_at = datetime.now()
@@ -1412,6 +1421,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get description from spec
         description = team_crd.spec.description
 
+        # Get icon from spec
+        icon = team_crd.spec.icon
+
         total_convert_time = time.time() - convert_start
         if total_convert_time > 0.2:
             logger.info(
@@ -1432,6 +1444,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "created_at": team.created_at,
             "updated_at": team.updated_at,
             "agent_type": agent_type,  # Add agent_type field
+            "icon": icon,  # Add icon field
         }
 
     def _convert_to_team_dict_with_cache(
@@ -1560,6 +1573,9 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
         # Get description from spec
         description = team_crd.spec.description
 
+        # Get icon from spec
+        icon = team_crd.spec.icon
+
         return {
             "id": team.id,
             "user_id": team.user_id,
@@ -1574,6 +1590,7 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             "created_at": team.created_at,
             "updated_at": team.updated_at,
             "agent_type": agent_type,
+            "icon": icon,
         }
 
     def _get_bot_summary_with_cache(

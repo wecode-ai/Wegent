@@ -44,6 +44,7 @@ class TeamBase(BaseModel):
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     is_active: bool = True
+    icon: Optional[str] = None  # Icon ID from preset icon library
 
 
 class TeamCreate(TeamBase):
@@ -64,6 +65,7 @@ class TeamUpdate(BaseModel):
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     is_active: Optional[bool] = None
     namespace: Optional[str] = None  # Group namespace
+    icon: Optional[str] = None  # Icon ID from preset icon library
 
 
 class TeamInDB(TeamBase):

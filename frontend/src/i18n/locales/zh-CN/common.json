@@ -231,6 +231,8 @@
     "filter_code": "编码",
     "go_to_chat": "去聊天",
     "go_to_code": "去编码",
+    "icon": "图标",
+    "selectIcon": "选择图标",
     "share": {
       "title": "智能体分享",
       "confirm_message": "确定要使用 {{userName}} 的 {{teamName}} 执行任务吗？",

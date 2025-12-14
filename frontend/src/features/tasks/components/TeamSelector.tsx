@@ -6,7 +6,6 @@
 
 import React, { useEffect, useMemo, useContext } from 'react';
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
-import { FaUsers } from 'react-icons/fa';
 import { Tag } from '@/components/ui/tag';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { useRouter } from 'next/navigation';
@@ -16,6 +15,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { paths } from '@/config/paths';
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 
 interface TeamSelectorProps {
   selectedTeam: Team | null;
@@ -121,7 +121,7 @@ export default function TeamSelector({
         searchText: team.name,
         content: (
           <div className="flex items-center gap-2 min-w-0">
-            <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
+            <TeamIconDisplay iconId={team.icon} size="sm" className="flex-shrink-0 text-text-muted" />
             <span
               className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
               title={team.name}
@@ -156,8 +156,10 @@ export default function TeamSelector({
       data-tour="team-selector"
       style={{ maxWidth: isMobile ? 200 : 260, minWidth: isMobile ? 60 : 80 }}
     >
-      <FaUsers
-        className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}
+      <TeamIconDisplay
+        iconId={selectedTeam?.icon}
+        size="xs"
+        className={`text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}
       />
       <div className="relative min-w-0 flex-1">
         <SearchableSelect

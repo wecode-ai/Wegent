@@ -6,7 +6,6 @@
 
 import { useEffect, useState, useCallback, useTransition, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { FaUsers } from 'react-icons/fa';
 import { HiOutlineCode, HiOutlineChatAlt2 } from 'react-icons/hi';
 import {
   ChevronDownIcon,
@@ -19,8 +18,10 @@ import { QuickAccessTeam, Team } from '@/types/api';
 import { saveLastTeamByMode } from '@/utils/userPreferences';
 import { useTranslation } from '@/hooks/useTranslation';
 import { Tag } from '@/components/ui/tag';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { paths } from '@/config/paths';
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 
 // Maximum number of quick access cards to display
 const MAX_QUICK_ACCESS_CARDS = 4;
@@ -242,6 +243,85 @@ export function QuickAccessCards({
     return null;
   }
 
+  // Render a single team card with optional tooltip
+  const renderTeamCard = (team: DisplayTeam) => {
+    const isSelected = selectedTeam?.id === team.id;
+    const isClicked = clickedTeamId === team.id;
+    const targetMode = getTeamTargetMode(team);
+    const willSwitchMode = targetMode !== 'both' && targetMode !== currentMode;
+
+    const cardContent = (
+      <div
+        onClick={() => !isClicked && !isPending && handleTeamClick(team)}
+        className={`
+          group relative flex items-center gap-1.5 px-3 py-1.5
+          rounded-full border cursor-pointer transition-all duration-200
+          ${
+            isClicked || isPending
+              ? 'switching-card border-primary bg-primary/10 ring-2 ring-primary/50'
+              : isSelected
+                ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
+                : 'border-border bg-surface hover:bg-hover hover:border-border-strong'
+          }
+          ${isClicked || isPending ? 'pointer-events-none' : ''}
+        `}
+      >
+        <TeamIconDisplay
+          iconId={team.icon}
+          size="sm"
+          className={`flex-shrink-0 transition-colors duration-200 ${
+            isClicked || isSelected ? 'text-primary' : 'text-text-muted'
+          }`}
+        />
+        <span
+          className={`text-sm font-medium transition-colors duration-200 whitespace-nowrap ${
+            isClicked || isSelected ? 'text-primary' : 'text-text-secondary'
+          }`}
+        >
+          {team.name}
+        </span>
+
+        {/* Mode switch indicator */}
+        {isClicked && switchingToMode && (
+          <div className="mode-indicator flex items-center gap-1 ml-0.5 text-primary">
+            <span className="text-xs">→</span>
+            {switchingToMode === 'code' ? (
+              <HiOutlineCode className="w-3.5 h-3.5" />
+            ) : (
+              <HiOutlineChatAlt2 className="w-3.5 h-3.5" />
+            )}
+          </div>
+        )}
+
+        {/* Hover hint for mode switch */}
+        {!isClicked && willSwitchMode && (
+          <div className="flex items-center text-text-muted opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-0.5">
+            {targetMode === 'code' ? (
+              <HiOutlineCode className="w-3 h-3" />
+            ) : (
+              <HiOutlineChatAlt2 className="w-3 h-3" />
+            )}
+          </div>
+        )}
+      </div>
+    );
+
+    // Tooltip content: prioritize description, fallback to name
+    const tooltipText = team.description || team.name;
+
+    // Always wrap with Tooltip
+    return (
+      <TooltipProvider key={team.id}>
+        <Tooltip>
+          <TooltipTrigger asChild>{cardContent}</TooltipTrigger>
+          <TooltipContent side="top" className="max-w-[300px]">
+            <p>{tooltipText}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+    );
+  };
+
   return (
     <>
       <style jsx>{`
@@ -294,68 +374,7 @@ export function QuickAccessCards({
         }
       `}</style>
       <div className="flex flex-wrap items-center gap-2 mt-4">
-        {displayTeams.map(team => {
-          const isSelected = selectedTeam?.id === team.id;
-          const isClicked = clickedTeamId === team.id;
-          const targetMode = getTeamTargetMode(team);
-          const willSwitchMode = targetMode !== 'both' && targetMode !== currentMode;
-
-          return (
-            <div
-              key={team.id}
-              onClick={() => !isClicked && !isPending && handleTeamClick(team)}
-              className={`
-                group relative flex items-center gap-1.5 px-3 py-1.5
-                rounded-full border cursor-pointer transition-all duration-200
-                ${
-                  isClicked || isPending
-                    ? 'switching-card border-primary bg-primary/10 ring-2 ring-primary/50'
-                    : isSelected
-                      ? 'border-primary bg-primary/5 ring-1 ring-primary/30'
-                      : 'border-border bg-surface hover:bg-hover hover:border-border-strong'
-                }
-                ${isClicked || isPending ? 'pointer-events-none' : ''}
-              `}
-              title={team.description || undefined}
-            >
-              <FaUsers
-                className={`w-3.5 h-3.5 flex-shrink-0 transition-colors duration-200 ${
-                  isClicked || isSelected ? 'text-primary' : 'text-text-muted'
-                }`}
-              />
-              <span
-                className={`text-sm font-medium transition-colors duration-200 whitespace-nowrap ${
-                  isClicked || isSelected ? 'text-primary' : 'text-text-secondary'
-                }`}
-              >
-                {team.name}
-              </span>
-
-              {/* Mode switch indicator */}
-              {isClicked && switchingToMode && (
-                <div className="mode-indicator flex items-center gap-1 ml-0.5 text-primary">
-                  <span className="text-xs">→</span>
-                  {switchingToMode === 'code' ? (
-                    <HiOutlineCode className="w-3.5 h-3.5" />
-                  ) : (
-                    <HiOutlineChatAlt2 className="w-3.5 h-3.5" />
-                  )}
-                </div>
-              )}
-
-              {/* Hover hint for mode switch */}
-              {!isClicked && willSwitchMode && (
-                <div className="flex items-center text-text-muted opacity-0 group-hover:opacity-100 transition-opacity duration-200 ml-0.5">
-                  {targetMode === 'code' ? (
-                    <HiOutlineCode className="w-3 h-3" />
-                  ) : (
-                    <HiOutlineChatAlt2 className="w-3 h-3" />
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
+        {displayTeams.map(team => renderTeamCard(team))}
 
         {/* More button - always show for team selection */}
         <div ref={moreButtonRef} className="relative">
@@ -429,7 +448,11 @@ export function QuickAccessCards({
                         <CheckIcon
                           className={`w-4 h-4 flex-shrink-0 ${isSelected ? 'opacity-100 text-primary' : 'opacity-0'}`}
                         />
-                        <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
+                        <TeamIconDisplay
+                          iconId={team.icon}
+                          size="sm"
+                          className="flex-shrink-0 text-text-muted"
+                        />
                         <span className="flex-1 text-sm font-medium truncate" title={team.name}>
                           {team.name}
                         </span>

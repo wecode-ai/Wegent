@@ -6,7 +6,6 @@
 
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import '@/features/common/scrollbar.css';
-import { AiOutlineTeam } from 'react-icons/ai';
 import { RiRobot2Line } from 'react-icons/ri';
 import LoadingState from '@/features/common/LoadingState';
 import {
@@ -16,6 +15,7 @@ import {
   ChatBubbleLeftEllipsisIcon,
   ShareIcon,
   CodeBracketIcon,
+  LinkSlashIcon,
 } from '@heroicons/react/24/outline';
 import { Bot, Team } from '@/types/api';
 import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams';
@@ -41,6 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ResourceListItem } from '@/components/common/ResourceListItem';
+import { TeamIconDisplay } from './teams/TeamIconDisplay';
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all';
@@ -387,7 +388,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                         <ResourceListItem
                           name={team.name}
                           description={team.description}
-                          icon={<AiOutlineTeam className="w-5 h-5 text-primary" />}
+                          icon={<TeamIconDisplay iconId={team.icon} size="md" className="text-primary" />}
                           tags={[
                             ...(team.workflow?.mode
                               ? [
@@ -504,7 +505,11 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                               title={isSharedTeam(team) ? t('teams.unbind') : t('teams.delete')}
                               className="h-7 w-7 sm:h-8 sm:w-8 hover:text-error"
                             >
-                              <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              {isSharedTeam(team) ? (
+                                <LinkSlashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              ) : (
+                                <TrashIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                              )}
                             </Button>
                           )}
                         </div>
