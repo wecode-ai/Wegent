@@ -6,7 +6,6 @@
 
 import React, { useCallback, useEffect, useState, useMemo } from 'react';
 import '@/features/common/scrollbar.css';
-import { AiOutlineTeam } from 'react-icons/ai';
 import { RiRobot2Line } from 'react-icons/ri';
 import LoadingState from '@/features/common/LoadingState';
 import {
@@ -42,6 +41,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { ResourceListItem } from '@/components/common/ResourceListItem';
+import { TeamIconDisplay } from './teams/TeamIconDisplay';
 
 interface TeamListProps {
   scope?: 'personal' | 'group' | 'all';
@@ -388,7 +388,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                         <ResourceListItem
                           name={team.name}
                           description={team.description}
-                          icon={<AiOutlineTeam className="w-5 h-5 text-primary" />}
+                          icon={<TeamIconDisplay iconId={team.icon} size="md" className="text-primary" />}
                           tags={[
                             ...(team.workflow?.mode
                               ? [

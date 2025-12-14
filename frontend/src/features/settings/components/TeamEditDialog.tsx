@@ -71,6 +71,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
   const [description, setDescription] = useState('');
   const [mode, setMode] = useState<TeamMode>('solo');
   const [bindMode, setBindMode] = useState<('chat' | 'code')[]>(['chat', 'code']);
+  const [icon, setIcon] = useState<string | null>(null);
 
   // Bot selection state
   const [selectedBotKeys, setSelectedBotKeys] = useState<React.Key[]>([]);
@@ -155,6 +156,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     if (formTeam) {
       setName(formTeam.name);
       setDescription(formTeam.description || '');
+      setIcon(formTeam.icon || null);
       const m = (formTeam.workflow?.mode as TeamMode) || 'pipeline';
       setMode(m);
       if (formTeam.bind_mode && Array.isArray(formTeam.bind_mode)) {
@@ -178,6 +180,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
     } else {
       setName('');
       setDescription('');
+      setIcon(null);
       setMode('solo');
       setBindMode(['chat', 'code']);
       setSelectedBotKeys([]);
@@ -354,6 +357,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bind_mode: bindMode,
               bots: botsData,
               namespace: scope === 'group' && groupName ? groupName : undefined,
+              icon: icon || undefined,
             });
             setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
           } else {
@@ -364,6 +368,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               bind_mode: bindMode,
               bots: botsData,
               namespace: scope === 'group' && groupName ? groupName : undefined,
+              icon: icon || undefined,
             });
             setTeams(prev => [created, ...prev]);
           }
@@ -431,6 +436,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           bind_mode: bindMode,
           bots: botsData,
           namespace: scope === 'group' && groupName ? groupName : undefined,
+          icon: icon || undefined,
         });
         setTeams(prev => prev.map(team => (team.id === updated.id ? updated : team)));
       } else {
@@ -441,6 +447,7 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
           bind_mode: bindMode,
           bots: botsData,
           namespace: scope === 'group' && groupName ? groupName : undefined,
+          icon: icon || undefined,
         });
         setTeams(prev => [created, ...prev]);
       }
@@ -479,6 +486,8 @@ export default function TeamEditDialog(props: TeamEditDialogProps) {
               setDescription={setDescription}
               bindMode={bindMode}
               setBindMode={setBindMode}
+              icon={icon}
+              setIcon={setIcon}
             />
 
             {/* Mode Selection Section */}

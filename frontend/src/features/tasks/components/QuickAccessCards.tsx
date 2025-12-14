@@ -6,7 +6,6 @@
 
 import { useEffect, useState, useCallback, useTransition, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { FaUsers } from 'react-icons/fa';
 import { HiOutlineCode, HiOutlineChatAlt2 } from 'react-icons/hi';
 import {
   ChevronDownIcon,
@@ -21,6 +20,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { Tag } from '@/components/ui/tag';
 import { paths } from '@/config/paths';
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 
 // Maximum number of quick access cards to display
 const MAX_QUICK_ACCESS_CARDS = 4;
@@ -318,8 +318,10 @@ export function QuickAccessCards({
               `}
               title={team.description || undefined}
             >
-              <FaUsers
-                className={`w-3.5 h-3.5 flex-shrink-0 transition-colors duration-200 ${
+              <TeamIconDisplay
+                iconId={team.icon}
+                size="sm"
+                className={`flex-shrink-0 transition-colors duration-200 ${
                   isClicked || isSelected ? 'text-primary' : 'text-text-muted'
                 }`}
               />

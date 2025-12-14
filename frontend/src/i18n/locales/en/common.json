@@ -231,6 +231,8 @@
     "filter_code": "Code",
     "go_to_chat": "Go to Chat",
     "go_to_code": "Go to Code",
+    "icon": "Icon",
+    "selectIcon": "Select Icon",
     "share": {
       "title": "Team Share",
       "confirm_message": "Do you want to use {{userName}}'s {{teamName}} to execute tasks?",
