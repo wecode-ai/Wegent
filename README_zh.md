@@ -326,12 +326,27 @@ wegent/
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+            <br />
+            <sub><b>Xuemin</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
     </td>
+    <td align="center">
+        <a href="https://github.com/johnny0120">
+            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+            <br />
+            <sub><b>johnny0120</b></sub>
+        </a>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>
