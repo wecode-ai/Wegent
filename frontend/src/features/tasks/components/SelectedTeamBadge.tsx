@@ -4,10 +4,10 @@
 
 'use client';
 
-import { FaUsers } from 'react-icons/fa';
 import { XMarkIcon } from '@heroicons/react/24/outline';
 import type { Team } from '@/types/api';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 
 interface SelectedTeamBadgeProps {
   team: Team;
@@ -26,7 +26,7 @@ export function SelectedTeamBadge({
 }: SelectedTeamBadgeProps) {
   const badgeContent = (
     <div className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-primary/30 bg-primary/5 text-primary text-xs">
-      <FaUsers className="w-2.5 h-2.5 flex-shrink-0" />
+      <TeamIconDisplay iconId={team.icon} size="xs" className="flex-shrink-0" />
       <span className="font-medium truncate max-w-[120px]">{team.name}</span>
       {showClearButton && onClear && (
         <button

@@ -125,6 +125,7 @@ export interface Team {
   is_mix_team?: boolean; // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both'; // Recommended usage mode (for QuickAccess)
   bind_mode?: ('chat' | 'code')[]; // Allowed modes for this team
+  icon?: string; // Icon ID from preset icon library
   user?: {
     user_name: string;
   };
@@ -445,6 +446,7 @@ export interface QuickAccessTeam {
   is_system: boolean; // True if from system recommendations
   recommended_mode?: 'chat' | 'code' | 'both';
   agent_type?: string;
+  icon?: string; // Icon ID from preset icon library
 }
 
 export interface QuickAccessResponse {
