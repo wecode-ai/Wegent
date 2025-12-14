@@ -171,6 +171,45 @@ export default function ChatInput({
     [disabled, setMessage]
   );
 
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      if (disabled) return;
+
+      // Get plain text from clipboard, stripping all formatting and invisible characters
+      const clipboardData = e.clipboardData;
+      let pastedText = clipboardData.getData('text/plain');
+
+      // Remove invisible/control characters that can break layout
+      // This includes: zero-width spaces, zero-width joiners, direction marks, etc.
+      // Keep normal whitespace (space, tab, newline) but remove problematic Unicode characters
+      pastedText = pastedText.replace(/[\u200B-\u200D\u2028\u2029\uFEFF\u00A0\u2060\u180E]/g, '');
+
+      // Get current selection
+      const selection = window.getSelection();
+      if (!selection || selection.rangeCount === 0) return;
+
+      const range = selection.getRangeAt(0);
+      range.deleteContents();
+
+      // Insert plain text node
+      const textNode = document.createTextNode(pastedText);
+      range.insertNode(textNode);
+
+      // Move cursor to end of inserted text
+      range.setStartAfter(textNode);
+      range.setEndAfter(textNode);
+      selection.removeAllRanges();
+      selection.addRange(range);
+
+      // Update message state
+      const newText = editableRef.current?.textContent || '';
+      setMessage(newText);
+      setShowPlaceholder(!newText);
+    },
+    [disabled, setMessage]
+  );
+
   const handleFocus = useCallback(() => {
     // Move cursor to end on focus
     if (editableRef.current) {
@@ -232,6 +271,7 @@ export default function ChatInput({
             contentEditable={!disabled}
             onInput={handleInput}
             onKeyDown={handleKeyDown}
+            onPaste={handlePaste}
             onCompositionStart={handleCompositionStart}
             onCompositionEnd={handleCompositionEnd}
             onFocus={handleFocus}
