@@ -90,6 +90,91 @@ AI_VERIFIED=1 git push
 
 ---
 
+## 📖 Terminology: Team vs Bot (IMPORTANT - Avoid Confusion!)
+
+**⚠️ CRITICAL: AI coding agents MUST understand the distinction between code-level terms and UI-level terms to avoid confusion when writing code or documentation.**
+
+### Terminology Mapping Table
+
+| Code/CRD Level (English) | Frontend UI (Chinese) | Frontend UI (English) | Description |
+|--------------------------|----------------------|----------------------|-------------|
+| **Team** | **智能体** | **Agent** | The user-facing AI agent that executes tasks |
+| **Bot** | **机器人** | **Bot/Robot** | A building block component that makes up a Team |
+
+### Conceptual Hierarchy
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Team (Code) = 智能体 (UI)                                       │
+│  ├── What users see and interact with in the frontend           │
+│  ├── Contains one or more Bots with collaboration modes         │
+│  └── Executes Tasks assigned by users                           │
+├─────────────────────────────────────────────────────────────────┤
+│  Bot (Code) = 机器人 (UI)                                        │
+│  ├── A component/building block of a Team                       │
+│  ├── Combines: Ghost (prompt) + Shell (runtime) + Model (LLM)   │
+│  └── Users configure Bots, then assemble them into Teams        │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Key Relationship
+
+```
+Bot = Ghost (灵魂/提示词) + Shell (运行环境) + Model (AI模型)
+Team = Bot(s) + Collaboration Mode (协作模式)
+Task = Team + Workspace (代码仓库)
+```
+
+**In simple terms:**
+- **Bot (机器人)**: The "worker" - a configured AI unit with specific capabilities
+- **Team (智能体)**: The "team of workers" - one or more Bots working together to complete user tasks
+
+### Correct Usage Examples
+
+**✅ CORRECT:**
+```typescript
+// When referring to what users see in the UI
+"用户创建了一个新的智能体" // User created a new Team (智能体)
+"配置机器人的提示词"      // Configure the Bot's (机器人) prompt
+
+// When writing code/API comments
+"Create a new Team resource"     // CRD level - use "Team"
+"Bot references Ghost and Shell" // CRD level - use "Bot"
+```
+
+**❌ INCORRECT (Common Mistakes):**
+```typescript
+// DON'T mix up the terms
+"用户创建了一个新的团队"   // WRONG - "团队" is not used, should be "智能体"
+"创建机器人来执行任务"    // WRONG - Tasks are executed by Teams (智能体), not Bots (机器人) directly
+
+// DON'T confuse code-level and UI-level terms
+"The agent contains multiple teams" // WRONG - should be "Team contains multiple Bots"
+```
+
+### File/Component Naming Convention
+
+| Domain | Naming Pattern | Example |
+|--------|---------------|---------|
+| API Routes | Use CRD names | `/api/teams`, `/api/bots` |
+| Database/Models | Use CRD names | `Team`, `Bot` |
+| Frontend i18n keys | Use CRD names | `teams.title`, `bots.title` |
+| Frontend i18n values (zh-CN) | Use UI terms | `"智能体列表"`, `"机器人"` |
+| Frontend i18n values (en) | Can use either | `"Agents"` or `"Teams"` |
+
+### Quick Reference for AI Agents
+
+When writing code or documentation, always ask:
+1. **Am I writing code/API?** → Use `Team` and `Bot` (CRD names)
+2. **Am I writing user-facing Chinese text?** → Use `智能体` and `机器人`
+3. **Am I writing user-facing English text?** → Use `Agent`/`Team` and `Bot`
+
+**Remember:**
+- `Team` in code = `智能体` in Chinese UI = What users interact with
+- `Bot` in code = `机器人` in Chinese UI = Building blocks that make up a Team
+
+---
+
 ## 🚀 Quick Start
 
 ```bash
@@ -239,12 +324,20 @@ export function TaskFormModal() {
 }
 ```
 
-**Component organization**:
+**Component Organization:**
 ```
 frontend/src/components/
-├── ui/              # shadcn/ui pure UI components (Button, Input, Dialog, etc.)
-├── common/          # Shared business components (EmptyState, LoadingSpinner, etc.)
-└── [feature]/       # Feature-specific components (only if not reusable)
+├── ui/              # shadcn/ui pure UI components (28 components)
+│                    # Button, Card, Badge, Tag, Dialog, Drawer, Input, Select, etc.
+└── common/          # Shared business components
+                     # ResourceListItem, UnifiedAddButton
+
+frontend/src/features/
+├── layout/          # Layout components (TopNavigation, UserMenu, MobileSidebar)
+├── tasks/           # Chat/Code task components (ChatArea, MessageBubble, Workbench)
+├── settings/        # Settings page components (BotList, ModelList, TeamList, etc.)
+├── admin/           # Admin panel components
+└── [other]/         # Feature-specific components
 ```
 
 ---
@@ -253,40 +346,189 @@ frontend/src/components/
 
 ### Color System - Calm UI Philosophy
 
-**Design principles:** Low saturation + low contrast, minimal shadows, generous whitespace, mint blue (`#14B8A6`) as primary accent.
+**Design principles:** Low saturation + low contrast, minimal shadows, generous whitespace, teal (`#14B8A6`) as primary accent.
 
-**Core CSS variables:**
+**Light Theme CSS Variables:**
 ```css
-/* Backgrounds: --color-bg-base, --color-bg-surface, --color-bg-muted, --color-bg-hover */
-/* Text: --color-text-primary, --color-text-secondary, --color-text-muted */
-/* Borders: --color-border, --color-border-strong */
-/* Theme: --color-primary (#14B8A6), --color-error, --color-link */
+--color-bg-base: 255 255 255;          /* White - page background */
+--color-bg-surface: 247 247 248;       /* Light gray - cards, panels */
+--color-bg-muted: 242 242 242;         /* Muted gray - secondary surfaces */
+--color-bg-hover: 224 224 224;         /* Hover states */
+--color-border: 224 224 224;           /* Default borders */
+--color-border-strong: 192 192 192;    /* Emphasized borders */
+--color-text-primary: 26 26 26;        /* Primary text */
+--color-text-secondary: 102 102 102;   /* Secondary text */
+--color-text-muted: 160 160 160;       /* Muted/placeholder text */
+--color-text-inverted: 255 255 255;    /* White text on dark backgrounds */
+--color-primary: 20 184 166;           /* Teal primary (#14B8A6) */
+--color-success: 20 184 166;           /* Same as primary */
+--color-error: 239 68 68;              /* Red (#EF4444) */
+--color-warning: 245 158 11;           /* Orange (#F59E0B) */
+--color-link: 85 185 247;              /* Blue links */
+--color-code-bg: 246 248 250;          /* Code block background */
+--radius: 0.5rem;                      /* Base border radius (8px) */
 ```
 
-**Tailwind usage:**
+**Dark Theme Variables:** (`[data-theme='dark']`)
+```css
+--color-bg-base: 14 15 15;             /* Near black */
+--color-bg-surface: 26 28 28;          /* Dark surface */
+--color-bg-muted: 33 36 36;            /* Dark muted */
+--color-bg-hover: 42 45 45;            /* Dark hover */
+--color-text-primary: 236 236 236;     /* Light text */
+--color-text-secondary: 212 212 212;   /* Secondary light text */
+```
+
+**Tailwind Usage:**
 ```jsx
-className="bg-base text-text-primary"        // Page background
-className="bg-surface border-border"         // Card
-className="bg-primary text-white"            // Primary button
+// Page background
+className="bg-base text-text-primary"
+
+// Card/Panel
+className="bg-surface border-border rounded-lg"
+
+// Primary button
+className="bg-primary text-white"
+
+// Secondary/Ghost elements
+className="bg-muted text-text-secondary"
 ```
 
-### Spacing & Typography
+### Typography
 
-- Spacing: `p-2` (8px), `p-4` (16px), `p-6` (24px), `gap-3` (12px)
-- Border radius: `rounded-2xl` (16px), `rounded-lg` (12px), `rounded-md` (6px)
-- Typography: H1 `text-xl font-semibold`, H2 `text-lg font-semibold`, Body `text-sm`
+| Element | Tailwind Classes |
+|---------|------------------|
+| H1 | `text-xl font-semibold` |
+| H2 | `text-lg font-semibold` |
+| H3 (Card Title) | `text-base font-semibold` |
+| Body | `text-sm` (14px) |
+| Small/Muted | `text-xs text-text-muted` |
+
+**Font Stack:** System fonts (`-apple-system`, `BlinkMacSystemFont`, `Segoe UI`, `Roboto`, etc.)
+
+### Spacing & Border Radius
+
+**Spacing:**
+- `p-2` (8px), `p-3` (12px), `p-4` (16px), `p-6` (24px)
+- `gap-2` (8px), `gap-3` (12px), `gap-4` (16px)
+
+**Border Radius:** Based on `--radius: 0.5rem` (8px)
+- `rounded-lg` → `var(--radius)` (8px)
+- `rounded-md` → `calc(var(--radius) - 2px)` (6px)
+- `rounded-sm` → `calc(var(--radius) - 4px)` (4px)
+- `rounded-full` → pills/avatars
 
 ### Component Library (shadcn/ui)
 
 **Location:** `frontend/src/components/ui/`
 
-**Core components:** Button (variants: default/secondary/ghost/outline/link), Card, Input, Dialog, Drawer, Select, SearchableSelect, Switch, Checkbox, RadioGroup, Badge, Tag, Alert, Toast, Tooltip, Form (react-hook-form + zod), Transfer, Progress, Spinner
+**UI Components (28 components):**
 
-**Example:**
+| Component | Key Features |
+|-----------|--------------|
+| **Button** | Variants: `default`, `primary`, `secondary`, `outline`, `ghost`, `link`, `destructive`. Sizes: `default` (h-10), `sm` (h-9), `lg` (h-11), `icon` (h-10 w-10) |
+| **Card** | Variants: `default`, `elevated`, `ghost`. Padding: `none`, `sm` (p-3), `default` (p-4), `lg` (p-6) |
+| **Badge** | Status indicators. Variants: `default`, `success`, `error`, `warning`, `info`, `secondary`. Sizes: `default` (h-5), `sm` (h-4), `lg` (h-6) |
+| **Tag** | Closable labels. Variants: `default`, `success`, `error`, `warning`, `info` |
+| **Spinner** | Loading indicator. Sizes: `sm` (h-4), `md` (h-6), `lg` (h-8). Props: `text`, `center` |
+| **Dialog** | Modal with overlay, animations, close button |
+| **Drawer** | Slide-out panel |
+| **Select** | Radix-based dropdown |
+| **SearchableSelect** | Select with search filtering |
+| **Input** | Standard text input with focus ring |
+| **Textarea** | Multi-line text input |
+| **Form** | React Hook Form + Zod validation integration |
+| **Switch** | Toggle switch |
+| **Checkbox** | Checkbox input |
+| **RadioGroup** | Radio button group |
+| **Toast/Toaster** | Notification system |
+| **Tooltip** | Hover information |
+| **Popover** | Click-triggered overlay |
+| **Progress** | Progress bar |
+| **Transfer** | Dual-list selection |
+| **Alert** | Alert messages |
+| **AlertDialog** | Confirmation dialogs |
+| **Accordion** | Collapsible sections |
+| **Command** | Command palette |
+| **Dropdown** | Dropdown menu |
+| **Label** | Form labels |
+| **ScrollArea** | Custom scrollable area |
+
+**Button Examples:**
 ```jsx
 import { Button } from '@/components/ui/button'
-<Button variant="default">Save</Button>
+
+<Button variant="primary">Save</Button>
+<Button variant="default">Cancel</Button>
 <Button variant="ghost" size="icon"><PencilIcon className="w-4 h-4" /></Button>
+<Button variant="destructive">Delete</Button>
+```
+
+### Common Components
+
+**Location:** `frontend/src/components/common/`
+
+| Component | Purpose |
+|-----------|---------|
+| **ResourceListItem** | Unified display for Bot, Model, Shell list items with icon, name, description, tags, public badge |
+| **UnifiedAddButton** | Standard "Add" button for creating new resources |
+
+### Layout Components
+
+**Location:** `frontend/src/features/layout/`
+
+| Component | Purpose |
+|-----------|---------|
+| **TopNavigation** | Top bar with logo, hamburger menu (mobile), title, and right-side actions |
+| **UserMenu** | User dropdown with docs, theme toggle, admin link, logout |
+| **MobileSidebar** | Headless UI Dialog-based slide-out sidebar for mobile |
+| **DocsButton** | Documentation link button |
+| **GithubStarButton** | GitHub star button |
+| **WorkbenchToggle** | Toggle for workbench panel |
+
+### Responsive Design
+
+**Breakpoints:**
+- Mobile: `max-width: 767px`
+- Tablet: `768px - 1023px`
+- Desktop: `min-width: 1024px`
+
+**Media Query Hooks:** (`src/features/layout/hooks/useMediaQuery.ts`)
+```tsx
+const isMobile = useIsMobile();   // max-width: 767px
+const isDesktop = useIsDesktop(); // min-width: 1024px
+```
+
+**Mobile Utilities:**
+- `smart-h-screen` → `height: min(100vh, 100dvh)` for better mobile compatibility
+- `touch-target` → `min-height: 44px; min-width: 44px` for touch-friendly elements
+- `scrollbar-hide` → Hide scrollbar while keeping functionality
+
+### CSS Animations
+
+**Available Animations:**
+| Class | Description |
+|-------|-------------|
+| `progress-bar-animated` | Shimmer effect for progress bars |
+| `progress-bar-shimmer` | Minimal shimmer effect |
+| `thinking-text-flow` | Gradient text animation for AI thinking state |
+| `animate-fade-in` | Fade in with slight upward movement |
+| `animate-slide-down` | Slide down and fade in |
+| `ripple-effect` | Touch feedback ripple |
+| `animate-pulse-dot` | Pulsing notification dot |
+
+**Animation Delays:** `animation-delay-200`, `animation-delay-400`
+
+### Toast Notifications
+
+Custom styled using CSS variables:
+```css
+.Toastify__toast {
+  background-color: rgb(var(--color-bg-surface));
+  border: 1px solid rgb(var(--color-border));
+  border-radius: 6px;
+  font-size: 14px;
+}
 ```
 
 ---
@@ -356,22 +598,40 @@ The pre-commit hook performs:
 wegent/
 ├── backend/              # FastAPI backend
 │   ├── app/
-│   │   ├── api/          # Route handlers (auth, bots, models, shells, teams, tasks, chat, git, executors, dify, quota, admin)
+│   │   ├── api/          # Route handlers (auth, bots, models, shells, teams, tasks, chat, git, executors, dify, quota, admin, groups)
 │   │   ├── core/         # Config, security, cache, YAML init
-│   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, PublicModel, PublicShell, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
-│   │   ├── schemas/      # Pydantic schemas & CRD definitions
-│   │   ├── services/     # Business logic (chat/, adapters/, search/, kind.py, repository.py)
+│   │   ├── models/       # SQLAlchemy models (Kind, User, Subtask, Namespace, NamespaceMember, SharedTeam, SharedTask, SkillBinary, SubtaskAttachment)
+│   │   ├── schemas/      # Pydantic schemas & CRD definitions (namespace.py, namespace_member.py)
+│   │   ├── services/     # Business logic (chat/, adapters/, search/, kind.py, repository.py, group_service.py, group_permission.py)
 │   │   └── repository/   # Git providers (GitHub, GitLab, Gitee, Gerrit)
 │   ├── alembic/          # Database migrations
 │   └── init_data/        # YAML initialization data
 ├── frontend/             # Next.js frontend
 │   └── src/
-│       ├── app/          # Pages: /, /login, /settings, /chat, /code, /tasks, /shared/task, /admin
-│       ├── apis/         # API clients (client.ts + module-specific, admin.ts)
-│       ├── components/   # UI components (ui/ for shadcn, common/)
-│       ├── features/     # Feature modules (common, layout, login, settings, tasks, theme, onboarding, admin)
+│       ├── app/          # App Router pages
+│       │   ├── (tasks)/  # Route group: /chat, /code, /settings, /knowledge (shared contexts)
+│       │   ├── admin/    # Admin panel
+│       │   ├── login/    # Login pages (password, OIDC)
+│       │   ├── shared/   # Public shared task page
+│       │   ├── tasks/    # Tasks management
+│       │   └── api/      # API routes (chat/stream, chat/cancel)
+│       ├── apis/         # API clients (client.ts + module-specific)
+│       ├── components/
+│       │   ├── ui/       # shadcn/ui components (28 components)
+│       │   └── common/   # Shared business components (ResourceListItem, UnifiedAddButton)
+│       ├── features/
+│       │   ├── admin/    # Admin panel components
+│       │   ├── common/   # Shared contexts (UserContext), scrollbar styles
+│       │   ├── knowledge/# Knowledge/Wiki feature
+│       │   ├── layout/   # Layout components (TopNavigation, UserMenu, MobileSidebar)
+│       │   ├── login/    # Login feature components
+│       │   ├── onboarding/# Onboarding tour
+│       │   ├── settings/ # Settings management (Bots, Models, Shells, Teams, Skills, Groups)
+│       │   ├── tasks/    # Chat/Code interface, Workbench, streaming
+│       │   └── theme/    # Theme provider and toggle
 │       ├── hooks/        # Custom hooks (useChatStream, useTranslation, useAttachment, useStreamingRecovery)
 │       ├── i18n/         # Internationalization (en, zh-CN)
+│       ├── lib/          # Utility functions (cn)
 │       └── types/        # TypeScript types
 ├── executor/             # Task executor (runs in Docker)
 │   ├── agents/           # ClaudeCode, Agno, Dify, ImageValidator
@@ -399,30 +659,32 @@ wegent/
 
 ## 🔧 CRD Architecture (Kubernetes-inspired)
 
+> **📖 Terminology Note:** See [Terminology: Team vs Bot](#-terminology-team-vs-bot-important---avoid-confusion) section for the distinction between code-level terms (Team, Bot) and UI-level terms (智能体, 机器人).
+
 ### Resource Hierarchy
 
 ```
 Ghost (system prompt + MCP servers + skills)
    ↓
-Bot (Ghost + Shell + optional Model)
+Bot (Ghost + Shell + optional Model)           ← UI: 机器人 (Bot)
    ↓
-Team (multiple Bots with roles)
+Team (multiple Bots with roles)                ← UI: 智能体 (Agent) - What users interact with
    ↓
 Task (Team + Workspace) → Subtasks (messages/steps)
 ```
 
 ### CRD Definitions (apiVersion: agent.wecode.io/v1)
 
-| Kind | Purpose | Key Spec Fields |
-|------|---------|-----------------|
-| **Ghost** | System prompt & tools | `systemPrompt`, `mcpServers`, `skills` |
-| **Model** | LLM configuration | `modelConfig`, `isCustomConfig`, `protocol` |
-| **Shell** | Execution environment | `shellType`, `supportModel`, `baseImage`, `baseShellRef` |
-| **Bot** | Agent unit | `ghostRef`, `shellRef`, `modelRef`, `agent_config` |
-| **Team** | Agent group | `members[{botRef, prompt, role}]`, `collaborationModel` |
-| **Task** | Execution unit | `title`, `prompt`, `teamRef`, `workspaceRef` |
-| **Workspace** | Git repository | `repository{gitUrl, gitRepo, branchName, gitDomain}` |
-| **Skill** | Claude Code skill | `description`, `version`, `author`, `tags` |
+| Kind | Purpose | UI Name (zh-CN) | Key Spec Fields |
+|------|---------|-----------------|-----------------|
+| **Ghost** | System prompt & tools | - | `systemPrompt`, `mcpServers`, `skills` |
+| **Model** | LLM configuration | 模型 | `modelConfig`, `isCustomConfig`, `protocol` |
+| **Shell** | Execution environment | 执行器 | `shellType`, `supportModel`, `baseImage`, `baseShellRef` |
+| **Bot** | Agent building block | **机器人** | `ghostRef`, `shellRef`, `modelRef`, `agent_config` |
+| **Team** | User-facing agent | **智能体** | `members[{botRef, prompt, role}]`, `collaborationModel` |
+| **Task** | Execution unit | 任务 | `title`, `prompt`, `teamRef`, `workspaceRef` |
+| **Workspace** | Git repository | 工作空间 | `repository{gitUrl, gitRepo, branchName, gitDomain}` |
+| **Skill** | Claude Code skill | 技能 | `description`, `version`, `author`, `tags` |
 
 ### Shell Types
 
@@ -469,9 +731,7 @@ Task (Team + Workspace) → Subtasks (messages/steps)
   - `ATTACHMENT_S3_USE_SSL` - Use SSL for S3 connections (default: true)
 - `WEB_SEARCH_*` - Web search configuration (see `backend/app/services/search/README.md`)
   - `WEB_SEARCH_ENABLED` - Enable/disable web search feature (default: false)
-  - `WEB_SEARCH_BASE_URL` - Search API endpoint URL (required when enabled)
-  - `WEB_SEARCH_CONFIG` - JSON string containing adapter configuration
-  - `WEB_SEARCH_MAX_RESULTS` - Default maximum search results (default: 5)
+  - `WEB_SEARCH_ENGINES` - JSON string containing adapter configuration
 
 #### Database Migrations (Alembic)
 
@@ -519,31 +779,52 @@ git commit -m "chore: merge alembic heads"
 
 ### Frontend
 
-**Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, i18next
+**Tech:** Next.js 15, React 19, TypeScript, Tailwind CSS, shadcn/ui, Headless UI, i18next
 
-**Key directories:**
+**Key Directories:**
 - `src/app/` - App Router pages
-- `src/features/settings/` - Models, Teams, Bots, Shells, Skills management
-- `src/features/tasks/` - Chat interface, Workbench, streaming
+- `src/app/(tasks)/` - Route group wrapping `/chat`, `/code`, `/settings`, `/knowledge` with shared contexts
+- `src/components/ui/` - shadcn/ui base components (28 components)
+- `src/components/common/` - Shared business components
+- `src/features/` - Feature-specific modules
 - `src/apis/` - API client modules
 
-**Route Groups:** `(tasks)` wraps `/chat` and `/code` with shared contexts (UserProvider, TaskContextProvider, ChatStreamProvider)
+**State Management (Context-based):**
 
-**State Management:** Context-based (UserContext, TaskContext, ChatStreamContext, ThemeContext)
+| Context | Location | Purpose |
+|---------|----------|---------|
+| `UserContext` | `features/common/UserContext.tsx` | User auth state, login/logout |
+| `TaskContext` | `features/tasks/contexts/taskContext.tsx` | Task list, pagination, search |
+| `ChatStreamContext` | `features/tasks/contexts/chatStreamContext.tsx` | Streaming chat state |
+| `ThemeContext` | `features/theme/ThemeProvider.tsx` | Theme (light/dark) |
 
-**API Routes:** `/api/chat/stream` proxies SSE to backend (required for streaming)
+**Route Group Layout:** (`src/app/(tasks)/layout.tsx`)
+```tsx
+<UserProvider>
+  <TaskContextProvider>
+    <ChatStreamProvider>
+      {children}
+    </ChatStreamProvider>
+  </TaskContextProvider>
+</UserProvider>
+```
 
-**Key features:**
-- Streaming chat with recovery (`useStreamingRecovery`)
+**Key Features:**
+- Streaming chat with recovery (`useStreamingRecovery` hook)
 - PDF export (`ExportPdfButton`, `pdf-generator.ts`)
 - Task/Team sharing (`TaskShareModal`, `TeamShareModal`)
+- Group management (`GroupManager`, `GroupMembersDialog`)
+- Resource scoping (personal, group, all)
 - Dify integration (`DifyAppSelector`, `DifyParamsForm`)
 - Web search integration (Globe icon toggle in chat interface)
 
-**Key environment variables:**
+**API Routes:**
+- `/api/chat/stream` - Proxies SSE to backend (required for streaming)
+- `/api/chat/cancel` - Cancel streaming chat
+
+**Environment Variables:**
 - `NEXT_PUBLIC_API_URL` - Backend API URL
 - `NEXT_PUBLIC_LOGIN_MODE` - Authentication mode ('password', 'oidc', 'all')
-- `NEXT_PUBLIC_WEB_SEARCH_ENABLED` - Enable/disable web search feature (must match backend `WEB_SEARCH_ENABLED`)
 
 ### Executor
 
@@ -590,8 +871,14 @@ git commit -m "chore: merge alembic heads"
 
 | Type | Description | Storage |
 |------|-------------|---------|
-| **Public** | System-provided, shared across users | `public_models` table |
-| **User** | User-defined private models | `kinds` table (kind='Model') |
+| **Public** | System-provided models, shared across all users | `kinds` table (user_id=0, namespace='default') |
+| **User** | User-defined private models | `kinds` table (user_id=xxx, namespace='default') |
+| **Group** | Group-shared models | `kinds` table (user_id=xxx, namespace!=default) |
+
+**Note:**
+- Group resources use `user_id=xxx`, `namespace!=default` (user_id represents who created the group resource)
+- Public models migrated from `public_models` table to `kinds` table with `user_id=0` marker (kind='Model')
+- Public shells also migrated to `kinds` table with `user_id=0` marker (kind='Shell')
 
 ### Model Resolution Order
 
@@ -635,6 +922,7 @@ spec:
 |--------|---------|
 | `/api/auth` | Authentication (login, OIDC) |
 | `/api/users` | User management |
+| `/api/groups` | Group (Namespace) management (CRUD, members, permissions) |
 | `/api/bots` | Bot CRUD |
 | `/api/models` | Model management (unified, test-connection, compatible) |
 | `/api/shells` | Shell management (unified, validate-image) |
@@ -668,6 +956,22 @@ spec:
 | `/public-models/{model_id}` | PUT | Update public model |
 | `/public-models/{model_id}` | DELETE | Delete public model |
 | `/stats` | GET | Get system statistics |
+
+### Group API Endpoints (`/api/groups`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/` | GET | List all groups where user is a member |
+| `/` | POST | Create new group |
+| `/{group_name:path}` | GET | Get group details |
+| `/{group_name:path}` | PUT | Update group info |
+| `/{group_name:path}` | DELETE | Delete group |
+| `/{group_name:path}/members` | GET | List group members |
+| `/{group_name:path}/members` | POST | Add member to group |
+| `/{group_name:path}/members/{member_id}` | GET | Get member details |
+| `/{group_name:path}/members/{member_id}` | PUT | Update member role |
+| `/{group_name:path}/members/{member_id}` | DELETE | Remove member from group |
+| `/{group_name:path}/permissions` | GET | Check user permissions in group |
 
 ### Executor Manager Routes
 
@@ -715,6 +1019,72 @@ The `role` column was added via migration `b2c3d4e5f6a7_add_role_to_users.py`:
 - Users with `user_name='admin'` are automatically set to `role='admin'`
 
 ---
+
+## 📦 Group (Namespace) Management
+
+**Groups (Namespaces) provide resource organization and collaboration for Bots, Models, Shells, and Teams.**
+
+### Overview
+
+Groups are organizational units that allow users to:
+- **Organize resources**: Group related Bots, Models, Shells, and Teams together
+- **Collaborate**: Share resources with team members via group membership
+- **Hierarchical structure**: Support nested groups (e.g., `parent/child/grandchild`)
+
+### Group Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `name` | string | Unique identifier, immutable (supports hierarchical format: `aaa/bbb/ccc`) |
+| `display_name` | string | Human-readable name (optional, mutable) |
+| `owner_user_id` | int | Group creator and owner |
+| `visibility` | enum | Access level: `private`, `internal`, `public` (default: `public`, currently not enforced) |
+| `description` | string | Group description |
+| `is_active` | bool | Group status |
+| `member_count` | int | Number of members in the group |
+| `resource_count` | int | Number of resources in the group |
+
+### Group Roles & Permissions
+
+| Role | Permissions |
+|------|-------------|
+| **Owner** | Full control: manage group, members, and all resources |
+| **Maintainer** | Manage resources, add/remove members (except Owner) |
+| **Developer** | Create and edit resources, view members |
+| **Reporter** | Read-only access to resources |
+
+### Hierarchical Groups
+
+Groups support up to 5 levels of nesting using `/` separator:
+- Format: `parent/child/grandchild`
+- Example: `ai-team/models/production`
+- Permissions: Inherited from parent groups
+- Max depth: 5 levels (0-4 slashes)
+
+### Resource Scopes
+
+When querying resources (Bots, Models, Shells, Teams), you can specify a scope:
+
+| Scope | Description | API Parameter |
+|-------|-------------|---------------|
+| `personal` | Only user's own resources | `scope=personal` |
+| `group` | Resources from a specific group | `scope=group&group_name=<name>` |
+| `all` | All accessible resources (personal + shared + public) | `scope=all` (default) |
+
+### Frontend Components
+
+**Location:** `frontend/src/features/settings/components/groups/`
+
+| Component | Purpose |
+|-----------|---------|
+| `GroupManager` | Main group list and management interface |
+| `CreateGroupDialog` | Create new group dialog |
+| `EditGroupDialog` | Edit group details |
+| `DeleteGroupConfirmDialog` | Confirm group deletion |
+| `GroupMembersDialog` | Manage group members and roles |
+| `GroupSelector` | Dropdown selector for resource creation |
+| `BotListWithScope`, `ModelListWithScope`, `ShellListWithScope`, `TeamListWithScope` | Resource lists with group filtering |
+
 
 ## 🔒 Security
 

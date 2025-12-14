@@ -29,6 +29,8 @@ interface TeamSelectorProps {
   hideSettingsLink?: boolean;
   // Optional: current mode for filtering teams by bind_mode
   currentMode?: 'chat' | 'code';
+  // Optional: whether to open the dropdown by default
+  defaultOpen?: boolean;
 }
 
 export default function TeamSelector({
@@ -40,6 +42,7 @@ export default function TeamSelector({
   taskDetail,
   hideSettingsLink = false,
   currentMode,
+  defaultOpen = false,
 }: TeamSelectorProps) {
   // Try to get context, but don't throw if not available
   const taskContext = useContext(TaskContext);
@@ -111,6 +114,7 @@ export default function TeamSelector({
   const selectItems: SearchableSelectItem[] = useMemo(() => {
     return filteredTeams.map(team => {
       const isSharedTeam = team.share_status === 2 && team.user?.user_name;
+      const isGroupTeam = team.namespace && team.namespace !== 'default';
       return {
         value: team.id.toString(),
         label: team.name,
@@ -124,6 +128,11 @@ export default function TeamSelector({
             >
               {team.name}
             </span>
+            {isGroupTeam && (
+              <Tag className="ml-2 text-xs !m-0 flex-shrink-0" variant="info">
+                {team.namespace}
+              </Tag>
+            )}
             {isSharedTeam && (
               <Tag
                 className="ml-2 text-xs !m-0 flex-shrink-0"
@@ -163,15 +172,22 @@ export default function TeamSelector({
           noMatchText={t('teams.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
           contentClassName="max-w-[320px]"
+          defaultOpen={defaultOpen}
           renderTriggerValue={item => {
             if (!item) return null;
             const team = filteredTeams.find(t => t.id.toString() === item.value);
             const isSharedTeam = team?.share_status === 2 && team?.user?.user_name;
+            const isGroupTeam = team?.namespace && team.namespace !== 'default';
             return (
               <div className="flex items-center gap-2 min-w-0">
                 <span className="truncate max-w-full flex-1 min-w-0" title={item.label}>
                   {item.label}
                 </span>
+                {isGroupTeam && (
+                  <Tag className="text-xs !m-0 flex-shrink-0 ml-2" variant="info">
+                    {team.namespace}
+                  </Tag>
+                )}
                 {isSharedTeam && (
                   <Tag
                     className="text-xs !m-0 flex-shrink-0 ml-2"

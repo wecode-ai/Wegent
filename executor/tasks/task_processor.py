@@ -12,10 +12,8 @@ from typing import Dict, Tuple, Optional, Any
 
 from executor.config import config
 from shared.status import TaskStatus
-from shared.utils.git_util import get_domain_from_url, get_project_path_from_url
-
-# Import the shared logger
 from shared.logger import setup_logger
+from shared.telemetry.decorators import trace_sync, add_span_event, set_span_attribute
 from executor.agents import Agent, AgentFactory
 from executor.services.agent_service import AgentService
 from executor.callback.callback_handler import (
@@ -25,7 +23,6 @@ from executor.callback.callback_handler import (
     send_status_callback,
 )
 
-# Use the shared logger setup function
 logger = setup_logger("task_processor")
 
 
@@ -57,7 +54,6 @@ def execute_task(agent: Agent) -> Tuple[TaskStatus, Optional[str]]:
     Returns:
         tuple: (status: TaskStatus, error_message: str or None)
     """
-    # Get AgentService instance on demand
     agent_service = AgentService()
     return agent_service.execute_agent_task(agent)
 
@@ -80,17 +76,31 @@ def _get_callback_params(task_data: Dict[str, Any]) -> Dict[str, str]:
         "executor_name": os.getenv("EXECUTOR_NAME"),
         "executor_namespace": os.getenv("EXECUTOR_NAMESPACE"),
     }
-    # Include task_type if present (e.g., "validation" for validation tasks)
     task_type = task_data.get("type")
     if task_type:
         params["task_type"] = task_type
     return params
 
 
+def _extract_task_attributes(task_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Extract trace attributes from task data."""
+    return {
+        "task.id": str(task_data.get("task_id", -1)),
+        "task.subtask_id": str(task_data.get("subtask_id", -1)),
+        "task.title": task_data.get("task_title", ""),
+        "task.type": task_data.get("type", "online"),
+        "executor.name": os.getenv("EXECUTOR_NAME", ""),
+    }
+
+
+@trace_sync(
+    span_name="execute_task",
+    tracer_name="executor.tasks",
+    extract_attributes=_extract_task_attributes
+)
 def process(task_data: Dict[str, Any]) -> TaskStatus:
     """
-    Process task and send callback
-    Now uses AgentService to execute tasks
+    Process task and send callback with distributed tracing support.
 
     Args:
         task_data (dict): Task data
@@ -98,53 +108,59 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
     Returns:
         TaskStatus: Processing status
     """
-    # Get common callback parameters
     callback_params = _get_callback_params(task_data)
 
-    # Extract validation_id from validation_params if present (for validation tasks)
+    # Extract validation_id for validation tasks
     validation_params = task_data.get("validation_params", {})
     validation_id = validation_params.get("validation_id") if validation_params else None
 
-    # For validation tasks, include validation_id in the started callback result
-    # so executor_manager can identify it as a validation task
     started_result = None
     if validation_id:
-        started_result = {
-            "validation_id": validation_id,
-            "stage": "running",
-        }
+        started_result = {"validation_id": validation_id, "stage": "running"}
 
     # Send task started callback
     result = send_task_started_callback(result=started_result, **callback_params)
     if not result or result.get("status") != TaskStatus.SUCCESS.value:
         logger.error("Failed to send 'running' status callback")
+        set_span_attribute("error", True)
+        set_span_attribute("error.message", "Failed to send running status callback")
         return TaskStatus.FAILED
+
+    add_span_event("task_started_callback_sent")
 
     # Execute task using AgentService
     try:
-        # Get AgentService instance on demand
         agent_service = AgentService()
         status, error_message = agent_service.execute_task(task_data)
 
-        # Set message based on execution result
         message = (
             "Task executed successfully"
             if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]
             else error_message
         )
+
+        set_span_attribute("task.execution_status", status.value)
+        if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
+            add_span_event("task_execution_completed")
+        elif status == TaskStatus.FAILED:
+            set_span_attribute("error", True)
+            set_span_attribute("error.message", error_message or "Unknown error")
+        elif status == TaskStatus.RUNNING:
+            add_span_event("task_execution_running")
+
     except Exception as e:
-        # Handle exceptions from execute_task itself
         error_msg = f"Unexpected error during task execution: {str(e)}"
         logger.exception(error_msg)
         status = TaskStatus.FAILED
         message = error_msg
+        set_span_attribute("error", True)
+        set_span_attribute("error.message", error_msg)
 
     # Send task completion or failure callback
     if status in [TaskStatus.SUCCESS, TaskStatus.COMPLETED]:
         send_task_completed_callback(message=message, **callback_params)
-    elif status in [TaskStatus.FAILED]:
-        # Include validation_id in result for validation tasks so that
-        # executor_manager can forward the failure status to backend
+        add_span_event("task_completed_callback_sent")
+    elif status == TaskStatus.FAILED:
         fail_result = None
         if validation_id:
             fail_result = {
@@ -157,6 +173,7 @@ def process(task_data: Dict[str, Any]) -> TaskStatus:
                 },
             }
         send_task_failed_callback(error_message=message, result=fail_result, **callback_params)
+        add_span_event("task_failed_callback_sent")
 
     return status
 
@@ -168,8 +185,5 @@ def run_task() -> TaskStatus:
     Returns:
         TaskStatus: Processing status
     """
-    # Read task data
     task_data = read_task_data()
-
-    # Process task and send callback
     return process(task_data)

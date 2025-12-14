@@ -12,7 +12,13 @@ from app.api.dependencies import get_db
 from app.core import security
 from app.models.system_config import SystemConfig
 from app.models.user import User
-from app.schemas.admin import QuickAccessResponse, QuickAccessTeam
+from app.schemas.admin import (
+    ChatSloganItem,
+    ChatTipItem,
+    QuickAccessResponse,
+    QuickAccessTeam,
+    WelcomeConfigResponse,
+)
 from app.schemas.user import UserCreate, UserInDB, UserUpdate
 from app.services.kind import kind_service
 from app.services.user import user_service
@@ -176,4 +182,117 @@ async def get_user_quick_access(
         user_version=user_version,
         show_system_recommended=show_system_recommended,
         teams=result_teams,
+    )
+
+
+# ==================== Welcome Config (Slogan & Tips) ====================
+
+CHAT_SLOGAN_TIPS_CONFIG_KEY = "chat_slogan_tips"
+
+# Default slogan and tips configuration
+DEFAULT_SLOGAN_TIPS_CONFIG = {
+    "slogans": [
+        {
+            "id": 1,
+            "zh": "今天有什么可以帮到你？",
+            "en": "What can I help you with today?",
+            "mode": "chat",
+        },
+        {
+            "id": 2,
+            "zh": "让我们一起写代码吧",
+            "en": "Let's code together",
+            "mode": "code",
+        },
+    ],
+    "tips": [
+        # Chat mode tips
+        {
+            "id": 1,
+            "zh": "试试问我任何问题，我会尽力帮助你",
+            "en": "Try asking me any question, I'll do my best to help",
+            "mode": "chat",
+        },
+        {
+            "id": 2,
+            "zh": "你可以上传文件让我帮你分析和处理",
+            "en": "You can upload files for me to analyze and process",
+            "mode": "chat",
+        },
+        {
+            "id": 3,
+            "zh": "我可以帮你总结文档、翻译内容或回答问题",
+            "en": "I can help you summarize documents, translate content, or answer questions",
+            "mode": "chat",
+        },
+        # Code mode tips
+        {
+            "id": 4,
+            "zh": "试试问我：帮我分析这段代码的性能问题",
+            "en": "Try asking: Help me analyze the performance issues in this code",
+            "mode": "code",
+        },
+        {
+            "id": 5,
+            "zh": "我可以帮你生成代码、修复 Bug 或重构现有代码",
+            "en": "I can help you generate code, fix bugs, or refactor existing code",
+            "mode": "code",
+        },
+        {
+            "id": 6,
+            "zh": "试试让我帮你编写单元测试或文档",
+            "en": "Try asking me to write unit tests or documentation",
+            "mode": "code",
+        },
+        {
+            "id": 7,
+            "zh": "我可以解释复杂的代码逻辑，帮助你理解代码库",
+            "en": "I can explain complex code logic and help you understand the codebase",
+            "mode": "code",
+        },
+        # Both modes tips
+        {
+            "id": 8,
+            "zh": "选择合适的智能体团队可以获得更好的回答",
+            "en": "Choosing the right agent team can get you better answers",
+            "mode": "both",
+        },
+    ],
+}
+
+
+@router.get("/welcome-config", response_model=WelcomeConfigResponse)
+async def get_welcome_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get welcome configuration (slogans and tips) for the chat page.
+    This is a public endpoint for logged-in users.
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == CHAT_SLOGAN_TIPS_CONFIG_KEY)
+        .first()
+    )
+
+    if not config:
+        # Return default configuration
+        return WelcomeConfigResponse(
+            slogans=[
+                ChatSloganItem(**s) for s in DEFAULT_SLOGAN_TIPS_CONFIG["slogans"]
+            ],
+            tips=[ChatTipItem(**tip) for tip in DEFAULT_SLOGAN_TIPS_CONFIG["tips"]],
+        )
+
+    config_value = config.config_value or {}
+    return WelcomeConfigResponse(
+        slogans=[
+            ChatSloganItem(**s)
+            for s in config_value.get("slogans", DEFAULT_SLOGAN_TIPS_CONFIG["slogans"])
+        ],
+        tips=[
+            ChatTipItem(**tip)
+            for tip in config_value.get("tips", DEFAULT_SLOGAN_TIPS_CONFIG["tips"])
+        ],
     )

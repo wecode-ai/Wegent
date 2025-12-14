@@ -43,7 +43,12 @@
     "status_completed": "Completed",
     "status_failed": "Failed",
     "status_cancelled": "Cancelled",
-    "status_cancelling": "Cancelling"
+    "status_cancelling": "Cancelling",
+    "recovered": "Recovered",
+    "content_recovered": "Content Recovered",
+    "content_recovered_desc": "Content has been recovered after page refresh",
+    "content_incomplete": "Response Incomplete",
+    "content_incomplete_desc": "Connection was lost, this is the partial content generated"
   },
   "shared_task": {
     "share_task": "Share",
@@ -131,7 +136,9 @@
     "payload_too_large": "Content too large: conversation history or attachment exceeds limit, please start a new conversation or reduce attachment size"
   },
   "clarification": {
-    "title": "Spec Clarification",
+    "title": "Smart Follow-up",
+    "show_raw": "Show Raw",
+    "show_form": "Show Form",
     "recommended": "Recommended",
     "custom_input": "Custom Input",
     "back_to_choices": "Back to Choices",
@@ -162,6 +169,7 @@
     "additional_placeholder": "Enter additional thoughts, requirements, or special notes here..."
   },
   "export": {
+    "export": "Export",
     "export_pdf": "Export PDF",
     "export_docx": "Export DOCX",
     "no_messages": "No messages to export",
@@ -182,7 +190,12 @@
   },
   "web_search": {
     "enable": "Enable web search",
-    "disable": "Disable web search"
+    "disable": "Disable web search",
+    "select_engine": "Select search engine"
+  },
+  "clarification_toggle": {
+    "enable": "Enable smart follow-up mode",
+    "disable": "Disable smart follow-up mode"
   },
   "streaming_wait": {
     "thinking": "Thinking",

@@ -23,34 +23,14 @@ from app.services.kind import kind_service
 router = APIRouter()
 
 
-@router.get("/namespaces/{namespace}/{kinds}")
-async def list_resources(
-    namespace: str = Path(..., description="Resource namespace"),
-    kinds: str = Path(
-        ...,
-        description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
-    ),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    List all resources of a specific kind in a namespace
-
-    Returns a list of resources of the specified kind in the given namespace.
-    The response is formatted according to the Kubernetes-style API conventions.
-    """
-    # Validate resource type
-    kind = validate_resource_type(kinds)
-
-    # Get resources list
-    resources = kind_service.list_resources(current_user.id, kind, namespace)
-
-    # Format and return response
-    return format_resource_list(kind, resources)
-
-
-@router.get("/namespaces/{namespace}/{kinds}/{name}")
+# IMPORTANT: More specific routes (with {name}) must be registered BEFORE generic routes
+# to avoid path parameter conflicts when using {namespace:path}
+@router.get("/namespaces/{namespace:path}/{kinds}/{name}")
 async def get_resource(
-    namespace: str = Path(..., description="Resource namespace"),
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
@@ -79,43 +59,40 @@ async def get_resource(
     return format_single_resource(kind, resource)
 
 
-@router.post("/namespaces/{namespace}/{kinds}", status_code=status.HTTP_201_CREATED)
-async def create_resource(
-    namespace: str = Path(..., description="Resource namespace"),
+@router.get("/namespaces/{namespace:path}/{kinds}")
+async def list_resources(
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
     ),
-    resource: Dict[str, Any] = None,
     current_user: User = Depends(get_current_user),
 ):
     """
-    Create a new resource
+    List all resources of a specific kind in a namespace
 
-    Creates a new resource of specified kind in given namespace.
-    The request body should contain complete resource definition.
-    The response is the created resource formatted according to the Kubernetes-style API conventions.
+    Returns a list of resources of the specified kind in the given namespace.
+    The response is formatted according to the Kubernetes-style API conventions.
     """
     # Validate resource type
     kind = validate_resource_type(kinds)
 
-    # Validate and prepare resource data
-    validated_resource = validate_and_prepare_resource(kind, resource, namespace)
-
-    # Create resource
-    resource_id = kind_service.create_resource(
-        current_user.id, kind, validated_resource
-    )
+    # Get resources list
+    resources = kind_service.list_resources(current_user.id, kind, namespace)
 
     # Format and return response
-    formatted_resource = kind_service._format_resource_by_id(kind, resource_id)
-    schema_class = KIND_SCHEMA_MAP[kind]
-    return schema_class.parse_obj(formatted_resource)
+    return format_resource_list(kind, resources)
 
 
-@router.put("/namespaces/{namespace}/{kinds}/{name}")
+@router.put("/namespaces/{namespace:path}/{kinds}/{name}")
 async def update_resource(
-    namespace: str = Path(..., description="Resource namespace"),
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
@@ -148,9 +125,12 @@ async def update_resource(
     return schema_class.parse_obj(formatted_resource)
 
 
-@router.delete("/namespaces/{namespace}/{kinds}/{name}")
+@router.delete("/namespaces/{namespace:path}/{kinds}/{name}")
 async def delete_resource(
-    namespace: str = Path(..., description="Resource namespace"),
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
     kinds: str = Path(
         ...,
         description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
@@ -171,3 +151,42 @@ async def delete_resource(
     kind_service.delete_resource(current_user.id, kind, namespace, name)
 
     return {"message": f"Successfully deleted resource '{name}'"}
+
+
+@router.post(
+    "/namespaces/{namespace:path}/{kinds}", status_code=status.HTTP_201_CREATED
+)
+async def create_resource(
+    namespace: str = Path(
+        ...,
+        description="Resource namespace (supports nested groups like 'parent/child')",
+    ),
+    kinds: str = Path(
+        ...,
+        description="Resource type. Valid options: ghosts, models, shells, bots, teams, workspaces, tasks",
+    ),
+    resource: Dict[str, Any] = None,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Create a new resource
+
+    Creates a new resource of specified kind in given namespace.
+    The request body should contain complete resource definition.
+    The response is the created resource formatted according to the Kubernetes-style API conventions.
+    """
+    # Validate resource type
+    kind = validate_resource_type(kinds)
+
+    # Validate and prepare resource data
+    validated_resource = validate_and_prepare_resource(kind, resource, namespace)
+
+    # Create resource
+    resource_id = kind_service.create_resource(
+        current_user.id, kind, validated_resource
+    )
+
+    # Format and return response
+    formatted_resource = kind_service._format_resource_by_id(kind, resource_id)
+    schema_class = KIND_SCHEMA_MAP[kind]
+    return schema_class.parse_obj(formatted_resource)

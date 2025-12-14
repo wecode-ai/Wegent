@@ -57,7 +57,7 @@ Wegent 是一个开源的 AI 原生操作系统，使您能够大规模定义、
 3. **🔒 独立沙箱环境**：每个 Agent 团队运行在独立沙箱环境中，支持多个 Agent 团队同时运行
 4. **🤝 高级协作模式**：对话模式可以实现并行、Leader、Solo 等 Agent 协作模式，完成新闻洞察、内容检索等复杂工作流
 5. **💻 AI 编码集成**：编码模式可以与 GitHub/GitLab 等代码服务对接，实现代码开发、review 等 AI Coding 工作流
-6. **🔍 联网搜索集成**：Chat Shell 团队可选的联网搜索功能，通过通用 HTTP 适配器支持多种搜索引擎（SearXNG、Google Custom Search、Bing、Brave 等）
+6. **🔍 联网搜索集成**：Chat Shell 团队可选的联网搜索功能，通过通用 HTTP 适配器支持多种搜索引擎（SearXNG、Google Custom Search、Bing、Brave 等），支持用户自选搜索引擎。
 
 ```mermaid
 graph LR
@@ -109,14 +109,16 @@ graph LR
 
 ### 🎯 核心概念
 
+> **📖 术语说明**：代码中的 `Team` 对应用户界面的"**智能体**"，`Bot` 对应用户界面的"**机器人**"。用户通过创建"智能体"来执行任务，而"机器人"是组成智能体的基础组件。
+
 - **👻 Ghost**：智能体的"灵魂" - 定义个性、能力和行为模式
 - **🧠 Model**：AI 模型配置 - 定义环境变量和模型参数
 - **🐚 Shell**："可执行程序" - 能够启动智能体的程序
-- **🤖 Bot**：完整的智能体实例，结合了 Ghost + Shell + Model
-- **👥 Team**：由多个 Bot + 协作模型组成，定义智能体如何协同工作
+- **🤖 Bot (机器人)**：完整的智能体实例，结合了 Ghost + Shell + Model
+- **👥 Team (智能体)**：由多个 Bot + 协作模型组成，用户直接使用的 AI 助手
 - **🤝 Collaboration**：定义团队中 Bot 之间的交互模式（类似工作流）
 - **💼 Workspace**：用于任务和项目的隔离工作环境
-- **🎯 Task**：分配给团队的可执行工作单元
+- **🎯 Task**：分配给智能体(Team)的可执行工作单元
 
 > 💡 **详细的 YAML 配置文档**:
 - [完整的 YAML 配置示例和字段说明](docs/zh/reference/yaml-specification.md)
@@ -324,12 +326,27 @@ wegent/
         </a>
     </td>
     <td align="center">
+        <a href="https://github.com/2561056571">
+            <img src="https://avatars.githubusercontent.com/u/112464849?v=4" width="80;" alt="2561056571"/>
+            <br />
+            <sub><b>Xuemin</b></sub>
+        </a>
+    </td>
+    <td align="center">
         <a href="https://github.com/fengkuizhi">
             <img src="https://avatars.githubusercontent.com/u/3616484?v=4" width="80;" alt="fengkuizhi"/>
             <br />
             <sub><b>Fengkuizhi</b></sub>
         </a>
     </td>
+    <td align="center">
+        <a href="https://github.com/johnny0120">
+            <img src="https://avatars.githubusercontent.com/u/15564476?v=4" width="80;" alt="johnny0120"/>
+            <br />
+            <sub><b>johnny0120</b></sub>
+        </a>
+    </td></tr>
+<tr>
     <td align="center">
         <a href="https://github.com/jolestar">
             <img src="https://avatars.githubusercontent.com/u/77268?v=4" width="80;" alt="jolestar"/>

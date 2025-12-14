@@ -112,6 +112,7 @@ export interface Shell {
 export interface Team {
   id: number;
   name: string;
+  namespace?: string; // Namespace for group teams (default: 'default')
   description: string;
   bots: TeamBot[];
   workflow: Record<string, string>;
@@ -451,6 +452,26 @@ export interface QuickAccessResponse {
   user_version: number | null;
   show_system_recommended: boolean; // True if user_version < system_version
   teams: QuickAccessTeam[];
+}
+
+// Welcome Config Types (Slogan & Tips)
+export interface ChatSloganItem {
+  id: number;
+  zh: string;
+  en: string;
+  mode?: 'chat' | 'code' | 'both';
+}
+
+export interface ChatTipItem {
+  id: number;
+  zh: string;
+  en: string;
+  mode?: 'chat' | 'code' | 'both';
+}
+
+export interface WelcomeConfigResponse {
+  slogans: ChatSloganItem[];
+  tips: ChatTipItem[];
 }
 
 export interface SystemConfigResponse {

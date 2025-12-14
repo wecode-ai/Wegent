@@ -22,6 +22,17 @@ dependencies = [
     "starlette>=0.49.1",
     "uvicorn==0.38.0",
     "websocket-client>=1.9.0",
+
+    # OpenTelemetry core packages
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+
+    # OpenTelemetry instrumentation packages
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "opentelemetry-instrumentation-requests>=0.48b0",
+    "opentelemetry-instrumentation-system-metrics>=0.48b0",
 ]
 
 [dependency-groups]

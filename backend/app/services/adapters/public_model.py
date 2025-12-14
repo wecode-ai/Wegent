@@ -9,8 +9,6 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.kind import Kind
-from app.models.public_model import PublicModel
-from app.models.public_shell import PublicShell
 from app.models.user import User
 from app.schemas.kind import Model, Shell
 from app.schemas.model import ModelBulkCreateItem, ModelCreate, ModelUpdate
@@ -19,27 +17,30 @@ from app.services.base import BaseService
 
 class ModelAdapter:
     """
-    Adapter to convert PublicModel to Model-like object for API compatibility
+    Adapter to convert Kind (Model) to Model-like object for API compatibility
     """
 
     @staticmethod
-    def to_model_dict(public_model: PublicModel) -> Dict[str, Any]:
+    def to_model_dict(kind: Kind) -> Dict[str, Any]:
         """
-        Convert PublicModel to Model-like dictionary
+        Convert Kind (Model) to Model-like dictionary
         """
-        # Extract config from json.spec.modelConfig
+        # Extract config and displayName from json
         config = {}
-        if isinstance(public_model.json, dict):
-            model_crd = Model.model_validate(public_model.json)
+        display_name = None
+        if isinstance(kind.json, dict):
+            model_crd = Model.model_validate(kind.json)
             config = model_crd.spec.modelConfig
+            display_name = model_crd.metadata.displayName
 
         return {
-            "id": public_model.id,
-            "name": public_model.name,
+            "id": kind.id,
+            "name": kind.name,
+            "displayName": display_name,
             "config": config,
-            "is_active": public_model.is_active,
-            "created_at": public_model.created_at,
-            "updated_at": public_model.updated_at,
+            "is_active": kind.is_active,
+            "created_at": kind.created_at,
+            "updated_at": kind.updated_at,
         }
 
 
@@ -53,21 +54,26 @@ class MockModel:
             setattr(self, key, value)
 
 
-class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
+class PublicModelService(BaseService[Kind, ModelCreate, ModelUpdate]):
     """
-    Public Model service class - adapter for public_models table
+    Public Model service class - queries kinds table with user_id=0
     """
 
     def create_model(
         self, db: Session, *, obj_in: ModelCreate, current_user: User
     ) -> Dict[str, Any]:
         """
-        Create a Public Model entry
+        Create a Public Model entry in kinds table
         """
         # Ensure unique name in default namespace
         existed = (
-            db.query(PublicModel)
-            .filter(PublicModel.name == obj_in.name, PublicModel.namespace == "default")
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.name == obj_in.name,
+                Kind.namespace == "default",
+            )
             .first()
         )
         if existed:
@@ -82,7 +88,9 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
             "apiVersion": "agent.wecode.io/v1",
         }
 
-        db_obj = PublicModel(
+        db_obj = Kind(
+            user_id=0,
+            kind="Model",
             name=obj_in.name,
             namespace="default",
             json=json_data,
@@ -97,49 +105,49 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         self, db: Session, *, items: List[ModelBulkCreateItem], current_user: User
     ) -> Dict[str, Any]:
         """
-        Bulk upsert public models.
+        Bulk upsert public models in kinds table.
         """
-        created: List[PublicModel] = []
-        updated: List[PublicModel] = []
+        created: List[Kind] = []
+        updated: List[Kind] = []
         skipped: List[Dict[str, Any]] = []
 
         for it in items:
             try:
                 existed = (
-                    db.query(PublicModel)
+                    db.query(Kind)
                     .filter(
-                        PublicModel.name == it.name, PublicModel.namespace == "default"
+                        Kind.user_id == 0,
+                        Kind.kind == "Model",
+                        Kind.name == it.name,
+                        Kind.namespace == "default",
                     )
                     .first()
                 )
                 if existed:
-                    if existed:
-                        # Update existing model
-                        if isinstance(existed.json, dict):
-                            model_crd = Model.model_validate(existed.json)
-                            # Update env section
-                            model_crd.spec.modelConfig["env"] = (
-                                dict(it.env) if isinstance(it.env, dict) else {}
-                            )
-                            existed.json = model_crd.model_dump()
-                        else:
-                            # Fallback for invalid JSON
-                            json_data = {
-                                "kind": "Model",
-                                "spec": {
-                                    "modelConfig": {
-                                        "env": (
-                                            dict(it.env)
-                                            if isinstance(it.env, dict)
-                                            else {}
-                                        )
-                                    }
-                                },
-                                "status": {"state": "Available"},
-                                "metadata": {"name": it.name, "namespace": "default"},
-                                "apiVersion": "agent.wecode.io/v1",
-                            }
-                            existed.json = json_data
+                    # Update existing model
+                    if isinstance(existed.json, dict):
+                        model_crd = Model.model_validate(existed.json)
+                        # Update env section
+                        model_crd.spec.modelConfig["env"] = (
+                            dict(it.env) if isinstance(it.env, dict) else {}
+                        )
+                        existed.json = model_crd.model_dump()
+                    else:
+                        # Fallback for invalid JSON
+                        json_data = {
+                            "kind": "Model",
+                            "spec": {
+                                "modelConfig": {
+                                    "env": (
+                                        dict(it.env) if isinstance(it.env, dict) else {}
+                                    )
+                                }
+                            },
+                            "status": {"state": "Available"},
+                            "metadata": {"name": it.name, "namespace": "default"},
+                            "apiVersion": "agent.wecode.io/v1",
+                        }
+                        existed.json = json_data
                     # Update is_active only if explicitly provided
                     if getattr(it, "is_active", None) is not None:
                         existed.is_active = it.is_active  # type: ignore[attr-defined]
@@ -158,7 +166,9 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
                         "apiVersion": "agent.wecode.io/v1",
                     }
 
-                    db_obj = PublicModel(
+                    db_obj = Kind(
+                        user_id=0,
+                        kind="Model",
                         name=it.name,
                         namespace="default",
                         json=json_data,
@@ -178,12 +188,17 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         self, db: Session, *, skip: int = 0, limit: int = 100, current_user: User
     ) -> List[Dict[str, Any]]:
         """
-        Get active public models (paginated)
+        Get active public models from kinds table (paginated)
         """
         public_models = (
-            db.query(PublicModel)
-            .filter(PublicModel.is_active == True)  # noqa: E712
-            .order_by(PublicModel.created_at.desc())
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.namespace == "default",
+                Kind.is_active == True,  # noqa: E712
+            )
+            .order_by(Kind.created_at.desc())
             .offset(skip)
             .limit(limit)
             .all()
@@ -192,10 +207,17 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
 
     def count_active_models(self, db: Session, *, current_user: User) -> int:
         """
-        Count active public models
+        Count active public models in kinds table
         """
         return (
-            db.query(PublicModel).filter(PublicModel.is_active == True).count()
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .count()
         )  # noqa: E712
 
     def list_model_names(
@@ -203,7 +225,7 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
     ) -> List[Dict[str, str]]:
         """
         List available model names based on shell type and shell supportModel filter.
-        Queries both user's own models (kinds table) and public models (public_models table).
+        Queries both user's own models and public models from kinds table.
 
         Shell type to model provider mapping:
         - Agno -> openai
@@ -211,9 +233,16 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
 
         Returns list of dicts with 'name' and 'displayName' fields.
         """
-        # Get shell configuration from public_shells table
+        # Get shell configuration from kinds table (public shells)
         shell_row = (
-            db.query(PublicShell.json).filter(PublicShell.name == shell_type).first()
+            db.query(Kind.json)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.name == shell_type,
+                Kind.namespace == "default",
+            )
+            .first()
         )
         if not shell_row:
             raise HTTPException(status_code=400, detail="Shell type not found")
@@ -290,9 +319,16 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
                 display_name = get_model_display_name(m.json)
                 result_models[m.name] = display_name
 
-        # Query public models from public_models table
+        # Query public models from kinds table
         public_models = (
-            db.query(PublicModel).filter(PublicModel.is_active == True).all()
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.namespace == "default",
+                Kind.is_active == True,
+            )
+            .all()
         )
 
         for m in public_models:
@@ -311,12 +347,16 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         self, db: Session, *, model_id: int, current_user: User
     ) -> Dict[str, Any]:
         """
-        Get public model by ID (only active)
+        Get public model by ID from kinds table (only active)
         """
         model = (
-            db.query(PublicModel)
+            db.query(Kind)
             .filter(
-                PublicModel.id == model_id, PublicModel.is_active == True
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.id == model_id,
+                Kind.namespace == "default",
+                Kind.is_active == True,
             )  # noqa: E712
             .first()
         )
@@ -328,13 +368,17 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         self, db: Session, *, model_id: int, obj_in: ModelUpdate, current_user: User
     ) -> Dict[str, Any]:
         """
-        Update public model by ID
+        Update public model by ID in kinds table
         """
-        # Get the actual PublicModel object for update
+        # Get the actual Kind object for update
         model = (
-            db.query(PublicModel)
+            db.query(Kind)
             .filter(
-                PublicModel.id == model_id, PublicModel.is_active == True
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.id == model_id,
+                Kind.namespace == "default",
+                Kind.is_active == True,
             )  # noqa: E712
             .first()
         )
@@ -346,10 +390,12 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         # If updating name, ensure uniqueness
         if "name" in update_data and update_data["name"] != model.name:
             existed = (
-                db.query(PublicModel)
+                db.query(Kind)
                 .filter(
-                    PublicModel.name == update_data["name"],
-                    PublicModel.namespace == "default",
+                    Kind.user_id == 0,
+                    Kind.kind == "Model",
+                    Kind.name == update_data["name"],
+                    Kind.namespace == "default",
                 )
                 .first()
             )
@@ -381,13 +427,17 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
 
     def delete_model(self, db: Session, *, model_id: int, current_user: User) -> None:
         """
-        Delete public model
+        Delete public model from kinds table
         """
-        # Get the actual PublicModel object for deletion
+        # Get the actual Kind object for deletion
         model = (
-            db.query(PublicModel)
+            db.query(Kind)
             .filter(
-                PublicModel.id == model_id, PublicModel.is_active == True
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.id == model_id,
+                Kind.namespace == "default",
+                Kind.is_active == True,
             )  # noqa: E712
             .first()
         )
@@ -397,4 +447,4 @@ class PublicModelService(BaseService[PublicModel, ModelCreate, ModelUpdate]):
         db.commit()
 
 
-public_model_service = PublicModelService(PublicModel)
+public_model_service = PublicModelService(Kind)

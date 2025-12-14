@@ -76,15 +76,27 @@ def list_unified_models(
     include_config: bool = Query(
         False, description="Whether to include full config in response"
     ),
+    scope: str = Query(
+        "personal",
+        description="Query scope: 'personal' (default), 'group', or 'all'",
+    ),
+    group_name: Optional[str] = Query(
+        None, description="Group name (required when scope='group')"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-    Get unified list of all available models (both public and user-defined).
+    Get unified list of all available models (both public and user-defined) with scope support.
 
     This endpoint aggregates models from:
     - Public models (type='public'): Shared across all users
-    - User-defined models (type='user'): Private to the current user
+    - User-defined models (type='user'): Private to the current user or group
+
+    Scope behavior:
+    - scope='personal' (default): personal models + public models
+    - scope='group': group models + public models (requires group_name)
+    - scope='all': personal + public + all user's groups
 
     Each model includes a 'type' field to identify its source, which is
     important for avoiding naming conflicts when binding models.
@@ -92,6 +104,8 @@ def list_unified_models(
     Parameters:
     - shell_type: Optional shell type to filter compatible models
     - include_config: Whether to include full model config in response
+    - scope: Query scope ('personal', 'group', or 'all')
+    - group_name: Group name (required when scope='group')
 
     Response:
     {
@@ -111,6 +125,8 @@ def list_unified_models(
         current_user=current_user,
         shell_type=shell_type,
         include_config=include_config,
+        scope=scope,
+        group_name=group_name,
     )
     return {"data": data}
 
@@ -162,11 +178,16 @@ def get_unified_model(
 @router.post("", response_model=ModelInDB, status_code=status.HTTP_201_CREATED)
 def create_model(
     model_create: ModelCreate,
+    group_name: Optional[str] = Query(None, description="Group name (namespace)"),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """
-    Create new Model
+    Create new Model.
+
+    If group_name is provided, creates the model in that group's namespace.
+    User must have Developer+ permission in the group.
+    Otherwise, creates a personal model in 'default' namespace.
     """
     return public_model_service.create_model(
         db=db, obj_in=model_create, current_user=current_user
@@ -432,8 +453,12 @@ def get_compatible_models(
                 model_type = env.get("model", "")
 
                 # Filter compatible models
-                # Agno supports both OpenAI and Claude models
-                if shell_type == "Agno" and model_type in ["openai", "claude"]:
+                # Agno supports OpenAI, Claude and Gemini models
+                if shell_type == "Agno" and model_type in [
+                    "openai",
+                    "claude",
+                    "gemini",
+                ]:
                     compatible_models.append({"name": model_kind.name})
                 elif shell_type == "ClaudeCode" and model_type == "claude":
                     compatible_models.append({"name": model_kind.name})

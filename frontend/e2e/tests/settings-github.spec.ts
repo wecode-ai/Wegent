@@ -4,7 +4,7 @@ test.describe('Settings - Git Integration', () => {
   test.beforeEach(async ({ page }) => {
     // Git integration is on the integrations tab (index 2)
     await page.goto('/settings?tab=integrations');
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
   });
 
   test('should access integrations page', async ({ page }) => {
@@ -22,7 +22,7 @@ test.describe('Settings - Git Integration', () => {
 
   test('should display token list or empty state', async ({ page }) => {
     // Wait for page to be fully loaded
-    await page.waitForLoadState('networkidle');
+    await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(1000);
 
     // Look for token list or empty state message "No git tokens configured"

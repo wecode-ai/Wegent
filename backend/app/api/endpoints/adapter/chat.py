@@ -46,6 +46,9 @@ class StreamChatRequest(BaseModel):
     attachment_id: Optional[int] = None  # Optional attachment ID for file upload
     # Web search toggle
     enable_web_search: bool = False  # Enable web search for this message
+    search_engine: Optional[str] = None  # Search engine to use
+    # Clarification mode toggle
+    enable_clarification: bool = False  # Enable clarification mode for this message
     # Git info (optional, for record keeping)
     git_url: Optional[str] = None
     git_repo: Optional[str] = None
@@ -76,13 +79,14 @@ def _get_shell_type(db: Session, bot: Kind, user_id: int) -> str:
 
     # If not found, check public shells
     if not shell:
-        from app.models.public_shell import PublicShell
-
         public_shell = (
-            db.query(PublicShell)
+            db.query(Kind)
             .filter(
-                PublicShell.name == bot_crd.spec.shellRef.name,
-                PublicShell.is_active == True,
+                Kind.user_id == 0,
+                Kind.kind == "Shell",
+                Kind.name == bot_crd.spec.shellRef.name,
+                Kind.namespace == bot_crd.spec.shellRef.namespace,
+                Kind.is_active == True,
             )
             .first()
         )
@@ -477,40 +481,20 @@ async def stream_chat(
             request.message, attachment
         )
 
-    # Handle web search if enabled
-    tool_messages = None
+    # Prepare web search tool definition if enabled
+    tools = None
     if request.enable_web_search:
         from app.core.config import settings
-        from app.services.search import get_global_search_service
+        from app.services.chat.tools import get_web_search_mcp
 
         # Check if web search is enabled globally
-        if not settings.WEB_SEARCH_ENABLED:
-            logger.warning("Web search requested but disabled in configuration")
+        if settings.WEB_SEARCH_ENABLED:
+            # Pass the FastMCP tool object directly
+            web_search_mcp = get_web_search_mcp(engine_name=request.search_engine)
+            if web_search_mcp:
+                tools = [web_search_mcp]
         else:
-            search_service = get_global_search_service()
-            if search_service:
-                try:
-                    # Perform search with configured max results
-                    max_results = getattr(settings, "WEB_SEARCH_MAX_RESULTS", 5)
-                    search_context = await search_service.search(
-                        request.message, limit=max_results
-                    )
-                    logger.info(
-                        f"Web search completed for query: {request.message[:50]}..."
-                    )
-
-                    # Build tool messages with search results
-                    if search_context:
-                        tool_messages = [
-                            {
-                                "role": "tool",
-                                "content": f"Web Search Results:\n{search_context}",
-                                "name": "web_search",
-                            }
-                        ]
-                except Exception as e:
-                    logger.error(f"Web search failed: {e}")
-                    # Continue without search results rather than failing the request
+            logger.warning("Web search requested but disabled in configuration")
 
     # Create task and subtasks (use original message for storage, final_message for LLM)
     task, assistant_subtask = await _create_task_and_subtasks(
@@ -570,6 +554,134 @@ async def stream_chat(
 
     # Get system prompt
     system_prompt = get_bot_system_prompt(db, bot, team.user_id, first_member.prompt)
+
+    # Append clarification mode instructions if enabled
+    if request.enable_clarification:
+        clarification_prompt = """
+
+## Smart Follow-up Mode (智能追问模式)
+
+When you receive a user request that is ambiguous or lacks important details, ask targeted clarification questions through MULTIPLE ROUNDS before proceeding with the task.
+
+### Output Format
+
+When asking clarification questions, output them in the following Markdown format:
+
+```markdown
+## 💬 智能追问 (Smart Follow-up Questions)
+
+### Q1: [Question text]
+**Type**: single_choice
+**Options**:
+- [✓] `value` - Label text (recommended)
+- [ ] `value` - Label text
+
+### Q2: [Question text]
+**Type**: multiple_choice
+**Options**:
+- [✓] `value` - Label text (recommended)
+- [ ] `value` - Label text
+- [ ] `value` - Label text
+
+### Q3: [Question text]
+**Type**: text_input
+```
+
+### Question Design Guidelines
+
+- Ask 3-5 focused questions per round
+- Use `single_choice` for yes/no or mutually exclusive options
+- Use `multiple_choice` for features that can be combined
+- Use `text_input` for open-ended requirements (e.g., specific details, numbers, names)
+- Mark recommended options with `[✓]` and `(recommended)`
+- Wrap the entire question section in a markdown code block (```markdown ... ```)
+
+### Question Types
+
+- `single_choice`: User selects ONE option
+- `multiple_choice`: User can select MULTIPLE options
+- `text_input`: Free text input (no options needed)
+
+### Multi-Round Clarification Strategy (重要！)
+
+**You MUST conduct multiple rounds of clarification (typically 2-4 rounds) to gather sufficient information.**
+
+**Round 1 - Basic Context (基础背景):**
+Focus on understanding the overall context:
+- What is the general goal/purpose?
+- Who is the target audience?
+- What format/type is expected?
+- What is the general domain/field?
+
+**Round 2 - Specific Details (具体细节):**
+Based on Round 1 answers, dig deeper:
+- What are the specific requirements within the chosen context?
+- What constraints or limitations exist?
+- What specific content/data should be included?
+- What is the scope or scale?
+
+**Round 3 - Personalization (个性化定制):**
+Gather user-specific information:
+- What are the user's specific achievements/data/examples?
+- What style/tone preferences?
+- Any special requirements or exceptions?
+- Timeline or deadline considerations?
+
+**Round 4 (if needed) - Final Confirmation (最终确认):**
+Clarify any remaining ambiguities before proceeding.
+
+### Exit Criteria - When to STOP Asking and START Executing (退出标准)
+
+**ONLY proceed to execute the task when ALL of the following conditions are met:**
+
+1. **Sufficient Specificity (足够具体):** You have enough specific details to produce a personalized, actionable result rather than a generic template.
+
+2. **Actionable Information (可执行信息):** You have concrete data, examples, or specifics that can be directly incorporated into the output.
+
+3. **Clear Scope (明确范围):** The boundaries and scope of the task are well-defined.
+
+4. **No Critical Gaps (无关键缺失):** There are no critical pieces of information missing that would significantly impact the quality of the output.
+
+**Examples of when to CONTINUE asking:**
+
+- User says "互联网行业" but hasn't specified their role (产品/研发/运营/设计/etc.)
+- User wants a "年终汇报" but hasn't mentioned any specific achievements or projects
+- User requests a "PPT" but hasn't provided any data or metrics to include
+- User mentions a goal but hasn't specified constraints (time, budget, resources)
+
+**Examples of when to STOP asking and proceed:**
+
+- User has provided their specific role, key projects, measurable achievements, and target audience
+- User has given concrete numbers, dates, or examples that can be directly used
+- User explicitly indicates they want to proceed with current information
+- You have asked 4+ rounds and have gathered substantial information
+
+### Information Completeness Checklist (信息完整度检查)
+
+Before deciding to proceed, mentally check:
+
+- [ ] WHO: Target audience clearly identified
+- [ ] WHAT: Specific deliverable type and format defined
+- [ ] WHY: Purpose and goals understood
+- [ ] HOW: Style, tone, and approach determined
+- [ ] DETAILS: Specific content, data, or examples provided
+- [ ] CONSTRAINTS: Limitations, requirements, or preferences known
+
+**If fewer than 4 items are checked, you likely need another round of questions.**
+
+### Response After Receiving Answers
+
+After each round of user answers:
+
+1. **Acknowledge** the answers briefly (1-2 sentences)
+2. **Assess** whether you have sufficient information (use the checklist above)
+3. **Either:**
+   - Ask follow-up questions (next round) if information is still insufficient
+   - OR proceed with the task if exit criteria are met
+
+**Important:** Do NOT rush to provide a solution after just one round of questions. Take time to gather comprehensive information for a truly personalized and high-quality output.
+"""
+        system_prompt = system_prompt + clarification_prompt
 
     # Build data_sources for placeholder replacement in DEFAULT_HEADERS
     # This mirrors the executor's member_builder.py logic
@@ -641,7 +753,7 @@ async def stream_chat(
             message=final_message,
             model_config=model_config,
             system_prompt=system_prompt,
-            tool_messages=tool_messages,
+            tools=tools,
         )
 
         # Forward the stream
@@ -902,7 +1014,7 @@ async def _handle_resume_stream(
                 await pubsub.unsubscribe()
                 await pubsub.close()
                 if redis_client:
-                    await redis_client.close()
+                    await redis_client.aclose()
 
         except Exception as e:
             logger.error(
@@ -1302,7 +1414,7 @@ async def resume_stream(
                 await pubsub.unsubscribe()
                 await pubsub.close()
                 if redis_client:
-                    await redis_client.close()
+                    await redis_client.aclose()
 
         except Exception as e:
             logger.error(
@@ -1320,3 +1432,31 @@ async def resume_stream(
             "Content-Encoding": "none",
         },
     )
+
+
+@router.get("/search-engines")
+async def get_search_engines(
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Get available search engines from configuration.
+
+    Returns:
+        {
+            "enabled": bool,
+            "engines": [{"name": str, "display_name": str}]
+        }
+    """
+    from app.core.config import settings
+    from app.services.search.factory import get_available_engines
+
+    if not settings.WEB_SEARCH_ENABLED:
+        return {"enabled": False, "engines": []}
+
+    # Get available engines from factory
+    engines = get_available_engines()
+
+    return {
+        "enabled": True,
+        "engines": engines,
+    }
