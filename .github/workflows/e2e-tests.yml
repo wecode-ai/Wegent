@@ -1,78 +1,48 @@
 name: E2E Tests
 
 on:
+  push:
+    branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  schedule:
+    # Run daily at 2 AM UTC
+    - cron: '0 2 * * *'
   workflow_dispatch:
-
-env:
-  # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
-  NEXT_PUBLIC_API_URL: http://localhost:8000
-  # Use pymysql driver (installed via pyproject.toml)
-  DATABASE_URL: mysql+pymysql://root:123456@localhost:3306/task_manager
-  REDIS_URL: redis://localhost:6379
-  ENVIRONMENT: development
-  # Enable auto migration on backend startup
-  DB_AUTO_MIGRATE: 'True'
 
 jobs:
   e2e-tests:
+    name: E2E Tests (Chromium)
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     services:
       mysql:
-        image: mysql:8.4
+        image: mysql:8.0
         env:
-          MYSQL_ROOT_PASSWORD: '123456'
-          MYSQL_DATABASE: task_manager
+          MYSQL_ROOT_PASSWORD: test123
+          MYSQL_DATABASE: wegent_test
         ports:
           - 3306:3306
         options: >-
-          --health-cmd="mysqladmin ping -h localhost"
+          --health-cmd="mysqladmin ping"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=5
+          --health-retries=3
 
       redis:
-        image: redis:7
+        image: redis:7-alpine
         ports:
           - 6379:6379
         options: >-
           --health-cmd="redis-cli ping"
           --health-interval=10s
           --health-timeout=5s
-          --health-retries=5
+          --health-retries=3
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      # Cache uv installation and virtual environment
-      - name: Cache uv and venv
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin/uv
-            ~/.cargo/bin/uvx
-            backend/.venv
-          key: ${{ runner.os }}-uv-${{ hashFiles('backend/pyproject.toml', 'backend/uv.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-uv-
-
-      - name: Install backend dependencies
-        working-directory: backend
-        run: |
-          if [ ! -f "$HOME/.cargo/bin/uv" ]; then
-            curl -LsSf https://astral.sh/uv/install.sh | sh
-          fi
-          source $HOME/.cargo/env
-          uv sync
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -81,119 +51,313 @@ jobs:
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Install frontend dependencies
-        working-directory: frontend
-        run: npm ci
-
-      # Cache Next.js build output for faster subsequent builds
-      - name: Cache Next.js build
-        uses: actions/cache@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          path: |
-            frontend/.next/cache
-          key: ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-${{ hashFiles('frontend/src/**/*', 'frontend/public/**/*') }}
-          restore-keys: |
-            ${{ runner.os }}-nextjs-${{ hashFiles('frontend/package-lock.json') }}-
-            ${{ runner.os }}-nextjs-
+          python-version: '3.11'
 
-      - name: Build frontend
-        working-directory: frontend
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install shared module
+        working-directory: ./shared
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e .
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: |
+          uv sync
+          # Install shared module in backend venv
+          source .venv/bin/activate
+          uv pip install -e ../shared
+
+      - name: Run database migrations
+        working-directory: ./backend
         env:
-          # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
-          NEXT_PUBLIC_API_URL: http://localhost:8000
-          # Enable Next.js build cache
-          NEXT_TELEMETRY_DISABLED: 1
-        run: npm run build
-
-      # Cache Playwright browsers
-      - name: Cache Playwright browsers
-        uses: actions/cache@v4
-        id: playwright-cache
-        with:
-          path: ~/.cache/ms-playwright
-          key: ${{ runner.os }}-playwright-${{ hashFiles('frontend/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-playwright-
-
-      - name: Install Playwright browsers
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-        working-directory: frontend
-        run: npx playwright install chromium --with-deps
-
-      - name: Install Playwright system dependencies
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-        working-directory: frontend
-        run: npx playwright install-deps chromium
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+        run: |
+          source .venv/bin/activate
+          alembic upgrade head
 
       - name: Start backend server
-        working-directory: backend
+        working-directory: ./backend
         env:
-          DATABASE_URL: mysql+pymysql://root:123456@127.0.0.1:3306/task_manager
-          REDIS_URL: redis://127.0.0.1:6379
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
           ENVIRONMENT: development
-          DB_AUTO_MIGRATE: 'True'
-          INIT_DATA_ENABLED: 'True'
-          INIT_DATA_DIR: ${{ github.workspace }}/backend/init_data
-          # Add project root to PYTHONPATH so 'shared' module can be imported
-          PYTHONPATH: ${{ github.workspace }}
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
         run: |
-          source $HOME/.cargo/env
-          uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 &
-          echo "Backend server starting (with auto migration and YAML init enabled)..."
+          source .venv/bin/activate
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          echo $! > backend.pid
+          sleep 15
+
+      - name: Verify backend is running
+        working-directory: ./backend
+        run: |
+          if [ -f backend.pid ]; then
+            PID=$(cat backend.pid)
+            if ps -p $PID > /dev/null; then
+              echo "Backend process is running (PID: $PID)"
+            else
+              echo "Backend process is not running!"
+              echo "=== Backend logs ==="
+              cat backend.log || echo "No log file found"
+              exit 1
+            fi
+          else
+            echo "Backend PID file not found!"
+            exit 1
+          fi
+
+      - name: Test backend health
+        run: |
+          echo "Testing backend health endpoint..."
+          for i in {1..10}; do
+            if curl -f http://localhost:8000/api/docs > /dev/null 2>&1; then
+              echo "Backend is responding!"
+              exit 0
+            fi
+            echo "Attempt $i failed, waiting 3 seconds..."
+            sleep 3
+          done
+          echo "Backend health check failed after 10 attempts"
+          exit 1
+
+      - name: Check backend logs on failure
+        if: failure()
+        working-directory: ./backend
+        run: |
+          if [ -f backend.log ]; then
+            echo "=== Backend logs ==="
+            cat backend.log
+          fi
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Install Playwright browsers
+        working-directory: ./frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: Build frontend
+        working-directory: ./frontend
+        env:
+          NEXT_PUBLIC_API_URL: http://localhost:8000
+        run: npm run build
 
       - name: Start frontend server
-        working-directory: frontend
+        working-directory: ./frontend
         env:
-          # Next.js rewrites /api/* to ${NEXT_PUBLIC_API_URL}/api/*, so only set the base URL
           NEXT_PUBLIC_API_URL: http://localhost:8000
         run: |
           npm start &
-          echo "Frontend server starting..."
+          sleep 5
 
-      - name: Wait for services to be ready
+      - name: Wait for services
         run: |
-          echo "Waiting for backend..."
-          for i in {1..60}; do
-            if curl -s http://localhost:8000/api/health > /dev/null 2>&1 || curl -s http://localhost:8000/ > /dev/null 2>&1; then
-              echo "Backend is ready!"
-              break
-            fi
-            echo "Waiting for backend... ($i/60)"
-            sleep 2
-          done
-
-          echo "Waiting for frontend..."
-          for i in {1..30}; do
-            if curl -s http://localhost:3000 > /dev/null 2>&1; then
-              echo "Frontend is ready!"
-              break
-            fi
-            echo "Waiting for frontend... ($i/30)"
-            sleep 2
-          done
+          npx wait-on http://localhost:3000 http://localhost:8000/api/docs --timeout 60000
 
       - name: Run E2E tests
-        working-directory: frontend
+        working-directory: ./frontend
         env:
           E2E_BASE_URL: http://localhost:3000
+          E2E_API_URL: http://localhost:8000
           CI: true
-        run: npm run e2e
+        run: npx playwright test --project=chromium --project=api
 
       - name: Upload test results
-        uses: actions/upload-artifact@v4
         if: always()
+        uses: actions/upload-artifact@v4
         with:
-          name: e2e-test-results
-          path: |
-            frontend/e2e-results.json
-            frontend/playwright-report/
-            frontend/test-results/
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 30
+
+      - name: Upload test traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-traces
+          path: frontend/test-results/
           retention-days: 7
 
-      - name: Upload failure screenshots
-        uses: actions/upload-artifact@v4
+      - name: Upload screenshots
         if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          name: e2e-failure-screenshots
-          path: frontend/test-results/**/*.png
+          name: playwright-screenshots
+          path: frontend/e2e/screenshots/
+          retention-days: 7
+
+      - name: Upload backend logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs-e2e
+          path: backend/backend.log
+          retention-days: 7
+
+  api-tests:
+    name: API Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: test123
+          MYSQL_DATABASE: wegent_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=3
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        run: pip install uv
+
+      - name: Install shared module
+        working-directory: ./shared
+        run: |
+          uv venv
+          source .venv/bin/activate
+          uv pip install -e .
+
+      - name: Install backend dependencies
+        working-directory: ./backend
+        run: |
+          uv sync
+          # Install shared module in backend venv
+          source .venv/bin/activate
+          uv pip install -e ../shared
+
+      - name: Run database migrations
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+        run: |
+          source .venv/bin/activate
+          alembic upgrade head
+
+      - name: Start backend server
+        working-directory: ./backend
+        env:
+          DATABASE_URL: mysql+pymysql://root:test123@localhost:3306/wegent_test
+          REDIS_URL: redis://localhost:6379/0
+          SECRET_KEY: test-secret-key-for-ci-testing
+          ALGORITHM: HS256
+          ENVIRONMENT: development
+          DB_AUTO_MIGRATE: "false"
+          INIT_DATA_ENABLED: "true"
+        run: |
+          source .venv/bin/activate
+          nohup uvicorn app.main:app --host 0.0.0.0 --port 8000 > backend.log 2>&1 &
+          echo $! > backend.pid
+          sleep 15
+
+      - name: Verify backend is running
+        working-directory: ./backend
+        run: |
+          if [ -f backend.pid ]; then
+            PID=$(cat backend.pid)
+            if ps -p $PID > /dev/null; then
+              echo "Backend process is running (PID: $PID)"
+            else
+              echo "Backend process is not running!"
+              echo "=== Backend logs ==="
+              cat backend.log || echo "No log file found"
+              exit 1
+            fi
+          else
+            echo "Backend PID file not found!"
+            exit 1
+          fi
+
+      - name: Test backend health
+        run: |
+          echo "Testing backend health endpoint..."
+          for i in {1..10}; do
+            if curl -f http://localhost:8000/api/docs > /dev/null 2>&1; then
+              echo "Backend is responding!"
+              exit 0
+            fi
+            echo "Attempt $i failed, waiting 3 seconds..."
+            sleep 3
+          done
+          echo "Backend health check failed after 10 attempts"
+          exit 1
+
+      - name: Check backend logs on failure
+        if: failure()
+        working-directory: ./backend
+        run: |
+          if [ -f backend.log ]; then
+            echo "=== Backend logs ==="
+            cat backend.log
+          fi
+
+      - name: Install frontend dependencies
+        working-directory: ./frontend
+        run: npm ci
+
+      - name: Install Playwright
+        working-directory: ./frontend
+        run: npx playwright install
+
+      - name: Wait for backend
+        run: npx wait-on http://localhost:8000/api/docs --timeout 60000
+
+      - name: Run API tests
+        working-directory: ./frontend
+        env:
+          E2E_API_URL: http://localhost:8000
+          CI: true
+        run: npx playwright test --project=api
+
+      - name: Upload API test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-results
+          path: frontend/playwright-report/
+          retention-days: 14
+
+      - name: Upload backend logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-logs-api
+          path: backend/backend.log
           retention-days: 7

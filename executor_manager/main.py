@@ -14,15 +14,15 @@ Supports two startup modes:
 """
 
 import threading
-import uvicorn
 from contextlib import asynccontextmanager
 
+import uvicorn
 # Import the shared logger
 from shared.logger import setup_logger
+from shared.telemetry.config import get_otel_config
 
-from scheduler.scheduler import TaskScheduler
 from routers.routers import app  # Import the FastAPI app defined in routes.py
-
+from scheduler.scheduler import TaskScheduler
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -30,9 +30,36 @@ logger = setup_logger(__name__)
 @asynccontextmanager
 async def lifespan(app):
     """
-    FastAPI application lifecycle manager
-    Starts the task scheduler when the application starts, and performs cleanup operations when the application shuts down
+    FastAPI application lifecycle manager.
+    Starts the task scheduler when the application starts, and performs cleanup operations when the application shuts down.
     """
+    # Initialize OpenTelemetry if enabled (configuration from shared/telemetry/config.py)
+    otel_config = get_otel_config("wegent-executor-manager")
+    if otel_config.enabled:
+        try:
+            from shared.telemetry.core import init_telemetry
+
+            init_telemetry(
+                service_name=otel_config.service_name,
+                enabled=otel_config.enabled,
+                otlp_endpoint=otel_config.otlp_endpoint,
+                sampler_ratio=otel_config.sampler_ratio,
+                service_version="0.1.0",
+                metrics_enabled=otel_config.metrics_enabled,
+                capture_request_headers=otel_config.capture_request_headers,
+                capture_request_body=otel_config.capture_request_body,
+                capture_response_headers=otel_config.capture_response_headers,
+                capture_response_body=otel_config.capture_response_body,
+                max_body_size=otel_config.max_body_size,
+            )
+            logger.info("OpenTelemetry initialized successfully")
+
+            # Apply instrumentation
+            from shared.telemetry.instrumentation import \
+                setup_opentelemetry_instrumentation
+            setup_opentelemetry_instrumentation(app, logger)
+        except Exception as e:
+            logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     # Extract executor binary to Named Volume on startup
     logger.info("Extracting executor binary to Named Volume...")
     try:
@@ -63,6 +90,12 @@ async def lifespan(app):
     if scheduler_instance:
         scheduler_instance.stop()
 
+    # Shutdown OpenTelemetry
+    if otel_config.enabled:
+        from shared.telemetry.core import shutdown_telemetry
+        shutdown_telemetry()
+        logger.info("OpenTelemetry shutdown completed")
+
 def start_scheduler(scheduler):
     """Start the task scheduler in a separate thread"""
     try:
@@ -89,6 +122,7 @@ def main():
         logger.error(f"Service startup failed: {e}")
         return 1
     return 0
+
 
 if __name__ == "__main__":
     exit(main())

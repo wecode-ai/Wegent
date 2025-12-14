@@ -16,6 +16,7 @@ dependencies = [
     "cryptography==46.0.3",
     "fastapi==0.109.1",
     "gitpython==3.1.43",
+    "google-genai==1.55.0",
     "httpx==0.28.1",
     "mcp==1.12.4",
     "openai==1.107.1",
@@ -24,6 +25,17 @@ dependencies = [
     "requests==2.31.0",
     "sqlalchemy==2.0.43",
     "uvicorn==0.25.0",
+
+    # OpenTelemetry core packages
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+
+    # OpenTelemetry instrumentation packages
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "opentelemetry-instrumentation-requests>=0.48b0",
+    "opentelemetry-instrumentation-system-metrics>=0.48b0",
 ]
 
 [dependency-groups]

@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -8,15 +8,23 @@ import { Suspense, useState, useCallback, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import TopNavigation from '@/features/layout/TopNavigation';
-import UserMenu from '@/features/layout/UserMenu';
-import { Tab } from '@headlessui/react';
-import { UsersIcon, CpuChipIcon, ShieldExclamationIcon } from '@heroicons/react/24/outline';
+import TaskSidebar from '@/features/tasks/components/TaskSidebar';
+import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
+import { AdminTabNav, AdminTabId } from '@/features/admin/components/AdminTabNav';
+import { ShieldExclamationIcon } from '@heroicons/react/24/outline';
 import UserList from '@/features/admin/components/UserList';
 import PublicModelList from '@/features/admin/components/PublicModelList';
+import SystemConfigPanel from '@/features/admin/components/SystemConfigPanel';
 import { UserProvider, useUser } from '@/features/common/UserContext';
+import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
+import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
+import { ThemeToggle } from '@/features/theme/ThemeToggle';
+import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { Button } from '@/components/ui/button';
+import '@/app/tasks/tasks.css';
+import '@/features/common/scrollbar.css';
 
 function AccessDenied() {
   const { t } = useTranslation('admin');
@@ -38,61 +46,66 @@ function AdminContent() {
   const searchParams = useSearchParams();
   const { t } = useTranslation('admin');
   const { user, isLoading } = useUser();
+  const isMobile = useIsMobile();
 
   // Check if user is admin
   const isAdmin = user?.role === 'admin';
 
-  // Tab index to name mapping
-  const tabIndexToName = useMemo(
-    (): Record<number, string> => ({
-      0: 'users',
-      1: 'public-models',
-    }),
-    []
-  );
-
-  // Tab name to index mapping
-  const tabNameToIndex = useMemo(
-    (): Record<string, number> => ({
-      users: 0,
-      'public-models': 1,
-    }),
-    []
-  );
-
-  // Function to get initial tab index from URL
-  const getInitialTabIndex = () => {
-    const tabParam = searchParams.get('tab');
-    if (tabParam && tabNameToIndex.hasOwnProperty(tabParam)) {
-      return tabNameToIndex[tabParam];
+  // Get initial tab from URL
+  const getInitialTab = (): AdminTabId => {
+    const tab = searchParams.get('tab');
+    if (tab && ['users', 'public-models', 'system-config'].includes(tab)) {
+      return tab as AdminTabId;
     }
-    return 0; // default to first tab
+    return 'users';
   };
 
-  // Initialize tabIndex based on URL parameter
-  const [tabIndex, setTabIndex] = useState(getInitialTabIndex);
+  const [activeTab, setActiveTab] = useState<AdminTabId>(getInitialTab);
 
-  // Detect screen size for responsive behavior
-  const [isDesktop, setIsDesktop] = useState(false);
+  // Mobile sidebar state
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
+  // Collapsed sidebar state
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Load collapsed state from localStorage
   useEffect(() => {
-    const checkScreenSize = () => {
-      setIsDesktop(window.innerWidth >= 1024); // 1024px as desktop breakpoint
-    };
-
-    checkScreenSize();
-    window.addEventListener('resize', checkScreenSize);
-    return () => window.removeEventListener('resize', checkScreenSize);
+    const savedCollapsed = localStorage.getItem('task-sidebar-collapsed');
+    if (savedCollapsed === 'true') {
+      setIsCollapsed(true);
+    }
   }, []);
 
+  const handleToggleCollapsed = () => {
+    setIsCollapsed(prev => {
+      const newValue = !prev;
+      localStorage.setItem('task-sidebar-collapsed', String(newValue));
+      return newValue;
+    });
+  };
+
+  // Handle tab change
   const handleTabChange = useCallback(
-    (idx: number) => {
-      setTabIndex(idx);
-      const tabName = tabIndexToName[idx] || 'users';
-      router.replace(`?tab=${tabName}`);
+    (tab: AdminTabId) => {
+      setActiveTab(tab);
+      router.replace(`?tab=${tab}`);
     },
-    [router, tabIndexToName]
+    [router]
   );
+
+  // Render content based on active tab
+  const currentComponent = useMemo(() => {
+    switch (activeTab) {
+      case 'users':
+        return <UserList />;
+      case 'public-models':
+        return <PublicModelList />;
+      case 'system-config':
+        return <SystemConfigPanel />;
+      default:
+        return <UserList />;
+    }
+  }, [activeTab]);
 
   // Show loading state
   if (isLoading) {
@@ -107,10 +120,26 @@ function AdminContent() {
   if (!isAdmin) {
     return (
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
-        <div className="flex-1 flex flex-col">
-          <TopNavigation activePage="dashboard" variant="standalone" showLogo={true}>
-            <GithubStarButton />
-            <UserMenu />
+        {/* Resizable sidebar with TaskSidebar */}
+        <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
+          <TaskSidebar
+            isMobileSidebarOpen={isMobileSidebarOpen}
+            setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+            pageType="chat"
+            isCollapsed={isCollapsed}
+            onToggleCollapsed={handleToggleCollapsed}
+          />
+        </ResizableSidebar>
+
+        {/* Main content area */}
+        <div className="flex-1 flex flex-col min-w-0">
+          <TopNavigation
+            activePage="dashboard"
+            variant="with-sidebar"
+            title={t('title')}
+            onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+          >
+            {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
           <AccessDenied />
         </div>
@@ -120,120 +149,34 @@ function AdminContent() {
 
   return (
     <div className="flex smart-h-screen bg-base text-text-primary box-border">
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Top Navigation */}
-        <TopNavigation activePage="dashboard" variant="standalone" showLogo={true}>
-          <GithubStarButton />
-          <UserMenu />
+      {/* Resizable sidebar with TaskSidebar */}
+      <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
+        <TaskSidebar
+          isMobileSidebarOpen={isMobileSidebarOpen}
+          setIsMobileSidebarOpen={setIsMobileSidebarOpen}
+          pageType="chat"
+          isCollapsed={isCollapsed}
+          onToggleCollapsed={handleToggleCollapsed}
+        />
+      </ResizableSidebar>
+
+      {/* Main content area */}
+      <div className="flex-1 flex flex-col min-w-0">
+        {/* Top navigation */}
+        <TopNavigation
+          activePage="dashboard"
+          variant="with-sidebar"
+          title={t('title')}
+          onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+        >
+          {isMobile ? <ThemeToggle /> : <GithubStarButton />}
         </TopNavigation>
 
-        {/* Admin Content with Tabs */}
-        <div className="flex-1 overflow-x-hidden">
-          <div className="w-full min-w-0">
-            <Tab.Group
-              selectedIndex={tabIndex}
-              onChange={handleTabChange}
-              className={isDesktop ? 'flex' : 'block'}
-            >
-              {/* Conditional rendering based on screen size */}
-              {isDesktop ? (
-                /* Desktop Layout */
-                <>
-                  <Tab.List className="w-64 bg-base flex flex-col space-y-1 px-8 py-4 focus:outline-none">
-                    <div className="mb-4">
-                      <h1 className="text-lg font-semibold text-text-primary">{t('title')}</h1>
-                      <p className="text-xs text-text-muted">{t('description')}</p>
-                    </div>
-                    <Tab
-                      className={({ selected }) =>
-                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
-                          selected
-                            ? 'bg-muted text-text-primary'
-                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
-                        }`
-                      }
-                    >
-                      <UsersIcon className="w-4 h-4" />
-                      <span>{t('tabs.users')}</span>
-                    </Tab>
+        {/* Tab navigation */}
+        <AdminTabNav activeTab={activeTab} onTabChange={handleTabChange} />
 
-                    <Tab
-                      className={({ selected }) =>
-                        `w-full flex items-center space-x-3 px-3 py-2 text-sm rounded-md transition-colors duration-200 focus:outline-none ${
-                          selected
-                            ? 'bg-muted text-text-primary'
-                            : 'text-text-muted hover:text-text-primary hover:bg-muted'
-                        }`
-                      }
-                    >
-                      <CpuChipIcon className="w-4 h-4" />
-                      <span>{t('tabs.public_models')}</span>
-                    </Tab>
-                  </Tab.List>
-
-                  <div className="flex-1 min-h-0 px-8 py-4 overflow-y-auto min-w-0">
-                    <Tab.Panels>
-                      <Tab.Panel className="focus:outline-none">
-                        <UserList />
-                      </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
-                        <PublicModelList />
-                      </Tab.Panel>
-                    </Tab.Panels>
-                  </div>
-                </>
-              ) : (
-                /* Mobile Layout */
-                <>
-                  <div className="bg-base border-b border-border px-4 py-2">
-                    <h1 className="text-lg font-semibold text-text-primary">{t('title')}</h1>
-                  </div>
-                  <div className="bg-base border-b border-border">
-                    <Tab.List className="flex space-x-1 px-2 py-2">
-                      <Tab
-                        className={({ selected }) =>
-                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
-                            selected
-                              ? 'bg-muted text-text-primary'
-                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
-                          }`
-                        }
-                      >
-                        <UsersIcon className="w-3 h-3" />
-                        <span className="hidden xs:inline">{t('tabs.users')}</span>
-                      </Tab>
-
-                      <Tab
-                        className={({ selected }) =>
-                          `flex-1 flex items-center justify-center space-x-1 px-2 py-2 text-xs rounded-md transition-colors duration-200 focus:outline-none ${
-                            selected
-                              ? 'bg-muted text-text-primary'
-                              : 'text-text-muted hover:text-text-primary hover:bg-muted'
-                          }`
-                        }
-                      >
-                        <CpuChipIcon className="w-3 h-3" />
-                        <span className="hidden xs:inline">{t('tabs.public_models')}</span>
-                      </Tab>
-                    </Tab.List>
-                  </div>
-
-                  <div className="flex-1 min-h-0 px-2 py-2 overflow-y-auto min-w-0">
-                    <Tab.Panels>
-                      <Tab.Panel className="focus:outline-none">
-                        <UserList />
-                      </Tab.Panel>
-                      <Tab.Panel className="focus:outline-none">
-                        <PublicModelList />
-                      </Tab.Panel>
-                    </Tab.Panels>
-                  </div>
-                </>
-              )}
-            </Tab.Group>
-          </div>
-        </div>
+        {/* Admin content area */}
+        <div className="flex-1 overflow-y-auto px-4 py-4 md:px-8 md:py-6">{currentComponent}</div>
       </div>
     </div>
   );
@@ -242,9 +185,13 @@ function AdminContent() {
 export default function AdminPage() {
   return (
     <UserProvider>
-      <Suspense fallback={<div>Loading...</div>}>
-        <AdminContent />
-      </Suspense>
+      <TaskContextProvider>
+        <ChatStreamProvider>
+          <Suspense fallback={<div>Loading...</div>}>
+            <AdminContent />
+          </Suspense>
+        </ChatStreamProvider>
+      </TaskContextProvider>
     </UserProvider>
   );
 }

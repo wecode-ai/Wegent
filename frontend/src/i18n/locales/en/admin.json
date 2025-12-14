@@ -3,7 +3,8 @@
   "description": "Manage users, roles, and public models",
   "tabs": {
     "users": "Users",
-    "public_models": "Public Models"
+    "public_models": "Public Models",
+    "system_config": "System Config"
   },
   "stats": {
     "total_users": "Total Users",
@@ -159,5 +160,45 @@
     "title": "Access Denied",
     "message": "You do not have permission to access this page. Only administrators can view this content.",
     "go_home": "Go to Home"
+  },
+  "system_config": {
+    "title": "Slogan & Tips Management",
+    "description": "Configure the chat page welcome slogans and tips",
+    "loading": "Loading configuration...",
+    "dialog_description": "Enter the content in both Chinese and English, and select the applicable mode",
+    "mode": "Applicable Mode",
+    "mode_chat": "Chat Mode",
+    "mode_code": "Code Mode",
+    "mode_both": "Both",
+    "slogan_title": "Slogan Configuration",
+    "add_slogan": "Add Slogan",
+    "edit_slogan": "Edit Slogan",
+    "no_slogans": "No slogans configured yet",
+    "slogan_zh": "Chinese Slogan",
+    "slogan_en": "English Slogan",
+    "slogan_zh_placeholder": "Enter Chinese slogan",
+    "slogan_en_placeholder": "Enter English slogan",
+    "delete_slogan_title": "Delete Slogan",
+    "delete_slogan_message": "Are you sure you want to delete this slogan? This action cannot be undone.",
+    "tips_title": "Tips Configuration",
+    "add_tip": "Add Tip",
+    "edit_tip": "Edit Tip",
+    "no_tips": "No tips configured yet",
+    "tip_zh": "Chinese Tip",
+    "tip_en": "English Tip",
+    "tip_zh_placeholder": "Enter Chinese tip text",
+    "tip_en_placeholder": "Enter English tip text",
+    "delete_tip_title": "Delete Tip",
+    "delete_tip_message": "Are you sure you want to delete this tip? This action cannot be undone.",
+    "version": "Version",
+    "success": {
+      "updated": "Configuration updated successfully"
+    },
+    "errors": {
+      "load_failed": "Failed to load configuration",
+      "save_failed": "Failed to save configuration",
+      "slogan_required": "Both Chinese and English slogan are required",
+      "tip_required": "Both Chinese and English tip text are required"
+    }
   }
 }

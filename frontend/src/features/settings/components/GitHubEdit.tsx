@@ -70,6 +70,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
   const [type, setType] = useState<GitInfo['type']>('github');
   const [tokenSaving, setTokenSaving] = useState(false);
   const isGitlabLike = type === 'gitlab' || type === 'gitee';
+  const isGitea = type === 'gitea';
   const isGerrit = type === 'gerrit';
 
   const isDomainInvalid = useMemo(() => {
@@ -77,8 +78,18 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
     return !isValidDomain(domain);
   }, [domain]);
 
+  const domainLink = useMemo(() => {
+    if (!domain) return '';
+    return /^https?:\/\//i.test(domain) ? domain : `https://${domain}`;
+  }, [domain]);
+
+  const giteaSettingsLink = useMemo(() => {
+    const base = domainLink || 'https://gitea.com';
+    return `${base.replace(/\/$/, '')}/user/settings/applications`;
+  }, [domainLink]);
+
   const hasGithubPlatform = useMemo(
-    () => platforms.some(info => sanitizeDomainInput(info.git_domain) === 'github.com'),
+    () => platforms.some((info: GitInfo) => sanitizeDomainInput(info.git_domain) === 'github.com'),
     [platforms]
   );
 
@@ -118,11 +129,12 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
       return;
     }
 
-    // Gerrit requires username
-    if (isGerrit && !usernameToSave) {
+    // Gerrit and Gitea require username
+    if ((isGerrit || isGitea) && !usernameToSave) {
+      const platformName = isGerrit ? 'Gerrit' : 'Gitea';
       toast({
         variant: 'destructive',
-        title: t('github.error.gerrit_username_required') || 'Gerrit username is required',
+        title: `${platformName} username is required`,
       });
       return;
     }
@@ -185,13 +197,28 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               <input
                 type="radio"
                 value="gitlab"
-                checked={isGitlabLike}
+                checked={type === 'gitlab'}
                 onChange={() => {
                   setType('gitlab');
                   setDomain('');
                 }}
               />
               {t('github.platform_gitlab')}
+            </label>
+            <label
+              className="flex items-center gap-1 text-sm text-text-primary"
+              title={t('github.platform_gitea') || 'Gitea'}
+            >
+              <input
+                type="radio"
+                value="gitea"
+                checked={isGitea}
+                onChange={() => {
+                  setType('gitea');
+                  setDomain('gitea.com');
+                }}
+              />
+              {t('github.platform_gitea') || 'Gitea'}
             </label>
             <label
               className="flex items-center gap-1 text-sm text-text-primary"
@@ -225,7 +252,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 ? 'e.g. github.com or github.enterprise.com'
                 : isGerrit
                   ? 'e.g. http://gerrit.company.com or gerrit.company.com'
-                  : 'e.g. http://gitlab.example.com or gitlab.example.com'
+                  : isGitea
+                    ? 'e.g. gitea.com or gitea.company.com'
+                    : 'e.g. http://gitlab.example.com or gitlab.example.com'
             }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
@@ -233,8 +262,8 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             <p className="mt-1 text-xs text-red-500">{t('github.error.invalid_domain')}</p>
           )}
         </div>
-        {/* Username input (Gerrit only) */}
-        {isGerrit && (
+        {/* Username input (Gerrit and Gitea only) */}
+        {(isGerrit || isGitea) && (
           <div>
             <label className="block text-sm font-medium text-text-secondary mb-2">
               {t('github.username') || 'Username'}
@@ -243,7 +272,7 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               type="text"
               value={username}
               onChange={e => setUsername(e.target.value)}
-              placeholder={t('github.username_placeholder') || 'Gerrit username'}
+              placeholder={t('github.username') || 'Username'}
               className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
             />
           </div>
@@ -262,7 +291,9 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
                 ? t('github.token.placeholder_github')
                 : isGerrit
                   ? t('github.token.placeholder_gerrit') || 'HTTP password from Gerrit Settings'
-                  : t('github.token.placeholder_gitlab')
+                  : isGitea
+                    ? t('github.token.placeholder_gitea') || 'Gitea personal access token'
+                    : t('github.token.placeholder_gitlab')
             }
             className="w-full px-3 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
           />
@@ -273,9 +304,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
             <strong>
               {type === 'github'
                 ? t('github.howto.github.title')
-                : isGerrit
-                  ? t('github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
-                  : t('github.howto.gitlab.title')}
+                : isGitea
+                  ? t('github.howto.gitea.title') || 'How to get your Gitea token:'
+                  : isGerrit
+                    ? t('github.howto.gerrit.title') || 'How to get Gerrit HTTP password:'
+                    : t('github.howto.gitlab.title')}
             </strong>
           </p>
           {type === 'github' ? (
@@ -294,6 +327,26 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
               </p>
               <p className="text-xs text-text-muted mb-2">{t('github.howto.github.step2')}</p>
               <p className="text-xs text-text-muted">{t('github.howto.github.step3')}</p>
+            </>
+          ) : isGitea ? (
+            <>
+              <p className="text-xs text-text-muted mb-2 flex items-center gap-1">
+                {t('github.howto.step1_visit')}
+                <a
+                  href={giteaSettingsLink || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary hover:text-primary/80 underline truncate max-w-[220px] inline-block align-bottom"
+                  title={
+                    giteaSettingsLink || 'https://gitea.example.com/user/settings/applications'
+                  }
+                >
+                  {giteaSettingsLink || 'https://gitea.example.com/user/settings/applications'}
+                </a>
+              </p>
+              <p className="text-xs text-text-muted mb-2">{t('github.howto.gitea.step2')}</p>
+              <p className="text-xs text-text-muted mb-2">{t('github.howto.gitea.step3')}</p>
+              <p className="text-xs text-warning">{t('github.howto.gitea.step4')}</p>
             </>
           ) : isGerrit ? (
             <>
@@ -364,11 +417,11 @@ const GitHubEdit: React.FC<GitHubEditProps> = ({ isOpen, onClose, mode, editInfo
           disabled={
             !domain ||
             isDomainInvalid ||
-            (isGerrit && !username.trim()) ||
+            ((isGerrit || isGitea) && !username.trim()) ||
             !token.trim() ||
             tokenSaving
           }
-          variant="default"
+          variant="primary"
           size="sm"
           style={{ flex: 1 }}
         >

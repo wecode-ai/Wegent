@@ -6,7 +6,6 @@
 
 import React, { useEffect, useMemo, useContext } from 'react';
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
-import { FaUsers } from 'react-icons/fa';
 import { Tag } from '@/components/ui/tag';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { useRouter } from 'next/navigation';
@@ -16,6 +15,7 @@ import { useTranslation } from '@/hooks/useTranslation';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { paths } from '@/config/paths';
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 
 interface TeamSelectorProps {
   selectedTeam: Team | null;
@@ -29,6 +29,8 @@ interface TeamSelectorProps {
   hideSettingsLink?: boolean;
   // Optional: current mode for filtering teams by bind_mode
   currentMode?: 'chat' | 'code';
+  // Optional: whether to open the dropdown by default
+  defaultOpen?: boolean;
 }
 
 export default function TeamSelector({
@@ -40,6 +42,7 @@ export default function TeamSelector({
   taskDetail,
   hideSettingsLink = false,
   currentMode,
+  defaultOpen = false,
 }: TeamSelectorProps) {
   // Try to get context, but don't throw if not available
   const taskContext = useContext(TaskContext);
@@ -111,19 +114,25 @@ export default function TeamSelector({
   const selectItems: SearchableSelectItem[] = useMemo(() => {
     return filteredTeams.map(team => {
       const isSharedTeam = team.share_status === 2 && team.user?.user_name;
+      const isGroupTeam = team.namespace && team.namespace !== 'default';
       return {
         value: team.id.toString(),
         label: team.name,
         searchText: team.name,
         content: (
           <div className="flex items-center gap-2 min-w-0">
-            <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
+            <TeamIconDisplay iconId={team.icon} size="sm" className="flex-shrink-0 text-text-muted" />
             <span
               className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
               title={team.name}
             >
               {team.name}
             </span>
+            {isGroupTeam && (
+              <Tag className="ml-2 text-xs !m-0 flex-shrink-0" variant="info">
+                {team.namespace}
+              </Tag>
+            )}
             {isSharedTeam && (
               <Tag
                 className="ml-2 text-xs !m-0 flex-shrink-0"
@@ -147,8 +156,10 @@ export default function TeamSelector({
       data-tour="team-selector"
       style={{ maxWidth: isMobile ? 200 : 260, minWidth: isMobile ? 60 : 80 }}
     >
-      <FaUsers
-        className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}
+      <TeamIconDisplay
+        iconId={selectedTeam?.icon}
+        size="xs"
+        className={`text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}
       />
       <div className="relative min-w-0 flex-1">
         <SearchableSelect
@@ -163,15 +174,22 @@ export default function TeamSelector({
           noMatchText={t('teams.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
           contentClassName="max-w-[320px]"
+          defaultOpen={defaultOpen}
           renderTriggerValue={item => {
             if (!item) return null;
             const team = filteredTeams.find(t => t.id.toString() === item.value);
             const isSharedTeam = team?.share_status === 2 && team?.user?.user_name;
+            const isGroupTeam = team?.namespace && team.namespace !== 'default';
             return (
               <div className="flex items-center gap-2 min-w-0">
                 <span className="truncate max-w-full flex-1 min-w-0" title={item.label}>
                   {item.label}
                 </span>
+                {isGroupTeam && (
+                  <Tag className="text-xs !m-0 flex-shrink-0 ml-2" variant="info">
+                    {team.namespace}
+                  </Tag>
+                )}
                 {isSharedTeam && (
                   <Tag
                     className="text-xs !m-0 flex-shrink-0 ml-2"

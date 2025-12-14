@@ -44,12 +44,15 @@ class TeamBase(BaseModel):
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     is_active: bool = True
+    icon: Optional[str] = None  # Icon ID from preset icon library
 
 
 class TeamCreate(TeamBase):
     """Team creation model"""
 
-    pass
+    namespace: str = (
+        "default"  # Group namespace, defaults to 'default' for personal teams
+    )
 
 
 class TeamUpdate(BaseModel):
@@ -61,6 +64,8 @@ class TeamUpdate(BaseModel):
     workflow: Optional[dict[str, Any]] = None
     bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
     is_active: Optional[bool] = None
+    namespace: Optional[str] = None  # Group namespace
+    icon: Optional[str] = None  # Icon ID from preset icon library
 
 
 class TeamInDB(TeamBase):
@@ -68,6 +73,7 @@ class TeamInDB(TeamBase):
 
     id: int
     user_id: int
+    namespace: Optional[str] = "default"  # Group namespace
     created_at: datetime
     updated_at: datetime
     user: Optional[dict[str, Any]] = None

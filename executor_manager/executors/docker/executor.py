@@ -10,40 +10,32 @@
 Docker executor for running tasks in Docker containers
 """
 
-from email import utils
 import json
 import os
 import subprocess
 import time
+from email import utils
 from typing import Any, Dict, List, Optional, Tuple
-import requests
-import httpx
 
-from executor_manager.config.config import EXECUTOR_ENV
-from executor_manager.utils.executor_name import generate_executor_name
+import httpx
+import requests
 from shared.logger import setup_logger
 from shared.status import TaskStatus
+
+from executor_manager.config.config import EXECUTOR_ENV
+from shared.telemetry.config import get_otel_config
 from executor_manager.executors.base import Executor
-from executor_manager.executors.docker.utils import (
-    build_callback_url,
-    find_available_port,
-    check_container_ownership,
-    delete_container,
-    get_container_ports,
-    get_running_task_details,
-)
 from executor_manager.executors.docker.constants import (
-    CONTAINER_OWNER,
-    DEFAULT_DOCKER_HOST,
-    DEFAULT_API_ENDPOINT,
-    DEFAULT_TIMEZONE,
-    DEFAULT_LOCALE,
-    DOCKER_SOCKET_PATH,
-    WORKSPACE_MOUNT_PATH,
-    DEFAULT_PROGRESS_RUNNING,
-    DEFAULT_PROGRESS_COMPLETE,
-    DEFAULT_TASK_ID,
-)
+    CONTAINER_OWNER, DEFAULT_API_ENDPOINT, DEFAULT_DOCKER_HOST, DEFAULT_LOCALE,
+    DEFAULT_PROGRESS_COMPLETE, DEFAULT_PROGRESS_RUNNING, DEFAULT_TASK_ID,
+    DEFAULT_TIMEZONE, DOCKER_SOCKET_PATH, WORKSPACE_MOUNT_PATH)
+from executor_manager.executors.docker.utils import (build_callback_url,
+                                                     check_container_ownership,
+                                                     delete_container,
+                                                     find_available_port,
+                                                     get_container_ports,
+                                                     get_running_task_details)
+from executor_manager.utils.executor_name import generate_executor_name
 
 logger = setup_logger(__name__)
 
@@ -483,6 +475,9 @@ class DockerExecutor(Executor):
         # Add callback URL
         self._add_callback_url(cmd, task)
 
+        # Add OpenTelemetry trace context for distributed tracing
+        self._add_trace_context(cmd)
+
         # Add executor image (use base_image if provided, otherwise use default executor_image)
         final_image = base_image if base_image else executor_image
         cmd.append(final_image)
@@ -513,6 +508,46 @@ class DockerExecutor(Executor):
         callback_url = build_callback_url(task)
         if callback_url:
             cmd.extend(["-e", f"CALLBACK_URL={callback_url}"])
+
+    def _add_trace_context(self, cmd: List[str]) -> None:
+        """
+        Add OpenTelemetry configuration and trace context environment variables.
+
+        This propagates both the OTEL configuration and current trace context
+        to the executor container, allowing it to:
+        1. Initialize OpenTelemetry with the same configuration
+        2. Continue the trace started by executor_manager
+        """
+        otel_config = get_otel_config()
+        if not otel_config.enabled:
+            return
+
+        try:
+            # Add OTEL configuration environment variables
+            # These are needed for executor to initialize OpenTelemetry
+            cmd.extend([
+                "-e", "OTEL_ENABLED=true",
+                "-e", f"OTEL_SERVICE_NAME=wegent-executor",  # Use executor-specific service name
+                "-e", f"OTEL_EXPORTER_OTLP_ENDPOINT={otel_config.otlp_endpoint}",
+                "-e", f"OTEL_TRACES_SAMPLER_ARG={otel_config.sampler_ratio}",
+                "-e", f"OTEL_METRICS_ENABLED={'true' if otel_config.metrics_enabled else 'false'}",
+                "-e", f"OTEL_CAPTURE_REQUEST_HEADERS={'true' if otel_config.capture_request_headers else 'false'}",
+                "-e", f"OTEL_CAPTURE_REQUEST_BODY={'true' if otel_config.capture_request_body else 'false'}",
+                "-e", f"OTEL_CAPTURE_RESPONSE_HEADERS={'true' if otel_config.capture_response_headers else 'false'}",
+                "-e", f"OTEL_CAPTURE_RESPONSE_BODY={'true' if otel_config.capture_response_body else 'false'}",
+                "-e", f"OTEL_MAX_BODY_SIZE={otel_config.max_body_size}",
+            ])
+            logger.debug("Added OTEL configuration env vars to container")
+
+            # Add trace context for distributed tracing continuity
+            from shared.telemetry.context import get_trace_context_env_vars
+
+            trace_env_vars = get_trace_context_env_vars()
+            for key, value in trace_env_vars.items():
+                cmd.extend(["-e", f"{key}={value}"])
+                logger.debug(f"Added trace context env var: {key}={value[:50]}...")
+        except Exception as e:
+            logger.warning(f"Failed to add trace context: {e}")
     
     def _handle_execution_exception(self, exception: Exception, task_id: int, status: Dict[str, Any]) -> None:
         """Handle exceptions during execution uniformly"""

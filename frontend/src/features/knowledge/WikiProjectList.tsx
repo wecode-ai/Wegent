@@ -112,6 +112,40 @@ export default function WikiProjectList({
     return <div className="bg-red-50 text-red-500 p-4 rounded-md">{error}</div>;
   }
 
+  // Empty state - show centered add button
+  if (filteredProjects.length === 0) {
+    return (
+      <div className="max-w-4xl mx-auto flex flex-col items-center justify-center py-16">
+        <Card
+          padding="lg"
+          className="hover:bg-hover transition-colors cursor-pointer flex flex-col items-center justify-center w-64 h-48"
+          onClick={onAddRepo}
+        >
+          <div className="w-14 h-14 rounded-full bg-primary/10 flex items-center justify-center mb-4">
+            <svg
+              className="h-8 w-8 text-primary"
+              xmlns="http://www.w3.org/2000/svg"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M12 4v16m8-8H4"
+              />
+            </svg>
+          </div>
+          <h3 className="font-medium text-base mb-2 text-text-primary">
+            {t('wiki.add_repository')}
+          </h3>
+          <p className="text-sm text-text-muted text-center">{t('wiki.add_repository_desc')}</p>
+        </Card>
+      </div>
+    );
+  }
+
   return (
     <div className="max-w-4xl mx-auto">
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

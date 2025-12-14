@@ -3,7 +3,8 @@
   "description": "管理用户、角色和公共模型",
   "tabs": {
     "users": "用户管理",
-    "public_models": "公共模型"
+    "public_models": "公共模型",
+    "system_config": "系统配置"
   },
   "stats": {
     "total_users": "总用户数",
@@ -159,5 +160,45 @@
     "title": "访问被拒绝",
     "message": "您没有权限访问此页面，只有管理员可以查看此内容。",
     "go_home": "返回首页"
+  },
+  "system_config": {
+    "title": "Slogan 与提示管理",
+    "description": "配置聊天页面的欢迎语和提示信息",
+    "loading": "加载配置中...",
+    "dialog_description": "请输入中英文内容，并选择适用的模式",
+    "mode": "适用模式",
+    "mode_chat": "聊天模式",
+    "mode_code": "编码模式",
+    "mode_both": "通用",
+    "slogan_title": "Slogan 配置",
+    "add_slogan": "添加 Slogan",
+    "edit_slogan": "编辑 Slogan",
+    "no_slogans": "暂无配置的 Slogan",
+    "slogan_zh": "中文 Slogan",
+    "slogan_en": "英文 Slogan",
+    "slogan_zh_placeholder": "请输入中文 Slogan",
+    "slogan_en_placeholder": "请输入英文 Slogan",
+    "delete_slogan_title": "删除 Slogan",
+    "delete_slogan_message": "确定要删除此 Slogan 吗？此操作无法撤销。",
+    "tips_title": "提示配置",
+    "add_tip": "添加提示",
+    "edit_tip": "编辑提示",
+    "no_tips": "暂无配置的提示",
+    "tip_zh": "中文提示",
+    "tip_en": "英文提示",
+    "tip_zh_placeholder": "请输入中文提示内容",
+    "tip_en_placeholder": "请输入英文提示内容",
+    "delete_tip_title": "删除提示",
+    "delete_tip_message": "确定要删除此提示吗？此操作无法撤销。",
+    "version": "版本",
+    "success": {
+      "updated": "配置更新成功"
+    },
+    "errors": {
+      "load_failed": "加载配置失败",
+      "save_failed": "保存配置失败",
+      "slogan_required": "中英文 Slogan 均为必填项",
+      "tip_required": "中英文提示内容均为必填项"
+    }
   }
 }

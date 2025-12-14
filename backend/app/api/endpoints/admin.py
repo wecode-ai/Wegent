@@ -20,7 +20,6 @@ from app.api.endpoints.kind.common import (
 from app.api.endpoints.kind.kinds import KIND_SCHEMA_MAP
 from app.core.security import create_access_token, get_admin_user, get_password_hash
 from app.models.kind import Kind
-from app.models.public_model import PublicModel
 from app.models.system_config import SystemConfig
 from app.models.user import User
 from app.schemas.admin import (
@@ -28,6 +27,10 @@ from app.schemas.admin import (
     AdminUserListResponse,
     AdminUserResponse,
     AdminUserUpdate,
+    ChatSloganItem,
+    ChatSloganTipsResponse,
+    ChatSloganTipsUpdate,
+    ChatTipItem,
     PasswordReset,
     PublicModelCreate,
     PublicModelListResponse,
@@ -389,11 +392,32 @@ async def list_public_models(
     current_user: User = Depends(get_admin_user),
 ):
     """
-    Get list of all public models with pagination
+    Get list of all public models with pagination, sorted by displayName
     """
-    query = db.query(PublicModel)
+    query = db.query(Kind).filter(
+        Kind.user_id == 0, Kind.kind == "Model", Kind.namespace == "default"
+    )
     total = query.count()
-    models = query.offset((page - 1) * limit).limit(limit).all()
+    models = query.all()
+
+    # Helper function to extract displayName from json
+    def get_display_name(model: Kind) -> str:
+        """Extract displayName from model json, fallback to name"""
+        if model.json and isinstance(model.json, dict):
+            metadata = model.json.get("metadata", {})
+            if isinstance(metadata, dict):
+                display_name = metadata.get("displayName")
+                if display_name:
+                    return display_name
+        return model.name
+
+    # Sort models by displayName (case-insensitive)
+    sorted_models = sorted(models, key=lambda m: get_display_name(m).lower())
+
+    # Apply pagination after sorting
+    start_idx = (page - 1) * limit
+    end_idx = start_idx + limit
+    paginated_models = sorted_models[start_idx:end_idx]
 
     return PublicModelListResponse(
         total=total,
@@ -402,12 +426,17 @@ async def list_public_models(
                 id=model.id,
                 name=model.name,
                 namespace=model.namespace,
+                display_name=(
+                    get_display_name(model)
+                    if get_display_name(model) != model.name
+                    else None
+                ),
                 model_json=model.json,
                 is_active=model.is_active,
                 created_at=model.created_at,
                 updated_at=model.updated_at,
             )
-            for model in models
+            for model in paginated_models
         ],
     )
 
@@ -427,10 +456,12 @@ async def create_public_model(
     """
     # Check if model with same name and namespace already exists
     existing_model = (
-        db.query(PublicModel)
+        db.query(Kind)
         .filter(
-            PublicModel.name == model_data.name,
-            PublicModel.namespace == model_data.namespace,
+            Kind.user_id == 0,
+            Kind.kind == "Model",
+            Kind.name == model_data.name,
+            Kind.namespace == model_data.namespace,
         )
         .first()
     )
@@ -440,7 +471,9 @@ async def create_public_model(
             detail=f"Public model '{model_data.name}' already exists in namespace '{model_data.namespace}'",
         )
 
-    new_model = PublicModel(
+    new_model = Kind(
+        user_id=0,
+        kind="Model",
         name=model_data.name,
         namespace=model_data.namespace,
         json=model_data.model_json,
@@ -471,7 +504,11 @@ async def update_public_model(
     """
     Update a public model (admin only)
     """
-    model = db.query(PublicModel).filter(PublicModel.id == model_id).first()
+    model = (
+        db.query(Kind)
+        .filter(Kind.id == model_id, Kind.user_id == 0, Kind.kind == "Model")
+        .first()
+    )
     if not model:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -482,9 +519,12 @@ async def update_public_model(
     if model_data.name and model_data.name != model.name:
         namespace = model_data.namespace or model.namespace
         existing_model = (
-            db.query(PublicModel)
+            db.query(Kind)
             .filter(
-                PublicModel.name == model_data.name, PublicModel.namespace == namespace
+                Kind.user_id == 0,
+                Kind.kind == "Model",
+                Kind.name == model_data.name,
+                Kind.namespace == namespace,
             )
             .first()
         )
@@ -527,7 +567,11 @@ async def delete_public_model(
     """
     Delete a public model (admin only)
     """
-    model = db.query(PublicModel).filter(PublicModel.id == model_id).first()
+    model = (
+        db.query(Kind)
+        .filter(Kind.id == model_id, Kind.user_id == 0, Kind.kind == "Model")
+        .first()
+    )
     if not model:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -559,7 +603,11 @@ async def get_system_stats(
         db.query(User).filter(User.role == "admin", User.is_active == True).count()
     )
     total_tasks = db.query(Task).count()
-    total_public_models = db.query(PublicModel).count()
+    total_public_models = (
+        db.query(Kind)
+        .filter(Kind.user_id == 0, Kind.kind == "Model", Kind.namespace == "default")
+        .count()
+    )
 
     return SystemStats(
         total_users=total_users,
@@ -1023,4 +1071,134 @@ async def update_quick_access_config(
     return SystemConfigResponse(
         version=config.version,
         teams=config.config_value.get("teams", []),
+    )
+
+
+# ==================== Chat Slogan & Tips Config Endpoints ====================
+
+CHAT_SLOGAN_TIPS_CONFIG_KEY = "chat_slogan_tips"
+
+# Default slogan and tips configuration
+DEFAULT_SLOGAN_TIPS_CONFIG = {
+    "slogans": [
+        {
+            "id": 1,
+            "zh": "今天有什么可以帮到你？",
+            "en": "What can I help you with today?",
+            "mode": "chat",
+        },
+        {
+            "id": 2,
+            "zh": "让我们一起写代码吧",
+            "en": "Let's code together",
+            "mode": "code",
+        },
+    ],
+    "tips": [
+        {
+            "id": 1,
+            "zh": "试试问我：帮我分析这段代码的性能问题",
+            "en": "Try asking: Help me analyze the performance issues in this code",
+        },
+        {
+            "id": 2,
+            "zh": "你可以上传文件让我帮你处理",
+            "en": "You can upload files for me to help you process",
+        },
+        {
+            "id": 3,
+            "zh": "我可以帮你生成代码、修复 Bug 或重构现有代码",
+            "en": "I can help you generate code, fix bugs, or refactor existing code",
+        },
+        {
+            "id": 4,
+            "zh": "试试让我帮你编写单元测试或文档",
+            "en": "Try asking me to write unit tests or documentation",
+        },
+        {
+            "id": 5,
+            "zh": "我可以解释复杂的代码逻辑，帮助你理解代码库",
+            "en": "I can explain complex code logic and help you understand the codebase",
+        },
+    ],
+}
+
+
+@router.get("/system-config/slogan-tips", response_model=ChatSloganTipsResponse)
+async def get_slogan_tips_config(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Get chat slogan and tips configuration
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == CHAT_SLOGAN_TIPS_CONFIG_KEY)
+        .first()
+    )
+    if not config:
+        # Return default configuration
+        return ChatSloganTipsResponse(
+            version=0,
+            slogans=[
+                ChatSloganItem(**s) for s in DEFAULT_SLOGAN_TIPS_CONFIG["slogans"]
+            ],
+            tips=[ChatTipItem(**tip) for tip in DEFAULT_SLOGAN_TIPS_CONFIG["tips"]],
+        )
+
+    config_value = config.config_value or {}
+    return ChatSloganTipsResponse(
+        version=config.version,
+        slogans=[
+            ChatSloganItem(**s)
+            for s in config_value.get("slogans", DEFAULT_SLOGAN_TIPS_CONFIG["slogans"])
+        ],
+        tips=[ChatTipItem(**tip) for tip in config_value.get("tips", [])],
+    )
+
+
+@router.put("/system-config/slogan-tips", response_model=ChatSloganTipsResponse)
+async def update_slogan_tips_config(
+    config_data: ChatSloganTipsUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_admin_user),
+):
+    """
+    Update chat slogan and tips configuration (admin only).
+    Version number is automatically incremented.
+    """
+    config = (
+        db.query(SystemConfig)
+        .filter(SystemConfig.config_key == CHAT_SLOGAN_TIPS_CONFIG_KEY)
+        .first()
+    )
+
+    config_value = {
+        "slogans": [s.model_dump() for s in config_data.slogans],
+        "tips": [tip.model_dump() for tip in config_data.tips],
+    }
+
+    if not config:
+        # Create new config
+        config = SystemConfig(
+            config_key=CHAT_SLOGAN_TIPS_CONFIG_KEY,
+            config_value=config_value,
+            version=1,
+            updated_by=current_user.id,
+        )
+        db.add(config)
+    else:
+        # Update existing config and increment version
+        config.config_value = config_value
+        config.version = config.version + 1
+        config.updated_by = current_user.id
+
+    db.commit()
+    db.refresh(config)
+
+    return ChatSloganTipsResponse(
+        version=config.version,
+        slogans=config_data.slogans,
+        tips=config_data.tips,
     )

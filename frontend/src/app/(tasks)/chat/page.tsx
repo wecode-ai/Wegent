@@ -10,6 +10,7 @@ import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
 import ResizableSidebar from '@/features/tasks/components/ResizableSidebar';
+import CollapsedSidebarButtons from '@/features/tasks/components/CollapsedSidebarButtons';
 import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
 import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
@@ -25,6 +26,8 @@ import ChatArea from '@/features/tasks/components/ChatArea';
 import { saveLastTab } from '@/utils/userPreferences';
 import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
+import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
+import { paths } from '@/config/paths';
 
 export default function ChatPage() {
   // Team state from service
@@ -32,6 +35,9 @@ export default function ChatPage() {
 
   // Task context for refreshing task list
   const { refreshTasks } = useTaskContext();
+
+  // Chat stream context
+  const { clearAllStreams } = useChatStreamContext();
 
   // User state for git token check
   const { user } = useUser();
@@ -101,6 +107,12 @@ export default function ChatPage() {
     });
   };
 
+  // Handle new task from collapsed sidebar button
+  const handleNewTask = () => {
+    clearAllStreams();
+    router.replace(paths.chat.getHref());
+  };
+
   return (
     <>
       {/* Handle OIDC token from URL parameters */}
@@ -127,6 +139,10 @@ export default function ChatPage() {
         hasShareId={hasShareId}
       />
       <div className="flex smart-h-screen bg-base text-text-primary box-border">
+        {/* Collapsed sidebar floating buttons */}
+        {isCollapsed && !isMobile && (
+          <CollapsedSidebarButtons onExpand={handleToggleCollapsed} onNewTask={handleNewTask} />
+        )}
         {/* Responsive resizable sidebar */}
         <ResizableSidebar isCollapsed={isCollapsed} onToggleCollapsed={handleToggleCollapsed}>
           <TaskSidebar

@@ -38,8 +38,8 @@ export interface GitInfo {
   id?: string;
   git_domain: string;
   git_token: string;
-  /** Type: "github" | "gitlab" | "gitee" | "gerrit" */
-  type: 'github' | 'gitlab' | 'gitee' | 'gerrit';
+  /** Type: "github" | "gitlab" | "gitee" | "gitea" | "gerrit" */
+  type: 'github' | 'gitlab' | 'gitee' | 'gitea' | 'gerrit';
   /** Username (required for Gerrit) */
   user_name?: string;
   /** Git user ID (from provider) */
@@ -112,6 +112,7 @@ export interface Shell {
 export interface Team {
   id: number;
   name: string;
+  namespace?: string; // Namespace for group teams (default: 'default')
   description: string;
   bots: TeamBot[];
   workflow: Record<string, string>;
@@ -124,6 +125,7 @@ export interface Team {
   is_mix_team?: boolean; // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
   recommended_mode?: 'chat' | 'code' | 'both'; // Recommended usage mode (for QuickAccess)
   bind_mode?: ('chat' | 'code')[]; // Allowed modes for this team
+  icon?: string; // Icon ID from preset icon library
   user?: {
     user_name: string;
   };
@@ -444,6 +446,7 @@ export interface QuickAccessTeam {
   is_system: boolean; // True if from system recommendations
   recommended_mode?: 'chat' | 'code' | 'both';
   agent_type?: string;
+  icon?: string; // Icon ID from preset icon library
 }
 
 export interface QuickAccessResponse {
@@ -451,6 +454,26 @@ export interface QuickAccessResponse {
   user_version: number | null;
   show_system_recommended: boolean; // True if user_version < system_version
   teams: QuickAccessTeam[];
+}
+
+// Welcome Config Types (Slogan & Tips)
+export interface ChatSloganItem {
+  id: number;
+  zh: string;
+  en: string;
+  mode?: 'chat' | 'code' | 'both';
+}
+
+export interface ChatTipItem {
+  id: number;
+  zh: string;
+  en: string;
+  mode?: 'chat' | 'code' | 'both';
+}
+
+export interface WelcomeConfigResponse {
+  slogans: ChatSloganItem[];
+  tips: ChatTipItem[];
 }
 
 export interface SystemConfigResponse {

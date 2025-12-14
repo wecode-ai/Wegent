@@ -44,16 +44,45 @@ const PRIMARY_COLOR = { r: 20, g: 184, b: 166 }; // #14B8A6
 
 /**
  * Colors for markdown rendering
+ * Text color changed to #1a1a1a for better readability
  */
 const COLORS = {
-  text: { r: 36, g: 41, b: 46 },
-  heading: { r: 36, g: 41, b: 46 },
+  text: { r: 26, g: 26, b: 26 }, // #1a1a1a - deep black for readability
+  heading: { r: 26, g: 26, b: 26 }, // #1a1a1a - deep black for readability
   link: { r: 85, g: 185, b: 247 },
   code: { r: 207, g: 34, b: 46 },
   codeBlockBg: { r: 246, g: 248, b: 250 },
-  codeBlockText: { r: 36, g: 41, b: 46 },
-  blockquote: { r: 106, g: 115, b: 125 },
-  listMarker: { r: 106, g: 115, b: 125 },
+  codeBlockText: { r: 26, g: 26, b: 26 }, // #1a1a1a - deep black for readability
+  blockquote: { r: 80, g: 80, b: 80 }, // Darker gray for better readability
+  listMarker: { r: 80, g: 80, b: 80 }, // Darker gray for better readability
+};
+
+/**
+ * Chat bubble styling configuration
+ */
+const BUBBLE_STYLES = {
+  // User message bubble - light blue/green aligned right
+  user: {
+    bgColor: { r: 227, g: 242, b: 253 }, // #E3F2FD - light blue
+    borderColor: { r: 187, g: 222, b: 251 }, // #BBDEFB - slightly darker blue
+    iconText: 'User', // Will be replaced with user icon
+    iconBgColor: { r: 66, g: 133, b: 244 }, // #4285F4 - Google blue
+  },
+  // AI message - no bubble, just plain text
+  ai: {
+    bgColor: { r: 255, g: 255, b: 255 }, // White - no visible background
+    borderColor: { r: 255, g: 255, b: 255 }, // White - no visible border
+    iconText: 'AI',
+    iconBgColor: { r: 20, g: 184, b: 166 }, // #14B8A6 - Wegent teal
+  },
+  // Common bubble properties
+  common: {
+    borderRadius: 3, // mm - reduced for more compact look
+    padding: 4, // mm - reduced padding for more compact bubbles
+    maxWidthPercent: 0.85, // 85% of content width - wider for better readability
+    iconSize: 5, // mm (diameter) - slightly smaller
+    messagePadding: 8, // mm spacing between messages - reduced
+  },
 };
 
 /**
@@ -149,12 +178,14 @@ async function addUnicodeFontToPdf(pdf: jsPDF): Promise<boolean> {
   }
 }
 /**
- * Check if text contains extended Unicode characters (CJK, etc.)
+ * Check if text contains extended Unicode characters (CJK, Box Drawing, etc.)
  * that require special font support
  */
 function requiresUnicodeFont(text: string): boolean {
-  // CJK Unified Ideographs and extensions
-  return /[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef]/.test(text);
+  // CJK Unified Ideographs and extensions, plus Box Drawing characters
+  return /[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef\u2500-\u257f\u2580-\u259f]/.test(
+    text
+  );
 }
 
 /**
@@ -859,16 +890,24 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
   /**
    * Render inline styled text segments with proper word wrapping
+   * @param segments - Text segments with style information
+   * @param startX - Starting X position
+   * @param maxWidth - Maximum width for text
+   * @param pageNum - Page number reference (for page break handling)
+   * @param baseFontSize - Base font size (default: 10)
+   * @param enablePageBreak - Whether to check for page breaks (default: true, set false for bubble content)
    */
   const renderStyledText = (
     segments: TextSegment[],
     startX: number,
     maxWidth: number,
     pageNum: { value: number },
-    baseFontSize: number = 10
+    baseFontSize: number = 10,
+    enablePageBreak: boolean = true
   ) => {
     let currentX = startX;
-    const lineHeight = lineHeights.paragraph;
+    // Use slightly smaller line height when page breaks are disabled (bubble mode)
+    const lineHeight = enablePageBreak ? lineHeights.paragraph : lineHeights.paragraph - 0.5;
 
     /**
      * Helper function to set font style for a segment
@@ -920,6 +959,18 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
       return textWidth;
     };
 
+    /**
+     * Helper function to handle line break with optional page break check
+     */
+    const handleLineBreak = (segment: TextSegment) => {
+      yPosition += lineHeight;
+      if (enablePageBreak && checkNewPage(lineHeight, pageNum)) {
+        // Re-apply segment style after page break
+        setSegmentStyle(segment);
+      }
+      currentX = startX;
+    };
+
     for (const segment of segments) {
       setSegmentStyle(segment);
 
@@ -965,12 +1016,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
             const wordWidth = pdf.getTextWidth(word);
             if (currentX > startX && wordWidth > startX + maxWidth - currentX) {
               // Move to next line
-              yPosition += lineHeight;
-              if (checkNewPage(lineHeight, pageNum)) {
-                // Re-apply segment style after page break
-                setSegmentStyle(segment);
-              }
-              currentX = startX;
+              handleLineBreak(segment);
             }
 
             // Check if single word is wider than maxWidth (need character-level wrapping)
@@ -992,12 +1038,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
                 if (charText.length > 0) {
                   drawTextWithDecorations(charText, currentX, yPosition, segment);
                   if (charIndex < word.length) {
-                    yPosition += lineHeight;
-                    if (checkNewPage(lineHeight, pageNum)) {
-                      // Re-apply segment style after page break
-                      setSegmentStyle(segment);
-                    }
-                    currentX = startX;
+                    handleLineBreak(segment);
                   } else {
                     currentX = startX + pdf.getTextWidth(charText);
                   }
@@ -1080,7 +1121,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
   /**
    * Render a code block with background
    */
-  const renderCodeBlock = (code: string, language: string, pageNum: { value: number }) => {
+  const _renderCodeBlock = (code: string, language: string, pageNum: { value: number }) => {
     const codeLines = code.split('\n');
     const lineHeight = lineHeights.code;
     const padding = 3;
@@ -1104,13 +1145,18 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
 
     yPosition += padding;
 
-    // Draw code lines
+    // Draw code lines - use Unicode font for CJK characters in code
     pdf.setFontSize(9);
-    pdf.setFont('courier', 'normal');
     pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b);
 
     for (const codeLine of codeLines) {
       checkNewPage(lineHeight, pageNum);
+      // Check if line contains CJK characters and use appropriate font
+      if (hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine)) {
+        pdf.setFont(UNICODE_FONT_NAME, 'normal');
+      } else {
+        pdf.setFont('courier', 'normal');
+      }
       // Wrap long lines
       const wrappedLines = pdf.splitTextToSize(codeLine || ' ', contentWidth - padding * 2);
       for (const wrappedLine of wrappedLines) {
@@ -1126,7 +1172,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
    * Render a table with headers and rows
    * Supports text wrapping within cells
    */
-  const renderTable = (
+  const _renderTable = (
     headers: string[],
     alignments: ('left' | 'center' | 'right')[],
     rows: string[][],
@@ -1307,7 +1353,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
   /**
    * Render a markdown line based on its type
    */
-  const renderMarkdownLine = (parsedLine: ParsedLine, pageNum: { value: number }) => {
+  const _renderMarkdownLine = (parsedLine: ParsedLine, pageNum: { value: number }) => {
     const { type, content, level, listNumber } = parsedLine;
 
     switch (type) {
@@ -1434,47 +1480,336 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
   };
 
   /**
-   * Process and render message content with full markdown support
+   * Draw a chat bubble icon (user or AI)
    */
-  const renderMessage = (msg: ExportMessage, pageNum: { value: number }) => {
-    const label =
-      msg.type === 'user' ? msg.userName || 'User' : msg.teamName || msg.botName || 'AI';
-    const timestamp = formatTimestamp(msg.timestamp);
+  const drawBubbleIcon = (x: number, y: number, isUser: boolean, _label: string) => {
+    const style = isUser ? BUBBLE_STYLES.user : BUBBLE_STYLES.ai;
+    const iconSize = BUBBLE_STYLES.common.iconSize;
+    const radius = iconSize / 2;
 
-    // Message header
-    checkNewPage(15, pageNum);
-    pdf.setFontSize(11);
-    setFontForText(pdf, label, 'bold');
-    pdf.setTextColor(
-      msg.type === 'user' ? 60 : PRIMARY_COLOR.r,
-      msg.type === 'user' ? 60 : PRIMARY_COLOR.g,
-      msg.type === 'user' ? 60 : PRIMARY_COLOR.b
-    );
-    pdf.text(`${label}:`, margin, yPosition);
+    // Draw circular background
+    pdf.setFillColor(style.iconBgColor.r, style.iconBgColor.g, style.iconBgColor.b);
+    pdf.circle(x + radius, y + radius, radius, 'F');
 
-    // Timestamp
-    pdf.setFontSize(9);
-    pdf.setFont('helvetica', 'normal');
-    pdf.setTextColor(160, 160, 160);
-    pdf.text(timestamp, pageWidth - margin, yPosition, { align: 'right' });
-    yPosition += 7;
+    // Draw icon text (first letter)
+    pdf.setFontSize(7);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(255, 255, 255);
+    const iconChar = isUser ? 'U' : 'A';
+    const textWidth = pdf.getTextWidth(iconChar);
+    pdf.text(iconChar, x + radius - textWidth / 2, y + radius + 1.5);
+  };
 
-    // Render attachments if present (for user messages)
-    if (msg.attachments && msg.attachments.length > 0) {
-      renderAttachments(msg.attachments, pageNum);
+  /**
+   * Calculate the height of message content for bubble sizing
+   */
+  const _calculateContentHeight = (content: string, bubbleContentWidth: number): number => {
+    let height = 0;
+    const lines = content.split('\n');
+    let inCodeBlock = false;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      if (isCodeBlockDelimiter(line)) {
+        if (!inCodeBlock) {
+          inCodeBlock = true;
+        } else {
+          inCodeBlock = false;
+          height += 6; // Code block padding - reduced
+        }
+        continue;
+      }
+
+      if (inCodeBlock) {
+        pdf.setFontSize(8);
+        pdf.setFont('courier', 'normal');
+        const wrappedLines = pdf.splitTextToSize(line || ' ', bubbleContentWidth - 4);
+        height += wrappedLines.length * lineHeights.code;
+      } else {
+        const parsedLine = parseLineType(line);
+        if (parsedLine.type === 'empty') {
+          height += 2; // Reduced empty line height
+        } else if (parsedLine.type === 'heading1' || parsedLine.type === 'heading2') {
+          pdf.setFontSize(headingSizes[parsedLine.type] - 2);
+          const headingLines = pdf.splitTextToSize(parsedLine.content, bubbleContentWidth);
+          height += headingLines.length * (lineHeights[parsedLine.type] - 1) + 2;
+        } else {
+          pdf.setFontSize(9);
+          const textLines = pdf.splitTextToSize(parsedLine.content || ' ', bubbleContentWidth);
+          height += textLines.length * (lineHeights.paragraph - 0.5);
+        }
+      }
     }
 
-    // Process content - separate code blocks from text
-    // Sanitize emojis first to prevent encoding issues in PDF
-    let content = sanitizeEmojisForPdf(msg.content);
+    return Math.max(height, 4); // Minimum height reduced to 4mm
+  };
 
-    // Remove special markers like ${$$}$
+  /**
+   * Process and render message content with chat bubble style layout
+   * User messages appear on the right with light blue background
+   * AI messages appear on the left with light gray background
+   */
+  const renderMessage = (msg: ExportMessage, pageNum: { value: number }) => {
+    const isUser = msg.type === 'user';
+    const label = isUser ? msg.userName || 'User' : msg.teamName || msg.botName || 'AI';
+    const timestamp = formatTimestamp(msg.timestamp);
+    const style = isUser ? BUBBLE_STYLES.user : BUBBLE_STYLES.ai;
+    const { padding, iconSize, messagePadding, maxWidthPercent, borderRadius } =
+      BUBBLE_STYLES.common;
+
+    // Sanitize and prepare content
+    let content = sanitizeEmojisForPdf(msg.content);
     content = content.replace(/\$\{\$\$\}\$/g, '\n');
-    // Remove progress bar markers
     content = content.replace(/__PROGRESS_BAR__:.*?:\d+/g, '');
-    // Remove truncated prompt markers
     content = content.replace(/__PROMPT_TRUNCATED__:.*?::(.*?)(?=\n|$)/g, '$1');
 
+    if (isUser) {
+      // User message: render with compact bubble style
+      const bubbleMaxWidth = contentWidth * maxWidthPercent;
+      const bubbleContentWidth = bubbleMaxWidth - padding * 2;
+      const iconSpacing = iconSize + 2;
+
+      // Check if we need a new page (estimate minimum height)
+      checkNewPage(20 + messagePadding, pageNum);
+
+      // Save starting position for bubble
+      const bubbleStartY = yPosition;
+      const bubbleX = pageWidth - margin - bubbleMaxWidth;
+      const iconX = bubbleX - iconSpacing;
+
+      // Draw icon first
+      drawBubbleIcon(iconX, bubbleStartY, isUser, label);
+
+      // Set content area boundaries
+      const contentStartX = bubbleX + padding;
+      const contentMaxWidth = bubbleContentWidth;
+
+      // Move yPosition inside bubble for content
+      yPosition = bubbleStartY + padding;
+
+      // Draw message header (label and timestamp) - compact
+      pdf.setFontSize(8);
+      setFontForText(pdf, label, 'bold');
+      pdf.setTextColor(66, 133, 244); // Blue for user
+      pdf.text(label, contentStartX, yPosition);
+
+      // Timestamp (smaller, gray, right-aligned within bubble)
+      pdf.setFontSize(6);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(140, 140, 140);
+      pdf.text(timestamp, bubbleX + bubbleMaxWidth - padding, yPosition, { align: 'right' });
+      yPosition += 4;
+
+      // Render attachments if present (for user messages)
+      if (msg.attachments && msg.attachments.length > 0) {
+        renderAttachmentsInBubble(msg.attachments, pageNum, contentStartX, contentMaxWidth);
+      }
+
+      // Render message content within bubble
+      renderMessageContentInBubble(content, pageNum, contentStartX, contentMaxWidth);
+
+      // Calculate actual bubble height based on rendered content
+      const bubbleEndY = yPosition + padding;
+      const actualBubbleHeight = bubbleEndY - bubbleStartY;
+
+      // Draw bubble background with rounded corners (draw after content to know exact height)
+      pdf.setFillColor(style.bgColor.r, style.bgColor.g, style.bgColor.b);
+      pdf.setDrawColor(style.borderColor.r, style.borderColor.g, style.borderColor.b);
+      pdf.setLineWidth(0.2);
+
+      // User bubble: simple rounded rectangle - draw behind content
+      // Note: We need to draw this first, but we calculated height after rendering
+      // So we'll redraw the bubble now with correct height
+      pdf.setFillColor(style.bgColor.r, style.bgColor.g, style.bgColor.b);
+      pdf.roundedRect(
+        bubbleX,
+        bubbleStartY,
+        bubbleMaxWidth,
+        actualBubbleHeight,
+        borderRadius,
+        borderRadius,
+        'FD'
+      );
+
+      // Re-render content on top of bubble background
+      yPosition = bubbleStartY + padding;
+
+      // Re-draw header
+      pdf.setFontSize(8);
+      setFontForText(pdf, label, 'bold');
+      pdf.setTextColor(66, 133, 244);
+      pdf.text(label, contentStartX, yPosition);
+
+      pdf.setFontSize(6);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(140, 140, 140);
+      pdf.text(timestamp, bubbleX + bubbleMaxWidth - padding, yPosition, { align: 'right' });
+      yPosition += 4;
+
+      // Re-render attachments
+      if (msg.attachments && msg.attachments.length > 0) {
+        renderAttachmentsInBubble(msg.attachments, pageNum, contentStartX, contentMaxWidth);
+      }
+
+      // Re-render content
+      renderMessageContentInBubble(content, pageNum, contentStartX, contentMaxWidth);
+
+      // Move to position after bubble
+      yPosition = bubbleEndY + messagePadding;
+    } else {
+      // AI message: render without bubble, just plain text with label
+      const aiContentWidth = contentWidth;
+
+      // Check if we need a new page
+      checkNewPage(15 + messagePadding, pageNum);
+
+      // Draw AI label with icon
+      const iconX = margin;
+      const iconY = yPosition;
+      drawBubbleIcon(iconX, iconY, false, label);
+
+      // Draw label next to icon
+      pdf.setFontSize(8);
+      setFontForText(pdf, label, 'bold');
+      pdf.setTextColor(PRIMARY_COLOR.r, PRIMARY_COLOR.g, PRIMARY_COLOR.b);
+      pdf.text(label, margin + iconSize + 2, yPosition + 3);
+
+      // Timestamp
+      pdf.setFontSize(6);
+      pdf.setFont('helvetica', 'normal');
+      pdf.setTextColor(140, 140, 140);
+      pdf.text(timestamp, pageWidth - margin, yPosition + 3, { align: 'right' });
+      yPosition += iconSize + 2;
+
+      // Render message content directly (no bubble)
+      renderMessageContentInBubble(content, pageNum, margin, aiContentWidth);
+
+      // Add spacing after AI message
+      yPosition += messagePadding;
+    }
+  };
+
+  /**
+   * Render attachments within a chat bubble
+   */
+  const renderAttachmentsInBubble = (
+    attachments: ExportAttachment[],
+    pageNum: { value: number },
+    startX: number,
+    maxWidth: number
+  ) => {
+    for (const attachment of attachments) {
+      const isImage = isImageExtension(attachment.file_extension);
+
+      if (isImage && attachment.imageData) {
+        renderImageAttachmentInBubble(attachment, pageNum, startX, maxWidth);
+      } else {
+        renderFileAttachmentInBubble(attachment, pageNum, startX, maxWidth);
+      }
+    }
+    yPosition += 2;
+  };
+
+  /**
+   * Render an image attachment within a bubble
+   */
+  const renderImageAttachmentInBubble = (
+    attachment: ExportAttachment,
+    pageNum: { value: number },
+    startX: number,
+    maxWidth: number
+  ) => {
+    if (!attachment.imageData) return;
+
+    try {
+      const imageFormat = getImageFormat(attachment.file_extension);
+      const imgWidth = Math.min(maxWidth - 10, 60);
+      const imgHeight = Math.min(50, 45);
+
+      pdf.addImage(
+        attachment.imageData,
+        imageFormat,
+        startX,
+        yPosition,
+        imgWidth,
+        imgHeight,
+        undefined,
+        'FAST'
+      );
+
+      yPosition += imgHeight + 2;
+
+      pdf.setFontSize(7);
+      pdf.setTextColor(120, 120, 120);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(attachment.filename, startX, yPosition);
+      yPosition += 4;
+    } catch (error) {
+      console.warn('Failed to render image attachment:', error);
+      renderFileAttachmentInBubble(attachment, pageNum, startX, maxWidth);
+    }
+  };
+
+  /**
+   * Render a file attachment info within a bubble
+   */
+  const renderFileAttachmentInBubble = (
+    attachment: ExportAttachment,
+    pageNum: { value: number },
+    startX: number,
+    maxWidth: number
+  ) => {
+    const attachmentHeight = 7;
+
+    // Draw attachment box
+    pdf.setFillColor(255, 255, 255);
+    pdf.setDrawColor(200, 200, 200);
+    pdf.roundedRect(startX, yPosition - 3, maxWidth - 10, attachmentHeight, 1, 1, 'FD');
+
+    // File type label
+    const fileTypeLabel = getFileTypeLabel(attachment.file_extension);
+    pdf.setFontSize(7);
+    pdf.setFont('helvetica', 'bold');
+    pdf.setTextColor(100, 100, 100);
+    pdf.text(fileTypeLabel, startX + 2, yPosition);
+
+    // Filename
+    pdf.setFontSize(8);
+    setFontForText(pdf, attachment.filename, 'normal');
+    pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b);
+    let displayFilename = attachment.filename;
+    const maxFilenameWidth = maxWidth - 50;
+    if (pdf.getTextWidth(displayFilename) > maxFilenameWidth) {
+      while (
+        pdf.getTextWidth(displayFilename + '...') > maxFilenameWidth &&
+        displayFilename.length > 0
+      ) {
+        displayFilename = displayFilename.slice(0, -1);
+      }
+      displayFilename += '...';
+    }
+    pdf.text(displayFilename, startX + 10, yPosition);
+
+    // File size
+    pdf.setFontSize(7);
+    pdf.setTextColor(140, 140, 140);
+    pdf.setFont('helvetica', 'normal');
+    const sizeText = formatFileSize(attachment.file_size);
+    pdf.text(sizeText, startX + maxWidth - 15, yPosition, { align: 'right' });
+
+    yPosition += attachmentHeight + 2;
+  };
+
+  /**
+   * Render message content within a chat bubble
+   */
+  const renderMessageContentInBubble = (
+    content: string,
+    pageNum: { value: number },
+    startX: number,
+    maxWidth: number
+  ) => {
     const lines = content.split('\n');
     let inCodeBlock = false;
     let codeBlockContent = '';
@@ -1492,7 +1827,7 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
       if (isCodeBlockDelimiter(line)) {
         // Flush any pending table before code block
         if (inTable && tableHeaders.length > 0) {
-          renderTable(tableHeaders, tableAlignments, tableRows, pageNum);
+          renderTableInBubble(tableHeaders, tableAlignments, tableRows, pageNum, startX, maxWidth);
           inTable = false;
           tableHeaders = [];
           tableAlignments = [];
@@ -1500,15 +1835,13 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
         }
 
         if (!inCodeBlock) {
-          // Start of code block
           inCodeBlock = true;
           codeLanguage = extractCodeLanguage(line);
           codeBlockContent = '';
         } else {
-          // End of code block
           inCodeBlock = false;
           if (codeBlockContent.trim()) {
-            renderCodeBlock(codeBlockContent, codeLanguage, pageNum);
+            renderCodeBlockInBubble(codeBlockContent, codeLanguage, pageNum, startX, maxWidth);
           }
           codeBlockContent = '';
           codeLanguage = '';
@@ -1519,15 +1852,11 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
       if (inCodeBlock) {
         codeBlockContent += (codeBlockContent ? '\n' : '') + line;
       } else {
-        // Parse and render markdown line
         const parsedLine = parseLineType(line, { inTable });
 
-        // Handle table parsing
         if (parsedLine.type === 'tableRow' || parsedLine.type === 'tableSeparator') {
           if (parsedLine.type === 'tableSeparator') {
-            // This is the separator line, the previous row was the header
             if (!inTable && tableRows.length === 0 && i > 0) {
-              // Look back for header row
               const prevLine = lines[i - 1];
               const prevParsed = parseLineType(prevLine, { inTable: true });
               if (prevParsed.type === 'tableRow' && prevParsed.tableCells) {
@@ -1537,45 +1866,373 @@ export async function generateChatPdf(options: PdfExportOptions): Promise<void> 
             tableAlignments = parsedLine.tableAlignments || [];
             inTable = true;
           } else if (parsedLine.type === 'tableRow' && parsedLine.tableCells) {
-            if (!inTable) {
-              // This might be a header row, wait for separator
-              // Don't render yet, just continue
-            } else {
-              // This is a data row
+            if (inTable) {
               tableRows.push(parsedLine.tableCells);
             }
           }
         } else {
-          // Not a table line, flush any pending table
           if (inTable && tableHeaders.length > 0) {
-            renderTable(tableHeaders, tableAlignments, tableRows, pageNum);
+            renderTableInBubble(
+              tableHeaders,
+              tableAlignments,
+              tableRows,
+              pageNum,
+              startX,
+              maxWidth
+            );
             inTable = false;
             tableHeaders = [];
             tableAlignments = [];
             tableRows = [];
           }
-          renderMarkdownLine(parsedLine, pageNum);
+          renderMarkdownLineInBubble(parsedLine, pageNum, startX, maxWidth);
         }
       }
     }
 
-    // Flush any remaining table at end of content
+    // Flush remaining table
     if (inTable && tableHeaders.length > 0) {
-      renderTable(tableHeaders, tableAlignments, tableRows, pageNum);
+      renderTableInBubble(tableHeaders, tableAlignments, tableRows, pageNum, startX, maxWidth);
     }
 
     // Handle unclosed code block
     if (inCodeBlock && codeBlockContent.trim()) {
-      renderCodeBlock(codeBlockContent, codeLanguage, pageNum);
+      renderCodeBlockInBubble(codeBlockContent, codeLanguage, pageNum, startX, maxWidth);
+    }
+  };
+
+  /**
+   * Render a code block within a bubble
+   */
+  const renderCodeBlockInBubble = (
+    code: string,
+    language: string,
+    pageNum: { value: number },
+    startX: number,
+    maxWidth: number
+  ) => {
+    const codeLines = code.split('\n');
+    const lineHeight = lineHeights.code;
+    const codePadding = 2;
+
+    // Check if we need a new page before starting the code block
+    checkNewPage(lineHeight * 3 + codePadding * 2, pageNum);
+
+    // Calculate the height of this code block segment (may span multiple pages)
+    const codeBlockStartY = yPosition - 2;
+    let currentBlockStartY = codeBlockStartY;
+
+    // Draw initial code background header with language label
+    pdf.setFillColor(COLORS.codeBlockBg.r, COLORS.codeBlockBg.g, COLORS.codeBlockBg.b);
+    pdf.setDrawColor(200, 200, 200);
+
+    // Language label
+    if (language) {
+      pdf.setFontSize(7);
+      pdf.setTextColor(140, 140, 140);
+      pdf.setFont('helvetica', 'normal');
+      pdf.text(language, startX + maxWidth - 3, yPosition, { align: 'right' });
     }
 
-    yPosition += 8; // Space between messages
+    yPosition += codePadding;
+
+    // Draw code lines - use Unicode font for CJK characters in code
+    pdf.setFontSize(8);
+    pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b);
+
+    const pageHeight = pdf.internal.pageSize.getHeight();
+    const margin = 20;
+
+    for (const codeLine of codeLines) {
+      // Check if line contains CJK characters and use appropriate font
+      if (hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine)) {
+        pdf.setFont(UNICODE_FONT_NAME, 'normal');
+      } else {
+        pdf.setFont('courier', 'normal');
+      }
+      const wrappedLines = pdf.splitTextToSize(codeLine || ' ', maxWidth - codePadding * 2);
+      for (const wrappedLine of wrappedLines) {
+        // Check if we need a new page
+        if (yPosition + lineHeight > pageHeight - 20) {
+          // Draw background for current page segment
+          const segmentHeight = yPosition - currentBlockStartY + codePadding;
+          pdf.setFillColor(COLORS.codeBlockBg.r, COLORS.codeBlockBg.g, COLORS.codeBlockBg.b);
+          pdf.setDrawColor(200, 200, 200);
+          pdf.roundedRect(startX, currentBlockStartY, maxWidth, segmentHeight, 1.5, 1.5, 'FD');
+
+          // Re-render the text on this page (since we drew the background after)
+          // This is handled by the fact that we're drawing line by line
+
+          // Add new page
+          addFooter(pageNum.value);
+          pdf.addPage();
+          pageNum.value++;
+          yPosition = margin;
+          currentBlockStartY = yPosition - 2;
+
+          // Reset font after page break
+          pdf.setFontSize(8);
+          pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b);
+          if (hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine)) {
+            pdf.setFont(UNICODE_FONT_NAME, 'normal');
+          } else {
+            pdf.setFont('courier', 'normal');
+          }
+        }
+        pdf.text(wrappedLine, startX + codePadding, yPosition);
+        yPosition += lineHeight;
+      }
+    }
+
+    // Draw final code block background
+    const finalSegmentHeight = yPosition - currentBlockStartY + codePadding;
+    pdf.setFillColor(COLORS.codeBlockBg.r, COLORS.codeBlockBg.g, COLORS.codeBlockBg.b);
+    pdf.setDrawColor(200, 200, 200);
+    pdf.roundedRect(startX, currentBlockStartY, maxWidth, finalSegmentHeight, 1.5, 1.5, 'FD');
+
+    // Re-render code lines on top of background for the last segment
+    // We need to track which lines belong to the current page segment
+    yPosition = currentBlockStartY + 2 + codePadding;
+    pdf.setFontSize(8);
+    pdf.setTextColor(COLORS.codeBlockText.r, COLORS.codeBlockText.g, COLORS.codeBlockText.b);
+
+    // Re-render all code lines (simplified approach - works for most cases)
+    for (const codeLine of codeLines) {
+      if (hasUnicodeFontLoaded(pdf) && requiresUnicodeFont(codeLine)) {
+        pdf.setFont(UNICODE_FONT_NAME, 'normal');
+      } else {
+        pdf.setFont('courier', 'normal');
+      }
+      const wrappedLines = pdf.splitTextToSize(codeLine || ' ', maxWidth - codePadding * 2);
+      for (const wrappedLine of wrappedLines) {
+        if (yPosition > currentBlockStartY && yPosition < pageHeight - 20) {
+          pdf.text(wrappedLine, startX + codePadding, yPosition);
+        }
+        yPosition += lineHeight;
+      }
+    }
+
+    yPosition += codePadding + 1;
+  };
+
+  /**
+   * Render a table within a bubble
+   */
+  const renderTableInBubble = (
+    headers: string[],
+    alignments: ('left' | 'center' | 'right')[],
+    rows: string[][],
+    pageNum: { value: number },
+    startX: number,
+    maxWidth: number
+  ) => {
+    if (headers.length === 0) return;
+
+    const cellPadding = 1.5;
+    const cellLineHeight = 4;
+    const numCols = headers.length;
+    const colWidth = maxWidth / numCols;
+    const rowHeight = cellLineHeight + cellPadding * 2;
+
+    // Check if we need a new page for the header
+    checkNewPage(rowHeight + 5, pageNum);
+
+    // Draw header row background
+    const headerY = yPosition;
+    pdf.setFillColor(240, 240, 240);
+    pdf.setDrawColor(200, 200, 200);
+    pdf.rect(startX, headerY, maxWidth, rowHeight, 'FD');
+
+    // Draw header text
+    pdf.setFontSize(8);
+    pdf.setTextColor(COLORS.heading.r, COLORS.heading.g, COLORS.heading.b);
+
+    let xPos = startX;
+    const textY = headerY + cellPadding + cellLineHeight * 0.7; // Vertically center text
+    for (let col = 0; col < numCols; col++) {
+      setFontForText(pdf, headers[col] || '', 'bold');
+      const cellText = pdf.splitTextToSize(headers[col] || '', colWidth - cellPadding * 2)[0] || '';
+      pdf.text(cellText, xPos + cellPadding, textY);
+      xPos += colWidth;
+    }
+
+    // Draw top border
+    pdf.setDrawColor(200, 200, 200);
+    pdf.line(startX, headerY, startX + maxWidth, headerY);
+
+    yPosition = headerY + rowHeight;
+
+    // Draw data rows
+    for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+      const row = rows[rowIdx];
+
+      // Check if we need a new page for this row
+      checkNewPage(rowHeight, pageNum);
+
+      const rowStartY = yPosition;
+
+      // Draw row background for alternating rows
+      if (rowIdx % 2 === 1) {
+        pdf.setFillColor(248, 248, 248);
+        pdf.rect(startX, rowStartY, maxWidth, rowHeight, 'F');
+      }
+
+      // Draw bottom border
+      pdf.setDrawColor(200, 200, 200);
+      pdf.line(startX, rowStartY + rowHeight, startX + maxWidth, rowStartY + rowHeight);
+
+      // Draw cell text
+      pdf.setFontSize(8);
+      pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b);
+
+      xPos = startX;
+      const rowTextY = rowStartY + cellPadding + cellLineHeight * 0.7; // Vertically center text
+      for (let col = 0; col < numCols; col++) {
+        setFontForText(pdf, row[col] || '', 'normal');
+        const cellText = pdf.splitTextToSize(row[col] || '', colWidth - cellPadding * 2)[0] || '';
+        pdf.text(cellText, xPos + cellPadding, rowTextY);
+        xPos += colWidth;
+      }
+
+      yPosition += rowHeight;
+    }
+
+    yPosition += 2;
+  };
+
+  /**
+   * Render a markdown line within a bubble
+   */
+  const renderMarkdownLineInBubble = (
+    parsedLine: ParsedLine,
+    pageNum: { value: number },
+    startX: number,
+    maxWidth: number
+  ) => {
+    const { type, content, level, listNumber } = parsedLine;
+
+    switch (type) {
+      case 'empty':
+        yPosition += 2;
+        break;
+
+      case 'tableSeparator':
+      case 'tableRow':
+        break;
+
+      case 'horizontalRule':
+        checkNewPage(5, pageNum);
+        pdf.setDrawColor(180, 180, 180);
+        pdf.setLineWidth(0.3);
+        pdf.line(startX, yPosition, startX + maxWidth, yPosition);
+        yPosition += 3;
+        break;
+
+      case 'heading1':
+      case 'heading2':
+      case 'heading3':
+      case 'heading4':
+      case 'heading5':
+      case 'heading6': {
+        const fontSize = Math.max(headingSizes[type] - 2, 9);
+        const lineHeight = lineHeights[type] - 1;
+        checkNewPage(lineHeight + 3, pageNum);
+        yPosition += 1;
+
+        pdf.setFontSize(fontSize);
+        pdf.setTextColor(COLORS.heading.r, COLORS.heading.g, COLORS.heading.b);
+        setFontForText(pdf, content, 'bold');
+
+        const headingLines = pdf.splitTextToSize(content, maxWidth);
+        for (const headingLine of headingLines) {
+          checkNewPage(lineHeight, pageNum);
+          pdf.text(headingLine, startX, yPosition);
+          yPosition += lineHeight;
+        }
+        yPosition += 1;
+        break;
+      }
+
+      case 'unorderedList': {
+        const indent = (level || 0) * 4;
+        checkNewPage(lineHeights.list, pageNum);
+        pdf.setFillColor(COLORS.listMarker.r, COLORS.listMarker.g, COLORS.listMarker.b);
+        const bulletX = startX + indent + 1.5;
+        const bulletY = yPosition - 1.2;
+        pdf.circle(bulletX, bulletY, 0.6, 'F');
+
+        pdf.setFontSize(9);
+        pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b);
+        setFontForText(pdf, content, 'normal');
+
+        const listLines = pdf.splitTextToSize(content, maxWidth - indent - 5);
+        for (let i = 0; i < listLines.length; i++) {
+          checkNewPage(lineHeights.list, pageNum);
+          pdf.text(listLines[i], startX + indent + 4, yPosition);
+          if (i < listLines.length - 1) yPosition += lineHeights.list - 0.5;
+        }
+        yPosition += lineHeights.list - 0.5;
+        break;
+      }
+
+      case 'orderedList': {
+        const indent = (level || 0) * 4;
+        checkNewPage(lineHeights.list, pageNum);
+        pdf.setFontSize(9);
+        pdf.setTextColor(COLORS.listMarker.r, COLORS.listMarker.g, COLORS.listMarker.b);
+        pdf.setFont('helvetica', 'normal');
+        const numberText = `${listNumber}.`;
+        pdf.text(numberText, startX + indent, yPosition);
+
+        pdf.setTextColor(COLORS.text.r, COLORS.text.g, COLORS.text.b);
+        setFontForText(pdf, content, 'normal');
+
+        const listLines = pdf.splitTextToSize(content, maxWidth - indent - 6);
+        for (let i = 0; i < listLines.length; i++) {
+          checkNewPage(lineHeights.list, pageNum);
+          pdf.text(listLines[i], startX + indent + 5, yPosition);
+          if (i < listLines.length - 1) yPosition += lineHeights.list - 0.5;
+        }
+        yPosition += lineHeights.list - 0.5;
+        break;
+      }
+
+      case 'blockquote': {
+        checkNewPage(lineHeights.blockquote + 2, pageNum);
+        pdf.setDrawColor(180, 180, 180);
+        pdf.setLineWidth(0.8);
+        pdf.line(startX + 1, yPosition - 2.5, startX + 1, yPosition + 1);
+
+        pdf.setFontSize(9);
+        pdf.setTextColor(COLORS.blockquote.r, COLORS.blockquote.g, COLORS.blockquote.b);
+        setFontForText(pdf, content, 'italic');
+
+        const quoteLines = pdf.splitTextToSize(content, maxWidth - 6);
+        for (const quoteLine of quoteLines) {
+          checkNewPage(lineHeights.blockquote, pageNum);
+          pdf.text(quoteLine, startX + 5, yPosition);
+          yPosition += lineHeights.blockquote - 0.5;
+        }
+        break;
+      }
+
+      case 'paragraph':
+      default: {
+        checkNewPage(lineHeights.paragraph, pageNum);
+        // Parse and render inline markdown (bold, italic, code, links, etc.)
+        const segments = parseInlineMarkdown(content);
+        // Enable page break for proper pagination
+        renderStyledText(segments, startX, maxWidth, pageNum, 9, true);
+        yPosition += lineHeights.paragraph - 0.5;
+        break;
+      }
+    }
   };
 
   /**
    * Render attachments section - images are displayed inline, other files show as file info
    */
-  const renderAttachments = (attachments: ExportAttachment[], pageNum: { value: number }) => {
+  const _renderAttachments = (attachments: ExportAttachment[], pageNum: { value: number }) => {
     for (const attachment of attachments) {
       const isImage = isImageExtension(attachment.file_extension);
 
