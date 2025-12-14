@@ -374,6 +374,7 @@
     "delete_task": "Delete Task",
     "searching": "Searching...",
     "press_enter_to_search": "Press Enter to search",
+    "search_hint": "Enter keywords to search conversations",
     "clear_search": "Clear",
     "mark_all_read": "Mark all as read",
     "open_from": "<> Code",

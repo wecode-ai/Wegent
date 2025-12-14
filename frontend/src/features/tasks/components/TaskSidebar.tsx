@@ -10,7 +10,22 @@ import { Button } from '@/components/ui/button';
 import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { paths } from '@/config/paths';
-import { Search, Plus, X, PanelLeftClose, PanelLeftOpen, Code, BookOpen } from 'lucide-react';
+import {
+  Search,
+  Plus,
+  X,
+  PanelLeftClose,
+  PanelLeftOpen,
+  Code,
+  BookOpen,
+  CheckCircle2,
+  XCircle,
+  StopCircle,
+  PauseCircle,
+  RotateCw,
+  Code2,
+  MessageSquare,
+} from 'lucide-react';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import TaskListSection from './TaskListSection';
@@ -19,6 +34,8 @@ import MobileSidebar from '@/features/layout/MobileSidebar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { UserFloatingMenu } from '@/features/layout/components/UserFloatingMenu';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Task, TaskType } from '@/types/api';
+import { taskApis } from '@/apis/tasks';
 
 interface TaskSidebarProps {
   isMobileSidebarOpen: boolean;
@@ -42,7 +59,7 @@ export default function TaskSidebar({
     tasks,
     loadMore,
     loadingMore,
-    searchTerm,
+    searchTerm: _searchTerm,
     setSearchTerm,
     searchTasks,
     isSearching,
@@ -52,11 +69,15 @@ export default function TaskSidebar({
     viewStatusVersion,
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const [localSearchTerm, setLocalSearchTerm] = useState(searchTerm);
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  // Custom debounce
+  // Search dialog specific state
+  const [dialogSearchTerm, setDialogSearchTerm] = useState('');
+  const [dialogSearchResults, setDialogSearchResults] = useState<Task[]>([]);
+  const [isDialogSearching, setIsDialogSearching] = useState(false);
+
+  // Custom debounce hook
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const useDebounce = <T extends (...args: any[]) => void>(callback: T, delay: number) => {
     const timeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -81,34 +102,63 @@ export default function TaskSidebar({
     return debouncedFn;
   };
 
-  // Debounce search
-  const debouncedSearch = useDebounce((term: string) => {
-    setSearchTerm(term);
-    searchTasks(term);
-  }, 500);
-
-  // Search input change
-  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setLocalSearchTerm(value);
-    debouncedSearch(value);
-  };
-
-  // Clear search
+  // Clear search for sidebar (used when clearing search results)
   const handleClearSearch = () => {
-    setLocalSearchTerm('');
     setSearchTerm('');
     searchTasks('');
+  };
+
+  // Dialog search function
+  const searchInDialog = useCallback(async (term: string) => {
+    if (!term.trim()) {
+      setDialogSearchResults([]);
+      return;
+    }
+
+    setIsDialogSearching(true);
+    try {
+      const result = await taskApis.searchTasks(term, { page: 1, limit: 20 });
+      setDialogSearchResults(result.items);
+    } catch (error) {
+      console.error('Failed to search tasks in dialog:', error);
+      setDialogSearchResults([]);
+    } finally {
+      setIsDialogSearching(false);
+    }
+  }, []);
+
+  // Debounced dialog search
+  const debouncedDialogSearch = useDebounce((term: string) => {
+    searchInDialog(term);
+  }, 300);
+
+  // Dialog search input change
+  const handleDialogSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setDialogSearchTerm(value);
+    debouncedDialogSearch(value);
+  };
+
+  // Clear dialog search
+  const handleClearDialogSearch = () => {
+    setDialogSearchTerm('');
+    setDialogSearchResults([]);
   };
 
   // Open search dialog
   const handleOpenSearchDialog = () => {
     setIsSearchDialogOpen(true);
+    // Reset dialog search state when opening
+    setDialogSearchTerm('');
+    setDialogSearchResults([]);
   };
 
   // Close search dialog
   const handleCloseSearchDialog = () => {
     setIsSearchDialogOpen(false);
+    // Clear dialog search state when closing
+    setDialogSearchTerm('');
+    setDialogSearchResults([]);
   };
 
   // Focus input when dialog opens
@@ -119,6 +169,102 @@ export default function TaskSidebar({
       }, 100);
     }
   }, [isSearchDialogOpen]);
+
+  // Handle task click in search dialog
+  const handleDialogTaskClick = (task: Task) => {
+    // Clear all stream states when switching tasks
+    clearAllStreams();
+
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams();
+      params.set('taskId', String(task.id));
+
+      // Navigate to the appropriate page based on task task_type
+      let targetPath = paths.chat.getHref(); // default to chat
+
+      if (task.task_type === 'code') {
+        targetPath = paths.code.getHref();
+      } else if (task.task_type === 'chat') {
+        targetPath = paths.chat.getHref();
+      } else {
+        // For backward compatibility: infer type from git information
+        if (task.git_repo && task.git_repo.trim() !== '') {
+          targetPath = paths.code.getHref();
+        } else {
+          targetPath = paths.chat.getHref();
+        }
+      }
+
+      router.push(`${targetPath}?${params.toString()}`);
+    }
+
+    // Close the dialog after navigation
+    handleCloseSearchDialog();
+    // Close mobile sidebar if open
+    setIsMobileSidebarOpen(false);
+  };
+
+  // Get status icon for search results
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'COMPLETED':
+        return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+      case 'FAILED':
+        return <XCircle className="w-4 h-4 text-red-500" />;
+      case 'CANCELLED':
+        return <StopCircle className="w-4 h-4 text-gray-400" />;
+      case 'RUNNING':
+        return (
+          <RotateCw
+            className="w-4 h-4 text-blue-500 animate-spin"
+            style={{ animationDuration: '2s' }}
+          />
+        );
+      case 'PENDING':
+        return <PauseCircle className="w-4 h-4 text-yellow-500" />;
+      default:
+        return <PauseCircle className="w-4 h-4 text-gray-400" />;
+    }
+  };
+
+  // Get task type icon for search results
+  const getTaskTypeIcon = (task: Task) => {
+    let taskType: TaskType | undefined = task.task_type;
+    if (!taskType) {
+      if (task.git_repo && task.git_repo.trim() !== '') {
+        taskType = 'code';
+      } else {
+        taskType = 'chat';
+      }
+    }
+
+    if (taskType === 'code') {
+      return <Code2 className="w-3.5 h-3.5 text-text-muted" />;
+    } else {
+      return <MessageSquare className="w-3.5 h-3.5 text-text-muted" />;
+    }
+  };
+
+  // Format time ago for search results
+  const formatTimeAgo = (dateString: string) => {
+    const now = new Date();
+    const date = new Date(dateString);
+    const diffMs = now.getTime() - date.getTime();
+
+    const MINUTE_MS = 60 * 1000;
+    const HOUR_MS = 60 * MINUTE_MS;
+    const DAY_MS = 24 * HOUR_MS;
+
+    if (diffMs < MINUTE_MS) {
+      return '0m';
+    } else if (diffMs < HOUR_MS) {
+      return `${Math.floor(diffMs / MINUTE_MS)}m`;
+    } else if (diffMs < DAY_MS) {
+      return `${Math.floor(diffMs / HOUR_MS)}h`;
+    } else {
+      return `${Math.floor(diffMs / DAY_MS)}d`;
+    }
+  };
 
   // Navigation buttons - always show all buttons
   const navigationButtons = [
@@ -266,42 +412,18 @@ export default function TaskSidebar({
         )}
       </div>
 
-      {/* Search Button - always shows "Search Conversation" */}
-      <div className="px-1 mb-0">
-        {isCollapsed ? (
-          <TooltipProvider>
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  onClick={handleOpenSearchDialog}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
-                  aria-label={t('tasks.search_placeholder_chat')}
-                >
-                  <Search className="h-4 w-4" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>{t('tasks.search_placeholder_chat')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : (
-          <Button
-            variant="ghost"
-            onClick={handleOpenSearchDialog}
-            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
-            size="sm"
-          >
-            <Search className="h-4 w-4 mr-0.5" />
-            {t('tasks.search_placeholder_chat')}
-          </Button>
-        )}
-      </div>
-
-      {/* Search Dialog - always shows "Search Conversation" */}
-      <Dialog open={isSearchDialogOpen} onOpenChange={setIsSearchDialogOpen}>
-        <DialogContent className="sm:max-w-md">
+      {/* Search Dialog - shows search input and results list */}
+      <Dialog
+        open={isSearchDialogOpen}
+        onOpenChange={open => {
+          if (!open) {
+            handleCloseSearchDialog();
+          } else {
+            setIsSearchDialogOpen(true);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-[678px] max-h-[440px] flex flex-col">
           <DialogHeader>
             <DialogTitle>{t('tasks.search_placeholder_chat')}</DialogTitle>
           </DialogHeader>
@@ -310,28 +432,95 @@ export default function TaskSidebar({
             <input
               ref={searchInputRef}
               type="text"
-              value={localSearchTerm}
-              onChange={handleSearchChange}
+              value={dialogSearchTerm}
+              onChange={handleDialogSearchChange}
               placeholder={t('tasks.search_placeholder_chat')}
               className="w-full pl-10 pr-10 py-2 bg-surface border border-border rounded-lg text-sm text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent"
-              onKeyDown={e => {
-                if (e.key === 'Enter') {
-                  handleCloseSearchDialog();
-                }
-              }}
             />
-            {localSearchTerm && (
+            {dialogSearchTerm && (
               <button
-                onClick={handleClearSearch}
+                onClick={handleClearDialogSearch}
                 className="absolute right-3 top-1/2 transform -translate-y-1/2"
               >
                 <X className="h-4 w-4 text-text-muted hover:text-text-primary" />
               </button>
             )}
           </div>
-          {localSearchTerm && (
-            <p className="text-xs text-text-muted mt-2">{t('tasks.press_enter_to_search')}</p>
-          )}
+
+          {/* New Conversation Button - below search input */}
+          <div
+            className="flex items-center gap-3 py-2.5 px-3 mt-2 rounded-lg hover:bg-hover cursor-pointer transition-colors border border-dashed border-border"
+            onClick={() => {
+              handleCloseSearchDialog();
+              handleNewAgentClick();
+            }}
+          >
+            <div className="flex-shrink-0">
+              <Plus className="w-3.5 h-3.5 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm text-primary font-medium">{t('tasks.new_conversation')}</p>
+            </div>
+          </div>
+
+          {/* Search Results List or Recent Tasks */}
+          <div className="flex-1 overflow-y-auto mt-3 -mx-6 px-6">
+            {isDialogSearching ? (
+              <div className="text-center py-8 text-sm text-text-muted">{t('tasks.searching')}</div>
+            ) : dialogSearchTerm && dialogSearchResults.length === 0 ? (
+              <div className="text-center py-8 text-sm text-text-muted">
+                {t('tasks.no_search_results')}
+              </div>
+            ) : dialogSearchTerm && dialogSearchResults.length > 0 ? (
+              // Show search results when there's a search term
+              <div className="space-y-1">
+                {dialogSearchResults.map(task => (
+                  <div
+                    key={task.id}
+                    className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-hover cursor-pointer transition-colors"
+                    onClick={() => handleDialogTaskClick(task)}
+                  >
+                    {/* Task type icon */}
+                    <div className="flex-shrink-0">{getTaskTypeIcon(task)}</div>
+
+                    {/* Task title and time */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-text-primary truncate">{task.title}</p>
+                      <p className="text-xs text-text-muted">{formatTimeAgo(task.created_at)}</p>
+                    </div>
+
+                    {/* Status icon */}
+                    <div className="flex-shrink-0">{getStatusIcon(task.status)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : !dialogSearchTerm && tasks.length > 0 ? (
+              // Show recent tasks when no search term (default view)
+              <div className="space-y-1">
+                {tasks.slice(0, 20).map(task => (
+                  <div
+                    key={task.id}
+                    className="flex items-center gap-3 py-2.5 px-3 rounded-lg hover:bg-hover cursor-pointer transition-colors"
+                    onClick={() => handleDialogTaskClick(task)}
+                  >
+                    {/* Task type icon */}
+                    <div className="flex-shrink-0">{getTaskTypeIcon(task)}</div>
+
+                    {/* Task title and time */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-text-primary truncate">{task.title}</p>
+                      <p className="text-xs text-text-muted">{formatTimeAgo(task.created_at)}</p>
+                    </div>
+
+                    {/* Status icon */}
+                    <div className="flex-shrink-0">{getStatusIcon(task.status)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : !dialogSearchTerm && tasks.length === 0 ? (
+              <div className="text-center py-8 text-sm text-text-muted">{t('tasks.no_tasks')}</div>
+            ) : null}
+          </div>
         </DialogContent>
       </Dialog>
 
@@ -390,7 +579,25 @@ export default function TaskSidebar({
         {/* History Title or Search Result Header */}
         {!isCollapsed && !isSearchResult && (
           <div className="px-1 pb-2 text-xs font-medium text-text-muted flex items-center justify-between">
-            <span>{t('tasks.history_title')}</span>
+            <div className="flex items-center gap-1">
+              <span>{t('tasks.history_title')}</span>
+              <TooltipProvider>
+                <Tooltip delayDuration={300}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleOpenSearchDialog}
+                      className="p-0.5 text-text-muted hover:text-text-primary transition-colors rounded"
+                      aria-label={t('tasks.search_placeholder_chat')}
+                    >
+                      <Search className="h-3.5 w-3.5" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">
+                    <p>{t('tasks.search_placeholder_chat')}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            </div>
             {/* Mark All As Read Button - show only when there are unread tasks */}
             {totalUnreadCount > 0 && (
               <button
@@ -400,6 +607,27 @@ export default function TaskSidebar({
                 {t('tasks.mark_all_read')} ({totalUnreadCount})
               </button>
             )}
+          </div>
+        )}
+        {/* Search Button for collapsed mode */}
+        {isCollapsed && !isSearchResult && (
+          <div className="px-1 pb-2 flex justify-center">
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={handleOpenSearchDialog}
+                    className="p-1 text-text-muted hover:text-text-primary transition-colors rounded hover:bg-hover"
+                    aria-label={t('tasks.search_placeholder_chat')}
+                  >
+                    <Search className="h-4 w-4" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>{t('tasks.search_placeholder_chat')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
         )}
         {!isCollapsed && isSearchResult && (
