@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useState } from 'react';
+import { useState, useContext, useMemo } from 'react';
 import { Copy, Check, Plus, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import type { FinalPromptData, Team, GitRepoInfo, GitBranch } from '@/types/api';
@@ -13,6 +13,7 @@ import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useRouter } from 'next/navigation';
 import { useToast } from '@/hooks/use-toast';
+import { TaskContext } from '../contexts/taskContext';
 
 interface FinalPromptMessageProps {
   data: FinalPromptData;
@@ -32,6 +33,56 @@ export default function FinalPromptMessage({
   const { theme } = useTheme();
   const router = useRouter();
   const [copied, setCopied] = useState(false);
+
+  // Get task context for fallback values when props are not provided
+  // This handles the case where user views clarification form in an existing task
+  // and the ChatArea's selectedTeam/selectedRepo/selectedBranch states are not yet populated
+  const taskContext = useContext(TaskContext);
+  const selectedTaskDetail = taskContext?.selectedTaskDetail ?? null;
+
+  // Compute effective values with fallback to task detail
+  const effectiveTeam = useMemo(() => {
+    if (selectedTeam) return selectedTeam;
+    // Fallback to task detail's team
+    if (selectedTaskDetail?.team) {
+      return selectedTaskDetail.team as Team;
+    }
+    return null;
+  }, [selectedTeam, selectedTaskDetail?.team]);
+
+  const effectiveRepo = useMemo((): GitRepoInfo | null => {
+    if (selectedRepo) return selectedRepo;
+    // Fallback to task detail's git info
+    if (selectedTaskDetail?.git_repo) {
+      return {
+        git_repo_id: selectedTaskDetail.git_repo_id || 0,
+        name: selectedTaskDetail.git_repo,
+        git_repo: selectedTaskDetail.git_repo,
+        git_url: selectedTaskDetail.git_url || '',
+        git_domain: selectedTaskDetail.git_domain || '',
+        private: false,
+        type: (selectedTaskDetail.git_domain?.includes('github')
+          ? 'github'
+          : selectedTaskDetail.git_domain?.includes('gitlab')
+            ? 'gitlab'
+            : 'gitee') as 'github' | 'gitlab' | 'gitee',
+      };
+    }
+    return null;
+  }, [selectedRepo, selectedTaskDetail]);
+
+  const effectiveBranch = useMemo((): GitBranch | null => {
+    if (selectedBranch) return selectedBranch;
+    // Fallback to task detail's branch
+    if (selectedTaskDetail?.branch_name) {
+      return {
+        name: selectedTaskDetail.branch_name,
+        protected: false,
+        default: false,
+      };
+    }
+    return null;
+  }, [selectedBranch, selectedTaskDetail?.branch_name]);
 
   const handleCopy = async () => {
     try {
@@ -66,7 +117,7 @@ export default function FinalPromptMessage({
   };
 
   const handleCreateTask = () => {
-    if (!selectedTeam || !selectedRepo || !selectedBranch) {
+    if (!effectiveTeam || !effectiveRepo || !effectiveBranch) {
       toast({
         title:
           t('clarification.select_context') || 'Please select Team, Repository and Branch first',
@@ -77,9 +128,9 @@ export default function FinalPromptMessage({
     // Store prompt data in sessionStorage for the new task page
     const promptData = {
       prompt: data.final_prompt,
-      teamId: selectedTeam.id,
-      repoId: selectedRepo.git_repo_id,
-      branch: selectedBranch.name,
+      teamId: effectiveTeam.id,
+      repoId: effectiveRepo.git_repo_id,
+      branch: effectiveBranch.name,
       timestamp: Date.now(),
     };
 
