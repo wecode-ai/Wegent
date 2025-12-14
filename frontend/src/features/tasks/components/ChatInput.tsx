@@ -75,25 +75,77 @@ export default function ChatInput({
     }
   }, [badge]);
 
-  // Sync contenteditable content with message prop
-  useEffect(() => {
-    if (editableRef.current && editableRef.current.textContent !== message) {
-      // Only update if different to avoid cursor jumping
-      const selection = window.getSelection();
-      const hadFocus = document.activeElement === editableRef.current;
+  // Helper function to extract text with preserved newlines from contentEditable
+  const getTextWithNewlines = useCallback((element: HTMLElement): string => {
+    let text = '';
+    const childNodes = element.childNodes;
 
-      editableRef.current.textContent = message;
+    for (let i = 0; i < childNodes.length; i++) {
+      const node = childNodes[i];
 
-      // Restore cursor to end if had focus
-      if (hadFocus && selection && message) {
-        const range = document.createRange();
-        range.selectNodeContents(editableRef.current);
-        range.collapse(false);
-        selection.removeAllRanges();
-        selection.addRange(range);
+      if (node.nodeType === Node.TEXT_NODE) {
+        text += node.textContent || '';
+      } else if (node.nodeType === Node.ELEMENT_NODE) {
+        const el = node as HTMLElement;
+        const tagName = el.tagName.toLowerCase();
+
+        // Handle <br> as newline
+        if (tagName === 'br') {
+          text += '\n';
+        } else if (tagName === 'div' || tagName === 'p') {
+          // Handle block elements (div, p) - add newline before if not first and has content
+          if (text && !text.endsWith('\n')) {
+            text += '\n';
+          }
+          text += getTextWithNewlines(el);
+        } else {
+          // For other elements, recursively get text
+          text += getTextWithNewlines(el);
+        }
       }
     }
-  }, [message]);
+
+    return text;
+  }, []);
+
+  // Helper function to set innerHTML with newlines converted to <br> tags
+  const setContentWithNewlines = useCallback((element: HTMLElement, text: string) => {
+    // Convert newlines to <br> tags for proper display in contentEditable
+    // Use innerHTML to properly render the <br> tags
+    const htmlContent = text
+      .split('\n')
+      .map(line => {
+        // Escape HTML entities to prevent XSS
+        const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        return escaped;
+      })
+      .join('<br>');
+    element.innerHTML = htmlContent;
+  }, []);
+
+  // Sync contenteditable content with message prop
+  useEffect(() => {
+    if (editableRef.current) {
+      // Get current content with newlines preserved
+      const currentContent = getTextWithNewlines(editableRef.current);
+      if (currentContent !== message) {
+        // Only update if different to avoid cursor jumping
+        const selection = window.getSelection();
+        const hadFocus = document.activeElement === editableRef.current;
+
+        setContentWithNewlines(editableRef.current, message);
+
+        // Restore cursor to end if had focus
+        if (hadFocus && selection && message) {
+          const range = document.createRange();
+          range.selectNodeContents(editableRef.current);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      }
+    }
+  }, [message, getTextWithNewlines, setContentWithNewlines]);
 
   // Auto focus the input when autoFocus is true and not disabled
   useEffect(() => {
@@ -164,11 +216,11 @@ export default function ChatInput({
   const handleInput = useCallback(
     (e: React.FormEvent<HTMLDivElement>) => {
       if (disabled) return;
-      const text = e.currentTarget.textContent || '';
+      const text = getTextWithNewlines(e.currentTarget);
       setMessage(text);
       setShowPlaceholder(!text);
     },
-    [disabled, setMessage]
+    [disabled, setMessage, getTextWithNewlines]
   );
 
   const handlePaste = useCallback(
@@ -202,12 +254,14 @@ export default function ChatInput({
       selection.removeAllRanges();
       selection.addRange(range);
 
-      // Update message state
-      const newText = editableRef.current?.textContent || '';
-      setMessage(newText);
-      setShowPlaceholder(!newText);
+      // Update message state - use getTextWithNewlines to preserve newlines
+      if (editableRef.current) {
+        const newText = getTextWithNewlines(editableRef.current);
+        setMessage(newText);
+        setShowPlaceholder(!newText);
+      }
     },
-    [disabled, setMessage]
+    [disabled, setMessage, getTextWithNewlines]
   );
 
   const handleFocus = useCallback(() => {
