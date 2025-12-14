@@ -15,6 +15,7 @@ export interface CreateTeamRequest {
   bind_mode?: ('chat' | 'code')[];
   is_active?: boolean;
   namespace?: string; // Group namespace, defaults to 'default' for personal teams
+  icon?: string; // Icon ID from preset icon library
 }
 
 export interface TeamListResponse {
