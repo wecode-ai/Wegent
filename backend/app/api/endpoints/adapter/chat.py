@@ -236,6 +236,10 @@ async def _create_task_and_subtasks(
 
         # Create task
         title = message[:50] + "..." if len(message) > 50 else message
+
+        # Auto-detect task type based on git_url presence
+        task_type = "code" if request.git_url else "chat"
+
         task_json = {
             "kind": "Task",
             "spec": {
@@ -259,7 +263,7 @@ async def _create_task_and_subtasks(
                 "namespace": "default",
                 "labels": {
                     "type": "online",
-                    "taskType": "chat",
+                    "taskType": task_type,
                     "autoDeleteExecutor": "false",
                     "source": "chat_shell",
                     **({"modelId": request.model_id} if request.model_id else {}),
