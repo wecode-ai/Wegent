@@ -13,11 +13,19 @@ RUN pip install --no-cache-dir uv -i http://mirrors.cloud.aliyuncs.com/pypi/simp
 ENV UV_INDEX_URL="http://mirrors.cloud.aliyuncs.com/pypi/simple/"
 ENV UV_EXTRA_INDEX_URL=""
 
+# OpenTelemetry configuration
+ENV OTEL_ENABLED=true
+ENV OTEL_MAX_BODY_SIZE=1048576
+ENV OTEL_CAPTURE_REQUEST_HEADERS=true
+ENV OTEL_CAPTURE_REQUEST_BODY=true
+ENV OTEL_TRACES_SAMPLER_ARG=1.0
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://wegent-otel-web.wb-plat-ide.svc.cluster.local:4317
+
 # Copy pyproject.toml and install dependencies
 COPY executor_manager/pyproject.toml /app/executor_manager/pyproject.toml
 RUN cd /app/executor_manager && uv pip install --system --no-cache -r pyproject.toml
 
-ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno","wecode-model-id":"${agent_config.env.model_id}"}}'
+ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"chat","wecode-model-id":"${model_config.model_id}"}}'
 
 ENV PYTHONPATH=/app
 COPY executor_manager /app/executor_manager
