@@ -23,7 +23,7 @@ ENV UV_EXTRA_INDEX_URL=""
 
 # Copy pyproject.toml and install dependencies
 COPY backend/pyproject.toml .
-ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno"}}'
+ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"chat"}}'
 
 # OpenTelemetry configuration
 ENV OTEL_ENABLED=true
