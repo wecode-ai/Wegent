@@ -25,7 +25,7 @@ ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://wegent-otel-web.wb-plat-ide.svc.cluster.l
 COPY executor_manager/pyproject.toml /app/executor_manager/pyproject.toml
 RUN cd /app/executor_manager && uv pip install --system --no-cache -r pyproject.toml
 
-ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"chat","wecode-model-id":"${model_config.model_id}"}}'
+ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno","wecode-model-id":"${agent_config.env.model_id}"}}'
 
 ENV PYTHONPATH=/app
 COPY executor_manager /app/executor_manager
