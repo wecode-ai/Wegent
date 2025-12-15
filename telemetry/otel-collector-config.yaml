@@ -33,6 +33,30 @@ processors:
         value: development
         action: upsert
 
+  # Filter processor to exclude unwanted traces
+  # Documentation: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/processor/filterprocessor
+  filter/traces:
+    error_mode: ignore
+    traces:
+      span:
+        # Exclude spans matching these conditions (blacklist mode)
+        # Use 'include' instead of 'exclude' for whitelist mode
+        - 'attributes["http.target"] == "/health"'
+        - 'attributes["http.target"] == "/healthz"'
+        - 'attributes["http.target"] == "/ready"'
+        - 'attributes["http.target"] == "/readyz"'
+        - 'attributes["http.target"] == "/livez"'
+        - 'attributes["http.target"] == "/metrics"'
+        - 'attributes["http.target"] == "/api/docs"'
+        - 'attributes["http.target"] == "/api/openapi.json"'
+        - 'attributes["http.target"] == "/favicon.ico"'
+        # Exclude static assets
+        - 'IsMatch(attributes["http.target"], "^/_next/.*")'
+        - 'IsMatch(attributes["http.target"], "^/static/.*")'
+        # Add more patterns as needed:
+        # - 'attributes["http.target"] == "/api/some-noisy-endpoint"'
+        # - 'IsMatch(attributes["http.target"], "^/api/internal/.*")'
+
 exporters:
   # Elasticsearch exporter for traces (long-term storage)
   elasticsearch/traces:
@@ -71,6 +95,7 @@ service:
         - otlp
       processors:
         - memory_limiter
+        - filter/traces
         - resource
         - batch
       exporters:
