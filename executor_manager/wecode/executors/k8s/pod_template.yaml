@@ -91,6 +91,29 @@ spec:
         - name: USE_BASE_IMAGE
           value: "true"
         {% endif %}
+        {% if otel_enabled %}
+        # OpenTelemetry configuration environment variables
+        - name: OTEL_ENABLED
+          value: "true"
+        - name: OTEL_SERVICE_NAME
+          value: "{{ otel_service_name }}"
+        - name: OTEL_EXPORTER_OTLP_ENDPOINT
+          value: "{{ otel_otlp_endpoint }}"
+        - name: OTEL_TRACES_SAMPLER_ARG
+          value: "{{ otel_sampler_ratio }}"
+        - name: OTEL_METRICS_ENABLED
+          value: "{{ 'true' if otel_metrics_enabled else 'false' }}"
+        - name: OTEL_CAPTURE_REQUEST_HEADERS
+          value: "{{ 'true' if otel_capture_request_headers else 'false' }}"
+        - name: OTEL_CAPTURE_REQUEST_BODY
+          value: "{{ 'true' if otel_capture_request_body else 'false' }}"
+        - name: OTEL_CAPTURE_RESPONSE_HEADERS
+          value: "{{ 'true' if otel_capture_response_headers else 'false' }}"
+        - name: OTEL_CAPTURE_RESPONSE_BODY
+          value: "{{ 'true' if otel_capture_response_body else 'false' }}"
+        - name: OTEL_MAX_BODY_SIZE
+          value: "{{ otel_max_body_size }}"
+        {% endif %}
       terminationMessagePath: /dev/termination-log
       terminationMessagePolicy: File
       volumeMounts:
