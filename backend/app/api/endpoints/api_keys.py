@@ -96,13 +96,12 @@ async def delete_api_key(
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Delete an API key."""
+    """Delete an API key (hard delete)."""
     api_key = (
         db.query(APIKey)
         .filter(
             APIKey.id == key_id,
             APIKey.user_id == current_user.id,
-            APIKey.is_active == True,
         )
         .first()
     )
@@ -113,8 +112,8 @@ async def delete_api_key(
             detail="API key not found",
         )
 
-    # Soft delete by setting is_active to False
-    api_key.is_active = False
+    # Hard delete - permanently remove the record
+    db.delete(api_key)
     db.commit()
 
     return None
