@@ -50,10 +50,18 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
-        from shared.telemetry.config import get_http_capture_settings
+        from shared.telemetry.config import (
+            get_excluded_urls_regex,
+            get_http_capture_settings,
+            get_otel_config,
+        )
 
         # Get HTTP capture settings
         capture_settings = get_http_capture_settings()
+        
+        # Get URL filtering configuration
+        otel_config = get_otel_config()
+        excluded_urls_regex = get_excluded_urls_regex()
 
         # Build hooks for capturing request/response data
         server_request_hook = None
@@ -72,18 +80,31 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
         ):
             client_response_hook = _create_client_response_hook(capture_settings, logger)
 
-        FastAPIInstrumentor.instrument_app(
-            app,
-            server_request_hook=server_request_hook,
-            client_request_hook=client_request_hook,
-            client_response_hook=client_response_hook,
-        )
+        # Configure FastAPI instrumentation with URL filtering
+        instrument_kwargs = {
+            "server_request_hook": server_request_hook,
+            "client_request_hook": client_request_hook,
+            "client_response_hook": client_response_hook,
+        }
+        
+        # Add excluded_urls if configured (blacklist mode)
+        if excluded_urls_regex and not otel_config.included_urls:
+            instrument_kwargs["excluded_urls"] = excluded_urls_regex
+            logger.info(f"  URL blacklist enabled: {len(otel_config.excluded_urls)} patterns")
+        
+        FastAPIInstrumentor.instrument_app(app, **instrument_kwargs)
         logger.info("✓ FastAPI instrumentation enabled")
 
         # Log capture settings
         if any(capture_settings.values()):
             enabled_captures = [k for k, v in capture_settings.items() if v]
             logger.info(f"  HTTP capture enabled for: {', '.join(enabled_captures)}")
+        
+        # Log URL filtering configuration
+        if otel_config.included_urls:
+            logger.info(f"  URL whitelist mode: {otel_config.included_urls}")
+        elif otel_config.excluded_urls:
+            logger.info(f"  URL blacklist: {otel_config.excluded_urls}")
 
     except ImportError:
         logger.debug("FastAPI instrumentation not available (package not installed)")
