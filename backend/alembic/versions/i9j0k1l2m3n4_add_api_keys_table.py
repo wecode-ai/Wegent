@@ -27,23 +27,21 @@ def upgrade() -> None:
     """Create api_keys table."""
     op.execute("""
     CREATE TABLE IF NOT EXISTS api_keys (
-        id INT NOT NULL AUTO_INCREMENT,
-        user_id INT NOT NULL,
-        key_hash VARCHAR(256) NOT NULL,
-        key_prefix VARCHAR(16) NOT NULL,
-        name VARCHAR(100) NOT NULL,
-        expires_at DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59',
-        last_used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        is_active TINYINT(1) NOT NULL DEFAULT 1,
-        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
+        user_id INT NOT NULL DEFAULT 0 COMMENT 'User ID who owns this API key',
+        key_hash VARCHAR(256) NOT NULL DEFAULT '' COMMENT 'SHA256 hash of the API key',
+        key_prefix VARCHAR(16) NOT NULL DEFAULT '' COMMENT 'Display prefix of the key (e.g., wg-abc123...)',
+        name VARCHAR(100) NOT NULL DEFAULT '' COMMENT 'User-defined name for this API key',
+        expires_at DATETIME NOT NULL DEFAULT '9999-12-31 23:59:59' COMMENT 'Expiration time, 9999-12-31 means never expires',
+        last_used_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Last time this key was used',
+        is_active TINYINT(1) NOT NULL DEFAULT 1 COMMENT 'Whether the key is active (1=active, 0=deleted)',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation timestamp',
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
         PRIMARY KEY (id),
-        UNIQUE KEY uk_api_keys_key_hash (key_hash),
-        KEY ix_api_keys_user_id (user_id),
-        KEY ix_api_keys_id (id),
-        CONSTRAINT fk_api_keys_user_id FOREIGN KEY (user_id)
-            REFERENCES users (id) ON DELETE CASCADE
-    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        UNIQUE KEY uniq_api_keys_key_hash (key_hash),
+        KEY idx_api_keys_user_id (user_id),
+        KEY idx_api_keys_id (id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
     """)
 
 
