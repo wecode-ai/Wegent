@@ -82,7 +82,9 @@ dependencies = [
 
     # Object storage (MinIO/S3)
     "minio>=7.2.0",
-    "fastmcp>=2.13.3",
+
+    # MCP tool calling
+    "mcp>=1.0.0",
 ]
 
 [dependency-groups]
