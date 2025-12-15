@@ -65,7 +65,7 @@ wegent-executor-manager:
 trigger_update_executor_manager:
     stage: production
     variables:
-        APP: wegent-executor-manager-web
+        APP: wegent-executor-manager-web;simulation-wegent-executor-manager-web
         SERVICE: wegent-executor-manager
         IMAGE_NAME: wegent-executor-manager-web
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
@@ -108,7 +108,7 @@ wegent-executor:
 trigger_update_executor:
     stage: production
     variables:
-        APP: wegent-executor-manager-web
+        APP: wegent-executor-manager-web;simulation-wegent-executor-manager-web
         SERVICE: wegent-executor
         IMAGE_NAME: wegent-executor
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
@@ -149,7 +149,7 @@ wegent-backend:
 trigger_update_backend_web:
     stage: production
     variables:
-        APP: wegent-backend-web
+        APP: wegent-backend-web;simulation-wegent-backend-web
         SERVICE: wegent-backend-web
         IMAGE_NAME: wegent-backend-web
         UPSTREAM_CI_PROJECT_ID: $CI_PROJECT_ID
@@ -189,7 +189,7 @@ wegent-web:
 trigger_update_front_web:
     stage: production
     variables:
-        APP: wegent-web
+        APP: wegent-web;simulation-wegent-web
         SERVICE: wegent-web
         IMAGE_NAME: wegent-web
         MASTER_BRANCH: master
