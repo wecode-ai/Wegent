@@ -468,6 +468,15 @@ class WikiService:
                     git_domain=source_domain or "",
                     repo_name=project_name,
                 )
+            elif source_type == "gitea":
+                from app.repository.gitea_provider import GiteaProvider
+
+                provider = GiteaProvider()
+                result = provider.check_user_project_access(
+                    token=git_token,
+                    git_domain=source_domain or "",
+                    repo_name=project_name,
+                )
             else:
                 return {
                     "has_access": True,  # Skip check for unsupported source types

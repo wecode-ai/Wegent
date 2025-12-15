@@ -496,6 +496,10 @@ class ChatService(ChatServiceBase):
     ) -> AsyncGenerator[Dict[str, Any], None]:
         """
         Handle tool calling flow: send request with tools, detect tool calls, execute them, send results back.
+
+        IMPORTANT: During tool calling iterations, we do NOT yield intermediate content to the user.
+        Only the final response (after all tool calls are complete) is yielded.
+        This prevents tool call arguments and intermediate "thinking" from being shown to users.
         """
         # Step 0: Flatten tools (extract from FastMCP)
         flat_tools = await self._flatten_tools(tools)
@@ -530,7 +534,7 @@ class ChatService(ChatServiceBase):
                 if not isinstance(chunk_data, dict):
                     # Backward compatibility check
                     if chunk_data:
-                        yield {"type": "content", "content": chunk_data}
+                        # Don't yield yet - we need to check if this step has tool calls
                         accumulated_content += chunk_data
                     continue
 
@@ -538,7 +542,7 @@ class ChatService(ChatServiceBase):
                     content = chunk_data.get("content", "")
                     if content:
                         accumulated_content += content
-                        yield chunk_data
+                        # Don't yield yet - we need to check if this step has tool calls
 
                 elif chunk_data.get("type") == "tool_call_chunk":
                     tc = chunk_data.get("tool_call", {})
@@ -560,8 +564,22 @@ class ChatService(ChatServiceBase):
 
             # Check for tool calls
             if not tool_calls_accumulator:
-                # No tool calls detected, we are done
+                # No tool calls detected - this is the final response
+                # Now yield the accumulated content to the user
+                if accumulated_content:
+                    yield {"type": "content", "content": accumulated_content}
                 return
+
+            # Tool calls detected - do NOT yield accumulated_content to user
+            # The accumulated_content during tool calling often contains:
+            # - Tool call arguments (e.g., {"query": "...", "limit": 5})
+            # - Intermediate "thinking" that shouldn't be shown
+            # We only log it for debugging purposes
+            if accumulated_content:
+                logger.debug(
+                    f"Tool calling step {current_depth}: suppressing intermediate content "
+                    f"({len(accumulated_content)} chars) from user output"
+                )
 
             # Reconstruct tool calls
             tool_calls = []
@@ -575,7 +593,7 @@ class ChatService(ChatServiceBase):
                     }
                 )
 
-            # Construct assistant message
+            # Construct assistant message (include content for context, but don't show to user)
             assistant_message = {
                 "role": "assistant",
                 "content": accumulated_content if accumulated_content else None,
