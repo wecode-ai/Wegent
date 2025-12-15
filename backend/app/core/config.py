@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     # Task limits
     MAX_RUNNING_TASKS_PER_USER: int = 10
 
+    # Direct chat configuration
+    MAX_CONCURRENT_CHATS: int = 50  # Maximum concurrent direct chat sessions
+    CHAT_HISTORY_EXPIRE_SECONDS: int = 7200  # Chat history expiration (2 hours)
+    CHAT_HISTORY_MAX_MESSAGES: int = 50  # Maximum messages to keep in history
+    CHAT_API_TIMEOUT_SECONDS: int = 300  # LLM API call timeout (5 minutes)
+
+    # Streaming incremental save configuration
+    STREAMING_REDIS_SAVE_INTERVAL: float = 1.0  # Redis save interval (seconds)
+    STREAMING_DB_SAVE_INTERVAL: float = 5.0  # Database save interval (seconds)
+    STREAMING_REDIS_TTL: int = 300  # Redis streaming cache TTL (seconds)
+    STREAMING_MIN_CHARS_TO_SAVE: int = 50  # Minimum characters to save on disconnect
+
     # Task append expiration (hours)
     APPEND_CHAT_TASK_EXPIRE_HOURS: int = 2
     APPEND_CODE_TASK_EXPIRE_HOURS: int = 24
@@ -72,7 +84,8 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://127.0.0.1:6379/0"
 
     # Team sharing configuration
-    TEAM_SHARE_BASE_URL: str = "http://localhost:3000"
+    TEAM_SHARE_BASE_URL: str = "http://localhost:3000/chat"
+    TASK_SHARE_BASE_URL: str = "http://localhost:3000"
     TEAM_SHARE_QUERY_PARAM: str = "teamShare"
 
     # AES encryption configuration for share tokens
@@ -93,6 +106,38 @@ class Settings(BaseSettings):
     # YAML initialization configuration
     INIT_DATA_DIR: str = "/app/init_data"
     INIT_DATA_ENABLED: bool = True
+    INIT_DATA_FORCE: bool = (
+        False  # Force re-initialize YAML resources (delete and recreate)
+    )
+
+    # default header
+    EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
+
+    # File upload configuration
+    MAX_UPLOAD_FILE_SIZE_MB: int = 50  # Maximum file size in MB
+    MAX_EXTRACTED_TEXT_LENGTH: int = 1000000  # Maximum extracted text length
+
+    # Attachment storage backend configuration
+    # Supported backends: "mysql" (default), "s3", "minio"
+    # If not configured or set to "mysql", binary data is stored in MySQL database
+    ATTACHMENT_STORAGE_BACKEND: str = "mysql"
+    # S3/MinIO configuration (only used when ATTACHMENT_STORAGE_BACKEND is "s3" or "minio")
+    ATTACHMENT_S3_ENDPOINT: str = (
+        ""  # e.g., "https://s3.amazonaws.com" or "http://minio:9000"
+    )
+    ATTACHMENT_S3_ACCESS_KEY: str = ""
+    ATTACHMENT_S3_SECRET_KEY: str = ""
+    ATTACHMENT_S3_BUCKET: str = "attachments"
+    ATTACHMENT_S3_REGION: str = "us-east-1"
+    ATTACHMENT_S3_USE_SSL: bool = True
+
+    # Web search configuration
+    WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
+    WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
+
+    # OpenTelemetry configuration is centralized in shared/telemetry/config.py
+    # Use: from shared.telemetry.config import get_otel_config
+    # All OTEL_* environment variables are read from there
 
     class Config:
         env_file = ".env"

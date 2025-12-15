@@ -36,7 +36,27 @@
     "subtask_failed": "Subtask failed",
     "unknown_error": "Unknown error",
     "bot": "Bot",
-    "application_parameters": "Application Parameters"
+    "application_parameters": "Application Parameters",
+    "status_running": "Running",
+    "status_pending": "Pending",
+    "status_processing": "Processing",
+    "status_completed": "Completed",
+    "status_failed": "Failed",
+    "status_cancelled": "Cancelled",
+    "status_cancelling": "Cancelling",
+    "recovered": "Recovered",
+    "content_recovered": "Content Recovered",
+    "content_recovered_desc": "Content has been recovered after page refresh",
+    "content_incomplete": "Response Incomplete",
+    "content_incomplete_desc": "Connection was lost, this is the partial content generated"
+  },
+  "shared_task": {
+    "share_task": "Share",
+    "sharing": "Sharing...",
+    "no_task_selected": "No task selected",
+    "no_task_selected_desc": "Please select a task to share",
+    "share_failed": "Failed to share task",
+    "share_failed_desc": "Please try again"
   },
   "settings": {
     "model": "Model",
@@ -109,10 +129,16 @@
     "execution_type": "Execution Type",
     "mcp_init_fail": "❌ MCP initialization failed. "
   },
-  "send_shortcut_ctrl": "Ctrl+Enter to send",
-  "send_shortcut_cmd": "Cmd+Enter to send",
+  "send_shortcut": "Enter to send, Shift+Enter for new line",
+  "send_shortcut_cmd_enter_mac": "⌘+Enter to send, Enter for new line",
+  "send_shortcut_cmd_enter_win": "Ctrl+Enter to send, Enter for new line",
+  "errors": {
+    "payload_too_large": "Content too large: conversation history or attachment exceeds limit, please start a new conversation or reduce attachment size"
+  },
   "clarification": {
-    "title": "Spec Clarification",
+    "title": "Smart Follow-up",
+    "show_raw": "Show Raw",
+    "show_form": "Show Form",
     "recommended": "Recommended",
     "custom_input": "Custom Input",
     "back_to_choices": "Back to Choices",
@@ -141,5 +167,40 @@
     "required_field": "This question is required",
     "additional_thoughts": "Additional Thoughts or Remarks",
     "additional_placeholder": "Enter additional thoughts, requirements, or special notes here..."
+  },
+  "export": {
+    "export": "Export",
+    "export_pdf": "Export PDF",
+    "export_docx": "Export DOCX",
+    "no_messages": "No messages to export",
+    "select_at_least_one": "Please select at least one message",
+    "selected_count": "Selected: {{count}} message(s)",
+    "select_all": "Select All",
+    "deselect_all": "Deselect All",
+    "cancel": "Cancel",
+    "confirm": "Export PDF",
+    "exporting": "Exporting...",
+    "exporting_docx": "Exporting DOCX...",
+    "success": "PDF exported successfully",
+    "docx_success": "DOCX exported successfully",
+    "failed": "Failed to export PDF",
+    "docx_failed": "Failed to export DOCX",
+    "select_from_here": "Select from here",
+    "select_below": "Select below"
+  },
+  "web_search": {
+    "enable": "Enable web search",
+    "disable": "Disable web search",
+    "select_engine": "Select search engine"
+  },
+  "clarification_toggle": {
+    "enable": "Enable smart follow-up mode",
+    "disable": "Disable smart follow-up mode"
+  },
+  "streaming_wait": {
+    "thinking": "Thinking",
+    "analyzing": "Analyzing in depth",
+    "generating_response": "Please wait, generating response",
+    "longer_than_usual": "Response is taking longer than usual"
   }
 }

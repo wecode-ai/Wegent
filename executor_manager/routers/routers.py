@@ -12,18 +12,19 @@ API routes module, defines FastAPI routes and models
 
 import os
 import time
-from executor_manager.config.config import EXECUTOR_DISPATCHER_MODE
-from fastapi import FastAPI, HTTPException, Request
-from pydantic import BaseModel
-from typing import Optional
+import uuid
+from typing import Any, Dict, Optional
 
-from shared.logger import setup_logger
+from executor_manager.executors.docker.persistent_container import (
+    PersistentContainerManager,
+)
 from executor_manager.tasks.task_processor import TaskProcessor
-from executor_manager.clients.task_api_client import TaskApiClient
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel
+from shared.logger import setup_logger
 from shared.models.task import TasksRequest
-from executor_manager.executors.dispatcher import ExecutorDispatcher
-from executor_manager.executors.docker.persistent_container import PersistentContainerManager
-from typing import Optional, Dict, Any
+from shared.telemetry.config import get_otel_config
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -41,23 +42,147 @@ api_client = TaskApiClient()
 # Create persistent container manager
 persistent_container_manager = PersistentContainerManager()
 
+# Health check paths that should skip logging to reduce overhead
+HEALTH_CHECK_PATHS = {"/", "/health"}
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    """Middleware: Log request duration and source IP"""
+    """Middleware: Log request duration, source IP, and capture OTEL data"""
+    from starlette.responses import StreamingResponse
+
+    # Skip logging for health check requests
+    if request.url.path == "/health":
+        return await call_next(request)
+
+    # Generate a unique request ID
+    request_id = str(uuid.uuid4())[:8]
+    request.state.request_id = request_id
+
     start_time = time.time()
     client_ip = request.client.host if request.client else "unknown"
-    
+
+    # Get OTEL config
+    otel_config = get_otel_config()
+
+    # Capture request body if OTEL is enabled and body capture is configured
+    request_body = None
+    if (
+        otel_config.enabled
+        and otel_config.capture_request_body
+        and request.method in ("POST", "PUT", "PATCH")
+    ):
+        try:
+            body_bytes = await request.body()
+            if body_bytes:
+                max_body_size = 4096
+                if len(body_bytes) <= max_body_size:
+                    request_body = body_bytes.decode("utf-8", errors="replace")
+                else:
+                    request_body = (
+                        body_bytes[:max_body_size].decode("utf-8", errors="replace")
+                        + f"... [truncated, total size: {len(body_bytes)} bytes]"
+                    )
+        except Exception as e:
+            logger.debug(f"Failed to capture request body: {e}")
+
+    # Add OpenTelemetry span attributes if enabled
+    if otel_config.enabled:
+        try:
+            from opentelemetry import trace
+            from shared.telemetry.context import set_request_context
+            from shared.telemetry.core import is_telemetry_enabled
+
+            if is_telemetry_enabled():
+                set_request_context(request_id)
+
+                if request_body:
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        current_span.set_attribute("http.request.body", request_body)
+        except Exception as e:
+            logger.debug(f"Failed to set OTEL context: {e}")
+
+    # Pre-request logging
+    logger.info(
+        f"request : {request.method} {request.url.path} {request.query_params} {request_id} {client_ip}"
+    )
+
     # Process request
     response = await call_next(request)
-    
+
     # Calculate duration in milliseconds
     process_time_ms = (time.time() - start_time) * 1000
-    
-    # Only log request completion with duration and IP for monitoring purposes
-    # Avoid duplicate logging since FastAPI already logs basic request info
-    logger.info(f"Request: {request.method} {request.url.path} from {client_ip} - "
-                f"Status: {response.status_code} - Time: {process_time_ms:.0f}ms")
-    
+
+    # Capture response headers and body if OTEL is enabled
+    if otel_config.enabled:
+        try:
+            from opentelemetry import trace
+            from shared.telemetry.core import is_telemetry_enabled
+
+            if is_telemetry_enabled():
+                current_span = trace.get_current_span()
+                if current_span and current_span.is_recording():
+                    # Capture response headers
+                    if otel_config.capture_response_headers:
+                        for header_name, header_value in response.headers.items():
+                            if header_name.lower() in (
+                                "authorization",
+                                "cookie",
+                                "set-cookie",
+                            ):
+                                header_value = "[REDACTED]"
+                            current_span.set_attribute(
+                                f"http.response.header.{header_name}", header_value
+                            )
+
+                    # Capture response body (only for non-streaming responses)
+                    if otel_config.capture_response_body:
+                        if not isinstance(response, StreamingResponse):
+                            try:
+                                response_body_chunks = []
+                                async for chunk in response.body_iterator:
+                                    response_body_chunks.append(chunk)
+
+                                response_body = b"".join(response_body_chunks)
+
+                                max_body_size = 4096
+                                if response_body:
+                                    if len(response_body) <= max_body_size:
+                                        body_str = response_body.decode(
+                                            "utf-8", errors="replace"
+                                        )
+                                    else:
+                                        body_str = (
+                                            response_body[:max_body_size].decode(
+                                                "utf-8", errors="replace"
+                                            )
+                                            + f"... [truncated, total size: {len(response_body)} bytes]"
+                                        )
+                                    current_span.set_attribute(
+                                        "http.response.body", body_str
+                                    )
+
+                                from starlette.responses import Response
+
+                                response = Response(
+                                    content=response_body,
+                                    status_code=response.status_code,
+                                    headers=dict(response.headers),
+                                    media_type=response.media_type,
+                                )
+                            except Exception as e:
+                                logger.debug(f"Failed to capture response body: {e}")
+        except Exception as e:
+            logger.debug(f"Failed to capture OTEL response: {e}")
+
+    # Post-request logging
+    logger.info(
+        f"response: {request.method} {request.url.path} {request_id} {client_ip} "
+        f"{response.status_code} {process_time_ms:.0f}ms"
+    )
+
+    response.headers["X-Request-ID"] = request_id
     return response
 
 
@@ -72,7 +197,9 @@ class CallbackRequest(BaseModel):
     status: Optional[str] = None
     error_message: Optional[str] = None
     result: Optional[Dict[str, Any]] = None
-    task_type: Optional[str] = None  # Task type: "validation" for validation tasks, None for regular tasks
+    task_type: Optional[str] = (
+        None  # Task type: "validation" for validation tasks, None for regular tasks
+    )
 
 
 @app.post("/executor-manager/callback")
@@ -93,12 +220,16 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
         # Check if this is a validation task callback
         # Primary check: task_type == "validation"
         # Fallback check: validation_id in result (for backward compatibility)
-        is_validation_task = request.task_type == "validation" or (request.result and request.result.get("validation_id"))
+        is_validation_task = request.task_type == "validation" or (
+            request.result and request.result.get("validation_id")
+        )
         if is_validation_task:
             await _forward_validation_callback(request)
             # For validation tasks, we only need to forward to backend for Redis update
             # No need to update task status in database (validation tasks don't exist in DB)
-            logger.info(f"Successfully processed validation callback for task {request.task_id}")
+            logger.info(
+                f"Successfully processed validation callback for task {request.task_id}"
+            )
             return {
                 "status": "success",
                 "message": f"Successfully processed validation callback for task {request.task_id}",
@@ -117,7 +248,9 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
             result=request.result,
         )
         if not success:
-            logger.warning(f"Failed to update status for task {request.task_id}: {result}")
+            logger.warning(
+                f"Failed to update status for task {request.task_id}: {result}"
+            )
         logger.info(f"Successfully processed callback for task {request.task_id}")
         return {
             "status": "success",
@@ -137,7 +270,9 @@ async def _forward_validation_callback(request: CallbackRequest):
     if not validation_id:
         # If no validation_id in result, we can't forward to backend
         # This can happen when task_type is "validation" but result is None (e.g., early failure)
-        logger.warning(f"Validation callback for task {request.task_id} has no validation_id, skipping forward")
+        logger.warning(
+            f"Validation callback for task {request.task_id} has no validation_id, skipping forward"
+        )
         return
 
     # Map callback status to validation status (case-insensitive)
@@ -179,9 +314,13 @@ async def _forward_validation_callback(request: CallbackRequest):
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(update_url, json=update_payload)
             if response.status_code == 200:
-                logger.info(f"Successfully forwarded validation callback: {validation_id} -> {validation_status}, valid={valid_value}")
+                logger.info(
+                    f"Successfully forwarded validation callback: {validation_id} -> {validation_status}, valid={valid_value}"
+                )
             else:
-                logger.warning(f"Failed to forward validation callback: {response.status_code} {response.text}")
+                logger.warning(
+                    f"Failed to forward validation callback: {response.status_code} {response.text}"
+                )
     except Exception as e:
         logger.error(f"Error forwarding validation callback: {e}")
 
@@ -208,6 +347,12 @@ async def receive_tasks(request: TasksRequest, http_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/", response_class=PlainTextResponse)
+async def root_health_check():
+    """Root health check endpoint for load balancers that check /"""
+    return "ok"
+
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -222,7 +367,9 @@ class DeleteExecutorRequest(BaseModel):
 async def delete_executor(request: DeleteExecutorRequest, http_request: Request):
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
-        logger.info(f"Received request to delete executor: {request.executor_name} from {client_ip}")
+        logger.info(
+            f"Received request to delete executor: {request.executor_name} from {client_ip}"
+        )
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.delete_executor(request.executor_name)
         return result
@@ -251,6 +398,7 @@ class CancelTaskRequest(BaseModel):
 
 class ValidateImageRequest(BaseModel):
     """Request body for validating base image compatibility"""
+
     image: str
     shell_type: str  # e.g., "ClaudeCode", "Agno"
     user_name: Optional[str] = None
@@ -260,6 +408,7 @@ class ValidateImageRequest(BaseModel):
 
 class ImageCheckResult(BaseModel):
     """Individual check result"""
+
     name: str
     version: Optional[str] = None
     status: str  # 'pass' or 'fail'
@@ -268,6 +417,7 @@ class ImageCheckResult(BaseModel):
 
 class ValidateImageResponse(BaseModel):
     """Response for image validation"""
+
     status: str  # 'submitted' for async validation
     message: str
     validation_task_id: Optional[int] = None
@@ -291,7 +441,9 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
     3. Report results back via callback with validation_result in result field
     """
     client_ip = http_request.client.host if http_request.client else "unknown"
-    logger.info(f"Received image validation request: image={request.image}, shell_type={request.shell_type}, validation_id={request.validation_id} from {client_ip}")
+    logger.info(
+        f"Received image validation request: image={request.image}, shell_type={request.shell_type}, validation_id={request.validation_id} from {client_ip}"
+    )
 
     shell_type = request.shell_type
     image = request.image
@@ -320,7 +472,10 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
     # Build validation task data
     # Use a unique negative task_id to distinguish validation tasks from regular tasks
     import time
-    validation_task_id = int(time.time() * 1000) % 1000000  # Negative ID for validation tasks
+
+    validation_task_id = (
+        int(time.time() * 1000) % 1000000
+    )  # Negative ID for validation tasks
 
     validation_task = {
         "task_id": validation_task_id,
@@ -328,10 +483,12 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
         "task_title": f"Image Validation: {request.shell_name or image}",
         "subtask_title": f"Validating {shell_type} dependencies",
         "type": "validation",
-        "bot": [{
-            "agent_name": "ImageValidator",
-            "base_image": image,  # Use the target image for validation
-        }],
+        "bot": [
+            {
+                "agent_name": "ImageValidator",
+                "base_image": image,  # Use the target image for validation
+            }
+        ],
         "user": {
             "name": request.user_name or "validator",
         },
@@ -348,7 +505,9 @@ async def validate_image(request: ValidateImageRequest, http_request: Request):
         # Submit validation task using the task processor
         task_processor.process_tasks([validation_task])
 
-        logger.info(f"Validation task submitted: task_id={validation_task_id}, validation_id={validation_id}, image={image}")
+        logger.info(
+            f"Validation task submitted: task_id={validation_task_id}, validation_id={validation_id}, image={image}"
+        )
 
         return {
             "status": "submitted",
@@ -380,7 +539,9 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
     """
     try:
         client_ip = http_request.client.host if http_request.client else "unknown"
-        logger.info(f"Received request to cancel task {request.task_id} from {client_ip}")
+        logger.info(
+            f"Received request to cancel task {request.task_id} from {client_ip}"
+        )
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.cancel_task(request.task_id)
@@ -389,8 +550,12 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
             logger.info(f"Successfully cancelled task {request.task_id}")
             return result
         else:
-            logger.warning(f"Failed to cancel task {request.task_id}: {result.get('error_msg', 'Unknown error')}")
-            raise HTTPException(status_code=400, detail=result.get("error_msg", "Failed to cancel task"))
+            logger.warning(
+                f"Failed to cancel task {request.task_id}: {result.get('error_msg', 'Unknown error')}"
+            )
+            raise HTTPException(
+                status_code=400, detail=result.get("error_msg", "Failed to cancel task")
+            )
 
     except HTTPException:
         raise
@@ -406,6 +571,7 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
 
 class ContainerCreateRequest(BaseModel):
     """Request body for creating a persistent container"""
+
     user_id: int
     shell_id: int
     shell_config: Dict[str, Any]
@@ -415,6 +581,7 @@ class ContainerCreateRequest(BaseModel):
 
 class ContainerActionRequest(BaseModel):
     """Request body for container actions (restart, stop)"""
+
     user_id: int
     shell_id: int
 
@@ -434,8 +601,14 @@ async def list_containers(
         List of container information
     """
     try:
-        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
-        logger.info(f"Received request to list containers (user_id={user_id}) from {client_ip}")
+        client_ip = (
+            http_request.client.host
+            if http_request and http_request.client
+            else "unknown"
+        )
+        logger.info(
+            f"Received request to list containers (user_id={user_id}) from {client_ip}"
+        )
 
         result = persistent_container_manager.list_persistent_containers(user_id)
         return result
@@ -462,10 +635,18 @@ async def get_container(
         Container information or 404 if not found
     """
     try:
-        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
-        logger.info(f"Received request to get container for shell {shell_id} from {client_ip}")
+        client_ip = (
+            http_request.client.host
+            if http_request and http_request.client
+            else "unknown"
+        )
+        logger.info(
+            f"Received request to get container for shell {shell_id} from {client_ip}"
+        )
 
-        container_info = persistent_container_manager.get_container_info(user_id, shell_id)
+        container_info = persistent_container_manager.get_container_info(
+            user_id, shell_id
+        )
 
         if not container_info:
             raise HTTPException(status_code=404, detail="Container not found")
@@ -494,8 +675,14 @@ async def create_container(
         Container information including status and access URL
     """
     try:
-        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
-        logger.info(f"Received request to create container for shell {request.shell_id} from {client_ip}")
+        client_ip = (
+            http_request.client.host
+            if http_request and http_request.client
+            else "unknown"
+        )
+        logger.info(
+            f"Received request to create container for shell {request.shell_id} from {client_ip}"
+        )
 
         result = persistent_container_manager.get_or_create_container(
             user_id=request.user_id,
@@ -506,7 +693,10 @@ async def create_container(
         )
 
         if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=result.get("error_message", "Failed to create container"))
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error_message", "Failed to create container"),
+            )
 
         return result
 
@@ -534,14 +724,23 @@ async def restart_container(
         Restart result
     """
     try:
-        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
-        logger.info(f"Received request to restart container for shell {shell_id} from {client_ip}")
+        client_ip = (
+            http_request.client.host
+            if http_request and http_request.client
+            else "unknown"
+        )
+        logger.info(
+            f"Received request to restart container for shell {shell_id} from {client_ip}"
+        )
 
         container_name = f"wegent-persistent-{request.user_id}-{shell_id}"
         result = persistent_container_manager.restart_container(container_name)
 
         if result.get("status") == "error":
-            raise HTTPException(status_code=500, detail=result.get("error_message", "Failed to restart container"))
+            raise HTTPException(
+                status_code=500,
+                detail=result.get("error_message", "Failed to restart container"),
+            )
 
         return result
 
@@ -569,8 +768,14 @@ async def delete_persistent_container(
         Deletion result
     """
     try:
-        client_ip = http_request.client.host if http_request and http_request.client else "unknown"
-        logger.info(f"Received request to delete container for shell {shell_id} from {client_ip}")
+        client_ip = (
+            http_request.client.host
+            if http_request and http_request.client
+            else "unknown"
+        )
+        logger.info(
+            f"Received request to delete container for shell {shell_id} from {client_ip}"
+        )
 
         container_name = f"wegent-persistent-{user_id}-{shell_id}"
         result = persistent_container_manager.delete_container(container_name)

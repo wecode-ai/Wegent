@@ -25,7 +25,7 @@ This guide provides detailed installation and configuration instructions for the
 
 #### Optional Software (for development)
 
-- **Python**: 3.9+
+- **Python**: 3.10+
 - **Node.js**: 18+
 - **MySQL**: 8.0+
 - **Redis**: 7+
@@ -84,6 +84,19 @@ REDIS_PASSWORD=your_redis_password  # Optional
 PASSWORD_KEY=your-password-key-here
 DATABASE_URL=mysql+pymysql://task_user:your_password@mysql:3306/task_manager
 
+# Attachment Storage Configuration (Optional)
+# Default: mysql (stores files in database)
+# Options: mysql, s3, minio
+ATTACHMENT_STORAGE_BACKEND=mysql
+
+# S3/MinIO Configuration (only required when using s3 or minio backend)
+# ATTACHMENT_S3_ENDPOINT=https://s3.amazonaws.com  # or http://minio:9000
+# ATTACHMENT_S3_ACCESS_KEY=your_access_key
+# ATTACHMENT_S3_SECRET_KEY=your_secret_key
+# ATTACHMENT_S3_BUCKET=attachments
+# ATTACHMENT_S3_REGION=us-east-1
+# ATTACHMENT_S3_USE_SSL=true
+
 # Frontend Configuration
 NEXT_PUBLIC_API_URL=http://localhost:8000
 
@@ -137,7 +150,7 @@ Visit the following URLs to verify installation:
 sudo apt-get update
 
 # Install Python
-sudo apt-get install python3.9 python3-pip python3-venv
+sudo apt-get install python3.10 python3-pip python3-venv
 
 # Install Node.js
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
@@ -157,7 +170,7 @@ sudo apt-get install git
 
 ```bash
 # Install using Homebrew
-brew install python@3.9 node@18 mysql redis git
+brew install python@3.10 node@18 mysql redis git
 ```
 
 ### Step 2: Setup Database
@@ -205,7 +218,7 @@ source venv/bin/activate  # Linux/macOS
 # venv\Scripts\activate  # Windows
 
 # Install dependencies
-pip install -r requirements.txt
+uv sync
 
 # Configure environment variables
 cp .env.example .env

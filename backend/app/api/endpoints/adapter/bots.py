@@ -18,18 +18,31 @@ router = APIRouter()
 def list_bots(
     page: int = Query(1, ge=1, description="Page number"),
     limit: int = Query(10, ge=1, le=100, description="Items per page"),
+    scope: str = Query(
+        "personal", description="Resource scope: personal, group, or all"
+    ),
+    group_name: str = Query(
+        None, description="Group name (required when scope is 'group')"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
-    """Get current user's Bot list (paginated)"""
+    """Get current user's Bot list (paginated) with scope support"""
     skip = (page - 1) * limit
     bot_dicts = bot_kinds_service.get_user_bots(
-        db=db, user_id=current_user.id, skip=skip, limit=limit
+        db=db,
+        user_id=current_user.id,
+        skip=skip,
+        limit=limit,
+        scope=scope,
+        group_name=group_name,
     )
     if page == 1 and len(bot_dicts) < limit:
         total = len(bot_dicts)
     else:
-        total = bot_kinds_service.count_user_bots(db=db, user_id=current_user.id)
+        total = bot_kinds_service.count_user_bots(
+            db=db, user_id=current_user.id, scope=scope, group_name=group_name
+        )
 
     # bot_dicts are already in the correct format
     return {"total": total, "items": bot_dicts}
@@ -88,9 +101,27 @@ def update_bot(
 @router.delete("/{bot_id}")
 def delete_bot(
     bot_id: int,
+    force: bool = Query(
+        False, description="Force delete even if bot has running tasks"
+    ),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """Delete Bot or deactivate if used in teams"""
-    bot_kinds_service.delete_with_user(db=db, bot_id=bot_id, user_id=current_user.id)
+    bot_kinds_service.delete_with_user(
+        db=db, bot_id=bot_id, user_id=current_user.id, force=force
+    )
     return {"message": "Bot deleted successfully"}
+
+
+@router.get("/{bot_id}/running-tasks")
+def check_bot_running_tasks(
+    bot_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Check if bot has any running tasks"""
+    result = bot_kinds_service.check_running_tasks(
+        db=db, bot_id=bot_id, user_id=current_user.id
+    )
+    return result

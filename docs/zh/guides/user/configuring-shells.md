@@ -36,8 +36,19 @@ Bot = Ghost (灵魂) + Shell (身体) + Model (大脑)
 ### 与数据库的关系
 
 Shell 资源存储在数据库的以下表中:
-- `public_shells`: 存储 Shell 配置信息
-- `kinds`: 定义资源类型为 `Shell`
+- `public_shells`: 存储系统提供的公共 Shell 配置 (所有用户共享)
+- `kinds`: 存储用户定义的自定义 Shell 配置 (用户特有)
+
+### Shell 查找顺序
+
+当 Bot 引用 Shell 时,系统按照以下顺序查找:
+1. **用户自定义 Shell**: 首先在 `kinds` 表中查找用户在指定命名空间下的 Shell
+2. **公共 Shell**: 如果未找到,则回退到 `public_shells` 表中的系统公共 Shell
+
+这允许用户:
+- 直接使用预设的公共 Shell (如 `ClaudeCode`、`Agno`、`Dify`)
+- 通过创建同名 Shell 覆盖公共 Shell
+- 定义只有自己可以访问的私有 Shell
 
 ---
 

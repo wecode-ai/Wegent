@@ -129,7 +129,9 @@ class ShellSpec(BaseModel):
         default="ephemeral",
         validation_alias=AliasChoices("workspaceType", "workspace_type"),
     )  # Workspace type: 'ephemeral' (default) or 'persistent'
-    resources: Optional[ShellResources] = None  # Resource config for persistent containers
+    resources: Optional[ShellResources] = (
+        None  # Resource config for persistent containers
+    )
 
 
 class ShellStatus(Status):
@@ -224,6 +226,9 @@ class TeamSpec(BaseModel):
 
     members: List[TeamMember]
     collaborationModel: str  # pipeline、route、coordinate、collaborate
+    bind_mode: Optional[List[str]] = None  # ['chat', 'code'] or empty list for none
+    description: Optional[str] = None  # Team description
+    icon: Optional[str] = None  # Icon ID from preset icon library
 
 
 class TeamStatus(Status):

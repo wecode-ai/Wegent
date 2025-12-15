@@ -9,7 +9,7 @@ import time
 import uuid
 
 import jwt  # pip install pyjwt
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -26,7 +26,10 @@ from app.schemas.user import (
     LoginResponse,
     UserAuthTypeResponse,
 )
-from app.services.k_batch import apply_default_resources_async
+from app.services.k_batch import (
+    apply_default_resources_async,
+    apply_default_resources_sync,
+)
 from app.services.oidc import oidc_service
 
 logger = logging.getLogger(__name__)
@@ -65,7 +68,6 @@ async def oidc_login():
 
 @router.get("/callback")
 async def oidc_callback(
-    background_tasks: BackgroundTasks,
     code: str = Query(..., description="Authorization code"),
     state: str = Query(..., description="State parameter"),
     error: str = Query(None, description="Error information"),
@@ -148,7 +150,8 @@ async def oidc_callback(
                 f"Created new OIDC user: user_id={user.id}, user_name={user.user_name}"
             )
 
-            background_tasks.add_task(apply_default_resources_async, user.id)
+            # Apply default resources synchronously for new OIDC users
+            apply_default_resources_sync(user.id)
         else:
             if user.email != email:
                 user.email = email
@@ -269,7 +272,6 @@ async def cli_oidc_login_init(request: CLILoginInitRequest):
 
 @router.get("/cli-callback")
 async def cli_oidc_callback(
-    background_tasks: BackgroundTasks,
     code: str = Query(..., description="Authorization code"),
     state: str = Query(..., description="State parameter"),
     error: str = Query(None, description="Error information"),
@@ -356,7 +358,9 @@ async def cli_oidc_callback(
             db.commit()
             db.refresh(user)
             logger.info(f"Created new OIDC user via CLI: user_name={user.user_name}")
-            background_tasks.add_task(apply_default_resources_async, user.id)
+
+            # Apply default resources synchronously for new CLI OIDC users
+            apply_default_resources_sync(user.id)
         else:
             if user.email != email:
                 user.email = email

@@ -54,6 +54,14 @@ class Subtask(Base):
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
     completed_at = Column(DateTime)
 
+    # Relationship to SubtaskAttachment (no foreign key constraint, use primaryjoin)
+    attachments = relationship(
+        "SubtaskAttachment",
+        primaryjoin="Subtask.id == foreign(SubtaskAttachment.subtask_id)",
+        backref="subtask",
+        viewonly=True,  # Read-only since no FK constraint
+    )
+
     __table_args__ = (
         {
             "sqlite_autoincrement": True,

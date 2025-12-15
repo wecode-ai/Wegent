@@ -18,7 +18,6 @@ from app.core import security
 from app.core.cache import cache_manager
 from app.models.container_instance import ContainerInstance
 from app.models.kind import Kind
-from app.models.public_shell import PublicShell
 from app.models.user import User
 from app.schemas.kind import Shell as ShellCRD
 
@@ -35,7 +34,7 @@ class UnifiedShell(BaseModel):
     """Unified shell representation for API responses"""
 
     name: str
-    type: str  # 'public' or 'user'
+    type: str  # 'public' or 'user' or 'group'
     displayName: Optional[str] = None
     shellType: str  # Agent type: 'ClaudeCode', 'Agno', 'Dify', etc.
     baseImage: Optional[str] = None
@@ -48,6 +47,7 @@ class UnifiedShell(BaseModel):
         default="ephemeral"
     )  # 'ephemeral' or 'persistent'
     resources: Optional[dict] = None  # Resource config for persistent containers
+    namespace: Optional[str] = None  # Resource namespace (group name or 'default')
 
 
 class ShellResourcesRequest(BaseModel):
@@ -152,8 +152,8 @@ class ContainerInstanceResponse(BaseModel):
     error_message: Optional[str] = None
 
 
-def _public_shell_to_unified(shell: PublicShell) -> UnifiedShell:
-    """Convert PublicShell to UnifiedShell"""
+def _public_shell_to_unified(shell: Kind) -> UnifiedShell:
+    """Convert public shell (Kind) to UnifiedShell"""
     shell_crd = ShellCRD.model_validate(shell.json)
     labels = shell_crd.metadata.labels or {}
     resources = None
@@ -173,6 +173,7 @@ def _public_shell_to_unified(shell: PublicShell) -> UnifiedShell:
         executionType=labels.get("type"),
         workspaceType=shell_crd.spec.workspaceType or "ephemeral",
         resources=resources,
+        namespace=shell.namespace,
     )
 
 
@@ -186,9 +187,13 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
             "cpu": shell_crd.spec.resources.cpu,
             "memory": shell_crd.spec.resources.memory,
         }
+
+    # Determine resource type based on namespace
+    resource_type = "group" if kind.namespace != "default" else "user"
+
     return UnifiedShell(
         name=kind.name,
-        type="user",
+        type=resource_type,
         displayName=shell_crd.metadata.displayName or kind.name,
         shellType=shell_crd.spec.shellType,
         baseImage=shell_crd.spec.baseImage,
@@ -197,18 +202,32 @@ def _user_shell_to_unified(kind: Kind) -> UnifiedShell:
         executionType=labels.get("type"),
         workspaceType=shell_crd.spec.workspaceType or "ephemeral",
         resources=resources,
+        namespace=kind.namespace,
     )
 
 
 @router.get("/unified", response_model=dict)
 def list_unified_shells(
+    scope: str = Query(
+        "personal",
+        description="Query scope: 'personal' (default), 'group', or 'all'",
+    ),
+    group_name: Optional[str] = Query(
+        None, description="Group name (required when scope='group')"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
     """
-        Get unified list of all available shells (both public and user-defined).
+    Get unified list of all available shells (both public and user-defined) with scope support.
 
-        Each shell includes a 'type' field ('public' or 'user') to identify its source.
+    Scope behavior:
+    - scope='personal' (default): personal shells + public shells
+    - scope='group': group shells + public shells (requires group_name)
+    - scope='all': personal + public + all user's groups
+
+    Each shell includes a 'type' field ('public' or 'user') to identify its source.
+
     Response:
     {
       "data": [
@@ -222,28 +241,35 @@ def list_unified_shells(
         }
       ]
     }
-        }
     """
+    from app.services.group_permission import get_user_groups
+
     result = []
 
-    # Get public shells
-    public_shells = (
-        db.query(PublicShell)
-        .filter(PublicShell.is_active == True)  # noqa: E712
-        .order_by(PublicShell.name.asc())
-        .all()
-    )
-    for shell in public_shells:
-        try:
-            result.append(_public_shell_to_unified(shell))
-        except Exception as e:
-            logger.warning(f"Failed to parse public shell {shell.name}: {e}")
+    # Determine which namespaces to query based on scope
+    namespaces_to_query = []
+    seen_names = set()
 
-    # Get user-defined shells
-    user_shells = (
+    if scope == "personal":
+        namespaces_to_query = ["default"]
+    elif scope == "group":
+        # Group shells - if group_name not provided, query all user's groups
+        if group_name:
+            namespaces_to_query = [group_name]
+        else:
+            # Query all user's groups (excluding default)
+            user_groups = get_user_groups(db, current_user.id)
+            namespaces_to_query = user_groups if user_groups else []
+    elif scope == "all":
+        namespaces_to_query = ["default"] + get_user_groups(db, current_user.id)
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid scope: {scope}")
+
+    # Get public shells (always included)
+    public_shells = (
         db.query(Kind)
         .filter(
-            Kind.user_id == current_user.id,
+            Kind.user_id == 0,
             Kind.kind == "Shell",
             Kind.namespace == "default",
             Kind.is_active == True,  # noqa: E712
@@ -251,11 +277,52 @@ def list_unified_shells(
         .order_by(Kind.name.asc())
         .all()
     )
-    for shell in user_shells:
+    for shell in public_shells:
         try:
-            result.append(_user_shell_to_unified(shell))
+            unified = _public_shell_to_unified(shell)
+            result.append(unified)
+            seen_names.add(shell.name)
         except Exception as e:
-            logger.warning(f"Failed to parse user shell {shell.name}: {e}")
+            logger.warning(f"Failed to parse public shell {shell.name}: {e}")
+
+    # Get user-defined shells from specified namespaces
+    for namespace in namespaces_to_query:
+        if namespace == "default":
+            # Query personal shells
+            user_shells = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == current_user.id,
+                    Kind.kind == "Shell",
+                    Kind.namespace == "default",
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .order_by(Kind.name.asc())
+                .all()
+            )
+        else:
+            # Query group shells
+            user_shells = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.namespace == namespace,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .order_by(Kind.name.asc())
+                .all()
+            )
+
+        for shell in user_shells:
+            try:
+                # Deduplicate by name
+                if shell.name in seen_names:
+                    continue
+                unified = _user_shell_to_unified(shell)
+                result.append(unified)
+                seen_names.add(shell.name)
+            except Exception as e:
+                logger.warning(f"Failed to parse user shell {shell.name}: {e}")
 
     return {"data": [s.model_dump() for s in result]}
 
@@ -297,10 +364,13 @@ def get_unified_shell(
 
     # Try public shells
     public_shell = (
-        db.query(PublicShell)
+        db.query(Kind)
         .filter(
-            PublicShell.name == shell_name,
-            PublicShell.is_active == True,  # noqa: E712
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
+            Kind.name == shell_name,
+            Kind.namespace == "default",
+            Kind.is_active == True,  # noqa: E712
         )
         .first()
     )
@@ -313,6 +383,7 @@ def get_unified_shell(
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
 def create_shell(
     request: ShellCreateRequest,
+    group_name: Optional[str] = Query(None, description="Group name (namespace)"),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -320,7 +391,25 @@ def create_shell(
     Create a user-defined shell.
 
     The shell must be based on an existing public shell (baseShellRef).
+    If group_name is provided, creates the shell in that group's namespace.
+    User must have Developer+ permission in the group.
     """
+    from app.schemas.namespace import GroupRole
+    from app.services.group_permission import check_group_permission
+
+    namespace = "default"
+
+    if group_name:
+        # Validate user has Developer+ permission in group
+        if not check_group_permission(
+            db, current_user.id, group_name, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{group_name}' to create shells",
+            )
+        namespace = group_name
+
     # Validate name format
     name_regex = r"^[a-z0-9][a-z0-9-]*[a-z0-9]$|^[a-z0-9]$"
     if not re.match(name_regex, request.name):
@@ -329,27 +418,32 @@ def create_shell(
             detail="Shell name must contain only lowercase letters, numbers, and hyphens",
         )
 
-    # Check if name already exists for this user
+    # Check if name already exists in this namespace
     existing = (
         db.query(Kind)
         .filter(
-            Kind.user_id == current_user.id,
             Kind.kind == "Shell",
             Kind.name == request.name,
-            Kind.namespace == "default",
+            Kind.namespace == namespace,
             Kind.is_active == True,  # noqa: E712
         )
         .first()
     )
     if existing:
-        raise HTTPException(status_code=400, detail="Shell name already exists")
+        raise HTTPException(
+            status_code=400,
+            detail=f"Shell '{request.name}' already exists in namespace '{namespace}'",
+        )
 
     # Validate baseShellRef - must be a public shell with local_engine type
     base_shell = (
-        db.query(PublicShell)
+        db.query(Kind)
         .filter(
-            PublicShell.name == request.baseShellRef,
-            PublicShell.is_active == True,  # noqa: E712
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
+            Kind.name == request.baseShellRef,
+            Kind.namespace == "default",
+            Kind.is_active == True,  # noqa: E712
         )
         .first()
     )
@@ -411,7 +505,7 @@ def create_shell(
         "kind": "Shell",
         "metadata": {
             "name": request.name,
-            "namespace": "default",
+            "namespace": namespace,
             "displayName": request.displayName,
             "labels": {"type": "local_engine"},  # User shells inherit local_engine type
         },
@@ -430,7 +524,7 @@ def create_shell(
         user_id=current_user.id,
         kind="Shell",
         name=request.name,
-        namespace="default",
+        namespace=namespace,
         json=shell_crd,
         is_active=True,
     )
@@ -452,8 +546,18 @@ def update_shell(
     Update a user-defined shell.
 
     Only user-defined shells can be updated. Public shells are read-only.
+    For group shells, user must have Developer+ permission.
     """
-    # Get user shell
+    from app.schemas.namespace import GroupRole
+
+    # Get user shell (try all accessible namespaces)
+    from app.services.group_permission import (
+        check_group_permission,
+        get_effective_role_in_group,
+        get_user_groups,
+    )
+
+    # Try personal namespace first
     shell = (
         db.query(Kind)
         .filter(
@@ -465,8 +569,41 @@ def update_shell(
         )
         .first()
     )
+
+    if not shell:
+        # Try group namespaces
+        user_groups = get_user_groups(db, current_user.id)
+        for group_name in user_groups:
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.name == shell_name,
+                    Kind.namespace == group_name,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+            if shell:
+                break
+
     if not shell:
         raise HTTPException(status_code=404, detail="User shell not found")
+
+    # Check permissions
+    if shell.namespace != "default":
+        # Group shell - check permission
+        if not check_group_permission(
+            db, current_user.id, shell.namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{shell.namespace}' to update this shell",
+            )
+    else:
+        # Personal shell - check ownership
+        if shell.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
 
     # Parse existing CRD
     shell_crd = ShellCRD.model_validate(shell.json)
@@ -506,6 +643,7 @@ def update_shell(
     # Update resources if provided
     if request.resources is not None:
         from app.schemas.kind import ShellResources
+
         shell_crd.spec.resources = ShellResources(
             cpu=request.resources.cpu,
             memory=request.resources.memory,
@@ -530,8 +668,12 @@ def delete_shell(
     Delete a user-defined shell.
 
     Only user-defined shells can be deleted. Public shells cannot be deleted.
+    For group shells, user must have Developer+ permission.
     """
-    # Get user shell
+    from app.schemas.namespace import GroupRole
+    from app.services.group_permission import check_group_permission, get_user_groups
+
+    # Try personal namespace first
     shell = (
         db.query(Kind)
         .filter(
@@ -543,12 +685,44 @@ def delete_shell(
         )
         .first()
     )
+
+    if not shell:
+        # Try group namespaces
+        user_groups = get_user_groups(db, current_user.id)
+        for group_name in user_groups:
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Shell",
+                    Kind.name == shell_name,
+                    Kind.namespace == group_name,
+                    Kind.is_active == True,  # noqa: E712
+                )
+                .first()
+            )
+            if shell:
+                break
+
     if not shell:
         raise HTTPException(status_code=404, detail="User shell not found")
 
-    # Soft delete
-    shell.is_active = False
-    db.add(shell)
+    # Check permissions
+    if shell.namespace != "default":
+        # Group shell - check permission
+        if not check_group_permission(
+            db, current_user.id, shell.namespace, GroupRole.Developer
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail=f"You need at least Developer role in group '{shell.namespace}' to delete this shell",
+            )
+    else:
+        # Personal shell - check ownership
+        if shell.user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied")
+
+    # Hard delete
+    db.delete(shell)
     db.commit()
 
     return {"message": "Shell deleted successfully"}
@@ -888,18 +1062,23 @@ async def _cleanup_validation_container(executor_name: str) -> None:
         logger.info(f"Cleaning up validation container: {executor_name}")
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.post(
-                delete_url,
-                json={"executor_name": executor_name}
+                delete_url, json={"executor_name": executor_name}
             )
 
             if response.status_code == 200:
                 result = response.json()
                 if result.get("status") == "success":
-                    logger.info(f"Successfully cleaned up validation container: {executor_name}")
+                    logger.info(
+                        f"Successfully cleaned up validation container: {executor_name}"
+                    )
                 else:
-                    logger.warning(f"Failed to cleanup validation container {executor_name}: {result.get('error_msg', 'Unknown error')}")
+                    logger.warning(
+                        f"Failed to cleanup validation container {executor_name}: {result.get('error_msg', 'Unknown error')}"
+                    )
             else:
-                logger.warning(f"Failed to cleanup validation container {executor_name}: HTTP {response.status_code}")
+                logger.warning(
+                    f"Failed to cleanup validation container {executor_name}: HTTP {response.status_code}"
+                )
     except Exception as e:
         logger.error(f"Error cleaning up validation container {executor_name}: {e}")
         # Don't raise exception - cleanup failure should not break validation status update
@@ -910,9 +1089,7 @@ async def _cleanup_validation_container(executor_name: str) -> None:
 # =====================================================================
 
 
-def _get_shell_id_by_name(
-    db: Session, user_id: int, shell_name: str
-) -> Optional[int]:
+def _get_shell_id_by_name(db: Session, user_id: int, shell_name: str) -> Optional[int]:
     """Get shell ID by name for the current user"""
     # First check user shells
     user_shell = (
@@ -929,12 +1106,15 @@ def _get_shell_id_by_name(
     if user_shell:
         return user_shell.id
 
-    # Check public shells
+    # Check public shells (user_id=0 indicates public shell)
     public_shell = (
-        db.query(PublicShell)
+        db.query(Kind)
         .filter(
-            PublicShell.name == shell_name,
-            PublicShell.is_active == True,  # noqa: E712
+            Kind.user_id == 0,
+            Kind.kind == "Shell",
+            Kind.name == shell_name,
+            Kind.namespace == "default",
+            Kind.is_active == True,  # noqa: E712
         )
         .first()
     )
@@ -1031,7 +1211,9 @@ async def restart_shell_container(
 
     # Call Executor Manager to restart container
     executor_manager_url = os.getenv("EXECUTOR_MANAGER_URL", "http://localhost:8001")
-    restart_url = f"{executor_manager_url}/executor-manager/containers/{shell_id}/restart"
+    restart_url = (
+        f"{executor_manager_url}/executor-manager/containers/{shell_id}/restart"
+    )
 
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -1098,7 +1280,9 @@ async def delete_shell_container(
 
     # If container exists in Docker, delete it via Executor Manager
     if container.container_id:
-        executor_manager_url = os.getenv("EXECUTOR_MANAGER_URL", "http://localhost:8001")
+        executor_manager_url = os.getenv(
+            "EXECUTOR_MANAGER_URL", "http://localhost:8001"
+        )
         delete_url = f"{executor_manager_url}/executor-manager/containers/{shell_id}"
 
         try:
@@ -1110,7 +1294,9 @@ async def delete_shell_container(
                         f"Failed to delete container from executor manager: {response.text}"
                     )
         except httpx.RequestError as e:
-            logger.warning(f"Failed to connect to executor manager for container deletion: {e}")
+            logger.warning(
+                f"Failed to connect to executor manager for container deletion: {e}"
+            )
             # Continue to delete database record even if executor manager call fails
 
     # Delete database record

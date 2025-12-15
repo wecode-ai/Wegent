@@ -10,16 +10,16 @@
 Callback client module, handles communication with the executor_manager callback API
 """
 
-import os
-import requests
-import time
 import json
-from typing import Dict, Any, Optional
+import os
+import time
+from typing import Any, Dict, Optional
 
+import requests
 from executor.config import config
-
 from shared.logger import setup_logger
 from shared.status import TaskStatus
+from shared.telemetry.config import get_otel_config
 from shared.utils.http_util import build_payload
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 
@@ -167,8 +167,20 @@ class CallbackClient:
         masked_data = mask_sensitive_data(data)
         logger.info("Sending callback to %s, body: %s", self.callback_url, masked_data)
 
+        # Prepare headers with trace context for distributed tracing
+        headers = {"Content-Type": "application/json"}
+        otel_config = get_otel_config()
+        if otel_config.enabled:
+            from shared.telemetry.context import inject_trace_context_to_headers
+            from shared.telemetry.core import is_telemetry_enabled
+
+            if is_telemetry_enabled():
+                headers = inject_trace_context_to_headers(headers)
+
         # Send original unmasked data
-        response = requests.post(self.callback_url, json=data, timeout=self.timeout)
+        response = requests.post(
+            self.callback_url, json=data, headers=headers, timeout=self.timeout
+        )
         return self._handle_response(response)
 
     def _handle_response(self, response: requests.Response) -> Dict[str, Any]:

@@ -4,25 +4,50 @@
 
 // Authentication Types
 
+// User Preferences
+export interface QuickAccessConfig {
+  version?: number; // User's synced system version
+  teams: number[]; // User's selected team IDs (excluding system recommended)
+}
+
+export interface UserPreferences {
+  send_key: 'enter' | 'cmd_enter';
+  quick_access?: QuickAccessConfig;
+}
+
 // User Types
+export type UserRole = 'admin' | 'user';
+export type AuthSource = 'password' | 'oidc' | 'unknown';
+
 export interface User {
   id: number;
   user_name: string;
   email: string;
   is_active: boolean;
+  role?: UserRole;
+  auth_source?: AuthSource;
   created_at: string;
   updated_at: string;
   git_info: GitInfo[];
+  preferences?: UserPreferences;
 }
 
 /** Git account information */
 export interface GitInfo {
+  /** Unique identifier for this git info entry (UUID) */
+  id?: string;
   git_domain: string;
   git_token: string;
-  /** Type: "github" | "gitlab" | "gitee" | "gerrit" */
-  type: 'github' | 'gitlab' | 'gitee' | 'gerrit';
+  /** Type: "github" | "gitlab" | "gitee" | "gitea" | "gerrit" */
+  type: 'github' | 'gitlab' | 'gitee' | 'gitea' | 'gerrit';
   /** Username (required for Gerrit) */
   user_name?: string;
+  /** Git user ID (from provider) */
+  git_id?: string;
+  /** Git login name */
+  git_login?: string;
+  /** Git email */
+  git_email?: string;
 }
 
 // Bot Types
@@ -87,6 +112,7 @@ export interface Shell {
 export interface Team {
   id: number;
   name: string;
+  namespace?: string; // Namespace for group teams (default: 'default')
   description: string;
   bots: TeamBot[];
   workflow: Record<string, string>;
@@ -97,6 +123,9 @@ export interface Team {
   share_status?: number; // 0: 个人团队, 1: 分享中, 2: 共享团队
   agent_type?: string; // agno, claude, dify, etc.
   is_mix_team?: boolean; // true if team has multiple different agent types (e.g., ClaudeCode + Agno)
+  recommended_mode?: 'chat' | 'code' | 'both'; // Recommended usage mode (for QuickAccess)
+  bind_mode?: ('chat' | 'code')[]; // Allowed modes for this team
+  icon?: string; // Icon ID from preset icon library
   user?: {
     user_name: string;
   };
@@ -208,12 +237,13 @@ export interface TaskDetail {
   result: Record<string, unknown>;
   error_message: string;
   created_at: string;
-  // updated_at: string
-  // completed_at: string
+  updated_at: string;
+  completed_at?: string;
   user: User;
   team: Team;
   subtasks: TaskDetailSubtask[];
   workbench?: WorkbenchData | null;
+  model_id?: string | null; // Model name used for this task
 }
 
 /** Subtask result structure */
@@ -251,6 +281,7 @@ export interface TaskDetailSubtask {
   updated_at: string;
   completed_at: string;
   bots: Bot[];
+  attachments?: Attachment[];
 }
 
 export interface Task {
@@ -382,4 +413,74 @@ export interface DifyParameterField {
 
 export interface DifyParametersSchema {
   user_input_form: DifyParameterField[];
+}
+
+// Attachment Types
+export type AttachmentStatus = 'uploading' | 'parsing' | 'ready' | 'failed';
+
+export interface Attachment {
+  id: number;
+  filename: string;
+  file_size: number;
+  mime_type: string;
+  status: AttachmentStatus;
+  text_length?: number | null;
+  error_message?: string | null;
+  subtask_id?: number | null;
+  file_extension: string;
+  created_at: string;
+}
+
+export interface AttachmentUploadState {
+  file: File | null;
+  attachment: Attachment | null;
+  isUploading: boolean;
+  uploadProgress: number;
+  error: string | null;
+}
+
+// Quick Access Types
+export interface QuickAccessTeam {
+  id: number;
+  name: string;
+  is_system: boolean; // True if from system recommendations
+  recommended_mode?: 'chat' | 'code' | 'both';
+  agent_type?: string;
+  icon?: string; // Icon ID from preset icon library
+}
+
+export interface QuickAccessResponse {
+  system_version: number;
+  user_version: number | null;
+  show_system_recommended: boolean; // True if user_version < system_version
+  teams: QuickAccessTeam[];
+}
+
+// Welcome Config Types (Slogan & Tips)
+export interface ChatSloganItem {
+  id: number;
+  zh: string;
+  en: string;
+  mode?: 'chat' | 'code' | 'both';
+}
+
+export interface ChatTipItem {
+  id: number;
+  zh: string;
+  en: string;
+  mode?: 'chat' | 'code' | 'both';
+}
+
+export interface WelcomeConfigResponse {
+  slogans: ChatSloganItem[];
+  tips: ChatTipItem[];
+}
+
+export interface SystemConfigResponse {
+  version: number;
+  teams: number[];
+}
+
+export interface SystemConfigUpdate {
+  teams: number[];
 }

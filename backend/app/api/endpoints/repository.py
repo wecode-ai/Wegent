@@ -20,6 +20,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+@router.post("/repositories/refresh")
+async def refresh_repositories(
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Force refresh user's repository cache.
+    Clears the Redis cache for all git domains configured by the user,
+    forcing fresh data to be fetched from Git providers on next request.
+    """
+    cleared_domains = await repository_service.clear_user_cache(current_user)
+    logger.info(
+        f"User {current_user.user_name} cleared repository cache for domains: {cleared_domains}"
+    )
+    return {
+        "success": True,
+        "message": "Repository cache cleared successfully",
+        "cleared_domains": cleared_domains,
+    }
+
+
 @router.get("/repositories", response_model=List[RepositoryResult])
 async def get_repositories(
     page: int = Query(1, ge=1, description="Page number"),
@@ -50,10 +70,12 @@ async def get_repositories(
 @router.get("/repositories/branches", response_model=List[Branch])
 async def get_branches(
     git_repo: str = Query(..., description="owner/repository_name"),
-    type: str = Query(..., description="Repository provider type (github/gitlab)"),
+    type: str = Query(
+        ..., description="Repository provider type (github/gitlab/gitee/gitea)"
+    ),
     git_domain: str = Query(
         ...,
-        description="Repository git domain, required (e.g., github.com, gitlab.com)",
+        description="Repository git domain, required (e.g., github.com, gitlab.com, gitea.example.com)",
     ),
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -69,10 +91,12 @@ async def get_branch_diff(
     git_repo: str = Query(..., description="owner/repository_name"),
     source_branch: str = Query(..., description="Source branch name"),
     target_branch: str = Query(..., description="Target branch name"),
-    type: str = Query(..., description="Repository provider type (github/gitlab)"),
+    type: str = Query(
+        ..., description="Repository provider type (github/gitlab/gitee/gitea)"
+    ),
     git_domain: str = Query(
         ...,
-        description="Repository git domain, required (e.g., github.com, gitlab.com)",
+        description="Repository git domain, required (e.g., github.com, gitlab.com, gitea.example.com)",
     ),
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),

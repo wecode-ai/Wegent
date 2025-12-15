@@ -25,7 +25,7 @@
 
 #### 可选软件（用于开发）
 
-- **Python**: 3.9+
+- **Python**: 3.10+
 - **Node.js**: 18+
 - **MySQL**: 8.0+
 - **Redis**: 7+
@@ -84,6 +84,19 @@ REDIS_PASSWORD=your_redis_password  # 可选
 PASSWORD_KEY=your-password-key-here
 DATABASE_URL=mysql+pymysql://task_user:your_password@mysql:3306/task_manager
 
+# 附件存储配置（可选）
+# 默认: mysql（将文件存储在数据库中）
+# 选项: mysql, s3, minio
+ATTACHMENT_STORAGE_BACKEND=mysql
+
+# S3/MinIO 配置（仅在使用 s3 或 minio 后端时需要）
+# ATTACHMENT_S3_ENDPOINT=https://s3.amazonaws.com  # 或 http://minio:9000
+# ATTACHMENT_S3_ACCESS_KEY=your_access_key
+# ATTACHMENT_S3_SECRET_KEY=your_secret_key
+# ATTACHMENT_S3_BUCKET=attachments
+# ATTACHMENT_S3_REGION=us-east-1
+# ATTACHMENT_S3_USE_SSL=true
+
 # 前端配置
 NEXT_PUBLIC_API_URL=http://localhost:8000
 
@@ -137,7 +150,7 @@ docker-compose logs -f
 sudo apt-get update
 
 # 安装 Python
-sudo apt-get install python3.9 python3-pip python3-venv
+sudo apt-get install python3.10 python3-pip python3-venv
 
 # 安装 Node.js
 curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
@@ -157,7 +170,7 @@ sudo apt-get install git
 
 ```bash
 # 使用 Homebrew 安装
-brew install python@3.9 node@18 mysql redis git
+brew install python@3.10 node@18 mysql redis git
 ```
 
 ### 步骤 2: 设置数据库
@@ -205,7 +218,7 @@ source venv/bin/activate  # Linux/macOS
 # venv\Scripts\activate  # Windows
 
 # 安装依赖
-pip install -r requirements.txt
+uv sync
 
 # 配置环境变量
 cp .env.example .env

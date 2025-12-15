@@ -17,7 +17,6 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from app.core.config import settings
 from app.models.kind import Kind
-from app.models.public_model import PublicModel
 from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Model, Shell, Task, Team, Workspace
@@ -246,7 +245,7 @@ class ExecutorKindsService(
         self, db: Session, agent_config: Any
     ) -> Any:
         """
-        Get model configuration from PublicModel table by private_model name in agent_config
+        Get model configuration from kinds table (public models) by private_model name in agent_config
         """
         # Check if agent_config is a dictionary
         if not isinstance(agent_config, dict):
@@ -261,9 +260,7 @@ class ExecutorKindsService(
 
         try:
             model_name = private_model_name.strip()
-            public_model = (
-                db.query(PublicModel).filter(PublicModel.name == model_name).first()
-            )
+            public_model = db.query(Kind).filter(Kind.name == model_name).first()
 
             if public_model and public_model.json:
                 model_config = public_model.json.get("spec", {}).get("modelConfig", {})
@@ -449,20 +446,21 @@ class ExecutorKindsService(
                 shell_id = None
                 shell_resources = None
                 if not shell:
-                    from app.models.public_shell import PublicShell
 
                     public_shell = (
-                        db.query(PublicShell)
+                        db.query(Kind)
                         .filter(
-                            PublicShell.name == bot_crd.spec.shellRef.name,
-                            PublicShell.is_active == True,
+                            Kind.name == bot_crd.spec.shellRef.name,
+                            Kind.is_active == True,
                         )
                         .first()
                     )
                     if public_shell and public_shell.json:
                         shell_crd_temp = Shell.model_validate(public_shell.json)
                         shell_base_image = shell_crd_temp.spec.baseImage
-                        shell_workspace_type = shell_crd_temp.spec.workspaceType or "ephemeral"
+                        shell_workspace_type = (
+                            shell_crd_temp.spec.workspaceType or "ephemeral"
+                        )
                         shell_id = public_shell.id
                         if shell_crd_temp.spec.resources:
                             shell_resources = {
@@ -498,12 +496,11 @@ class ExecutorKindsService(
                     if not model:
 
                         public_model = (
-                            db.query(PublicModel)
+                            db.query(Kind)
                             .filter(
-                                PublicModel.name == bot_crd.spec.modelRef.name,
-                                PublicModel.namespace
-                                == bot_crd.spec.modelRef.namespace,
-                                PublicModel.is_active == True,
+                                Kind.name == bot_crd.spec.modelRef.name,
+                                Kind.namespace == bot_crd.spec.modelRef.namespace,
+                                Kind.is_active == True,
                             )
                             .first()
                         )
@@ -536,7 +533,7 @@ class ExecutorKindsService(
                     if shell_crd.spec.baseImage:
                         shell_base_image = shell_crd.spec.baseImage
                     # Extract workspaceType and resources from user-defined shell
-                    if hasattr(shell, 'id'):
+                    if hasattr(shell, "id"):
                         shell_id = shell.id
                     shell_workspace_type = shell_crd.spec.workspaceType or "ephemeral"
                     if shell_crd.spec.resources:
@@ -656,8 +653,8 @@ class ExecutorKindsService(
                             else:
                                 # Fallback to public_models table (legacy)
                                 model_row = (
-                                    db.query(PublicModel)
-                                    .filter(PublicModel.name == model_name_to_use)
+                                    db.query(Kind)
+                                    .filter(Kind.name == model_name_to_use)
                                     .first()
                                 )
                                 if model_row and model_row.json:

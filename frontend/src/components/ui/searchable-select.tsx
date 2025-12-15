@@ -42,7 +42,9 @@ interface SearchableSelectProps {
   triggerClassName?: string;
   renderTriggerValue?: (item: SearchableSelectItem | undefined) => React.ReactNode;
   footer?: React.ReactNode;
+  listFooter?: React.ReactNode; // Content rendered at the end of the list (after items, before footer)
   showChevron?: boolean; // Whether to show chevron icon
+  defaultOpen?: boolean; // Whether to open the dropdown by default
 }
 
 export function SearchableSelect({
@@ -62,9 +64,11 @@ export function SearchableSelect({
   triggerClassName,
   renderTriggerValue,
   footer,
+  listFooter,
   showChevron = false,
+  defaultOpen = false,
 }: SearchableSelectProps) {
-  const [isOpen, setIsOpen] = React.useState(false);
+  const [isOpen, setIsOpen] = React.useState(defaultOpen);
   const [searchValue, setSearchValue] = React.useState('');
 
   // Find selected item
@@ -126,22 +130,30 @@ export function SearchableSelect({
           className={cn(
             'p-0 w-auto min-w-[var(--radix-popover-trigger-width)] max-w-[90vw] border border-border bg-base',
             'shadow-xl rounded-xl overflow-hidden',
+            'max-h-[var(--radix-popover-content-available-height,400px)]',
+            'flex flex-col',
             contentClassName
           )}
           align="start"
           sideOffset={4}
+          collisionPadding={8}
+          avoidCollisions={true}
+          sticky="partial"
         >
-          <Command className="border-0" shouldFilter={!onSearchChange}>
+          <Command
+            className="border-0 flex flex-col flex-1 min-h-0 overflow-hidden"
+            shouldFilter={!onSearchChange}
+          >
             <CommandInput
               placeholder={searchPlaceholder}
               value={searchValue}
               onValueChange={handleSearchValueChange}
               className={cn(
-                'h-9 rounded-none border-b border-border',
+                'h-9 rounded-none border-b border-border flex-shrink-0',
                 'placeholder:text-text-muted text-sm'
               )}
             />
-            <CommandList className="max-h-[300px] overflow-y-auto">
+            <CommandList className="min-h-[36px] max-h-[200px] overflow-y-auto flex-1">
               {error ? (
                 <div className="py-4 px-3 text-center text-sm text-error">{error}</div>
               ) : items.length === 0 ? (
@@ -181,10 +193,7 @@ export function SearchableSelect({
                         {item.content ? (
                           <div className="flex-1 min-w-0">{item.content}</div>
                         ) : (
-                          <span
-                            className="flex-1 break-all whitespace-pre-wrap"
-                            style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
-                          >
+                          <span className="flex-1 min-w-0 truncate" title={item.label}>
                             {item.label}
                           </span>
                         )}
@@ -194,6 +203,7 @@ export function SearchableSelect({
                 </>
               )}
             </CommandList>
+            {listFooter}
           </Command>
           {footer}
         </PopoverContent>

@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { apiClient } from './client';
+import { getToken } from './user';
 import { Task, PaginationParams, TaskStatus, SuccessMessage, TaskDetail } from '../types/api';
 
 // Task Request/Response Types
@@ -80,6 +81,73 @@ export interface BranchDiffResponse {
   diff_url: string;
   html_url: string;
   permalink_url: string;
+}
+
+// Task Share Types
+export interface TaskShareResponse {
+  share_url: string;
+  share_token: string;
+}
+
+export interface TaskShareInfo {
+  user_id: number;
+  user_name: string;
+  task_id: number;
+  task_title: string;
+  task_type?: string; // 'chat' or 'code'
+  git_repo_id?: number; // Original task's repository ID (for code tasks)
+  git_repo?: string; // Original task's repository full name (e.g., "owner/repo")
+  git_domain?: string; // Original task's git domain (e.g., "github.com")
+  git_type?: string; // Original task's git type: "github", "gitlab", "gitee"
+  branch_name?: string; // Original task's branch name (for code tasks)
+}
+
+export interface JoinSharedTaskRequest {
+  share_token: string;
+  team_id?: number; // Optional: if not provided, backend will use user's first team
+  model_id?: string; // Model name (not database ID)
+  force_override_bot_model?: boolean; // Force override bot's predefined model
+  // Complete repository information (for code tasks)
+  git_repo_id?: number; // Git repository ID
+  git_url?: string; // Git repository URL
+  git_repo?: string; // Repository full name (e.g., "owner/repo")
+  git_domain?: string; // Git domain (e.g., "github.com")
+  branch_name?: string; // Git branch name
+}
+
+export interface JoinSharedTaskResponse {
+  message: string;
+  task_id: number; // The copied task ID
+}
+
+export interface PublicAttachmentData {
+  id: number;
+  original_filename: string;
+  file_extension: string;
+  file_size: number;
+  mime_type: string;
+  extracted_text: string;
+  text_length: number;
+  status: string;
+}
+
+export interface PublicSubtaskData {
+  id: number;
+  role: string;
+  prompt: string;
+  result?: unknown;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  attachments: PublicAttachmentData[];
+}
+
+export interface PublicSharedTaskResponse {
+  task_title: string;
+  sharer_name: string;
+  sharer_id: number;
+  subtasks: PublicSubtaskData[];
+  created_at: string;
 }
 
 // Task Services
@@ -168,5 +236,80 @@ export const taskApis = {
     query.append('type', params.type);
     query.append('git_domain', params.git_domain);
     return apiClient.get(`/git/repositories/diff?${query}`);
+  },
+
+  // Share task - generate share link
+  shareTask: async (taskId: number): Promise<TaskShareResponse> => {
+    return apiClient.post(`/tasks/${taskId}/share`, {});
+  },
+
+  // Get task share info - doesn't require authentication
+  getTaskShareInfo: async (shareToken: string): Promise<TaskShareInfo> => {
+    const query = new URLSearchParams();
+    query.append('share_token', shareToken);
+    return apiClient.get(`/tasks/share/info?${query}`);
+  },
+
+  // Join shared task - copy task to user's task list
+  joinSharedTask: async (request: JoinSharedTaskRequest): Promise<JoinSharedTaskResponse> => {
+    return apiClient.post('/tasks/share/join', request);
+  },
+
+  // Get public shared task - doesn't require authentication
+  // Use native fetch to avoid authentication interceptor
+  getPublicSharedTask: async (token: string): Promise<PublicSharedTaskResponse> => {
+    const query = new URLSearchParams();
+    query.append('token', token);
+    const response = await fetch(`/api/tasks/share/public?${query}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMsg = errorText;
+      try {
+        const json = JSON.parse(errorText);
+        if (json && typeof json.detail === 'string') {
+          errorMsg = json.detail;
+        }
+      } catch {
+        // Not JSON, use original text
+      }
+      throw new Error(errorMsg);
+    }
+
+    return response.json();
+  },
+
+  /**
+   * Export task to DOCX format
+   */
+  exportTaskDocx: async (taskId: number): Promise<Blob> => {
+    const token = getToken();
+    const response = await fetch(`/api/tasks/${taskId}/export/docx`, {
+      method: 'GET',
+      headers: {
+        ...(token && { Authorization: `Bearer ${token}` }),
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      let errorMsg = errorText;
+      try {
+        const json = JSON.parse(errorText);
+        if (json && typeof json.detail === 'string') {
+          errorMsg = json.detail;
+        }
+      } catch {
+        // Not JSON, use original text
+      }
+      throw new Error(errorMsg);
+    }
+
+    return response.blob();
   },
 };

@@ -45,7 +45,9 @@ GRACEFUL_SHUTDOWN_TIMEOUT = int(os.environ.get("GRACEFUL_SHUTDOWN_TIMEOUT", "10"
 
 # Workspace cleanup configuration
 TASK_WORKSPACE_MAX_AGE_HOURS = int(os.environ.get("TASK_WORKSPACE_MAX_AGE_HOURS", "24"))
-FEATURE_WORKSPACE_MAX_AGE_DAYS = int(os.environ.get("FEATURE_WORKSPACE_MAX_AGE_DAYS", "7"))
+FEATURE_WORKSPACE_MAX_AGE_DAYS = int(
+    os.environ.get("FEATURE_WORKSPACE_MAX_AGE_DAYS", "7")
+)
 
 # Custom instruction files configuration
 # These files will be automatically loaded from the project root and merged with systemPrompt
@@ -53,8 +55,11 @@ FEATURE_WORKSPACE_MAX_AGE_DAYS = int(os.environ.get("FEATURE_WORKSPACE_MAX_AGE_D
 # Files are merged in the order specified in this list
 # Non-existent files are silently skipped
 CUSTOM_INSTRUCTION_FILES = os.getenv(
-    "CUSTOM_INSTRUCTION_FILES",
-    ".cursorrules,.windsurfrules"
+    "CUSTOM_INSTRUCTION_FILES", ".cursorrules,.windsurfrules"
 ).split(",")
+
+# OpenTelemetry configuration is centralized in shared/telemetry/config.py
+# Use: from shared.telemetry.config import get_otel_config
+# All OTEL_* environment variables are read from there
 
 CUSTOM_CONFIG = load_custom_config()

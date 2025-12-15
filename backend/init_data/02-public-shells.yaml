@@ -14,7 +14,7 @@ metadata:
 spec:
   shellType: ClaudeCode
   supportModel: []
-  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
+  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1
 status:
   state: Available
 ---
@@ -28,7 +28,7 @@ metadata:
 spec:
   shellType: Agno
   supportModel: []
-  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
+  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1
 status:
   state: Available
 ---
@@ -42,5 +42,22 @@ metadata:
 spec:
   shellType: Dify
   supportModel: []
+status:
+  state: Available
+---
+apiVersion: agent.wecode.io/v1
+kind: Shell
+metadata:
+  name: Chat
+  namespace: default
+  displayName: Chat
+  labels:
+    type: direct_chat
+spec:
+  shellType: Chat
+  supportModel:
+    - claude
+    - openai
+    - gemini
 status:
   state: Available

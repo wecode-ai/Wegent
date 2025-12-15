@@ -529,16 +529,16 @@ find /path/to/workspace -type d -mtime +90 -exec rm -rf {} \;
 pip install --upgrade pip setuptools wheel
 
 # 2. 使用镜像源
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+uv pip install --index-url https://pypi.tuna.tsinghua.edu.cn/simple -r pyproject.toml
 
 # 3. 分别安装依赖
-pip install -r requirements.txt --no-deps
-pip install <specific-package>
+uv pip install --no-deps -r pyproject.toml
+uv pip install <specific-package>
 
 # 4. 使用 conda（如果 pip 失败）
-conda create -n wegent python=3.9
+conda create -n wegent python=3.10
 conda activate wegent
-pip install -r requirements.txt
+uv sync
 ```
 
 ### 问题 15: Node.js 依赖安装失败

@@ -5,7 +5,7 @@
 import { apiClient } from './client';
 
 // Shell Types
-export type ShellTypeEnum = 'public' | 'user';
+export type ShellTypeEnum = 'public' | 'user' | 'group';
 export type WorkspaceType = 'ephemeral' | 'persistent';
 
 export interface ShellResources {
@@ -15,7 +15,7 @@ export interface ShellResources {
 
 export interface UnifiedShell {
   name: string;
-  type: ShellTypeEnum; // 'public' or 'user' - identifies shell source
+  type: ShellTypeEnum; // 'public', 'user', or 'group' - identifies shell source
   displayName?: string | null;
   shellType: string; // Agent type: 'ClaudeCode' | 'Agno' | 'Dify'
   baseImage?: string | null;
@@ -24,6 +24,7 @@ export interface UnifiedShell {
   executionType?: 'local_engine' | 'external_api' | null; // Shell execution type
   workspaceType?: WorkspaceType | null; // 'ephemeral' or 'persistent'
   resources?: ShellResources | null; // Resource configuration for persistent containers
+  namespace?: string; // Resource namespace (group name or 'default')
 }
 
 export interface UnifiedShellListResponse {
@@ -93,12 +94,25 @@ export interface ValidationStatusResponse {
 // Shell Services
 export const shellApis = {
   /**
-   * Get unified list of all available shells (both public and user-defined)
+   * Get unified list of all available shells (public, user-defined, and group shells)
    *
-   * Each shell includes a 'type' field ('public' or 'user') to identify its source.
+   * Each shell includes a 'type' field ('public', 'user', or 'group') to identify its source.
+   * @param scope - Resource scope: 'personal', 'group', or 'all'
+   * @param groupName - Group name (required when scope is 'group')
    */
-  async getUnifiedShells(): Promise<UnifiedShellListResponse> {
-    return apiClient.get('/shells/unified');
+  async getUnifiedShells(
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string
+  ): Promise<UnifiedShellListResponse> {
+    const params = new URLSearchParams();
+    if (scope) {
+      params.append('scope', scope);
+    }
+    if (groupName) {
+      params.append('group_name', groupName);
+    }
+    const queryString = params.toString();
+    return apiClient.get(`/shells/unified${queryString ? `?${queryString}` : ''}`);
   },
 
   /**
@@ -120,9 +134,16 @@ export const shellApis = {
 
   /**
    * Create a new user-defined shell
+   * @param request - Shell creation data
+   * @param groupName - Optional group name to create shell in group scope
    */
-  async createShell(request: ShellCreateRequest): Promise<UnifiedShell> {
-    return apiClient.post('/shells', request);
+  async createShell(request: ShellCreateRequest, groupName?: string): Promise<UnifiedShell> {
+    const params = new URLSearchParams();
+    if (groupName) {
+      params.append('group_name', groupName);
+    }
+    const queryString = params.toString();
+    return apiClient.post(`/shells${queryString ? `?${queryString}` : ''}`, request);
   },
 
   /**

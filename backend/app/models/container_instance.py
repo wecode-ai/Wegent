@@ -28,8 +28,12 @@ class ContainerInstance(Base):
     user_id = Column(BigInteger, nullable=False, index=True)
     shell_id = Column(BigInteger, nullable=False, index=True)
     container_id = Column(String(64), unique=True, nullable=True)  # Docker container ID
-    access_url = Column(String(500), nullable=True)  # Container access URL (WebSocket/API)
-    status = Column(String(20), nullable=False, default="pending")  # pending/creating/running/stopped/error
+    access_url = Column(
+        String(500), nullable=True
+    )  # Container access URL (WebSocket/API)
+    status = Column(
+        String(20), nullable=False, default="pending"
+    )  # pending/creating/running/stopped/error
     repo_url = Column(String(500), nullable=True)  # Cloned repository URL
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

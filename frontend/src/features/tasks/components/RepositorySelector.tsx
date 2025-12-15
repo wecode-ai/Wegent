@@ -25,24 +25,29 @@ function truncateMiddle(text: string, maxLength: number, startChars = 8, endChar
 }
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
 import { FiGithub } from 'react-icons/fi';
-import { Loader2 } from 'lucide-react';
+import { Loader2, RefreshCw } from 'lucide-react';
+import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { GitRepoInfo, TaskDetail } from '@/types/api';
 import { useUser } from '@/features/common/UserContext';
 import { useRouter } from 'next/navigation';
-import Modal from '@/features/common/Modal';
-import { Button } from '@/components/ui/button';
 import { paths } from '@/config/paths';
 import { useTranslation } from 'react-i18next';
 import { getLastRepo } from '@/utils/userPreferences';
 import { githubApis } from '@/apis/github';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 interface RepositorySelectorProps {
   selectedRepo: GitRepoInfo | null;
   handleRepoChange: (repo: GitRepoInfo | null) => void;
   disabled: boolean;
   selectedTaskDetail?: TaskDetail | null;
+  /** When true, the selector will take full width of its container */
+  fullWidth?: boolean;
+  /** When true, display only icon without text (for responsive collapse) */
+  compact?: boolean;
 }
 
 export default function RepositorySelector({
@@ -50,16 +55,20 @@ export default function RepositorySelector({
   handleRepoChange,
   disabled,
   selectedTaskDetail,
+  fullWidth = false,
+  compact = false,
 }: RepositorySelectorProps) {
   const { toast } = useToast();
+  const { t } = useTranslation();
   const { user } = useUser();
   const router = useRouter();
   const [repos, setRepos] = useState<GitRepoInfo[]>([]);
   const [cachedRepos, setCachedRepos] = useState<GitRepoInfo[]>([]); // Cache initially loaded repositories
   const [loading, setLoading] = useState<boolean>(false);
   const [isSearching, setIsSearching] = useState<boolean>(false); // User is searching (includes waiting period)
+  const [isRefreshing, setIsRefreshing] = useState<boolean>(false); // Refreshing repository cache
+  const [currentSearchQuery, setCurrentSearchQuery] = useState<string>(''); // Current search query for refresh
   const [error, setError] = useState<string | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
   const searchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // Check if user has git_info configured
   const hasGitInfo = () => {
@@ -153,6 +162,9 @@ export default function RepositorySelector({
    */
   const handleSearchChange = useCallback(
     (query: string) => {
+      // Track current search query for refresh functionality
+      setCurrentSearchQuery(query);
+
       // Clear previous timer
       if (searchTimeoutRef.current) {
         clearTimeout(searchTimeoutRef.current);
@@ -179,6 +191,41 @@ export default function RepositorySelector({
     },
     [searchLocalRepos, searchRemoteRepos, cachedRepos]
   );
+
+  /**
+   * Handle refresh cache button click
+   * Clears backend Redis cache and reloads repository list
+   */
+  const handleRefreshCache = useCallback(async () => {
+    if (isRefreshing) return; // Prevent duplicate clicks
+
+    setIsRefreshing(true);
+    try {
+      // 1. Call backend API to clear cache
+      await githubApis.refreshRepositories();
+
+      // 2. Reload data based on current search state
+      if (currentSearchQuery.trim()) {
+        // Has search query: re-execute search
+        const results = await githubApis.searchRepositories(currentSearchQuery, {
+          fullmatch: false,
+          timeout: 30,
+        });
+        setRepos(results);
+      } else {
+        // No search query: reload all repositories
+        const data = await githubApis.getRepositories();
+        setRepos(data);
+        setCachedRepos(data);
+      }
+
+      toast({ title: t('branches.refresh_success') });
+    } catch {
+      toast({ variant: 'destructive', title: t('branches.refresh_failed') });
+    } finally {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing, currentSearchQuery, toast, t]);
 
   // Cleanup timer
   useEffect(() => {
@@ -341,11 +388,9 @@ export default function RepositorySelector({
   /**
    * Navigate to settings page to configure git integration
    */
-  const handleModalClick = () => {
-    setIsModalOpen(false);
+  const handleIntegrationClick = () => {
     router.push(paths.settings.integrations.getHref());
   };
-  const { t } = useTranslation();
   const isMobile = useIsMobile();
 
   // Convert repos to SearchableSelectItem format
@@ -373,14 +418,145 @@ export default function RepositorySelector({
     return items;
   }, [repos, selectedRepo]);
 
+  // Tooltip content for repository selector
+  // In compact mode, show selected repo name in tooltip
+  const tooltipContent =
+    compact && selectedRepo
+      ? `${t('repos.repository_tooltip', '选择代码仓库')}: ${selectedRepo.git_repo}`
+      : t('repos.repository_tooltip', '选择代码仓库');
+
+  // In compact mode, only show the icon button
+  if (compact) {
+    return (
+      <div className="flex items-center min-w-0" data-tour="repo-selector">
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                disabled={disabled || loading}
+                className={cn(
+                  'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                  'transition-colors',
+                  'text-text-muted hover:text-text-primary hover:bg-muted',
+                  loading ? 'animate-pulse' : '',
+                  'focus:outline-none focus:ring-0',
+                  'disabled:cursor-not-allowed disabled:opacity-50'
+                )}
+                onClick={() => {
+                  const trigger = document.querySelector(
+                    '[data-repo-trigger]'
+                  ) as HTMLButtonElement;
+                  trigger?.click();
+                }}
+              >
+                <FiGithub className="w-4 h-4 flex-shrink-0" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{tooltipContent}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+        {/* Hidden SearchableSelect for popover functionality */}
+        <div className="hidden">
+          <SearchableSelect
+            value={selectedRepo?.git_repo_id.toString()}
+            onValueChange={handleChange}
+            onSearchChange={handleSearchChange}
+            disabled={disabled || loading}
+            placeholder={t('branches.select_repository')}
+            searchPlaceholder={t('branches.search_repository')}
+            items={selectItems}
+            loading={loading}
+            error={error}
+            emptyText={t('branches.select_repository')}
+            noMatchText={t('branches.no_match')}
+            contentClassName="max-w-[280px]"
+            footer={
+              <div className="border-t border-border bg-base flex items-center justify-between px-2.5 py-2 text-xs text-text-secondary">
+                <div
+                  className="cursor-pointer group flex items-center space-x-2 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
+                  onClick={handleIntegrationClick}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      handleIntegrationClick();
+                    }
+                  }}
+                >
+                  <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                  <span className="font-medium group-hover:text-text-primary">
+                    {t('branches.configure_integration')}
+                  </span>
+                </div>
+                <div
+                  className="cursor-pointer flex items-center gap-1.5 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1.5 py-0.5"
+                  onClick={e => {
+                    e.stopPropagation();
+                    handleRefreshCache();
+                  }}
+                  role="button"
+                  tabIndex={0}
+                  title={t('branches.load_more')}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      handleRefreshCache();
+                    }
+                  }}
+                >
+                  <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+                  <span className="text-xs">
+                    {isRefreshing ? t('branches.refreshing') : t('actions.refresh')}
+                  </span>
+                </div>
+              </div>
+            }
+          />
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div
-      className="flex items-center space-x-2 min-w-0"
+      className={cn('flex items-center min-w-0', fullWidth && 'w-full')}
       data-tour="repo-selector"
-      style={{ maxWidth: isMobile ? 200 : 280 }}
+      style={fullWidth ? undefined : { maxWidth: isMobile ? 200 : 280 }}
     >
-      <FiGithub className="w-3 h-3 text-text-muted flex-shrink-0 ml-1" />
-      <div className="relative flex items-center gap-2 min-w-0 flex-1">
+      <TooltipProvider>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              disabled={disabled || loading}
+              className={cn(
+                'flex items-center gap-1 min-w-0 rounded-md px-2 py-1',
+                'transition-colors',
+                'text-text-muted hover:text-text-primary hover:bg-muted',
+                loading ? 'animate-pulse' : '',
+                'focus:outline-none focus:ring-0',
+                'disabled:cursor-not-allowed disabled:opacity-50'
+              )}
+              onClick={() => {
+                // Trigger the SearchableSelect to open
+                const trigger = document.querySelector('[data-repo-trigger]') as HTMLButtonElement;
+                trigger?.click();
+              }}
+            >
+              <FiGithub className="w-4 h-4 flex-shrink-0" />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="top">
+            <p>{tooltipContent}</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
+      <div className={cn('relative flex items-center gap-2 min-w-0 flex-1', fullWidth && 'w-full')}>
         <SearchableSelect
           value={selectedRepo?.git_repo_id.toString()}
           onValueChange={handleChange}
@@ -393,38 +569,62 @@ export default function RepositorySelector({
           error={error}
           emptyText={t('branches.select_repository')}
           noMatchText={t('branches.no_match')}
+          className={fullWidth ? 'w-full' : undefined}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
-          contentClassName="max-w-[280px]"
+          contentClassName={fullWidth ? 'max-w-[400px]' : 'max-w-[280px]'}
           renderTriggerValue={item => (
             <span className="block" title={item?.label}>
-              {item?.label ? truncateMiddle(item.label, isMobile ? 20 : 25) : ''}
+              {item?.label ? truncateMiddle(item.label, fullWidth ? 60 : isMobile ? 20 : 25) : ''}
             </span>
           )}
+          footer={
+            <div className="border-t border-border bg-base flex items-center justify-between px-2.5 py-2 text-xs text-text-secondary">
+              <div
+                className="cursor-pointer group flex items-center space-x-2 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1 py-0.5"
+                onClick={handleIntegrationClick}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    handleIntegrationClick();
+                  }
+                }}
+              >
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('branches.configure_integration')}
+                </span>
+              </div>
+              <div
+                className="cursor-pointer flex items-center gap-1.5 hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary rounded px-1.5 py-0.5"
+                onClick={e => {
+                  e.stopPropagation();
+                  handleRefreshCache();
+                }}
+                role="button"
+                tabIndex={0}
+                title={t('branches.load_more')}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleRefreshCache();
+                  }
+                }}
+              >
+                <RefreshCw className={cn('w-3.5 h-3.5', isRefreshing && 'animate-spin')} />
+                <span className="text-xs">
+                  {isRefreshing ? t('branches.refreshing') : t('actions.refresh')}
+                </span>
+              </div>
+            </div>
+          }
         />
         {isSearching && (
           <Loader2 className="w-3 h-3 text-text-muted animate-spin flex-shrink-0 absolute right-0" />
         )}
       </div>
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title={t('guide.title')}
-        maxWidth="sm"
-      >
-        <div className="flex flex-col items-center">
-          <p className="text-sm text-text-secondary mb-6 text-center leading-relaxed">
-            {t('guide.description')}
-          </p>
-          <Button
-            variant="default"
-            size="sm"
-            onClick={handleModalClick}
-            style={{ minWidth: '100px' }}
-          >
-            {t('branches.set_token')}
-          </Button>
-        </div>
-      </Modal>
     </div>
   );
 }

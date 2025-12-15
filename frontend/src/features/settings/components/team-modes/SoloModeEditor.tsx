@@ -1,4 +1,4 @@
-// SPDX-FileCopyrightText: 2025 Weibo, Inc.
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
 //
 // SPDX-License-Identifier: Apache-2.0
 
@@ -8,19 +8,19 @@ import React, { useMemo, useState, useCallback, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown';
 import { RiRobot2Line, RiMagicLine } from 'react-icons/ri';
-import { Plus } from 'lucide-react';
+import { Plus, ChevronDown, Check } from 'lucide-react';
 import { Bot, Team } from '@/types/api';
 import { useTranslation } from '@/hooks/useTranslation';
 import { getPromptBadgeStyle, type PromptBadgeVariant } from '@/utils/styles';
 import { Tag } from '@/components/ui/tag';
-import BotEdit, { AgentType } from '../BotEdit';
+import BotEdit, { AgentType, BotEditRef } from '../BotEdit';
 
 export interface SoloModeEditorProps {
   bots: Bot[];
@@ -36,6 +36,14 @@ export interface SoloModeEditorProps {
   onCreateBot?: () => void;
   /** List of allowed agent types for filtering when creating bots */
   allowedAgents?: AgentType[];
+  /** Current team editing ID (0 = new team) */
+  editingTeamId?: number;
+  /** Ref to access BotEdit methods for external saving */
+  botEditRef?: React.RefObject<BotEditRef | null>;
+  /** Scope for filtering shells */
+  scope?: 'personal' | 'group' | 'all';
+  /** Group name when scope is 'group' */
+  groupName?: string;
 }
 
 export default function SoloModeEditor({
@@ -48,6 +56,10 @@ export default function SoloModeEditor({
   teamPromptMap,
   onOpenPromptDrawer,
   allowedAgents,
+  editingTeamId,
+  botEditRef,
+  scope,
+  groupName,
 }: SoloModeEditorProps) {
   const { t } = useTranslation('common');
 
@@ -93,12 +105,20 @@ export default function SoloModeEditor({
     [promptSummary.variant]
   );
 
-  // State for inline bot editing mode (readOnly vs edit)
-  const [isEditingBot, setIsEditingBot] = useState(false);
-  // State for inline bot creation mode
-  const [isCreatingBot, setIsCreatingBot] = useState(false);
+  // Determine if this is a new team without a selected bot
+  const isNewTeamWithoutBot = editingTeamId === 0 && selectedBotId === null;
+
+  // State for inline bot creation mode - auto-enter for new teams
+  const [isCreatingBot, setIsCreatingBot] = useState(isNewTeamWithoutBot);
   // Track bots IDs to detect new bot creation
   const prevBotIdsRef = useRef<Set<number>>(new Set(bots.map(b => b.id)));
+
+  // Update isCreatingBot when editingTeamId or selectedBotId changes
+  useEffect(() => {
+    if (editingTeamId === 0 && selectedBotId === null) {
+      setIsCreatingBot(true);
+    }
+  }, [editingTeamId, selectedBotId]);
 
   // Get the selected bot
   const selectedBot = useMemo(() => {
@@ -110,30 +130,20 @@ export default function SoloModeEditor({
   const handleBotChange = useCallback(
     (botId: number) => {
       setSelectedBotId(botId);
-      setIsEditingBot(false);
+      setIsCreatingBot(false);
     },
     [setSelectedBotId]
   );
 
-  // Handle edit button click (switch from readOnly to edit mode)
-  const handleEditClick = useCallback(() => {
-    setIsEditingBot(true);
-  }, []);
-
-  // Handle cancel edit (switch back to readOnly mode)
-  const handleCancelEdit = useCallback(() => {
-    setIsEditingBot(false);
-  }, []);
-
   // Handle create new bot - show inline creation form
   const handleCreateBot = useCallback(() => {
+    setSelectedBotId(null);
     setIsCreatingBot(true);
-    setIsEditingBot(false);
-  }, []);
+  }, [setSelectedBotId]);
 
   // Handle bot edit close
   const handleBotEditClose = useCallback(() => {
-    setIsEditingBot(false);
+    // No-op for solo mode - bot changes are saved with team
   }, []);
 
   // Handle bot creation close - just close the creation mode (used for cancel)
@@ -146,8 +156,12 @@ export default function SoloModeEditor({
 
   // Handle cancel creation explicitly
   const handleCancelCreate = useCallback(() => {
+    // If there are existing bots, select the first one
+    if (bots.length > 0) {
+      setSelectedBotId(bots[0].id);
+    }
     setIsCreatingBot(false);
-  }, []);
+  }, [bots, setSelectedBotId]);
 
   // Effect to detect new bot creation and auto-select it
   useEffect(() => {
@@ -170,114 +184,114 @@ export default function SoloModeEditor({
     prevBotIdsRef.current = currentBotIds;
   }, [bots, isCreatingBot, setSelectedBotId]);
 
+  // Determine the current mode label
+  const currentModeLabel = useMemo(() => {
+    if (isCreatingBot) {
+      return t('bots.new_bot');
+    }
+    if (selectedBot) {
+      return selectedBot.name;
+    }
+    return t('team.select_bot_placeholder');
+  }, [isCreatingBot, selectedBot, t]);
+
   return (
     <div className="flex flex-col h-full min-h-0">
-      {/* Bot selector */}
-      <div className="flex flex-col mb-4 flex-shrink-0">
-        <div className="flex items-center mb-1">
-          <label className="block text-lg font-semibold text-text-primary">
-            {t('team.select_bot')} <span className="text-red-400">*</span>
-          </label>
-        </div>
+      {/* Compact header with bot switcher */}
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <div className="flex items-center gap-2">
-          <Select
-            value={selectedBotId?.toString() ?? undefined}
-            onValueChange={value => handleBotChange(Number(value))}
-          >
-            <SelectTrigger className="flex-1 min-h-[36px]">
-              {selectedBotId !== null && selectedBot ? (
-                <div className="flex items-center gap-2 flex-1 min-w-0">
-                  <RiRobot2Line className="w-4 h-4 text-text-muted flex-shrink-0" />
-                  <span className="truncate">
-                    {selectedBot.name}
-                    <span className="text-text-muted text-xs ml-1">({selectedBot.shell_type})</span>
-                  </span>
-                </div>
-              ) : (
-                <SelectValue placeholder={t('team.select_bot_placeholder')} />
-              )}
-            </SelectTrigger>
-            <SelectContent>
-              {bots.length === 0 ? (
-                <div className="p-2 text-center">
-                  <Button
-                    size="sm"
-                    onClick={e => {
-                      e.stopPropagation();
-                      handleCreateBot();
-                    }}
-                  >
-                    <Plus className="mr-2 h-4 w-4" />
-                    {t('bots.new_bot')}
-                  </Button>
-                </div>
-              ) : (
-                bots.map((b: Bot) => (
-                  <SelectItem key={b.id} value={b.id.toString()}>
-                    <div className="flex items-center w-full">
-                      <div className="flex min-w-0 flex-1 items-center space-x-2">
-                        <RiRobot2Line className="w-4 h-4 text-text-muted flex-shrink-0" />
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="block truncate max-w-[200px]">
-                              {b.name}{' '}
-                              <span className="text-text-muted text-xs">({b.shell_type})</span>
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{`${b.name} (${b.shell_type})`}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </div>
-                    </div>
-                  </SelectItem>
-                ))
-              )}
-            </SelectContent>
-          </Select>
-
-          {/* Create new bot button */}
-          <Button variant="outline" size="sm" onClick={handleCreateBot} className="flex-shrink-0">
-            <Plus className="h-4 w-4 mr-1" />
-            {t('bots.new_bot')}
-          </Button>
+          <RiRobot2Line className="w-5 h-5 text-primary" />
+          <span className="text-base font-medium text-text-primary">
+            {isCreatingBot ? t('bots.new_bot') : t('team.current_bot')}
+          </span>
+          {!isCreatingBot && selectedBot && (
+            <span className="text-sm text-text-muted">({selectedBot.shell_type})</span>
+          )}
         </div>
-        {/* Team prompt link - similar to BotTransfer style */}
-        {selectedBotId !== null && onOpenPromptDrawer && (
-          <div className="flex items-center gap-2 mt-2">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  variant="link"
-                  size="sm"
-                  className="h-auto p-0 text-primary hover:text-primary/80"
-                  onClick={onOpenPromptDrawer}
+
+        <div className="flex items-center gap-2">
+          {/* Team prompt link - show when a bot is selected */}
+          {selectedBotId !== null && onOpenPromptDrawer && !isCreatingBot && (
+            <div className="flex items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="h-auto p-0 text-primary hover:text-primary/80"
+                    onClick={onOpenPromptDrawer}
+                  >
+                    <RiMagicLine className="mr-1 h-4 w-4" />
+                    {t('team.prompts_link')}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{t('team.prompts_tooltip')}</p>
+                </TooltipContent>
+              </Tooltip>
+              <Tag
+                className="!m-0 !px-2 !py-0 text-xs leading-5"
+                variant="default"
+                style={promptSummaryStyle}
+              >
+                {promptSummary.label}
+              </Tag>
+            </div>
+          )}
+
+          {/* Bot switcher dropdown */}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="outline" size="sm" className="gap-1">
+                <span className="max-w-[120px] truncate">{currentModeLabel}</span>
+                <ChevronDown className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-56">
+              {/* Create new bot option */}
+              <DropdownMenuItem onClick={handleCreateBot} className="gap-2">
+                <Plus className="h-4 w-4" />
+                <span>{t('bots.new_bot')}</span>
+                {isCreatingBot && <Check className="h-4 w-4 ml-auto" />}
+              </DropdownMenuItem>
+
+              {bots.length > 0 && <DropdownMenuSeparator />}
+
+              {/* Existing bots list */}
+              {bots.map((bot: Bot) => (
+                <DropdownMenuItem
+                  key={bot.id}
+                  onClick={() => handleBotChange(bot.id)}
+                  className="gap-2"
                 >
-                  <RiMagicLine className="mr-1 h-4 w-4" />
-                  {t('team.prompts_link')}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('team.prompts_tooltip')}</p>
-              </TooltipContent>
-            </Tooltip>
-            <Tag
-              className="!m-0 !px-2 !py-0 text-xs leading-5"
-              variant="default"
-              style={promptSummaryStyle}
-            >
-              {promptSummary.label}
-            </Tag>
-          </div>
-        )}
+                  <RiRobot2Line className="h-4 w-4 text-text-muted" />
+                  <div className="flex flex-col flex-1 min-w-0">
+                    <span className="truncate">{bot.name}</span>
+                    <span className="text-xs text-text-muted">{bot.shell_type}</span>
+                  </div>
+                  {selectedBotId === bot.id && !isCreatingBot && (
+                    <Check className="h-4 w-4 ml-auto flex-shrink-0" />
+                  )}
+                </DropdownMenuItem>
+              ))}
+
+              {bots.length === 0 && (
+                <div className="px-2 py-1.5 text-sm text-text-muted text-center">
+                  {t('team.no_bots_available')}
+                </div>
+              )}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
 
       {/* Bot details / edit area */}
-      <div className="flex-1 min-h-[500px] rounded-md border border-border bg-base overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden border border-border rounded-lg">
         {isCreatingBot ? (
           /* Show BotEdit component in creation mode */
           <div className="h-full overflow-auto">
             <BotEdit
+              ref={botEditRef}
               bots={bots}
               setBots={setBots}
               editingBotId={0}
@@ -286,14 +300,18 @@ export default function SoloModeEditor({
               toast={toast}
               embedded={true}
               readOnly={false}
-              onCancelEdit={handleCancelCreate}
+              hideActions={true}
+              onCancelEdit={bots.length > 0 ? handleCancelCreate : undefined}
               allowedAgents={allowedAgents}
+              scope={scope}
+              groupName={groupName}
             />
           </div>
         ) : selectedBotId !== null ? (
-          /* Show BotEdit component - either in readOnly or edit mode */
+          /* Show BotEdit component in edit mode - bot saves with team */
           <div className="h-full overflow-auto">
             <BotEdit
+              ref={botEditRef}
               bots={bots}
               setBots={setBots}
               editingBotId={selectedBotId}
@@ -301,19 +319,20 @@ export default function SoloModeEditor({
               onClose={handleBotEditClose}
               toast={toast}
               embedded={true}
-              readOnly={!isEditingBot}
-              onEditClick={handleEditClick}
-              onCancelEdit={handleCancelEdit}
+              readOnly={false}
+              hideActions={true}
               allowedAgents={allowedAgents}
+              scope={scope}
+              groupName={groupName}
             />
           </div>
         ) : (
-          /* No bot selected */
-          <div className="flex items-center justify-center h-full text-text-muted">
+          /* No bot selected - prompt to create or select */
+          <div className="flex items-center justify-center h-full text-text-muted p-4">
             <div className="text-center">
               <RiRobot2Line className="w-12 h-12 mx-auto mb-2 opacity-50" />
-              <p>{t('team.no_bot_selected')}</p>
-              <Button variant="outline" size="sm" onClick={handleCreateBot} className="mt-4">
+              <p className="mb-4">{t('team.no_bot_selected')}</p>
+              <Button variant="outline" size="sm" onClick={handleCreateBot}>
                 <Plus className="h-4 w-4 mr-1" />
                 {t('bots.new_bot')}
               </Button>

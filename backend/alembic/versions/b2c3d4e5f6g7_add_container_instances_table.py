@@ -11,13 +11,13 @@ Create Date: 2025-01-01 00:00:00.000000
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "b2c3d4e5f6g7"
-down_revision: Union[str, None] = "a1b2c3d4e5f6"
+down_revision: Union[str, None] = "h8i9j0k1l2m3"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -31,7 +31,9 @@ def upgrade() -> None:
         sa.Column("shell_id", sa.BigInteger(), nullable=False),
         sa.Column("container_id", sa.String(length=64), nullable=True),
         sa.Column("access_url", sa.String(length=500), nullable=True),
-        sa.Column("status", sa.String(length=20), nullable=False, server_default="pending"),
+        sa.Column(
+            "status", sa.String(length=20), nullable=False, server_default="pending"
+        ),
         sa.Column("repo_url", sa.String(length=500), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=True),
         sa.Column("updated_at", sa.DateTime(), nullable=True),
@@ -45,8 +47,12 @@ def upgrade() -> None:
     # Create indexes
     op.create_index("idx_user_id", "container_instances", ["user_id"], unique=False)
     op.create_index("idx_shell_id", "container_instances", ["shell_id"], unique=False)
-    op.create_index("idx_container_status", "container_instances", ["status"], unique=False)
-    op.create_index("idx_user_shell", "container_instances", ["user_id", "shell_id"], unique=False)
+    op.create_index(
+        "idx_container_status", "container_instances", ["status"], unique=False
+    )
+    op.create_index(
+        "idx_user_shell", "container_instances", ["user_id", "shell_id"], unique=False
+    )
 
 
 def downgrade() -> None:

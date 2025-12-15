@@ -1,0 +1,45 @@
+name: Update Contributors
+
+on:
+  schedule:
+    # Run weekly on Sunday at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-contributors:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Update Contributors in README
+        uses: akhilmhdh/contributors-readme-action@v2.3.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image_size: 80
+          columns_per_row: 8
+          readme_path: README.md
+          committer_username: github-actions[bot]
+          committer_email: github-actions[bot]@users.noreply.github.com
+          commit_message: 'docs: update contributors list'
+
+      - name: Update Contributors in Chinese README
+        uses: akhilmhdh/contributors-readme-action@v2.3.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          image_size: 80
+          columns_per_row: 8
+          readme_path: README_zh.md
+          committer_username: github-actions[bot]
+          committer_email: github-actions[bot]@users.noreply.github.com
+          commit_message: 'docs: update contributors list (zh)'

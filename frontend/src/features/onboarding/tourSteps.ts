@@ -15,8 +15,8 @@ export interface TourStepConfig {
 export const getTourSteps = (
   t: (key: string) => string,
   hasTeams: boolean,
-  hasGitToken: boolean,
-  currentPage: 'chat' | 'code'
+  _hasGitToken: boolean,
+  _currentPage: 'chat' | 'code'
 ): DriveStep[] => {
   const steps: DriveStep[] = [];
 
@@ -38,9 +38,9 @@ export const getTourSteps = (
     },
   });
 
-  // Step 3: Team selector
+  // Step 3: Input controls (attachment, team, model)
   steps.push({
-    element: '[data-tour="team-selector"]',
+    element: '[data-tour="input-controls"]',
     popover: {
       title: t('onboarding.step3_title'),
       description: hasTeams
@@ -49,18 +49,14 @@ export const getTourSteps = (
     },
   });
 
-  // Step 4: Repository selector (only on code page)
-  if (currentPage === 'code') {
-    steps.push({
-      element: '[data-tour="repo-selector"]',
-      popover: {
-        title: t('onboarding.step4_title'),
-        description: hasGitToken
-          ? t('onboarding.step4_description')
-          : t('onboarding.step4_description_no_token'),
-      },
-    });
-  }
+  // Step 4: Send button
+  steps.push({
+    element: '[data-tour="send-button"]',
+    popover: {
+      title: t('onboarding.step4_title'),
+      description: t('onboarding.step4_description'),
+    },
+  });
 
   // Step 5: Task sidebar
   steps.push({

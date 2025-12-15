@@ -20,10 +20,19 @@ class User(Base):
     email = Column(String(100))
     git_info = Column(JSON)
     is_active = Column(Boolean, default=True)
+    # User role: admin or user (default)
+    role = Column(String(20), nullable=False, default="user")
     # Authentication source: password, oidc, or unknown (for existing users)
     auth_source = Column(String(20), nullable=False, default="unknown")
+    # User preferences (e.g., send_key: "enter" or "cmd_enter")
+    preferences = Column(String(4096), nullable=False, default="{}")
     created_at = Column(DateTime, default=func.now())
     updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+    # Relationships
+    shared_tasks = relationship(
+        "SharedTask", foreign_keys="[SharedTask.user_id]", back_populates="user"
+    )
 
     __table_args__ = (
         {

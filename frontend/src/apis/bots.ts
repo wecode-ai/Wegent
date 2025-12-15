@@ -4,6 +4,7 @@
 
 import { apiClient } from './client';
 import { Bot, PaginationParams, SuccessMessage } from '../types/api';
+import type { CheckRunningTasksResponse } from './common';
 
 // Bot Request/Response Types
 export interface CreateBotRequest {
@@ -13,6 +14,7 @@ export interface CreateBotRequest {
   system_prompt: string;
   mcp_servers: Record<string, unknown>;
   skills?: string[];
+  namespace?: string; // Group namespace, defaults to 'default' for personal bots
 }
 
 export interface UpdateBotRequest {
@@ -23,8 +25,8 @@ export interface UpdateBotRequest {
   mcp_servers?: Record<string, unknown>;
   skills?: string[];
   is_active?: boolean;
+  namespace?: string; // Group namespace
 }
-
 export interface BotListResponse {
   total: number;
   items: Bot[];
@@ -32,11 +34,22 @@ export interface BotListResponse {
 
 // Bot Services
 export const botApis = {
-  async getBots(params?: PaginationParams): Promise<BotListResponse> {
-    const query = params ? `?page=${params.page || 1}&limit=${params.limit || 100}` : '';
-    return apiClient.get(`/bots${query}`);
+  async getBots(
+    params?: PaginationParams,
+    scope?: 'personal' | 'group' | 'all',
+    groupName?: string
+  ): Promise<BotListResponse> {
+    const queryParams = new URLSearchParams();
+    queryParams.append('page', String(params?.page || 1));
+    queryParams.append('limit', String(params?.limit || 100));
+    if (scope) {
+      queryParams.append('scope', scope);
+    }
+    if (groupName) {
+      queryParams.append('group_name', groupName);
+    }
+    return apiClient.get(`/bots?${queryParams.toString()}`);
   },
-
   async getBot(id: number): Promise<Bot> {
     return apiClient.get(`/bots/${id}`);
   },
@@ -49,7 +62,12 @@ export const botApis = {
     return apiClient.put(`/bots/${id}`, data);
   },
 
-  async deleteBot(id: number): Promise<SuccessMessage> {
-    return apiClient.delete(`/bots/${id}`);
+  async deleteBot(id: number, force: boolean = false): Promise<SuccessMessage> {
+    const queryParams = force ? '?force=true' : '';
+    return apiClient.delete(`/bots/${id}${queryParams}`);
+  },
+
+  async checkRunningTasks(id: number): Promise<CheckRunningTasksResponse> {
+    return apiClient.get(`/bots/${id}/running-tasks`);
   },
 };

@@ -142,6 +142,7 @@ frontend/
 - 📝 完整的 CRUD 操作支持
 - 🔄 实时状态同步
 - 🛡️ 数据加密（AES）
+- 👥 基于角色的访问控制（管理员/普通用户）
 
 **API 设计**：
 ```
@@ -152,7 +153,8 @@ frontend/
 ├── /bots            # Bot 资源管理
 ├── /teams           # Team 资源管理
 ├── /workspaces      # Workspace 资源管理
-└── /tasks           # Task 资源管理
+├── /tasks           # Task 资源管理
+└── /admin           # 管理员操作（用户管理、公共模型）
 ```
 
 **关键依赖**：
@@ -247,7 +249,8 @@ wegent_db/
 ├── teams            # Team 定义
 ├── workspaces       # Workspace 配置
 ├── tasks            # Task 记录
-└── users            # 用户信息
+├── users            # 用户信息（含角色字段）
+└── public_models    # 系统级公共模型
 ```
 
 **数据模型特点**：
@@ -349,7 +352,7 @@ sequenceDiagram
 ```python
 {
     "framework": "FastAPI >= 0.68.0",
-    "language": "Python 3.9+",
+    "language": "Python 3.10+",
     "orm": "SQLAlchemy >= 2.0.28",
     "database": "PyMySQL 1.1.0",
     "auth": [
@@ -441,6 +444,7 @@ status:
 - 🛡️ AES 加密敏感数据
 - 🔐 沙箱环境隔离
 - 🚫 最小权限原则
+- 👥 基于角色的访问控制（管理员/普通用户）
 
 ### 5. 可观测性
 

@@ -1,0 +1,51 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wegent-shared"
+version = "1.0.0"
+description = "Wegent Shared Utilities and Models"
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0.1",
+    "cryptography>=42.0.4",
+    "httpx>=0.26.0",
+    "requests>=2.31.0",
+
+    # OpenTelemetry core packages
+    "opentelemetry-api>=1.27.0",
+    "opentelemetry-sdk>=1.27.0",
+    "opentelemetry-exporter-otlp>=1.27.0",
+
+    # OpenTelemetry instrumentation packages
+    "opentelemetry-instrumentation-fastapi>=0.48b0",
+    "opentelemetry-instrumentation-httpx>=0.48b0",
+    "opentelemetry-instrumentation-requests>=0.48b0",
+    "opentelemetry-instrumentation-system-metrics>=0.48b0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.1",
+    "pytest-asyncio>=1.3.0",
+    "pytest-cov>=7.0.0",
+    "pytest-mock>=3.15.1",
+]
+
+[tool.setuptools]
+packages = ["shared", "shared.models", "shared.telemetry", "shared.telemetry.context", "shared.telemetry.metrics", "shared.utils"]
+
+[tool.setuptools.package-dir]
+shared = "."
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"

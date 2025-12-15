@@ -4,18 +4,18 @@
 
 'use client';
 
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useContext } from 'react';
 import { SearchableSelect, SearchableSelectItem } from '@/components/ui/searchable-select';
-import { FaUsers } from 'react-icons/fa';
 import { Tag } from '@/components/ui/tag';
 import { Cog6ToothIcon } from '@heroicons/react/24/outline';
 import { useRouter } from 'next/navigation';
-import { Team } from '@/types/api';
-import { useTaskContext } from '../contexts/taskContext';
+import { Team, TaskDetail } from '@/types/api';
+import { TaskContext } from '../contexts/taskContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { useMediaQuery } from '@/hooks/useMediaQuery';
 import { paths } from '@/config/paths';
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
+import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
 
 interface TeamSelectorProps {
   selectedTeam: Team | null;
@@ -23,6 +23,14 @@ interface TeamSelectorProps {
   teams: Team[];
   disabled: boolean;
   isLoading?: boolean;
+  // Optional: pass task detail directly instead of using context
+  taskDetail?: TaskDetail | null;
+  // Optional: hide the settings footer link
+  hideSettingsLink?: boolean;
+  // Optional: current mode for filtering teams by bind_mode
+  currentMode?: 'chat' | 'code';
+  // Optional: whether to open the dropdown by default
+  defaultOpen?: boolean;
 }
 
 export default function TeamSelector({
@@ -31,30 +39,48 @@ export default function TeamSelector({
   teams,
   disabled,
   isLoading,
+  taskDetail,
+  hideSettingsLink = false,
+  currentMode,
+  defaultOpen = false,
 }: TeamSelectorProps) {
-  const { selectedTaskDetail } = useTaskContext();
+  // Try to get context, but don't throw if not available
+  const taskContext = useContext(TaskContext);
+  const selectedTaskDetail = taskDetail ?? taskContext?.selectedTaskDetail ?? null;
   const { t } = useTranslation('common');
   const router = useRouter();
   const isMobile = useMediaQuery('(max-width: 767px)');
   const sharedBadgeStyle = useMemo(() => getSharedBadgeStyle(), []);
-  // Handle team selection from task detail
-  useEffect(() => {
-    console.log('[TeamSelector] Effect triggered', {
-      hasSelectedTaskDetail: !!selectedTaskDetail,
-      selectedTeam: selectedTeam?.name || 'null',
-      selectedTeamId: selectedTeam?.id || 'null',
-      teamsLength: teams.length,
+
+  // Filter teams by bind_mode based on current mode
+  const filteredTeams = useMemo(() => {
+    // First filter out teams with empty bind_mode array
+    const teamsWithValidBindMode = teams.filter(team => {
+      // If bind_mode is an empty array, filter it out
+      if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false;
+      return true;
     });
 
+    if (!currentMode) return teamsWithValidBindMode;
+    return teamsWithValidBindMode.filter(team => {
+      // If bind_mode is not set (undefined/null), show in all modes
+      if (!team.bind_mode) return true;
+      // Otherwise, only show if current mode is in bind_mode
+      return team.bind_mode.includes(currentMode);
+    });
+  }, [teams, currentMode]);
+
+  // Handle team selection from task detail
+  useEffect(() => {
     // Priority 1: Set team from task detail if viewing a task
     if (
       selectedTaskDetail &&
       'team' in selectedTaskDetail &&
       selectedTaskDetail.team &&
-      teams.length > 0
+      filteredTeams.length > 0
     ) {
       const foundTeam =
-        teams.find(t => t.id === (selectedTaskDetail.team as { id: number }).id) || null;
+        filteredTeams.find(t => t.id === (selectedTaskDetail.team as { id: number }).id) || null;
       if (foundTeam && (!selectedTeam || selectedTeam.id !== foundTeam.id)) {
         console.log('[TeamSelector] Setting team from task detail:', foundTeam.name, foundTeam.id);
         setSelectedTeam(foundTeam);
@@ -62,41 +88,55 @@ export default function TeamSelector({
       }
     }
 
-    // Priority 2: Validate selected team still exists in list
-    if (selectedTeam && teams.length > 0) {
-      const exists = teams.some(team => team.id === selectedTeam.id);
-      if (!exists) {
-        console.log('[TeamSelector] Selected team not in list, clearing selection');
+    // Priority 2: Validate selected team still exists in filtered list
+    if (selectedTeam) {
+      if (filteredTeams.length > 0) {
+        const exists = filteredTeams.some(team => team.id === selectedTeam.id);
+        if (!exists) {
+          // When selected team is filtered out, auto-select the first available team
+          setSelectedTeam(filteredTeams[0]);
+        }
+      } else {
+        // No teams available after filtering, clear selection
         setSelectedTeam(null);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTaskDetail, teams]);
+  }, [selectedTaskDetail, filteredTeams, selectedTeam, setSelectedTeam]);
 
   const handleChange = (value: string) => {
-    const team = teams.find(t => t.id === Number(value));
+    const team = filteredTeams.find(t => t.id === Number(value));
     if (team) {
       setSelectedTeam(team);
     }
   };
 
-  // Convert teams to SearchableSelectItem format
+  // Convert filtered teams to SearchableSelectItem format
   const selectItems: SearchableSelectItem[] = useMemo(() => {
-    return teams.map(team => {
+    return filteredTeams.map(team => {
       const isSharedTeam = team.share_status === 2 && team.user?.user_name;
+      const isGroupTeam = team.namespace && team.namespace !== 'default';
       return {
         value: team.id.toString(),
         label: team.name,
         searchText: team.name,
         content: (
           <div className="flex items-center gap-2 min-w-0">
-            <FaUsers className="w-3.5 h-3.5 flex-shrink-0 text-text-muted" />
+            <TeamIconDisplay
+              iconId={team.icon}
+              size="sm"
+              className="flex-shrink-0 text-text-muted"
+            />
             <span
               className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
               title={team.name}
             >
               {team.name}
             </span>
+            {isGroupTeam && (
+              <Tag className="ml-2 text-xs !m-0 flex-shrink-0" variant="info">
+                {team.namespace}
+              </Tag>
+            )}
             {isSharedTeam && (
               <Tag
                 className="ml-2 text-xs !m-0 flex-shrink-0"
@@ -110,9 +150,9 @@ export default function TeamSelector({
         ),
       };
     });
-  }, [teams, t, sharedBadgeStyle]);
+  }, [filteredTeams, t, sharedBadgeStyle]);
 
-  if (!selectedTeam || teams.length === 0) return null;
+  if (!selectedTeam || filteredTeams.length === 0) return null;
 
   return (
     <div
@@ -120,8 +160,10 @@ export default function TeamSelector({
       data-tour="team-selector"
       style={{ maxWidth: isMobile ? 200 : 260, minWidth: isMobile ? 60 : 80 }}
     >
-      <FaUsers
-        className={`w-3 h-3 text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}
+      <TeamIconDisplay
+        iconId={selectedTeam?.icon}
+        size="xs"
+        className={`text-text-muted flex-shrink-0 ml-1 ${isLoading ? 'animate-pulse' : ''}`}
       />
       <div className="relative min-w-0 flex-1">
         <SearchableSelect
@@ -136,15 +178,22 @@ export default function TeamSelector({
           noMatchText={t('teams.no_match')}
           triggerClassName="w-full border-0 shadow-none h-auto py-0 px-0 hover:bg-transparent focus:ring-0"
           contentClassName="max-w-[320px]"
+          defaultOpen={defaultOpen}
           renderTriggerValue={item => {
             if (!item) return null;
-            const team = teams.find(t => t.id.toString() === item.value);
+            const team = filteredTeams.find(t => t.id.toString() === item.value);
             const isSharedTeam = team?.share_status === 2 && team?.user?.user_name;
+            const isGroupTeam = team?.namespace && team.namespace !== 'default';
             return (
               <div className="flex items-center gap-2 min-w-0">
                 <span className="truncate max-w-full flex-1 min-w-0" title={item.label}>
                   {item.label}
                 </span>
+                {isGroupTeam && (
+                  <Tag className="text-xs !m-0 flex-shrink-0 ml-2" variant="info">
+                    {team.namespace}
+                  </Tag>
+                )}
                 {isSharedTeam && (
                   <Tag
                     className="text-xs !m-0 flex-shrink-0 ml-2"
@@ -158,21 +207,25 @@ export default function TeamSelector({
             );
           }}
           footer={
-            <div
-              className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
-              onClick={() => router.push(paths.settings.team.getHref())}
-              role="button"
-              tabIndex={0}
-              onKeyDown={e => {
-                if (e.key === 'Enter' || e.key === ' ') {
-                  e.preventDefault();
-                  router.push(paths.settings.team.getHref());
-                }
-              }}
-            >
-              <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
-              <span className="font-medium group-hover:text-text-primary">{t('teams.manage')}</span>
-            </div>
+            hideSettingsLink ? undefined : (
+              <div
+                className="border-t border-border bg-base cursor-pointer group flex items-center space-x-2 px-2.5 py-2 text-xs text-text-secondary hover:bg-muted transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary w-full"
+                onClick={() => router.push(paths.settings.team.getHref())}
+                role="button"
+                tabIndex={0}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    router.push(paths.settings.team.getHref());
+                  }
+                }}
+              >
+                <Cog6ToothIcon className="w-4 h-4 text-text-secondary group-hover:text-text-primary" />
+                <span className="font-medium group-hover:text-text-primary">
+                  {t('teams.manage')}
+                </span>
+              </div>
+            )
           }
         />
       </div>

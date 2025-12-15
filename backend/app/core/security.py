@@ -204,11 +204,41 @@ def get_admin_user(current_user: User = Depends(get_current_user)) -> User:
     Raises:
         HTTPException: If user is not admin
     """
-    # Here we assume users with username 'admin' are administrators
-    # Actual projects may require more complex permission management
-    if current_user.user_name != "admin":
+    # Check user's role field to determine admin status
+    if current_user.role != "admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Permission denied. Admin access required.",
         )
+    return current_user
+
+
+def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
+    """
+    Get current user from JWT token without raising exceptions.
+
+    This function is useful for optional authentication scenarios where
+    you want to check if a token is valid without failing the request.
+
+    Args:
+        token: JWT token string
+        db: Database session
+
+    Returns:
+        User object if token is valid and user exists, None otherwise
+    """
+    try:
+        payload = jwt.decode(
+            token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM]
+        )
+        username: str = payload.get("sub")
+        if username is None:
+            return None
+
+        user = user_service.get_user_by_name(db=db, user_name=username)
+        return user
+    except JWTError:
+        return None
+    except Exception:
+        return None
     return current_user

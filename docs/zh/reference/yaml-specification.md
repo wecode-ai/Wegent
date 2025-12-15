@@ -200,7 +200,7 @@ metadata:
 spec:
   shellType: ClaudeCode
   supportModel: []
-  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.0
+  baseImage: ghcr.io/wecode-ai/wegent-base-python3.12:1.0.1
 status:
   state: Available
 ```

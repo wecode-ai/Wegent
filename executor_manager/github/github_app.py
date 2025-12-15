@@ -2,14 +2,15 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
-import jwt  # PyJWT
 import time
-import requests
-from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
-from shared.logger import setup_logger
-from executor_manager.config import config
 from functools import lru_cache
+from typing import Any, Dict, Optional
+
+import jwt  # PyJWT
+import requests
+from executor_manager.config import config
+from shared.logger import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -117,9 +118,7 @@ class GitHubApp:
 
         token_data = self.get_installation_token(installation_id)
         if not token_data or "token" not in token_data:
-            raise RuntimeError(
-                f"Failed to retrieve installation token for {full_name}"
-            )
+            raise RuntimeError(f"Failed to retrieve installation token for {full_name}")
 
         return {
             "token": token_data["token"],
@@ -132,7 +131,5 @@ class GitHubApp:
 @lru_cache(maxsize=1)
 def get_github_app() -> GitHubApp:
     return GitHubApp(
-        app_id=config.GITHUB_APP_ID,
-        private_key_path=config.GITHUB_PRIVATE_KEY_PATH
+        app_id=config.GITHUB_APP_ID, private_key_path=config.GITHUB_PRIVATE_KEY_PATH
     )
-

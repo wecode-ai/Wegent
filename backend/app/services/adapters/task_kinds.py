@@ -95,23 +95,30 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     status_code=400,
                     detail="task already clear, please create a new task",
                 )
-
-            # Check if task is expired
             expire_hours = settings.APPEND_CHAT_TASK_EXPIRE_HOURS
+            # Check if task is expired
             task_type = (
                 task_crd.metadata.labels
                 and task_crd.metadata.labels.get("taskType")
                 or "chat"
             )
+            # Only check expiration for code tasks, chat tasks have no expiration
             if task_type == "code":
                 expire_hours = settings.APPEND_CODE_TASK_EXPIRE_HOURS
-            if (
-                datetime.now() - existing_task.updated_at
-            ).total_seconds() > expire_hours * 3600:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"{task_type} task has expired. You can only append tasks within {expire_hours} hours after last update.",
-                )
+
+            task_shell_source = (
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("source")
+                or None
+            )
+            if task_shell_source != "chat_shell":
+                if (
+                    datetime.now() - existing_task.updated_at
+                ).total_seconds() > expire_hours * 3600:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{task_type} task has expired. You can only append tasks within {expire_hours} hours after last update.",
+                    )
 
             # Get team reference information from task_crd and validate if team exists
             team_name = task_crd.spec.teamRef.name
@@ -258,26 +265,70 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's Task list with pagination (only active tasks, excluding DELETE status)
-        Optimized version using batch queries to reduce database calls
+        Optimized version using raw SQL to avoid MySQL "Out of sort memory" errors.
+        DELETE status tasks are filtered in application layer.
         """
-        query = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
+        # Use raw SQL to get task IDs without JSON_EXTRACT in WHERE clause
+        count_sql = text(
+            """
+            SELECT COUNT(*) FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+        """
         )
+        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        # Get task IDs sorted by created_at
+        ids_sql = text(
+            """
+            SELECT id FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT :limit OFFSET :skip
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
 
-        if not tasks:
+        if not task_ids:
+            return [], 0
+
+        # Load full task data for the selected IDs
+        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+
+        # Filter out DELETE status tasks in application layer and restore order
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status != "DELETE":
+                id_to_task[t.id] = t
+
+        # Restore the original order and apply limit
+        filtered_tasks = []
+        for tid in task_ids:
+            if tid in id_to_task:
+                filtered_tasks.append(id_to_task[tid])
+                if len(filtered_tasks) >= limit:
+                    break
+
+        total = total_result if total_result else 0
+
+        if not filtered_tasks:
             return [], total
 
         # Get all related data in batch to avoid N+1 queries
-        related_data_batch = self._get_tasks_related_data_batch(db, tasks, user_id)
+        related_data_batch = self._get_tasks_related_data_batch(
+            db, filtered_tasks, user_id
+        )
 
         result = []
-        for task in tasks:
+        for task in filtered_tasks:
             task_crd = Task.model_validate(task.json)
             task_related_data = related_data_batch.get(str(task.id), {})
             result.append(
@@ -291,20 +342,64 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Get user's Task list with pagination (lightweight version for list display)
-        Only returns essential fields without JOIN queries for better performance
+        Only returns essential fields without JOIN queries for better performance.
+
+        Uses raw SQL to avoid MySQL "Out of sort memory" errors caused by
+        JSON_EXTRACT in WHERE clause combined with ORDER BY.
         """
-        query = db.query(Kind).filter(
-            Kind.user_id == user_id,
-            Kind.kind == "Task",
-            Kind.is_active == True,
-            text("JSON_EXTRACT(json, '$.status.status') != 'DELETE'"),
+        # Use raw SQL to get task IDs with proper indexing
+        # This avoids the JSON_EXTRACT memory issue by using a subquery approach
+        count_sql = text(
+            """
+            SELECT COUNT(*) FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+        """
         )
+        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        # Get task IDs sorted by created_at, then filter DELETE status in application
+        # Using index on (user_id, kind, is_active, created_at) for efficient sorting
+        ids_sql = text(
+            """
+            SELECT id FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT :limit OFFSET :skip
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "limit": limit + 50, "skip": skip}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
 
-        if not tasks:
-            return [], total
+        if not task_ids:
+            return [], 0
+
+        # Load full task data for the selected IDs
+        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+
+        # Filter out DELETE status tasks in application layer and restore order
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status != "DELETE":
+                id_to_task[t.id] = t
+
+        # Restore the original order and apply limit
+        tasks = []
+        for tid in task_ids:
+            if tid in id_to_task:
+                tasks.append(id_to_task[tid])
+                if len(tasks) >= limit:
+                    break
+
+        # Recalculate total excluding DELETE status (approximate)
+        total = total_result if total_result else 0
 
         # Build lightweight result without expensive JOIN operations
         result = []
@@ -327,12 +422,15 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             # Parse timestamps
             created_at = task.created_at
             updated_at = task.updated_at
+            completed_at = None
             if task_crd.status:
                 try:
                     if task_crd.status.createdAt:
                         created_at = task_crd.status.createdAt
                     if task_crd.status.updatedAt:
                         updated_at = task_crd.status.updatedAt
+                    if task_crd.status.completedAt:
+                        completed_at = task_crd.status.completedAt
                 except:
                     pass
 
@@ -420,6 +518,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "type": type_value,
                     "created_at": created_at,
                     "updated_at": updated_at,
+                    "completed_at": completed_at,
                     "team_id": team_id,
                     "git_repo": git_repo,
                 }
@@ -432,32 +531,74 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
     ) -> Tuple[List[Dict[str, Any]], int]:
         """
         Fuzzy search tasks by title for current user (pagination), excluding DELETE status
-        Optimized version using batch queries to reduce database calls
+        Optimized version using raw SQL to avoid MySQL "Out of sort memory" errors.
+        Title matching and DELETE status filtering are done in application layer.
         """
-        query = (
-            db.query(Kind)
-            .filter(
-                Kind.user_id == user_id,
-                Kind.kind == "Task",
-                Kind.is_active == True,
-                text(
-                    "JSON_EXTRACT(json, '$.status.status') != 'DELETE' and JSON_EXTRACT(json, '$.spec.title') LIKE :title"
-                ),
-            )
-            .params(title=f"%{title}%")
+        # Use raw SQL to get task IDs without JSON_EXTRACT in WHERE clause
+        count_sql = text(
+            """
+            SELECT COUNT(*) FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+        """
         )
+        total_result = db.execute(count_sql, {"user_id": user_id}).scalar()
 
-        total = query.with_entities(func.count(Kind.id)).scalar()
-        tasks = query.order_by(Kind.created_at.desc()).offset(skip).limit(limit).all()
+        # Get task IDs sorted by created_at (fetch more to account for filtering)
+        ids_sql = text(
+            """
+            SELECT id FROM kinds
+            WHERE user_id = :user_id
+            AND kind = 'Task'
+            AND is_active = true
+            ORDER BY created_at DESC
+            LIMIT :limit OFFSET :skip
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "limit": limit + 100, "skip": skip}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
 
-        if not tasks:
+        if not task_ids:
+            return [], 0
+
+        # Load full task data for the selected IDs
+        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+
+        # Filter by title and DELETE status in application layer, restore order
+        title_lower = title.lower()
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            task_title = task_crd.spec.title or ""
+            # Filter: not DELETE and title matches
+            if status != "DELETE" and title_lower in task_title.lower():
+                id_to_task[t.id] = t
+
+        # Restore the original order and apply limit
+        filtered_tasks = []
+        for tid in task_ids:
+            if tid in id_to_task:
+                filtered_tasks.append(id_to_task[tid])
+                if len(filtered_tasks) >= limit:
+                    break
+
+        # Approximate total (actual count would require full scan)
+        total = len(id_to_task)
+
+        if not filtered_tasks:
             return [], total
 
         # Get all related data in batch to avoid N+1 queries
-        related_data_batch = self._get_tasks_related_data_batch(db, tasks, user_id)
+        related_data_batch = self._get_tasks_related_data_batch(
+            db, filtered_tasks, user_id
+        )
 
         result = []
-        for task in tasks:
+        for task in filtered_tasks:
             task_crd = Task.model_validate(task.json)
             task_related_data = related_data_batch.get(str(task.id), {})
             result.append(
@@ -578,7 +719,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                         model_crd = Model.model_validate(model.json)
                         agent_config = model_crd.spec.modelConfig
 
-                # Get Shell data from kinds table
+                # Get Shell data from kinds table (first check user's shells, then public shells)
                 shell = (
                     db.query(Kind)
                     .filter(
@@ -590,6 +731,18 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     )
                     .first()
                 )
+                if not shell:
+                    # If not found in user's shells, check public shells (user_id = 0)
+                    shell = (
+                        db.query(Kind)
+                        .filter(
+                            Kind.user_id == 0,
+                            Kind.kind == "Shell",
+                            Kind.name == bot_crd.spec.shellRef.name,
+                            Kind.is_active == True,
+                        )
+                        .first()
+                    )
                 if shell and shell.json:
                     shell_crd = Shell.model_validate(shell.json)
                     shell_type = shell_crd.spec.shellType
@@ -611,6 +764,26 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Convert subtasks to dict and replace bot_ids with bot objects
         subtasks_dict = []
         for subtask in subtasks:
+            # Convert attachments to dict format
+            attachments_list = []
+            if hasattr(subtask, "attachments") and subtask.attachments:
+                for attachment in subtask.attachments:
+                    attachments_list.append(
+                        {
+                            "id": attachment.id,
+                            "filename": attachment.original_filename,
+                            "file_size": attachment.file_size,
+                            "mime_type": attachment.mime_type,
+                            "status": (
+                                attachment.status.value
+                                if hasattr(attachment.status, "value")
+                                else attachment.status
+                            ),
+                            "file_extension": attachment.file_extension,
+                            "created_at": attachment.created_at,
+                        }
+                    )
+
             # Convert subtask to dict
             subtask_dict = {
                 # Subtask base fields
@@ -637,6 +810,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "bots": [
                     bots.get(bot_id) for bot_id in subtask.bot_ids if bot_id in bots
                 ],
+                # Add attachments
+                "attachments": attachments_list,
             }
             subtasks_dict.append(subtask_dict)
 
@@ -1048,6 +1223,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             or "chat"
         )
 
+        model_id = task_crd.metadata.labels and task_crd.metadata.labels.get("modelId")
+
         return {
             "id": task.id,
             "type": type,
@@ -1069,6 +1246,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "created_at": created_at or task.created_at,
             "updated_at": updated_at or task.updated_at,
             "completed_at": completed_at,
+            "model_id": model_id,
         }
 
     def _convert_team_to_dict(

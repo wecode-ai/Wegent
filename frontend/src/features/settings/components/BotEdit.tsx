@@ -2,7 +2,14 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-import React, { useCallback, useState, useEffect, useMemo } from 'react';
+import React, {
+  useCallback,
+  useState,
+  useEffect,
+  useMemo,
+  useImperativeHandle,
+  forwardRef,
+} from 'react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
 import { Loader2, XIcon, SettingsIcon, Edit } from 'lucide-react';
@@ -34,6 +41,32 @@ import { adaptMcpConfigForAgent, isValidAgentType } from '../utils/mcpTypeAdapte
 /** Agent types supported by the system */
 export type AgentType = 'ClaudeCode' | 'Agno' | 'Dify';
 
+/** Interface for bot data returned by getBotData */
+export interface BotFormData {
+  name: string;
+  shell_name: string;
+  agent_config: Record<string, unknown>;
+  system_prompt: string;
+  mcp_servers: Record<string, unknown>;
+  skills: string[];
+}
+
+/** Interface for validation result */
+export interface BotValidationResult {
+  isValid: boolean;
+  error?: string;
+}
+
+/** Ref interface exposed by BotEdit */
+export interface BotEditRef {
+  /** Get current bot form data */
+  getBotData: () => BotFormData | null;
+  /** Validate bot form data */
+  validateBot: () => BotValidationResult;
+  /** Save bot (create or update) and return the bot id */
+  saveBot: () => Promise<number | null>;
+}
+
 interface BotEditProps {
   bots: Bot[];
   setBots: React.Dispatch<React.SetStateAction<Bot[]>>;
@@ -51,20 +84,32 @@ interface BotEditProps {
   onCancelEdit?: () => void;
   /** List of allowed agent types for filtering. If not provided, all agents are shown */
   allowedAgents?: AgentType[];
+  /** Whether to hide action buttons (save/edit/cancel) - useful when parent handles saving */
+  hideActions?: boolean;
+  /** Scope for filtering shells */
+  scope?: 'personal' | 'group' | 'all';
+  /** Group name when scope is 'group' */
+  groupName?: string;
 }
-const BotEdit: React.FC<BotEditProps> = ({
-  bots,
-  setBots,
-  editingBotId,
-  cloningBot,
-  onClose,
-  toast,
-  embedded = false,
-  readOnly = false,
-  onEditClick,
-  onCancelEdit,
-  allowedAgents,
-}) => {
+const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
+  {
+    bots,
+    setBots,
+    editingBotId,
+    cloningBot,
+    onClose,
+    toast,
+    embedded = false,
+    readOnly = false,
+    onEditClick,
+    onCancelEdit,
+    allowedAgents,
+    hideActions = false,
+    scope,
+    groupName,
+  },
+  ref
+) => {
   const { t, i18n } = useTranslation('common');
 
   const [botSaving, setBotSaving] = useState(false);
@@ -257,11 +302,17 @@ const BotEdit: React.FC<BotEditProps> = ({
   }, [i18n.language]);
 
   // Get shells list (including both public and user-defined shells)
+  // Get shells list (including both public and user-defined shells)
   useEffect(() => {
+    // Wait for scope to be defined before fetching
+    if (scope === undefined) {
+      return;
+    }
+
     const fetchShells = async () => {
       setLoadingShells(true);
       try {
-        const response = await shellApis.getUnifiedShells();
+        const response = await shellApis.getUnifiedShells(scope, groupName);
         // Filter shells based on allowedAgents prop (using shellType as agent type)
         let filteredShells = response.data || [];
         if (allowedAgents && allowedAgents.length > 0) {
@@ -282,8 +333,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     };
 
     fetchShells();
-  }, [toast, t, allowedAgents]);
-  // Get skills list - only for ClaudeCode agent
+  }, [toast, t, allowedAgents, scope, groupName]);
   useEffect(() => {
     // Only fetch skills when agent is ClaudeCode
     if (agentName !== 'ClaudeCode') {
@@ -311,13 +361,6 @@ const BotEdit: React.FC<BotEditProps> = ({
 
   // Fetch corresponding model list when agentName changes
   useEffect(() => {
-    console.log('[DEBUG] fetchModels useEffect triggered', {
-      agentName,
-      baseBot_shell_name: baseBot?.shell_name,
-      baseBot_shell_type: baseBot?.shell_type,
-      baseBot_agent_config: baseBot?.agent_config,
-    });
-
     if (!agentName) {
       setModels([]);
       return;
@@ -332,8 +375,8 @@ const BotEdit: React.FC<BotEditProps> = ({
         const shellType = selectedShell?.shellType || agentName;
 
         // Use the new unified models API which includes type information
-        const response = await modelApis.getUnifiedModels(shellType);
-        console.log('[DEBUG] Models loaded:', response.data);
+        // Pass scope and groupName to filter models based on current context
+        const response = await modelApis.getUnifiedModels(shellType, false, scope, groupName);
         setModels(response.data);
 
         // After loading models, check if we should restore the bot's saved model
@@ -346,17 +389,9 @@ const BotEdit: React.FC<BotEditProps> = ({
         const agentMatches = baseBotShellName === agentName;
         const isPredefined = hasConfig && isPredefinedModel(baseBot.agent_config);
 
-        console.log('[DEBUG] Model restore check:', {
-          hasConfig,
-          agentMatches,
-          isPredefined,
-          agent_config: baseBot?.agent_config,
-        });
-
         if (hasConfig && agentMatches && isPredefined) {
           const savedModelName = getModelFromConfig(baseBot.agent_config);
           const savedModelType = getModelTypeFromConfig(baseBot.agent_config);
-          console.log('[DEBUG] Saved model name:', savedModelName, 'type:', savedModelType);
           // Only set the model if it exists in the loaded models list
           // Match by both name and type if type is specified
           const foundModel = response.data.find((m: UnifiedModel) => {
@@ -366,16 +401,9 @@ const BotEdit: React.FC<BotEditProps> = ({
             return m.name === savedModelName;
           });
           if (savedModelName && foundModel) {
-            console.log(
-              '[DEBUG] Setting selectedModel to:',
-              savedModelName,
-              'type:',
-              foundModel.type
-            );
             setSelectedModel(savedModelName);
             setSelectedModelType(foundModel.type);
           } else {
-            console.log('[DEBUG] Model not found in list, clearing selection');
             // Model not found in list, clear selection
             setSelectedModel('');
             setSelectedModelType(undefined);
@@ -461,16 +489,167 @@ const BotEdit: React.FC<BotEditProps> = ({
     return () => window.removeEventListener('keydown', handleEsc);
   }, [handleBack]);
 
+  // Validate bot form data
+  const validateBot = useCallback((): BotValidationResult => {
+    if (!botName.trim() || !agentName.trim()) {
+      return { isValid: false, error: t('bot.errors.required') };
+    }
+
+    // For Dify agent, validate config
+    if (isDifyAgent) {
+      const trimmedConfig = agentConfig.trim();
+      if (!trimmedConfig) {
+        return { isValid: false, error: t('bot.errors.agent_config_json') };
+      }
+      try {
+        const parsed = JSON.parse(trimmedConfig);
+        const env = (parsed as Record<string, unknown>)?.env as Record<string, unknown> | undefined;
+        if (!env?.DIFY_API_KEY || !env?.DIFY_BASE_URL) {
+          return { isValid: false, error: t('bot.errors.dify_required_fields') };
+        }
+      } catch {
+        return { isValid: false, error: t('bot.errors.agent_config_json') };
+      }
+    } else if (isCustomModel) {
+      if (!selectedProtocol) {
+        return { isValid: false, error: t('bot.errors.protocol_required') };
+      }
+      const trimmedConfig = agentConfig.trim();
+      if (!trimmedConfig) {
+        return { isValid: false, error: t('bot.errors.agent_config_json') };
+      }
+      try {
+        JSON.parse(trimmedConfig);
+      } catch {
+        return { isValid: false, error: t('bot.errors.agent_config_json') };
+      }
+    }
+
+    // Validate MCP config if present (not for Dify)
+    if (!isDifyAgent && mcpConfig.trim()) {
+      try {
+        JSON.parse(mcpConfig);
+      } catch {
+        return { isValid: false, error: t('bot.errors.mcp_config_json') };
+      }
+    }
+
+    return { isValid: true };
+  }, [botName, agentName, isDifyAgent, agentConfig, isCustomModel, selectedProtocol, mcpConfig, t]);
+
+  // Get bot form data for external use
+  const getBotData = useCallback((): BotFormData | null => {
+    const validation = validateBot();
+    if (!validation.isValid) {
+      return null;
+    }
+
+    let parsedAgentConfig: Record<string, unknown> = {};
+
+    if (isDifyAgent) {
+      parsedAgentConfig = JSON.parse(agentConfig.trim());
+    } else if (isCustomModel) {
+      const configObj = JSON.parse(agentConfig.trim());
+      parsedAgentConfig = { ...configObj, protocol: selectedProtocol };
+    } else {
+      parsedAgentConfig = createPredefinedModelConfig(selectedModel, selectedModelType) as Record<
+        string,
+        unknown
+      >;
+    }
+
+    let parsedMcpConfig: Record<string, unknown> = {};
+    if (!isDifyAgent && mcpConfig.trim()) {
+      parsedMcpConfig = JSON.parse(mcpConfig);
+      if (parsedMcpConfig && agentName && isValidAgentType(agentName)) {
+        parsedMcpConfig = adaptMcpConfigForAgent(parsedMcpConfig, agentName);
+      }
+    }
+
+    return {
+      name: botName.trim(),
+      shell_name: agentName.trim(),
+      agent_config: parsedAgentConfig,
+      system_prompt: isDifyAgent ? '' : prompt.trim() || '',
+      mcp_servers: parsedMcpConfig,
+      skills: selectedSkills.length > 0 ? selectedSkills : [],
+    };
+  }, [
+    validateBot,
+    isDifyAgent,
+    agentConfig,
+    isCustomModel,
+    selectedProtocol,
+    selectedModel,
+    selectedModelType,
+    mcpConfig,
+    agentName,
+    botName,
+    prompt,
+    selectedSkills,
+  ]);
+
+  // Save bot and return the bot id
+  const saveBot = useCallback(async (): Promise<number | null> => {
+    const validation = validateBot();
+    if (!validation.isValid) {
+      toast({
+        variant: 'destructive',
+        title: validation.error,
+      });
+      return null;
+    }
+
+    const botData = getBotData();
+    if (!botData) {
+      return null;
+    }
+
+    setBotSaving(true);
+    try {
+      const botReq: CreateBotRequest = {
+        name: botData.name,
+        shell_name: botData.shell_name,
+        agent_config: botData.agent_config,
+        system_prompt: botData.system_prompt,
+        mcp_servers: botData.mcp_servers,
+        skills: botData.skills,
+        namespace: scope === 'group' && groupName ? groupName : undefined,
+      };
+
+      if (editingBotId && editingBotId > 0) {
+        const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest);
+        setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)));
+        return updated.id;
+      } else {
+        const created = await botApis.createBot(botReq);
+        setBots(prev => [created, ...prev]);
+        return created.id;
+      }
+    } catch (error) {
+      toast({
+        variant: 'destructive',
+        title: (error as Error)?.message || t('bot.errors.save_failed'),
+      });
+      return null;
+    } finally {
+      setBotSaving(false);
+    }
+  }, [validateBot, getBotData, editingBotId, setBots, toast, t]);
+
+  // Expose methods via ref
+  useImperativeHandle(
+    ref,
+    () => ({
+      getBotData,
+      validateBot,
+      saveBot,
+    }),
+    [getBotData, validateBot, saveBot]
+  );
+
   // Save logic
   const handleSave = async () => {
-    console.log('[DEBUG] handleSave called', {
-      botName,
-      agentName,
-      isCustomModel,
-      selectedModel,
-      agentConfig,
-    });
-
     if (!botName.trim() || !agentName.trim()) {
       toast({
         variant: 'destructive',
@@ -553,8 +732,6 @@ const BotEdit: React.FC<BotEditProps> = ({
       parsedAgentConfig = createPredefinedModelConfig(selectedModel, selectedModelType);
     }
 
-    console.log('[DEBUG] parsedAgentConfig:', parsedAgentConfig);
-
     let parsedMcpConfig: Record<string, unknown> | null = null;
 
     // Skip MCP config for Dify agent
@@ -591,23 +768,20 @@ const BotEdit: React.FC<BotEditProps> = ({
         system_prompt: isDifyAgent ? '' : prompt.trim() || '', // Clear system_prompt for Dify
         mcp_servers: parsedMcpConfig ?? {},
         skills: selectedSkills.length > 0 ? selectedSkills : [],
+        namespace: scope === 'group' && groupName ? groupName : undefined,
       };
-      console.log('[DEBUG] Saving bot request:', JSON.stringify(botReq, null, 2));
 
       if (editingBotId && editingBotId > 0) {
         // Edit existing bot
         const updated = await botApis.updateBot(editingBotId, botReq as UpdateBotRequest);
-        console.log('[DEBUG] Bot updated response:', JSON.stringify(updated, null, 2));
         setBots(prev => prev.map(b => (b.id === editingBotId ? updated : b)));
       } else {
         // Create new bot
         const created = await botApis.createBot(botReq);
-        console.log('[DEBUG] Bot created response:', JSON.stringify(created, null, 2));
         setBots(prev => [created, ...prev]);
       }
       onClose();
     } catch (error) {
-      console.error('[DEBUG] Save error:', error);
       toast({
         variant: 'destructive',
         title: (error as Error)?.message || t('bot.errors.save_failed'),
@@ -618,7 +792,7 @@ const BotEdit: React.FC<BotEditProps> = ({
   };
   return (
     <div
-      className={`flex flex-col w-full bg-surface rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'min-h-0' : 'min-h-[650px]'}`}
+      className={`flex flex-col w-full bg-white dark:bg-white/95 rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'h-full min-h-0' : 'min-h-[650px]'}`}
     >
       {/* Top navigation bar */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
@@ -643,128 +817,130 @@ const BotEdit: React.FC<BotEditProps> = ({
         ) : (
           <div /> /* Placeholder for flex spacing */
         )}
-        {readOnly ? (
-          <Button onClick={onEditClick} variant="outline">
-            <Edit className="mr-2 h-4 w-4" />
-            {t('actions.edit')}
-          </Button>
-        ) : (
-          <div className="flex items-center gap-2">
-            {embedded && onCancelEdit && (
-              <Button onClick={onCancelEdit} variant="outline">
-                {t('common.cancel')}
-              </Button>
-            )}
-            <Button onClick={handleSave} disabled={botSaving}>
-              {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {botSaving ? t('actions.saving') : t('actions.save')}
+        {!hideActions &&
+          (readOnly ? (
+            <Button onClick={onEditClick} variant="outline">
+              <Edit className="mr-2 h-4 w-4" />
+              {t('actions.edit')}
             </Button>
-          </div>
-        )}
+          ) : (
+            <div className="flex items-center gap-2">
+              {embedded && onCancelEdit && (
+                <Button onClick={onCancelEdit} variant="outline">
+                  {t('common.cancel')}
+                </Button>
+              )}
+              <Button onClick={handleSave} disabled={botSaving} variant="primary">
+                {botSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                {botSaving ? t('actions.saving') : t('actions.save')}
+              </Button>
+            </div>
+          ))}
       </div>
 
-      {/* Main content area - using responsive layout */}
-      <div className="flex flex-col lg:flex-row gap-4 flex-grow mx-2 min-h-0 overflow-hidden">
-        <div
-          className={`flex flex-col space-y-3 overflow-y-auto w-full flex-shrink-0 ${isDifyAgent ? 'lg:w-full' : 'lg:w-2/5 xl:w-1/3'}`}
-        >
-          {/* Bot Name */}
-          <div className="flex flex-col">
-            <div className="flex items-center mb-1">
-              <label className="block text-lg font-semibold text-text-primary">
-                {t('bot.name')} <span className="text-red-400">*</span>
-              </label>
+      {/* Main content area - using vertical layout */}
+      <div className="flex flex-col gap-4 flex-1 mx-2 min-h-0 overflow-y-auto">
+        <div className={`flex flex-col space-y-3 w-full flex-shrink-0`}>
+          {/* Bot Name and Agent in one row */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            {/* Bot Name */}
+            <div className="flex flex-col flex-1">
+              <div className="flex items-center mb-1">
+                <label className="block text-lg font-semibold text-text-primary">
+                  {t('bot.name')} <span className="text-red-400">*</span>
+                </label>
+              </div>
+              <input
+                type="text"
+                value={botName}
+                onChange={e => setBotName(e.target.value)}
+                placeholder={t('bot.name_placeholder')}
+                disabled={readOnly}
+                className={`w-full px-4 py-1 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              />
             </div>
-            <input
-              type="text"
-              value={botName}
-              onChange={e => setBotName(e.target.value)}
-              placeholder={t('bot.name_placeholder')}
-              disabled={readOnly}
-              className={`w-full px-4 py-1 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
-            />
-          </div>
 
-          {/* Agent */}
-          <div className="flex flex-col">
-            <div className="flex items-center mb-1">
-              <label className="block text-lg font-semibold text-text-primary">
-                {t('bot.agent')} <span className="text-red-400">*</span>
-              </label>
-              {/* Help Icon */}
-              <button
-                type="button"
-                onClick={() => handleOpenShellDocs()}
-                className="ml-2 text-text-muted hover:text-primary transition-colors"
-                title={t('bot.view_shell_config_guide')}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-5 w-5"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
+            {/* Agent */}
+            <div className="flex flex-col flex-1">
+              <div className="flex items-center mb-1">
+                <label className="block text-lg font-semibold text-text-primary">
+                  {t('bot.agent')} <span className="text-red-400">*</span>
+                </label>
+                {/* Help Icon */}
+                <button
+                  type="button"
+                  onClick={() => handleOpenShellDocs()}
+                  className="ml-2 text-text-muted hover:text-primary transition-colors"
+                  title={t('bot.view_shell_config_guide')}
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
-                  />
-                </svg>
-              </button>
-            </div>
-            <Select
-              value={agentName}
-              onValueChange={value => {
-                if (readOnly) return;
-                if (value !== agentName) {
-                  setIsCustomModel(false);
-                  setSelectedModel('');
-                  setAgentConfig('');
-                  setAgentConfigError(false);
-                  setModels([]);
-                  // Clear protocol when switching agent type since protocols are filtered by agent
-                  setSelectedProtocol('');
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+                    />
+                  </svg>
+                </button>
+              </div>
+              <Select
+                value={agentName}
+                onValueChange={value => {
+                  if (readOnly) return;
+                  if (value !== agentName) {
+                    setIsCustomModel(false);
+                    setSelectedModel('');
+                    setAgentConfig('');
+                    setAgentConfigError(false);
+                    setModels([]);
+                    // Clear protocol when switching agent type since protocols are filtered by agent
+                    setSelectedProtocol('');
 
-                  // Adapt MCP config when switching agent type
-                  if (mcpConfig.trim()) {
-                    try {
-                      const currentMcpConfig = JSON.parse(mcpConfig);
-                      if (isValidAgentType(value)) {
-                        const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value);
-                        setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
-                      } else {
-                        console.warn(
-                          `Unknown agent type "${value}", skipping MCP config adaptation`
-                        );
+                    // Adapt MCP config when switching agent type
+                    if (mcpConfig.trim()) {
+                      try {
+                        const currentMcpConfig = JSON.parse(mcpConfig);
+                        if (isValidAgentType(value)) {
+                          const adaptedConfig = adaptMcpConfigForAgent(currentMcpConfig, value);
+                          setMcpConfig(JSON.stringify(adaptedConfig, null, 2));
+                        } else {
+                          console.warn(
+                            `Unknown agent type "${value}", skipping MCP config adaptation`
+                          );
+                        }
+                      } catch (error) {
+                        // If parsing fails, keep the original config
+                        console.warn('Failed to adapt MCP config on agent change:', error);
                       }
-                    } catch (error) {
-                      // If parsing fails, keep the original config
-                      console.warn('Failed to adapt MCP config on agent change:', error);
                     }
                   }
-                }
-                setAgentName(value);
-              }}
-              disabled={loadingShells || readOnly}
-            >
-              <SelectTrigger className="w-full">
-                <SelectValue placeholder={t('bot.agent_select')} />
-              </SelectTrigger>
-              <SelectContent>
-                {shells.map(shell => (
-                  <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
-                    {shell.displayName || shell.name}
-                    {shell.type === 'user' && (
-                      <span className="ml-1 text-xs text-text-muted">
-                        [{t('bot.custom_shell', '自定义')}]
-                      </span>
-                    )}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                  setAgentName(value);
+                }}
+                disabled={loadingShells || readOnly}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder={t('bot.agent_select')} />
+                </SelectTrigger>
+                <SelectContent>
+                  {shells.map(shell => (
+                    <SelectItem key={`${shell.name}-${shell.type}`} value={shell.name}>
+                      {shell.displayName || shell.name}
+                      {shell.type === 'user' && (
+                        <span className="ml-1 text-xs text-text-muted">
+                          [{t('bot.custom_shell', '自定义')}]
+                        </span>
+                      )}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
           </div>
 
           {/* Conditional rendering based on agent type */}
@@ -896,6 +1072,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                           <>
                             <SelectItem value="openai">OpenAI</SelectItem>
                             <SelectItem value="claude">Claude (Anthropic)</SelectItem>
+                            <SelectItem value="gemini">Gemini (Google)</SelectItem>
                           </>
                         )}
                         {/* Show all options if agent type is unknown or not selected */}
@@ -946,7 +1123,7 @@ const BotEdit: React.FC<BotEditProps> = ({
 }`
                           : ''
                     }
-                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                    className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base h-[150px] custom-scrollbar ${agentConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-border focus:ring-primary/40 focus:border-primary'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   />
                 ) : (
                   <Select
@@ -981,7 +1158,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                             key={`${model.name}:${model.type}`}
                             value={`${model.name}:${model.type}`}
                           >
-                            {model.displayName ? `${model.displayName}(${model.name})` : model.name}
+                            {model.displayName || model.name}
                             {model.type === 'public' && (
                               <span className="ml-1 text-xs text-text-muted">
                                 [{t('bot.public_model', '公共')}]
@@ -1125,7 +1302,7 @@ const BotEdit: React.FC<BotEditProps> = ({
                   }}
                   onBlur={prettifyMcpConfig}
                   disabled={readOnly}
-                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-transparent focus:ring-primary/40 focus:border-transparent'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+                  className={`w-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 font-mono text-base flex-grow resize-none custom-scrollbar ${mcpConfigError ? 'border border-red-400 focus:ring-red-300 focus:border-red-400' : 'border border-border focus:ring-primary/40 focus:border-primary'} ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
                   placeholder={`{
   "github": {
     "command": "docker",
@@ -1154,9 +1331,9 @@ const BotEdit: React.FC<BotEditProps> = ({
           )}
         </div>
 
-        {/* Right Prompt area - responsive layout */}
+        {/* Prompt area - below the config section */}
         {!isDifyAgent && (
-          <div className="w-full lg:w-3/5 xl:w-2/3 flex flex-col min-h-0">
+          <div className="w-full flex flex-col min-h-0">
             <div className="mb-1 flex-shrink-0">
               <div className="flex items-center">
                 <label className="block text-base font-medium text-text-primary">
@@ -1175,7 +1352,7 @@ const BotEdit: React.FC<BotEditProps> = ({
               }}
               disabled={readOnly}
               placeholder={t('bot.prompt_placeholder')}
-              className={`w-full h-full px-4 py-2 bg-base rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-transparent text-base resize-none custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
+              className={`w-full h-full px-4 py-2 bg-base border border-border rounded-md text-text-primary placeholder:text-text-muted focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary text-base resize-none custom-scrollbar min-h-[200px] flex-grow ${readOnly ? 'cursor-not-allowed opacity-70' : ''}`}
             />
           </div>
         )}
@@ -1215,25 +1392,6 @@ const BotEdit: React.FC<BotEditProps> = ({
       <style
         dangerouslySetInnerHTML={{
           __html: `
-          @media (max-width: 1024px) {
-            /* Stack layout on tablet and mobile */
-            .flex.flex-col.lg\\:flex-row {
-              flex-direction: column !important;
-            }
-            .w-full.lg\\:w-2\\/5.xl\\:w-1\\/3 {
-              width: 100% !important;
-              margin-bottom: 1rem;
-            }
-            
-            /* Ensure Dify full width on mobile */
-            .lg\\:w-full {
-               width: 100% !important;
-            }
-            .w-full.lg\\:w-3\\/5.xl\\:w-2\\/3 {
-              width: 100% !important;
-            }
-          }
-
           @media (max-width: 640px) {
             /* Mobile specific optimizations */
             .flex.flex-col.w-full.bg-surface.rounded-lg {
@@ -1378,5 +1536,7 @@ const BotEdit: React.FC<BotEditProps> = ({
     </div>
   );
 };
+
+const BotEdit = forwardRef(BotEditInner);
 
 export default BotEdit;
