@@ -135,6 +135,28 @@ class Settings(BaseSettings):
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
 
+    # MCP (Model Context Protocol) configuration for Chat Shell
+    # Enable/disable MCP tools in Chat Shell mode
+    CHAT_MCP_ENABLED: bool = False
+    # JSON configuration for MCP servers (similar to Claude Desktop format)
+    # Example:
+    # {
+    #     "mcpServers": {
+    #         "image-gen": {
+    #             "type": "sse",
+    #             "url": "http://localhost:8080/sse",
+    #             "headers": {"Authorization": "Bearer xxx"}
+    #         },
+    #         "ppt-gen": {
+    #             "type": "stdio",
+    #             "command": "npx",
+    #             "args": ["-y", "@anthropic/ppt-mcp-server"],
+    #             "env": {"API_KEY": "xxx"}
+    #         }
+    #     }
+    # }
+    CHAT_MCP_SERVERS: str = "{}"
+
     # OpenTelemetry configuration is centralized in shared/telemetry/config.py
     # Use: from shared.telemetry.config import get_otel_config
     # All OTEL_* environment variables are read from there

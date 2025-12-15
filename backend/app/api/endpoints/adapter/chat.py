@@ -489,14 +489,14 @@ async def stream_chat(
     tools = None
     if request.enable_web_search:
         from app.core.config import settings
-        from app.services.chat.tools import get_web_search_mcp
+        from app.services.chat.tools import get_web_search_tool
 
         # Check if web search is enabled globally
         if settings.WEB_SEARCH_ENABLED:
-            # Pass the FastMCP tool object directly
-            web_search_mcp = get_web_search_mcp(engine_name=request.search_engine)
-            if web_search_mcp:
-                tools = [web_search_mcp]
+            # Get web search tool
+            web_search_tool = get_web_search_tool(engine_name=request.search_engine)
+            if web_search_tool:
+                tools = [web_search_tool]
         else:
             logger.warning("Web search requested but disabled in configuration")
 
