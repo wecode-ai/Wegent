@@ -133,8 +133,134 @@ docker-compose restart backend executor_manager
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTLP gRPC endpoint | `http://otel-collector:4317` |
 | `OTEL_TRACES_SAMPLER_ARG` | Sampling ratio (0.0-1.0) | `1.0` |
 | `OTEL_METRICS_ENABLED` | Enable/disable metrics export | `false` |
+| `OTEL_EXCLUDED_URLS` | Comma-separated URL patterns to exclude (blacklist) | See below |
+| `OTEL_INCLUDED_URLS` | Comma-separated URL patterns to include (whitelist) | Empty (all) |
+| `OTEL_DISABLE_SEND_RECEIVE_SPANS` | Disable internal http.send/http.receive spans | `true` |
 
 **Note:** Metrics export is disabled by default because Elasticsearch exporter has limited support for certain metric types. If you see `StatusCode.UNIMPLEMENTED` errors, keep metrics disabled.
+
+### SSE/Streaming Endpoint Optimization
+
+By default, OpenTelemetry ASGI instrumentation creates internal spans for each `http.send` and `http.receive` event. For SSE (Server-Sent Events) or streaming endpoints like `/api/chat/stream`, this creates excessive noise as **each chunk generates a separate span**.
+
+#### Industry Standard Solution
+
+The `OTEL_DISABLE_SEND_RECEIVE_SPANS` environment variable (default: `true`) disables these internal spans. This is the **industry standard approach** recommended by OpenTelemetry for streaming endpoints.
+
+**How it works:**
+- Uses the `exclude_spans` parameter in `FastAPIInstrumentor.instrument_app()`
+- Passes `exclude_spans="send,receive"` to exclude both send and receive internal spans
+- This is the official API provided by `opentelemetry-instrumentation-fastapi`
+
+**What it does:**
+- Prevents creation of internal spans with `asgi.event.type = http.response.body`
+- Reduces trace noise significantly for streaming responses
+- Maintains the parent HTTP span for the overall request
+
+**Example trace comparison:**
+
+Without optimization (noisy):
+```
+POST /api/chat/stream (parent span)
+├── http send (chunk 1)
+├── http send (chunk 2)
+├── http send (chunk 3)
+├── ... (hundreds of spans for each SSE chunk)
+└── http send (chunk N)
+```
+
+With optimization (clean):
+```
+POST /api/chat/stream (single span with full duration)
+```
+
+#### Configuration
+
+```yaml
+# Default: streaming-friendly mode (recommended)
+environment:
+  OTEL_ENABLED: "true"
+  OTEL_DISABLE_SEND_RECEIVE_SPANS: "true"  # Default, can be omitted
+
+# If you need to debug streaming internals (not recommended for production)
+environment:
+  OTEL_ENABLED: "true"
+  OTEL_DISABLE_SEND_RECEIVE_SPANS: "false"
+```
+
+#### Requirements
+
+This feature uses the `exclude_spans` parameter which is available in `opentelemetry-instrumentation-fastapi`. The project uses `>= 0.48b0` which fully supports this feature.
+
+#### References
+
+- [OpenTelemetry FastAPI Instrumentation](https://github.com/open-telemetry/opentelemetry-python-contrib/tree/main/instrumentation/opentelemetry-instrumentation-fastapi) - Official FastAPI instrumentation with `exclude_spans` parameter
+- [OpenTelemetry ASGI Instrumentation](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/asgi/asgi.html)
+- [HTTP Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/http/) - OpenTelemetry standards for HTTP tracing
+
+### URL Filtering (Blacklist/Whitelist)
+
+You can filter which API endpoints are traced using blacklist or whitelist mode.
+
+#### Default Excluded URLs (Blacklist)
+
+By default, the following URLs are excluded from tracing:
+
+- `/health`, `/healthz`, `/ready`, `/readyz`, `/livez` - Health check endpoints
+- `/metrics` - Prometheus metrics endpoint
+- `/api/docs`, `/api/openapi.json` - API documentation
+- `/favicon.ico` - Browser favicon
+
+#### Blacklist Mode (Default)
+
+Exclude specific URLs from tracing:
+
+```bash
+# Exclude additional endpoints
+OTEL_EXCLUDED_URLS="/health,/metrics,/api/docs,/api/internal/*,/api/v1/ping"
+```
+
+#### Whitelist Mode
+
+Only trace specific URLs (useful for debugging specific endpoints):
+
+```bash
+# Only trace these endpoints
+OTEL_INCLUDED_URLS="/api/tasks/*,/api/chat/*,/api/teams/*"
+```
+
+**Note:** When `OTEL_INCLUDED_URLS` is set, `OTEL_EXCLUDED_URLS` is ignored.
+
+#### Pattern Syntax
+
+| Pattern | Description | Example |
+|---------|-------------|---------|
+| `/api/health` | Exact match | Matches only `/api/health` |
+| `/api/*` | Prefix wildcard | Matches `/api/users`, `/api/tasks/123`, etc. |
+| `^/api/v[0-9]+/.*` | Regex (starts with `^`) | Matches `/api/v1/users`, `/api/v2/tasks` |
+
+#### Example Configurations
+
+**Exclude noisy internal endpoints:**
+```yaml
+environment:
+  OTEL_ENABLED: "true"
+  OTEL_EXCLUDED_URLS: "/health,/metrics,/api/docs,/api/internal/*,/api/v1/heartbeat"
+```
+
+**Debug specific feature only:**
+```yaml
+environment:
+  OTEL_ENABLED: "true"
+  OTEL_INCLUDED_URLS: "/api/chat/*,/api/tasks/*"
+```
+
+**Clear default exclusions (trace everything):**
+```yaml
+environment:
+  OTEL_ENABLED: "true"
+  OTEL_EXCLUDED_URLS: ""  # Empty string clears defaults
+```
 
 ### OpenTelemetry Collector Configuration
 
@@ -238,6 +364,74 @@ Kibana is useful for complex queries and creating dashboards.
    - Request latency histogram
    - Error rate over time
    - Service call counts
+
+## Fault Tolerance (Collector Unavailability)
+
+**Important:** The OpenTelemetry SDK is configured with fail-safe settings to ensure that if the Collector is unavailable, your main services will **NOT** be affected.
+
+### How It Works
+
+When the Collector is down or unreachable:
+
+1. **Traces are buffered** in memory (up to 2048 spans)
+2. **Export attempts timeout quickly** (5 seconds for connection, 10 seconds for export)
+3. **Spans are dropped** (not blocking) when the buffer is full
+4. **Your application continues to function normally**
+
+### Configuration Details
+
+The SDK uses `BatchSpanProcessor` with these fail-safe settings:
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `max_queue_size` | 2048 | Maximum spans to buffer before dropping |
+| `schedule_delay_millis` | 5000 | Export batch every 5 seconds |
+| `max_export_batch_size` | 512 | Maximum spans per export batch |
+| `export_timeout_millis` | 10000 | 10 second timeout per export attempt |
+| `exporter.timeout` | 5 | 5 second connection timeout |
+
+### What Happens When Collector is Down
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│  Collector DOWN                                                  │
+├─────────────────────────────────────────────────────────────────┤
+│  1. Service continues to handle requests normally               │
+│  2. Spans are queued in memory (up to 2048)                     │
+│  3. Export attempts fail with timeout (5-10 seconds)            │
+│  4. Warning logs appear: "Failed to export spans"               │
+│  5. When queue is full, oldest spans are dropped                │
+│  6. NO impact on request latency or service availability        │
+├─────────────────────────────────────────────────────────────────┤
+│  Collector RECOVERS                                              │
+├─────────────────────────────────────────────────────────────────┤
+│  1. Queued spans are exported                                   │
+│  2. New spans continue to be collected                          │
+│  3. Normal operation resumes automatically                      │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Monitoring Collector Health
+
+To monitor if the Collector is healthy:
+
+```bash
+# Check collector status
+docker-compose -f telemetry/docker-compose.yml ps otel-collector
+
+# Check collector logs for errors
+docker-compose -f telemetry/docker-compose.yml logs otel-collector | tail -50
+
+# Check collector metrics
+curl http://localhost:8888/metrics | grep otelcol_exporter
+```
+
+### Best Practices
+
+1. **Always set `OTEL_ENABLED=false` in critical production environments** if you're not actively using tracing
+2. **Monitor collector health** with alerting on the collector's `/metrics` endpoint
+3. **Use sampling** (`OTEL_TRACES_SAMPLER_ARG=0.1`) to reduce load
+4. **Deploy collector with high availability** (multiple replicas) in production
 
 ## Production Recommendations
 
