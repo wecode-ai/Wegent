@@ -224,6 +224,16 @@ const ShellList: React.FC<ShellListProps> = ({
                                 variant: 'info',
                                 className: 'hidden sm:inline-flex text-xs',
                               },
+                              ...(shell.workspaceType === 'persistent'
+                                ? [
+                                    {
+                                      key: 'workspace-type',
+                                      label: t('shells.workspace_persistent'),
+                                      variant: 'success' as const,
+                                      className: 'text-xs',
+                                    },
+                                  ]
+                                : []),
                               ...(shell.baseImage
                                 ? [
                                     {

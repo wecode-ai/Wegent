@@ -18,6 +18,7 @@ from shared.status import TaskStatus
 from shared.logger import setup_logger
 from executor.callback.callback_client import CallbackClient
 from shared.utils.crypto import is_token_encrypted, decrypt_git_token
+from executor.workspace.workspace_setup import WorkspaceSetup, WorkspaceResult
 
 logger = setup_logger("agent_base")
 
@@ -53,6 +54,8 @@ class Agent:
         self.task_type = task_data.get("type")  # Task type (e.g., "validation" for validation tasks)
         self.execution_status = TaskStatus.INITIALIZED
         self.project_path = None
+        self.workspace_result: Optional[WorkspaceResult] = None
+        self.feature_name: Optional[str] = None
 
     def handle(self, pre_executed: Optional[TaskStatus] = None) -> Tuple[TaskStatus, Optional[str]]:
         """
@@ -148,26 +151,52 @@ class Agent:
         raise NotImplementedError("Subclasses must implement execute()")
 
     def download_code(self):
-        git_url = self.task_data.get("git_url","")
+        """
+        Download code using the new workspace structure.
+        
+        If USE_LEGACY_WORKSPACE is True, uses the old flat directory structure.
+        Otherwise, uses the new feature-based workspace structure.
+        """
+        git_url = self.task_data.get("git_url", "")
         if git_url == "":
             logger.info("git url is empty, skip download code")
             return
         
-        user_config = self.task_data.get("user")
+        user_config = self.task_data.get("user") or {}
         git_token = user_config.get("git_token")
+        git_login = user_config.get("git_login")
+        
         # Handle encrypted tokens
         if git_token and is_token_encrypted(git_token):
             logger.debug(f"Agent[{self.get_name()}][{self.task_id}] Decrypting git token")
             git_token = decrypt_git_token(git_token)
 
-        username = user_config.get("user_name")
         branch_name = self.task_data.get("branch_name")
-        repo_name = git_util.get_repo_name_from_url(git_url)
+        
         logger.info(f"Agent[{self.get_name()}][{self.task_id}] start download code for git url: {git_url}, branch name: {branch_name}")
-        logger.info("username: {username} git token: {git_token}")
-        logger.info(user_config)
-
-        project_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id),repo_name)
+        
+        # Check if we should use legacy workspace mode
+        if config.USE_LEGACY_WORKSPACE:
+            self._download_code_legacy(git_url, branch_name, user_config, git_token)
+        else:
+            self._download_code_new(git_url, branch_name, user_config, git_token, git_login)
+    
+    def _download_code_legacy(
+        self,
+        git_url: str,
+        branch_name: Optional[str],
+        user_config: Dict[str, Any],
+        git_token: Optional[str]
+    ):
+        """
+        Download code using the legacy flat directory structure.
+        
+        This is the original implementation for backward compatibility.
+        """
+        username = user_config.get("user_name")
+        repo_name = git_util.get_repo_name_from_url(git_url)
+        
+        project_path = os.path.join(config.WORKSPACE_ROOT, str(self.task_id), repo_name)
         if self.project_path is None:
             self.project_path = project_path
 
@@ -185,6 +214,117 @@ class Agent:
                 raise Exception(error_msg)
         else:
             logger.info(f"Agent[{self.get_name()}][{self.task_id}] Project already exists at {project_path}, skip cloning")
+    
+    def _download_code_new(
+        self,
+        git_url: str,
+        branch_name: Optional[str],
+        user_config: Dict[str, Any],
+        git_token: Optional[str],
+        git_login: Optional[str]
+    ):
+        """
+        Download code using the new feature-based workspace structure.
+        
+        Branch naming convention:
+        - branch_name: Source branch to checkout from (e.g., 'develop', 'main')
+        - feature_branch: Feature branch name for workspace directory (optional, from task_data)
+        
+        Uses WorkspaceSetup to create either:
+        - Feature workspace (if feature_branch is provided)
+        - Task workspace (if no feature_branch, uses branch_name as source branch)
+        """
+        # Get additional repositories for cross-repo features
+        additional_repos = self.task_data.get("additional_repos")
+        
+        # Get feature_branch from task_data (optional)
+        # feature_branch is the name for the workspace directory and new branch
+        # branch_name is the source branch to checkout from
+        feature_branch = self.task_data.get("feature_branch")
+        
+        # Setup workspace
+        workspace_setup = WorkspaceSetup()
+        result = workspace_setup.setup_workspace(
+            task_id=self.task_id,
+            git_url=git_url,
+            branch_name=branch_name,  # Source branch (e.g., 'develop', 'main')
+            feature_branch=feature_branch,  # Feature branch name (optional)
+            prompt=self.task_data.get("prompt", ""),
+            git_token=git_token,
+            git_login=git_login,
+            additional_repos=additional_repos
+        )
+        
+        # Store workspace result
+        self.workspace_result = result
+        
+        if not result.success:
+            error_msg = f"Agent[{self.get_name()}][{self.task_id}] Failed to setup workspace: {result.error_message}"
+            logger.error(error_msg)
+            raise Exception(error_msg)
+        
+        # Set project path
+        if result.project_path:
+            self.project_path = result.project_path
+        else:
+            self.project_path = result.workspace_path
+        
+        # Store feature name if available
+        self.feature_name = result.feature_name
+        
+        # Setup git config if we have a project path
+        if result.project_path and os.path.exists(result.project_path):
+            self.setup_git_config(user_config, result.project_path)
+        
+        logger.info(
+            f"Agent[{self.get_name()}][{self.task_id}] Workspace setup complete: "
+            f"type={'feature' if result.is_feature_workspace else 'task'}, "
+            f"path={result.workspace_path}, project={result.project_path}"
+        )
+    
+    def convert_to_feature_workspace(self, feature_name: str) -> bool:
+        """
+        Convert the current task workspace to a feature workspace.
+        
+        This is called when Claude decides on a branch name for a task
+        that was initially created without one.
+        
+        Args:
+            feature_name: The feature/branch name to use
+            
+        Returns:
+            True if conversion was successful
+        """
+        if config.USE_LEGACY_WORKSPACE:
+            logger.warning("Cannot convert to feature workspace in legacy mode")
+            return False
+        
+        user_config = self.task_data.get("user") or {}
+        git_token = user_config.get("git_token")
+        git_login = user_config.get("git_login")
+        
+        # Handle encrypted tokens
+        if git_token and is_token_encrypted(git_token):
+            git_token = decrypt_git_token(git_token)
+        
+        workspace_setup = WorkspaceSetup()
+        result = workspace_setup.convert_task_to_feature(
+            task_id=self.task_id,
+            feature_name=feature_name,
+            git_token=git_token,
+            git_login=git_login
+        )
+        
+        if result.success:
+            self.workspace_result = result
+            self.feature_name = feature_name
+            if result.project_path:
+                self.project_path = result.project_path
+            logger.info(f"Agent[{self.get_name()}][{self.task_id}] Converted to feature workspace: {feature_name}")
+            return True
+        else:
+            logger.error(f"Agent[{self.get_name()}][{self.task_id}] Failed to convert to feature: {result.error_message}")
+            return False
 
     def initialize(self) -> TaskStatus:
         """

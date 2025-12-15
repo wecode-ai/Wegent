@@ -388,7 +388,13 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                         <ResourceListItem
                           name={team.name}
                           description={team.description}
-                          icon={<TeamIconDisplay iconId={team.icon} size="md" className="text-primary" />}
+                          icon={
+                            <TeamIconDisplay
+                              iconId={team.icon}
+                              size="md"
+                              className="text-primary"
+                            />
+                          }
                           tags={[
                             ...(team.workflow?.mode
                               ? [

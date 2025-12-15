@@ -5,7 +5,6 @@
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 from shared.utils.git_util import clone_repo_with_token, is_gerrit_url
 
 

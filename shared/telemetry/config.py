@@ -31,10 +31,11 @@ from typing import Dict, Optional
 class OtelConfig:
     """
     OpenTelemetry configuration dataclass.
-    
+
     This class holds all OTEL configuration values loaded from environment
     variables. Use get_otel_config() to get a singleton instance.
     """
+
     enabled: bool
     service_name: str
     otlp_endpoint: str
@@ -54,24 +55,24 @@ _otel_config: Optional[OtelConfig] = None
 def get_otel_config(service_name_override: Optional[str] = None) -> OtelConfig:
     """
     Get OpenTelemetry configuration from environment variables.
-    
+
     This function returns a cached OtelConfig instance. The configuration
     is loaded once from environment variables and reused for subsequent calls.
-    
+
     Args:
         service_name_override: Optional service name to override the default.
                               Only used on first call when config is created.
-    
+
     Returns:
         OtelConfig: Configuration dataclass with all OTEL settings
-    
+
     Example:
         >>> config = get_otel_config("wegent-backend")
         >>> if config.enabled:
         ...     init_telemetry(config)
     """
     global _otel_config
-    
+
     if _otel_config is None:
         default_service_name = service_name_override or os.getenv(
             "OTEL_SERVICE_NAME", "wegent-service"
@@ -83,32 +84,35 @@ def get_otel_config(service_name_override: Optional[str] = None) -> OtelConfig:
                 "OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317"
             ),
             sampler_ratio=float(os.getenv("OTEL_TRACES_SAMPLER_ARG", "1.0")),
-            metrics_enabled=os.getenv("OTEL_METRICS_ENABLED", "false").lower() == "true",
+            metrics_enabled=os.getenv("OTEL_METRICS_ENABLED", "false").lower()
+            == "true",
             capture_request_headers=os.getenv(
                 "OTEL_CAPTURE_REQUEST_HEADERS", "false"
-            ).lower() == "true",
-            capture_request_body=os.getenv(
-                "OTEL_CAPTURE_REQUEST_BODY", "false"
-            ).lower() == "true",
+            ).lower()
+            == "true",
+            capture_request_body=os.getenv("OTEL_CAPTURE_REQUEST_BODY", "false").lower()
+            == "true",
             capture_response_headers=os.getenv(
                 "OTEL_CAPTURE_RESPONSE_HEADERS", "false"
-            ).lower() == "true",
+            ).lower()
+            == "true",
             capture_response_body=os.getenv(
                 "OTEL_CAPTURE_RESPONSE_BODY", "false"
-            ).lower() == "true",
+            ).lower()
+            == "true",
             max_body_size=min(
                 int(os.getenv("OTEL_MAX_BODY_SIZE", "4096")),
-                10485760  # Hard limit of 1MB to prevent memory issues
+                10485760,  # Hard limit of 1MB to prevent memory issues
             ),
         )
-    
+
     return _otel_config
 
 
 def get_otel_config_from_env() -> Dict[str, any]:
     """
     Get OpenTelemetry configuration from environment variables as a dictionary.
-    
+
     This is a legacy function for backward compatibility. New code should
     use get_otel_config() which returns a typed OtelConfig dataclass.
 
@@ -178,7 +182,7 @@ def set_http_capture_settings(
 def reset_otel_config() -> None:
     """
     Reset the cached OTEL configuration.
-    
+
     This is primarily useful for testing purposes where you need to
     reload configuration with different environment variables.
     """

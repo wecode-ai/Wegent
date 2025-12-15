@@ -5,6 +5,7 @@
 """
 Models package
 """
+from app.models.container_instance import ContainerInstance
 from app.models.kind import Kind
 from app.models.namespace import Namespace
 from app.models.namespace_member import NamespaceMember
@@ -23,6 +24,7 @@ __all__ = [
     "Subtask",
     "SharedTeam",
     "SkillBinary",
+    "ContainerInstance",
     "SystemConfig",
     "Namespace",
     "NamespaceMember",

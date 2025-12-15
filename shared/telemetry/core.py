@@ -17,7 +17,6 @@ from opentelemetry import metrics, trace
 from opentelemetry.metrics import Meter
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.trace import Tracer
-
 from shared.telemetry.config import set_http_capture_settings
 from shared.telemetry.providers import (
     init_meter_provider,

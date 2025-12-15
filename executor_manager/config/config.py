@@ -52,7 +52,9 @@ GITHUB_PRIVATE_KEY_PATH = os.getenv("GITHUB_PRIVATE_KEY_PATH")
 GITHUB_PRIVATE_KEY = os.getenv("GITHUB_PRIVATE_KEY")
 
 EXECUTOR_DISPATCHER_MODE = os.getenv("EXECUTOR_DISPATCHER_MODE", "docker")
-EXECUTOR_CONFIG = os.getenv("EXECUTOR_CONFIG", "{\"docker\":\"executor_manager.executors.docker.DockerExecutor\"}")
+EXECUTOR_CONFIG = os.getenv(
+    "EXECUTOR_CONFIG", '{"docker":"executor_manager.executors.docker.DockerExecutor"}'
+)
 EXECUTOR_ENV = os.environ.get("EXECUTOR_ENV", "{}")
 
 # OpenTelemetry configuration is centralized in shared/telemetry/config.py

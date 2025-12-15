@@ -215,6 +215,10 @@ status:
 | `spec.shellType` | string | Yes | Shell type, such as `ClaudeCode`, `Agno`, `Dify` |
 | `spec.supportModel` | array | No | List of supported model types |
 | `spec.baseImage` | string | No | Docker base image for local engine shells (required for `local_engine` type) |
+| `spec.workspaceType` | string | No | Workspace type: `ephemeral` (default) or `persistent`. Ephemeral creates new container per task, persistent keeps container running |
+| `spec.resources` | object | No | Resource configuration for persistent containers (only used when `workspaceType` is `persistent`) |
+| `spec.resources.cpu` | string | No | CPU cores allocated, default `2` |
+| `spec.resources.memory` | string | No | Memory size allocated, e.g., `4Gi`. Options: `2Gi`, `4Gi`, `8Gi`, `16Gi` |
 | `status.state` | string | No | Shell status: `Available` or `Unavailable` |
 
 ### Shell Types

@@ -121,7 +121,11 @@ export default function TeamSelector({
         searchText: team.name,
         content: (
           <div className="flex items-center gap-2 min-w-0">
-            <TeamIconDisplay iconId={team.icon} size="sm" className="flex-shrink-0 text-text-muted" />
+            <TeamIconDisplay
+              iconId={team.icon}
+              size="sm"
+              className="flex-shrink-0 text-text-muted"
+            />
             <span
               className="font-medium text-xs text-text-secondary truncate flex-1 min-w-0"
               title={team.name}

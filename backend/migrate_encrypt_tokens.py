@@ -65,9 +65,13 @@ def migrate_user_tokens(db: Session) -> int:
                 encrypted_token = encrypt_git_token(git_token)
                 git_item["git_token"] = encrypted_token
                 modified = True
-                logger.info(f"Encrypted token for user {user.user_name}, type: {git_item.get('type')}")
+                logger.info(
+                    f"Encrypted token for user {user.user_name}, type: {git_item.get('type')}"
+                )
             except Exception as e:
-                logger.error(f"Failed to encrypt token for user {user.user_name}: {str(e)}")
+                logger.error(
+                    f"Failed to encrypt token for user {user.user_name}: {str(e)}"
+                )
                 continue
 
         if modified:

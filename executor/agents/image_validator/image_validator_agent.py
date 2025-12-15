@@ -14,11 +14,11 @@ compatibility with specific shell types.
 
 import re
 import subprocess
-from typing import Dict, Any, Tuple, Optional, List
+from typing import Any, Dict, List, Optional, Tuple
 
+from executor.agents.base import Agent
 from shared.logger import setup_logger
 from shared.status import TaskStatus
-from executor.agents.base import Agent
 
 logger = setup_logger("image_validator")
 
@@ -67,7 +67,7 @@ class ImageValidatorAgent(Agent):
                 "command": "sqlite3 --version",
                 "version_regex": r"(\d+\.\d+\.\d+)",
                 "min_version": "3.50.0",
-            }
+            },
         ],
     }
 
@@ -95,7 +95,9 @@ class ImageValidatorAgent(Agent):
             logger.error(f"Unknown shell type: {self.shell_type}")
             return TaskStatus.FAILED
 
-        logger.info(f"ImageValidator initialized for shell_type={self.shell_type}, validation_id={self.validation_id}")
+        logger.info(
+            f"ImageValidator initialized for shell_type={self.shell_type}, validation_id={self.validation_id}"
+        )
         return TaskStatus.SUCCESS
 
     def execute(self) -> TaskStatus:
@@ -181,7 +183,9 @@ class ImageValidatorAgent(Agent):
 
             output = result.stdout.strip()
             if result.returncode != 0 or "not found" in output.lower():
-                logger.warning(f"Check '{name}' failed: command returned error or not found")
+                logger.warning(
+                    f"Check '{name}' failed: command returned error or not found"
+                )
                 return {
                     "name": name,
                     "status": "fail",
@@ -199,7 +203,9 @@ class ImageValidatorAgent(Agent):
                         from packaging import version as pkg_version
 
                         if pkg_version.parse(version) < pkg_version.parse(min_version):
-                            logger.warning(f"Check '{name}': version {version} < required {min_version}")
+                            logger.warning(
+                                f"Check '{name}': version {version} < required {min_version}"
+                            )
                             return {
                                 "name": name,
                                 "version": version,

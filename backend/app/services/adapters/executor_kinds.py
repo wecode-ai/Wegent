@@ -442,6 +442,9 @@ class ExecutorKindsService(
 
                 # If user shell not found, try public shells
                 shell_base_image = None
+                shell_workspace_type = "ephemeral"  # Default to ephemeral
+                shell_id = None
+                shell_resources = None
                 if not shell:
 
                     public_shell = (
@@ -455,13 +458,23 @@ class ExecutorKindsService(
                     if public_shell and public_shell.json:
                         shell_crd_temp = Shell.model_validate(public_shell.json)
                         shell_base_image = shell_crd_temp.spec.baseImage
+                        shell_workspace_type = (
+                            shell_crd_temp.spec.workspaceType or "ephemeral"
+                        )
+                        shell_id = public_shell.id
+                        if shell_crd_temp.spec.resources:
+                            shell_resources = {
+                                "cpu": shell_crd_temp.spec.resources.cpu,
+                                "memory": shell_crd_temp.spec.resources.memory,
+                            }
 
                         # Create a mock shell object for compatibility
                         class MockShell:
-                            def __init__(self, json_data):
+                            def __init__(self, json_data, shell_id):
                                 self.json = json_data
+                                self.id = shell_id
 
-                        shell = MockShell(public_shell.json)
+                        shell = MockShell(public_shell.json, public_shell.id)
 
                 # Get model for agent config (modelRef is optional)
                 # Try to find in kinds table (user's private models) first, then public_models table
@@ -519,6 +532,15 @@ class ExecutorKindsService(
                     # Extract baseImage from shell (user-defined shell overrides public shell)
                     if shell_crd.spec.baseImage:
                         shell_base_image = shell_crd.spec.baseImage
+                    # Extract workspaceType and resources from user-defined shell
+                    if hasattr(shell, "id"):
+                        shell_id = shell.id
+                    shell_workspace_type = shell_crd.spec.workspaceType or "ephemeral"
+                    if shell_crd.spec.resources:
+                        shell_resources = {
+                            "cpu": shell_crd.spec.resources.cpu,
+                            "memory": shell_crd.spec.resources.memory,
+                        }
 
                 if model and model.json:
                     model_crd = Model.model_validate(model.json)
@@ -675,6 +697,9 @@ class ExecutorKindsService(
                         "skills": skills,
                         "role": team_member_info.role if team_member_info else "",
                         "base_image": shell_base_image,  # Custom base image for executor
+                        "workspace_type": shell_workspace_type,  # Workspace type: ephemeral or persistent
+                        "shell_id": shell_id,  # Shell ID for persistent container naming
+                        "shell_resources": shell_resources,  # Resource config for persistent containers
                     }
                 )
 

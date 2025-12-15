@@ -13,7 +13,6 @@ import logging
 from typing import Any, Dict, Optional
 
 from opentelemetry.metrics import Counter, Histogram, UpDownCounter
-
 from shared.telemetry.core import get_meter, is_telemetry_enabled
 
 logger = logging.getLogger(__name__)

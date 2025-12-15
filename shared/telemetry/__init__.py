@@ -47,9 +47,6 @@ from shared.telemetry.core import (
     shutdown_telemetry,
 )
 
-# Instrumentation
-from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
-
 # Decorators for tracing
 from shared.telemetry.decorators import (
     add_span_event,
@@ -57,6 +54,9 @@ from shared.telemetry.decorators import (
     trace_async,
     trace_sync,
 )
+
+# Instrumentation
+from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
 
 __all__ = [
     # Core
