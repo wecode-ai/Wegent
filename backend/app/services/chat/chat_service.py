@@ -16,7 +16,7 @@ from app.services.chat.base import ChatServiceBase, get_http_client
 from app.services.chat.db_handler import db_handler
 from app.services.chat.message_builder import message_builder
 from app.services.chat.providers import get_provider
-from app.services.chat.providers.base import ChunkType, StreamChunk
+from app.services.chat.providers.base import ChunkType, StreamChunk, ProviderConfig
 from app.services.chat.session_manager import session_manager
 from app.services.chat.stream_manager import StreamState, stream_manager
 from app.services.chat.tool_handler import ToolCallAccumulator, ToolHandler
@@ -251,6 +251,52 @@ class ChatService(ChatServiceBase):
                 ToolHandler.build_assistant_message(accumulated_content, tool_calls)
             )
             messages.extend(await tool_handler.execute_all(tool_calls))
+
+
+    async def chat_completion(
+        self,
+        message: str,
+        model_config: dict[str, Any],
+        system_prompt: str = "",
+    ) -> str:
+        """
+        Non-streaming chat completion for simple LLM calls.
+
+        Args:
+            message: User message
+            model_config: Model configuration dict
+            system_prompt: System prompt for the conversation
+
+        Returns:
+            The LLM response as a string
+        """
+        # Build messages
+        messages = message_builder.build_messages(
+            message=message,
+            system_prompt=system_prompt,
+            history=[],
+        )
+
+        # Get provider
+        provider = get_provider(model_config)
+        if not provider:
+            raise ValueError("Failed to create provider from model config")
+
+        # Collect all content from streaming response
+        cancel_event = asyncio.Event()
+        accumulated_content = ""
+
+        try:
+            async for chunk in provider.stream_chat(messages, cancel_event):
+                if chunk.type == ChunkType.CONTENT and chunk.content:
+                    accumulated_content += chunk.content
+                elif chunk.type == ChunkType.ERROR:
+                    raise ValueError(chunk.error or "Unknown error from LLM")
+        except Exception as e:
+            logger.error(f"Chat completion error: {e}")
+            raise
+
+        return accumulated_content
 
 
 # Global chat service instance
