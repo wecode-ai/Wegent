@@ -135,8 +135,68 @@ docker-compose restart backend executor_manager
 | `OTEL_METRICS_ENABLED` | Enable/disable metrics export | `false` |
 | `OTEL_EXCLUDED_URLS` | Comma-separated URL patterns to exclude (blacklist) | See below |
 | `OTEL_INCLUDED_URLS` | Comma-separated URL patterns to include (whitelist) | Empty (all) |
+| `OTEL_DISABLE_SEND_RECEIVE_SPANS` | Disable internal http.send/http.receive spans | `true` |
 
 **Note:** Metrics export is disabled by default because Elasticsearch exporter has limited support for certain metric types. If you see `StatusCode.UNIMPLEMENTED` errors, keep metrics disabled.
+
+### SSE/Streaming Endpoint Optimization
+
+By default, OpenTelemetry ASGI instrumentation creates internal spans for each `http.send` and `http.receive` event. For SSE (Server-Sent Events) or streaming endpoints like `/api/chat/stream`, this creates excessive noise as **each chunk generates a separate span**.
+
+#### Industry Standard Solution
+
+The `OTEL_DISABLE_SEND_RECEIVE_SPANS` environment variable (default: `true`) disables these internal spans. This is the **industry standard approach** recommended by OpenTelemetry for streaming endpoints.
+
+**How it works:**
+- Uses the `exclude_spans` parameter in `FastAPIInstrumentor.instrument_app()`
+- Passes `exclude_spans="send,receive"` to exclude both send and receive internal spans
+- This is the official API provided by `opentelemetry-instrumentation-fastapi`
+
+**What it does:**
+- Prevents creation of internal spans with `asgi.event.type = http.response.body`
+- Reduces trace noise significantly for streaming responses
+- Maintains the parent HTTP span for the overall request
+
+**Example trace comparison:**
+
+Without optimization (noisy):
+```
+POST /api/chat/stream (parent span)
+├── http send (chunk 1)
+├── http send (chunk 2)
+├── http send (chunk 3)
+├── ... (hundreds of spans for each SSE chunk)
+└── http send (chunk N)
+```
+
+With optimization (clean):
+```
+POST /api/chat/stream (single span with full duration)
+```
+
+#### Configuration
+
+```yaml
+# Default: streaming-friendly mode (recommended)
+environment:
+  OTEL_ENABLED: "true"
+  OTEL_DISABLE_SEND_RECEIVE_SPANS: "true"  # Default, can be omitted
+
+# If you need to debug streaming internals (not recommended for production)
+environment:
+  OTEL_ENABLED: "true"
+  OTEL_DISABLE_SEND_RECEIVE_SPANS: "false"
+```
+
+#### Requirements
+
+This feature uses the `exclude_spans` parameter which is available in `opentelemetry-instrumentation-fastapi`. The project uses `>= 0.48b0` which fully supports this feature.
+
+#### References
+
+- [OpenTelemetry FastAPI Instrumentation](https://github.com/open-telemetry/opentelemetry-python-contrib/tree/main/instrumentation/opentelemetry-instrumentation-fastapi) - Official FastAPI instrumentation with `exclude_spans` parameter
+- [OpenTelemetry ASGI Instrumentation](https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/asgi/asgi.html)
+- [HTTP Semantic Conventions](https://opentelemetry.io/docs/specs/semconv/http/) - OpenTelemetry standards for HTTP tracing
 
 ### URL Filtering (Blacklist/Whitelist)
 

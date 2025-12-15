@@ -10,8 +10,10 @@ with OTLP exporters for distributed tracing and metrics.
 """
 
 import logging
+from typing import Optional, Sequence
 
 from opentelemetry import metrics, trace
+from opentelemetry.context import Context
 from opentelemetry.exporter.otlp.proto.grpc.metric_exporter import OTLPMetricExporter
 from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.metrics import MeterProvider as SDKMeterProvider
@@ -19,9 +21,93 @@ from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider as SDKTracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.sdk.trace.sampling import ParentBasedTraceIdRatio
+from opentelemetry.sdk.trace.sampling import (
+    Decision,
+    ParentBasedTraceIdRatio,
+    Sampler,
+    SamplingResult,
+)
+from opentelemetry.trace import Link, SpanKind
+from opentelemetry.util.types import Attributes
 
 logger = logging.getLogger(__name__)
+
+
+class FilteringParentBasedSampler(Sampler):
+    """
+    A custom sampler that filters out internal ASGI spans (http send/receive).
+    
+    This sampler wraps a parent-based sampler and adds filtering logic to
+    drop spans with names like "http send" or "http receive" which are
+    created by the ASGI middleware for each SSE chunk in streaming responses.
+    
+    This significantly reduces trace noise for streaming endpoints like
+    /api/chat/stream where each chunk would otherwise create a separate span.
+    """
+    
+    # Span names to filter out (internal ASGI spans)
+    FILTERED_SPAN_NAMES = frozenset([
+        "http send",
+        "http receive",
+        "HTTP send",
+        "HTTP receive",
+        "asgi.send",
+        "asgi.receive",
+    ])
+    
+    def __init__(
+        self,
+        root_sampler: Sampler,
+        filter_internal_spans: bool = True,
+    ):
+        """
+        Initialize the filtering sampler.
+        
+        Args:
+            root_sampler: The underlying sampler to use for non-filtered spans
+            filter_internal_spans: Whether to filter out internal ASGI spans
+        """
+        self._root_sampler = root_sampler
+        self._filter_internal_spans = filter_internal_spans
+    
+    def should_sample(
+        self,
+        parent_context: Optional[Context],
+        trace_id: int,
+        name: str,
+        kind: Optional[SpanKind] = None,
+        attributes: Attributes = None,
+        links: Optional[Sequence[Link]] = None,
+        trace_state: Optional["TraceState"] = None,
+    ) -> SamplingResult:
+        """
+        Determine if a span should be sampled.
+        
+        Filters out internal ASGI spans (http send/receive) to reduce noise
+        from streaming endpoints.
+        """
+        # Filter out internal ASGI spans if enabled
+        if self._filter_internal_spans and name in self.FILTERED_SPAN_NAMES:
+            return SamplingResult(
+                decision=Decision.DROP,
+                attributes=None,
+                trace_state=trace_state,
+            )
+        
+        # Delegate to the root sampler for all other spans
+        return self._root_sampler.should_sample(
+            parent_context=parent_context,
+            trace_id=trace_id,
+            name=name,
+            kind=kind,
+            attributes=attributes,
+            links=links,
+            trace_state=trace_state,
+        )
+    
+    def get_description(self) -> str:
+        """Return a description of this sampler."""
+        return f"FilteringParentBasedSampler(root={self._root_sampler.get_description()}, filter_internal={self._filter_internal_spans})"
 
 
 def init_tracer_provider(

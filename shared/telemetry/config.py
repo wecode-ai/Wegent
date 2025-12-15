@@ -22,6 +22,9 @@ Environment Variables:
     OTEL_MAX_BODY_SIZE: Maximum body size to capture in bytes (default: 4096, max: 1048576)
     OTEL_EXCLUDED_URLS: Comma-separated list of URL patterns to exclude from tracing (default: health,metrics,docs)
     OTEL_INCLUDED_URLS: Comma-separated list of URL patterns to include (whitelist mode, empty means all)
+    OTEL_DISABLE_SEND_RECEIVE_SPANS: Disable internal http.send/http.receive spans for SSE/streaming (default: true)
+        This is the industry standard approach to reduce noise from streaming endpoints like /api/chat/stream
+        where each chunk would otherwise create a separate span. See OpenTelemetry ASGI instrumentation docs.
 """
 
 import os
@@ -64,6 +67,7 @@ class OtelConfig:
     max_body_size: int  # Maximum body size to capture in bytes
     excluded_urls: List[str] = field(default_factory=list)  # URL patterns to exclude (blacklist)
     included_urls: List[str] = field(default_factory=list)  # URL patterns to include (whitelist, empty means all)
+    disable_send_receive_spans: bool = True  # Disable internal http.send/http.receive spans for SSE/streaming
 
 
 # Cached configuration instance
@@ -134,6 +138,11 @@ def get_otel_config(service_name_override: Optional[str] = None) -> OtelConfig:
             ),
             excluded_urls=excluded_urls,
             included_urls=included_urls,
+            # Default to True to reduce noise from SSE/streaming endpoints
+            # This is the industry standard approach - see OpenTelemetry ASGI instrumentation docs
+            disable_send_receive_spans=os.getenv(
+                "OTEL_DISABLE_SEND_RECEIVE_SPANS", "true"
+            ).lower() == "true",
         )
     
     return _otel_config

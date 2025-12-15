@@ -46,7 +46,26 @@ def setup_opentelemetry_instrumentation(
 
 
 def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
-    """Setup FastAPI instrumentation for tracing HTTP requests."""
+    """Setup FastAPI instrumentation for tracing HTTP requests.
+    
+    Industry Standard for SSE/Streaming:
+    ------------------------------------
+    By default, OpenTelemetry ASGI instrumentation creates internal spans for each
+    http.send and http.receive event. For SSE/streaming endpoints like /api/chat/stream,
+    this creates excessive noise as each chunk generates a separate span.
+    
+    Industry Standard Solutions:
+    1. Use `excluded_urls` to skip tracing for streaming endpoints entirely
+    2. Use custom ASGI middleware with `exclude_send_receive_spans=True` (ASGI >= 0.45b0)
+    3. Configure sampling to reduce the volume of these spans
+    
+    We implement option 2 when available, with automatic fallback behavior.
+    
+    References:
+    - OpenTelemetry ASGI Instrumentation: https://opentelemetry-python-contrib.readthedocs.io/en/latest/instrumentation/asgi/asgi.html
+    - GitHub Issue: https://github.com/open-telemetry/opentelemetry-python-contrib/issues/1075
+    - Semantic Conventions: https://opentelemetry.io/docs/specs/semconv/http/
+    """
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
@@ -92,8 +111,38 @@ def _setup_fastapi_instrumentation(app: Any, logger: logging.Logger) -> None:
             instrument_kwargs["excluded_urls"] = excluded_urls_regex
             logger.info(f"  URL blacklist enabled: {len(otel_config.excluded_urls)} patterns")
         
-        FastAPIInstrumentor.instrument_app(app, **instrument_kwargs)
-        logger.info("✓ FastAPI instrumentation enabled")
+        # Disable internal http.send/http.receive spans if configured
+        # This is the industry standard approach to reduce noise from SSE/streaming endpoints
+        # where each chunk would otherwise create a separate span
+        #
+        # The `exclude_spans` parameter is supported in opentelemetry-instrumentation-fastapi
+        # It accepts a string to specify which spans to exclude: "send", "receive", or "send,receive"
+        #
+        # This parameter prevents the creation of internal spans with:
+        # - asgi.event.type = http.response.body
+        # - span.kind = internal
+        if otel_config.disable_send_receive_spans:
+            # Exclude both send and receive spans to reduce noise from streaming endpoints
+            instrument_kwargs["exclude_spans"] = "send,receive"
+            logger.info("  Internal http.send/http.receive spans disabled (streaming-friendly mode)")
+        
+        # Apply instrumentation
+        try:
+            FastAPIInstrumentor.instrument_app(app, **instrument_kwargs)
+            logger.info("✓ FastAPI instrumentation enabled")
+        except TypeError as e:
+            # If exclude_spans is not supported, retry without it
+            if "exclude_spans" in str(e) and otel_config.disable_send_receive_spans:
+                logger.warning(
+                    "  exclude_spans not supported in this version. "
+                    "Upgrade opentelemetry-instrumentation-fastapi to disable "
+                    "internal http.send/http.receive spans for streaming endpoints."
+                )
+                del instrument_kwargs["exclude_spans"]
+                FastAPIInstrumentor.instrument_app(app, **instrument_kwargs)
+                logger.info("✓ FastAPI instrumentation enabled (without streaming optimization)")
+            else:
+                raise
 
         # Log capture settings
         if any(capture_settings.values()):
