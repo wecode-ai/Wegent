@@ -347,7 +347,7 @@ def test_model_connection(
             response = client.chat.completions.create(
                 model=model_id,
                 messages=[{"role": "user", "content": "hi"}],
-                max_tokens=1,
+                max_tokens=128,
             )
             return {"success": True, "message": f"Successfully connected to {model_id}"}
 
@@ -364,7 +364,7 @@ def test_model_connection(
 
             response = client.messages.create(
                 model=model_id,
-                max_tokens=1,
+                max_tokens=128,
                 messages=[{"role": "user", "content": "hi"}],
             )
             return {"success": True, "message": f"Successfully connected to {model_id}"}
@@ -389,7 +389,7 @@ def test_model_connection(
 
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
-                "generationConfig": {"maxOutputTokens": 1},
+                "generationConfig": {"maxOutputTokens": 128},
             }
 
             with httpx.Client(timeout=30.0) as client:
