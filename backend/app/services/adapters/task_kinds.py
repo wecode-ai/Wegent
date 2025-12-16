@@ -650,7 +650,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         if team_id:
             team = db.query(Kind).filter(Kind.id == team_id).first()
             if team:
-                team = self._convert_team_to_dict(team, db, user_id)
+                # Use team_kinds_service._convert_to_team_dict to get full team info including agent_type
+                team = team_kinds_service._convert_to_team_dict(team, db, user_id)
 
         # Get related subtasks
         subtasks = subtask_service.get_by_task(db=db, task_id=task_id, user_id=user_id)

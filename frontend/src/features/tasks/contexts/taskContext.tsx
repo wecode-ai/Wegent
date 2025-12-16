@@ -267,14 +267,6 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
           selectedTaskDetail.updated_at ||
           new Date().toISOString();
 
-        console.log(`[taskContext] Auto-marking task ${selectedTaskDetail.id} as viewed:`, {
-          taskId: selectedTaskDetail.id,
-          taskStatus: selectedTaskDetail.status,
-          taskDetailCompletedAt: selectedTaskDetail.completed_at,
-          taskDetailUpdatedAt: selectedTaskDetail.updated_at,
-          usingTimestamp: taskTimestamp,
-        });
-
         markTaskAsViewed(selectedTaskDetail.id, selectedTaskDetail.status, taskTimestamp);
         setViewStatusVersion(prev => prev + 1);
       }

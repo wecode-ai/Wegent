@@ -135,6 +135,7 @@ export default function ModelSelector({
     if (showDefaultOption && !disabled) {
       setForceOverride(true);
     }
+    // Note: setForceOverride is a stable setter from parent component, safe to include
   }, [showDefaultOption, setForceOverride, disabled]);
 
   // Get compatible provider based on team agent_type
@@ -210,6 +211,7 @@ export default function ModelSelector({
       if (showDefaultOption) {
         // New team supports default option, set to default
         setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+        setForceOverride(false);
       } else if (selectedModel && selectedModel.name !== DEFAULT_MODEL_NAME) {
         // Check if current model is still compatible
         const isStillCompatible = filteredModels.some(
@@ -227,7 +229,7 @@ export default function ModelSelector({
 
     // Case 2: Initial load - restore from localStorage or set default
     // IMPORTANT: Skip auto-initialization when disabled (viewing existing task with model already set)
-    if (!hasInitializedRef.current && filteredModels.length > 0 && !disabled) {
+    if (!hasInitializedRef.current && filteredModels.length > 0) {
       hasInitializedRef.current = true;
 
       if (showDefaultOption) {
@@ -274,7 +276,8 @@ export default function ModelSelector({
       hasInitializedRef.current &&
       userSelectedModelRef.current &&
       !teamChanged &&
-      filteredModels.length > 0
+      filteredModels.length > 0 &&
+      !disabled
     ) {
       const userModel = userSelectedModelRef.current;
       // Check if user's model is still valid
@@ -310,6 +313,7 @@ export default function ModelSelector({
     filteredModels,
     selectedModel,
     setSelectedModel,
+    setForceOverride,
     disabled,
   ]);
   // Save selected model to localStorage

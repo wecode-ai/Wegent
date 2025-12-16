@@ -97,11 +97,6 @@ export default function ChatArea({
   if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
     // Use mode-specific preference, with fallback to generic preference
     initialTeamIdRef.current = getLastTeamIdByMode(taskType);
-    console.log(
-      '[ChatArea] Pre-loaded team ID from localStorage for mode:',
-      taskType,
-      initialTeamIdRef.current
-    );
   }
 
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -322,6 +317,31 @@ export default function ChatArea({
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
     useTaskContext();
 
+  const detailTeamId = useMemo<number | null>(() => {
+    if (!selectedTaskDetail?.team) {
+      return null;
+    }
+    if (typeof selectedTaskDetail.team === 'number') {
+      return selectedTaskDetail.team;
+    }
+    if (typeof selectedTaskDetail.team === 'object') {
+      const maybeId = (selectedTaskDetail.team as { id?: number }).id;
+      return typeof maybeId === 'number' ? maybeId : null;
+    }
+    return null;
+  }, [selectedTaskDetail?.team]);
+
+  const _detailTeamName = useMemo<string | null>(() => {
+    if (!selectedTaskDetail?.team) {
+      return null;
+    }
+    if (typeof selectedTaskDetail.team === 'object') {
+      const maybeName = (selectedTaskDetail.team as { name?: string }).name;
+      return typeof maybeName === 'string' ? maybeName : null;
+    }
+    return null;
+  }, [selectedTaskDetail?.team]);
+
   // Global Chat Stream Context - streams persist across task switches
   const {
     getStreamState,
@@ -432,6 +452,8 @@ export default function ChatArea({
   // 5. CRITICAL: Once we have messages, keep showing them even during data refresh
   //    to prevent the "flash of empty state" bug
   // 6. NEW: Local pending message for immediate UI feedback
+  const isViewingExistingTask = Boolean(selectedTaskDetail?.id);
+
   const hasMessages = React.useMemo(() => {
     const hasSelectedTask = selectedTaskDetail && selectedTaskDetail.id;
     const hasNewTaskStream = !selectedTaskDetail?.id && streamingTaskId && isStreamingTaskActive;
@@ -456,6 +478,28 @@ export default function ChatArea({
     localPendingMessage,
   ]);
 
+  useEffect(() => {
+    console.debug('[ChatArea][sync-state]', {
+      selectedTaskId: selectedTaskDetail?.id ?? null,
+      taskModelId: selectedTaskDetail?.model_id ?? null,
+      detailTeamId,
+      selectedTeamId: selectedTeam?.id ?? null,
+      selectedModel: selectedModel?.name ?? null,
+      forceOverride,
+      hasMessages,
+      isViewingExistingTask,
+    });
+  }, [
+    selectedTaskDetail?.id,
+    selectedTaskDetail?.model_id,
+    detailTeamId,
+    selectedTeam?.id,
+    selectedModel?.name,
+    forceOverride,
+    hasMessages,
+    isViewingExistingTask,
+  ]);
+
   // Determine if chat input should be hidden (workflow mode always hides chat input)
   const shouldHideChatInput = React.useMemo(() => {
     return appMode === 'workflow';
@@ -465,15 +509,13 @@ export default function ChatArea({
   // Only runs for new tasks (no messages), not when switching to existing tasks
   useEffect(() => {
     // Skip if already restored, no teams, or viewing existing task (has messages)
-    if (hasRestoredPreferences || !teams.length || hasMessages) return;
+    if (hasRestoredPreferences || !teams.length || (!selectedTaskDetail && hasMessages)) return;
 
     const lastTeamId = initialTeamIdRef.current;
-    console.log('[ChatArea] Trying to restore team with ID:', lastTeamId);
 
     if (lastTeamId) {
       const lastTeam = teams.find(team => team.id === lastTeamId);
       if (lastTeam) {
-        console.log('[ChatArea] âœ… Restoring team from localStorage:', lastTeam.name, lastTeam.id);
         setSelectedTeam(lastTeam);
         setHasRestoredPreferences(true);
         return;
@@ -495,49 +537,102 @@ export default function ChatArea({
       setSelectedTeam(teams[0]);
     }
     setHasRestoredPreferences(true);
+    // Note: selectedTaskDetail is intentionally excluded from dependencies
+    // This effect should only run when teams load, not when task detail changes
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [teams, hasRestoredPreferences, hasMessages]);
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
-    if (selectedTeamForNewTask && !hasMessages) {
+    if (selectedTeamForNewTask && !selectedTaskDetail) {
       setSelectedTeam(selectedTeamForNewTask);
     }
-  }, [selectedTeamForNewTask, hasMessages]);
+  }, [selectedTeamForNewTask, selectedTaskDetail]);
 
-  // Set model from task detail when viewing existing task
+  // Sync team selection when viewing an existing task
   useEffect(() => {
-    // Only apply when viewing an existing task (has messages) and task has a model_id
-    if (hasMessages && selectedTaskDetail?.model_id && selectedTaskDetail?.id) {
-      const taskModelId = selectedTaskDetail.model_id;
+    if (!detailTeamId) {
+      return;
+    }
 
-      // If current model already matches, skip
-      if (selectedModel?.name === taskModelId) {
-        return;
-      }
-
-      // Check if it's the default model
-      if (taskModelId === DEFAULT_MODEL_NAME) {
-        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
-      } else {
-        // For non-default models, create a minimal model object
-        // The type field is intentionally undefined so ModelSelector won't try to validate it
-        setSelectedModel({
-          name: taskModelId,
-          provider: '',
-          modelId: taskModelId,
-          displayName: null,
-          type: undefined, // Explicitly set to undefined to skip compatibility checks
-        });
+    if (!selectedTeam?.id || selectedTeam.id !== detailTeamId) {
+      const matchedTeam = teams.find(team => team.id === detailTeamId) || null;
+      if (matchedTeam) {
+        setSelectedTeam(matchedTeam);
+        setHasRestoredPreferences(true);
       }
     }
-  }, [
-    hasMessages,
-    selectedTaskDetail?.model_id,
-    selectedTaskDetail?.id,
-    selectedModel?.name,
-    setSelectedModel,
-  ]);
+  }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam]);
 
+  // Set model and override flag when viewing existing task
+  useEffect(() => {
+    if (!selectedTaskDetail?.id || !selectedTeam) {
+      return;
+    }
+
+    const taskModelId = selectedTaskDetail.model_id;
+
+    const handleDefaultModel = () => {
+      if (selectedModel?.name !== DEFAULT_MODEL_NAME) {
+        setSelectedModel({ name: DEFAULT_MODEL_NAME, provider: '', modelId: '' });
+      }
+      if (forceOverride) {
+        setForceOverride(false);
+      }
+    };
+
+    const handleExplicitModel = (modelName: string) => {
+      if (selectedModel?.name === modelName) {
+        return;
+      }
+      setSelectedModel({
+        name: modelName,
+        provider: '',
+        modelId: modelName,
+        displayName: null,
+        type: undefined,
+      });
+    };
+
+    if (!taskModelId || taskModelId === DEFAULT_MODEL_NAME) {
+      // Try to match the team's current default model (first bot's bound model)
+      const teamModelName = (() => {
+        if (!selectedTeam.bots || selectedTeam.bots.length === 0) {
+          return null;
+        }
+        const firstBotConfig = selectedTeam.bots[0]?.bot?.agent_config;
+        if (!firstBotConfig) {
+          return null;
+        }
+        try {
+          return (firstBotConfig as Record<string, unknown>).bind_model as string | undefined;
+        } catch (_error) {
+          return null;
+        }
+      })();
+
+      if (teamModelName) {
+        handleExplicitModel(teamModelName);
+        setForceOverride(false);
+      } else {
+        handleDefaultModel();
+      }
+      return;
+    }
+
+    handleExplicitModel(taskModelId);
+    if (!forceOverride) {
+      setForceOverride(true);
+    }
+  }, [
+    selectedTaskDetail?.id,
+    selectedTaskDetail?.model_id,
+    selectedTeam,
+    selectedModel?.name,
+    forceOverride,
+    setSelectedModel,
+    setForceOverride,
+  ]);
   const shouldHideQuotaUsage = React.useMemo(() => {
     if (!isMobile || !selectedTeam?.name) return false;
 
@@ -672,237 +767,287 @@ export default function ChatArea({
     [isLoading, isStreaming, attachmentState.attachment, handleFileSelect, selectedTeam]
   );
 
-  // Core message sending logic - can be called directly with a message or use taskInputMessage
-  const handleSendMessage = async (overrideMessage?: string) => {
-    const message = overrideMessage?.trim() || taskInputMessage.trim();
-    if (!message && !shouldHideChatInput) return;
+  const scrollToBottom = useCallback((force = false) => {
+    const container = scrollContainerRef.current;
+    if (!container) return;
 
-    // Check if attachment is ready
-    if (!isAttachmentReadyToSend) {
-      toast({
-        variant: 'destructive',
-        title: '请等待文件上传完成',
+    if (force || isUserNearBottomRef.current) {
+      // Use requestAnimationFrame to ensure DOM is fully rendered before scrolling
+      requestAnimationFrame(() => {
+        if (container) {
+          container.scrollTop = container.scrollHeight;
+          // Force means user initiated action, treat as pinned to bottom
+          if (force) {
+            isUserNearBottomRef.current = true;
+          }
+        }
       });
-      return;
     }
+  }, []);
 
-    setIsLoading(true);
-    setError('');
+  // Core message sending logic - can be called directly with a message or use taskInputMessage
+  const handleSendMessage = useCallback(
+    async (overrideMessage?: string) => {
+      const message = overrideMessage?.trim() || taskInputMessage.trim();
+      if (!message && !shouldHideChatInput) return;
 
-    // Check if this is a Chat Shell - use streaming mode
-    console.log('[ChatArea] handleSendMessage - checking isChatShell:', {
-      selectedTeam: selectedTeam?.name,
-      selectedTeamId: selectedTeam?.id,
-      agentType: selectedTeam?.agent_type,
-      isChatShellResult: isChatShell(selectedTeam),
-      attachmentId: attachmentState.attachment?.id,
-    });
+      // Check if attachment is ready
+      if (!isAttachmentReadyToSend) {
+        toast({
+          variant: 'destructive',
+          title: '请等待文件上传完成',
+        });
+        return;
+      }
 
-    if (isChatShell(selectedTeam)) {
-      console.log('[ChatArea] Using Chat Shell streaming mode');
+      setIsLoading(true);
+      setError('');
 
-      // OPTIMIZATION: Set local pending state IMMEDIATELY for instant UI feedback
-      // This happens synchronously before any async operations
-      setLocalPendingMessage(message);
-      setLocalPendingAttachment(attachmentState.attachment || null);
+      // Check if this is a Chat Shell - use streaming mode
+      console.log('[ChatArea] handleSendMessage - checking isChatShell:', {
+        selectedTeam: selectedTeam?.name,
+        selectedTeamId: selectedTeam?.id,
+        agentType: selectedTeam?.agent_type,
+        isChatShellResult: isChatShell(selectedTeam),
+        attachmentId: attachmentState.attachment?.id,
+      });
 
-      setTaskInputMessage('');
-      // Reset attachment immediately after sending (clear from input area)
-      resetAttachment();
+      if (isChatShell(selectedTeam)) {
+        console.log('[ChatArea] Using Chat Shell streaming mode');
+
+        // OPTIMIZATION: Set local pending state IMMEDIATELY for instant UI feedback
+        // This happens synchronously before any async operations
+        setLocalPendingMessage(message);
+        setLocalPendingAttachment(attachmentState.attachment || null);
+
+        setTaskInputMessage('');
+        // Reset attachment immediately after sending (clear from input area)
+        resetAttachment();
+
+        // When default model is selected, don't pass model_id (use bot's predefined model)
+        const modelId =
+          selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
+
+        try {
+          // OPTIMIZATION: For new tasks, generate a temporary ID immediately
+          // This allows the UI to show the pending message right away
+          const immediateTaskId = selectedTaskDetail?.id || -Date.now();
+
+          // Set streaming task ID BEFORE calling contextStartStream
+          // This ensures hasMessages becomes true immediately
+          if (!selectedTaskDetail?.id) {
+            setStreamingTaskId(immediateTaskId);
+          }
+
+          // Use the global context to start stream with callbacks
+          // Pass immediateTaskId to ensure ChatArea and context use the same temporary ID
+          const tempTaskId = await contextStartStream(
+            {
+              message,
+              team_id: selectedTeam?.id ?? 0,
+              task_id: selectedTaskDetail?.id,
+              model_id: modelId,
+              force_override_bot_model: forceOverride,
+              attachment_id: attachmentState.attachment?.id,
+              enable_web_search: enableWebSearch,
+              search_engine: selectedSearchEngine || undefined,
+              enable_clarification: enableClarification,
+            },
+            {
+              pendingUserMessage: message,
+              pendingAttachment: attachmentState.attachment,
+              immediateTaskId: immediateTaskId,
+              onTaskIdResolved: realTaskId => {
+                // Update streaming task ID when real task ID is resolved
+                setStreamingTaskId(realTaskId);
+
+                // Refresh task list immediately when task ID is resolved
+                // This ensures the new task appears in the sidebar while streaming
+                refreshTasks();
+
+                // Note: We don't update URL here to avoid triggering TaskParamSync
+                // which would call setSelectedTask and trigger refreshSelectedTaskDetail.
+                // URL will be updated when stream completes.
+              },
+              onComplete: async (completedTaskId, _subtaskId) => {
+                // Note: Don't call resetStreamingState here as we handle streamingTaskId separately below
+                // and we need to wait for task detail refresh before clearing
+
+                // Refresh task list after stream ends
+                refreshTasks();
+
+                // If this was a new task (first message), update URL
+                if (completedTaskId && !selectedTaskDetail?.id) {
+                  const params = new URLSearchParams(Array.from(searchParams.entries()));
+                  params.set('taskId', String(completedTaskId));
+                  router.push(`?${params.toString()}`);
+
+                  // Wait for task detail to be loaded before clearing stream
+                  // This prevents the flash of empty content when URL changes
+                  try {
+                    // Give TaskParamSync time to trigger and load the task detail
+                    // We use a small delay to ensure the URL change has been processed
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    // Then wait for the actual refresh to complete
+                    await refreshSelectedTaskDetail(false);
+                  } catch (error) {
+                    console.error('Failed to refresh task detail after stream:', error);
+                  } finally {
+                    // Only clear stream content after data is refreshed (or failed)
+                    contextResetStream(completedTaskId);
+                    setStreamingTaskId(null);
+                  }
+                } else if (selectedTaskDetail?.id) {
+                  // If this was a follow-up message (second+ message), refresh task detail
+                  // to show the new subtasks (user message + AI response)
+                  // Wait for the refresh to complete BEFORE clearing the stream to prevent flashing
+                  try {
+                    await refreshSelectedTaskDetail(false);
+                  } catch (error) {
+                    console.error('Failed to refresh task detail after stream:', error);
+                  } finally {
+                    // Only clear stream content after data is refreshed (or failed)
+                    contextResetStream(completedTaskId);
+                    setStreamingTaskId(null);
+                  }
+                }
+              },
+              onError: error => {
+                // Reset all streaming state on error
+                resetStreamingState();
+
+                toast({
+                  variant: 'destructive',
+                  title: error.message,
+                });
+              },
+            }
+          );
+
+          // Update streaming task ID if it changed (e.g., from immediate to returned)
+          // Only update if we got a different ID back
+          if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
+            setStreamingTaskId(tempTaskId);
+          }
+
+          // Note: For new tasks, the selected task is now set in onTaskIdResolved callback
+          // when the real task ID is received from the backend
+
+          // Manually trigger scroll to bottom after sending message
+          setTimeout(() => scrollToBottom(true), 0);
+        } catch (err) {
+          toast({
+            variant: 'destructive',
+            title: (err as Error)?.message || 'Failed to start chat stream',
+          });
+        }
+
+        setIsLoading(false);
+        return;
+      }
+
+      // Non-Chat Shell: use existing task creation flow
+      // Prepare message with embedded external API parameters if applicable
+      let finalMessage = message;
+      if (Object.keys(externalApiParams).length > 0) {
+        // Embed parameters using special marker format
+        // Backend will extract these parameters for external API calls
+        const paramsJson = JSON.stringify(externalApiParams);
+        finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`;
+      }
 
       // When default model is selected, don't pass model_id (use bot's predefined model)
       const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
-
-      try {
-        // OPTIMIZATION: For new tasks, generate a temporary ID immediately
-        // This allows the UI to show the pending message right away
-        const immediateTaskId = selectedTaskDetail?.id || -Date.now();
-
-        // Set streaming task ID BEFORE calling contextStartStream
-        // This ensures hasMessages becomes true immediately
-        if (!selectedTaskDetail?.id) {
-          setStreamingTaskId(immediateTaskId);
-        }
-
-        // Use the global context to start stream with callbacks
-        // Pass immediateTaskId to ensure ChatArea and context use the same temporary ID
-        const tempTaskId = await contextStartStream(
-          {
-            message,
-            team_id: selectedTeam?.id ?? 0,
-            task_id: selectedTaskDetail?.id,
-            model_id: modelId,
-            force_override_bot_model: forceOverride,
-            attachment_id: attachmentState.attachment?.id,
-            enable_web_search: enableWebSearch,
-            search_engine: selectedSearchEngine || undefined,
-            enable_clarification: enableClarification,
-          },
-          {
-            pendingUserMessage: message,
-            pendingAttachment: attachmentState.attachment,
-            immediateTaskId: immediateTaskId,
-            onTaskIdResolved: realTaskId => {
-              // Update streaming task ID when real task ID is resolved
-              setStreamingTaskId(realTaskId);
-
-              // Refresh task list immediately when task ID is resolved
-              // This ensures the new task appears in the sidebar while streaming
-              refreshTasks();
-
-              // Note: We don't update URL here to avoid triggering TaskParamSync
-              // which would call setSelectedTask and trigger refreshSelectedTaskDetail.
-              // URL will be updated when stream completes.
-            },
-            onComplete: async (completedTaskId, _subtaskId) => {
-              // Note: Don't call resetStreamingState here as we handle streamingTaskId separately below
-              // and we need to wait for task detail refresh before clearing
-
-              // Refresh task list after stream ends
-              refreshTasks();
-
-              // If this was a new task (first message), update URL
-              if (completedTaskId && !selectedTaskDetail?.id) {
-                const params = new URLSearchParams(Array.from(searchParams.entries()));
-                params.set('taskId', String(completedTaskId));
-                router.push(`?${params.toString()}`);
-
-                // Wait for task detail to be loaded before clearing stream
-                // This prevents the flash of empty content when URL changes
-                try {
-                  // Give TaskParamSync time to trigger and load the task detail
-                  // We use a small delay to ensure the URL change has been processed
-                  await new Promise(resolve => setTimeout(resolve, 100));
-                  // Then wait for the actual refresh to complete
-                  await refreshSelectedTaskDetail(false);
-                } catch (error) {
-                  console.error('Failed to refresh task detail after stream:', error);
-                } finally {
-                  // Only clear stream content after data is refreshed (or failed)
-                  contextResetStream(completedTaskId);
-                  setStreamingTaskId(null);
-                }
-              } else if (selectedTaskDetail?.id) {
-                // If this was a follow-up message (second+ message), refresh task detail
-                // to show the new subtasks (user message + AI response)
-                // Wait for the refresh to complete BEFORE clearing the stream to prevent flashing
-                try {
-                  await refreshSelectedTaskDetail(false);
-                } catch (error) {
-                  console.error('Failed to refresh task detail after stream:', error);
-                } finally {
-                  // Only clear stream content after data is refreshed (or failed)
-                  contextResetStream(completedTaskId);
-                  setStreamingTaskId(null);
-                }
-              }
-            },
-            onError: error => {
-              // Reset all streaming state on error
-              resetStreamingState();
-
-              toast({
-                variant: 'destructive',
-                title: error.message,
-              });
-            },
-          }
-        );
-
-        // Update streaming task ID if it changed (e.g., from immediate to returned)
-        // Only update if we got a different ID back
-        if (tempTaskId !== immediateTaskId && tempTaskId > 0) {
-          setStreamingTaskId(tempTaskId);
-        }
-
-        // Note: For new tasks, the selected task is now set in onTaskIdResolved callback
-        // when the real task ID is received from the backend
-
-        // Manually trigger scroll to bottom after sending message
-        setTimeout(() => scrollToBottom(true), 0);
-      } catch (err) {
+      const { error, newTask } = await sendMessage({
+        message: finalMessage,
+        team: selectedTeam,
+        repo: showRepositorySelector ? selectedRepo : null,
+        branch: showRepositorySelector ? selectedBranch : null,
+        task_id: selectedTaskDetail?.id,
+        taskType: taskType,
+        model_id: modelId,
+        force_override_bot_model: forceOverride,
+      });
+      if (error) {
         toast({
           variant: 'destructive',
-          title: (err as Error)?.message || 'Failed to start chat stream',
+          title: error,
         });
+      } else {
+        setTaskInputMessage('');
+        // Reset attachment after successful send
+        resetAttachment();
+        // Redirect to task URL after successfully creating a task
+        if (newTask && newTask.task_id) {
+          const params = new URLSearchParams(Array.from(searchParams.entries()));
+          params.set('taskId', String(newTask.task_id));
+          router.push(`?${params.toString()}`);
+          // Actively refresh task list and task details
+          refreshTasks();
+          // Create a minimal Task object with required fields
+          setSelectedTask({
+            id: newTask.task_id,
+            title: message.substring(0, 100),
+            team_id: selectedTeam?.id || 0,
+            git_url: selectedRepo?.git_url || '',
+            git_repo: selectedRepo?.git_repo || '',
+            git_repo_id: selectedRepo?.git_repo_id || 0,
+            git_domain: selectedRepo?.git_domain || '',
+            branch_name: selectedBranch?.name || '',
+            prompt: message,
+            status: 'PENDING',
+            task_type: taskType,
+            progress: 0,
+            batch: 1,
+            result: {} as Record<string, unknown>,
+            error_message: '',
+            user_id: 0,
+            user_name: '',
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            completed_at: '',
+          });
+        } else if (selectedTaskDetail?.id) {
+          // If appending message to existing task, also refresh task details
+          refreshTasks();
+          // Actively refresh task details to ensure latest status and messages
+          refreshSelectedTaskDetail(false); // false means not auto-refresh, allow fetching completed task details
+        }
+        // Manually trigger scroll to bottom after sending message
+        setTimeout(() => scrollToBottom(true), 0);
       }
-
       setIsLoading(false);
-      return;
-    }
-
-    // Non-Chat Shell: use existing task creation flow
-    // Prepare message with embedded external API parameters if applicable
-    let finalMessage = message;
-    if (Object.keys(externalApiParams).length > 0) {
-      // Embed parameters using special marker format
-      // Backend will extract these parameters for external API calls
-      const paramsJson = JSON.stringify(externalApiParams);
-      finalMessage = `[EXTERNAL_API_PARAMS]${paramsJson}[/EXTERNAL_API_PARAMS]\n${message}`;
-    }
-
-    // When default model is selected, don't pass model_id (use bot's predefined model)
-    const modelId = selectedModel?.name === DEFAULT_MODEL_NAME ? undefined : selectedModel?.name;
-    const { error, newTask } = await sendMessage({
-      message: finalMessage,
-      team: selectedTeam,
-      repo: showRepositorySelector ? selectedRepo : null,
-      branch: showRepositorySelector ? selectedBranch : null,
-      task_id: selectedTaskDetail?.id,
-      taskType: taskType,
-      model_id: modelId,
-      force_override_bot_model: forceOverride,
-    });
-    if (error) {
-      toast({
-        variant: 'destructive',
-        title: error,
-      });
-    } else {
-      setTaskInputMessage('');
-      // Reset attachment after successful send
-      resetAttachment();
-      // Redirect to task URL after successfully creating a task
-      if (newTask && newTask.task_id) {
-        const params = new URLSearchParams(Array.from(searchParams.entries()));
-        params.set('taskId', String(newTask.task_id));
-        router.push(`?${params.toString()}`);
-        // Actively refresh task list and task details
-        refreshTasks();
-        // Create a minimal Task object with required fields
-        setSelectedTask({
-          id: newTask.task_id,
-          title: message.substring(0, 100),
-          team_id: selectedTeam?.id || 0,
-          git_url: selectedRepo?.git_url || '',
-          git_repo: selectedRepo?.git_repo || '',
-          git_repo_id: selectedRepo?.git_repo_id || 0,
-          git_domain: selectedRepo?.git_domain || '',
-          branch_name: selectedBranch?.name || '',
-          prompt: message,
-          status: 'PENDING',
-          task_type: taskType,
-          progress: 0,
-          batch: 1,
-          result: {} as Record<string, unknown>,
-          error_message: '',
-          user_id: 0,
-          user_name: '',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          completed_at: '',
-        });
-      } else if (selectedTaskDetail?.id) {
-        // If appending message to existing task, also refresh task details
-        refreshTasks();
-        // Actively refresh task details to ensure latest status and messages
-        refreshSelectedTaskDetail(false); // false means not auto-refresh, allow fetching completed task details
-      }
-      // Manually trigger scroll to bottom after sending message
-      setTimeout(() => scrollToBottom(true), 0);
-    }
-    setIsLoading(false);
-  };
+    },
+    [
+      taskInputMessage,
+      shouldHideChatInput,
+      isAttachmentReadyToSend,
+      toast,
+      selectedTeam,
+      attachmentState.attachment,
+      resetAttachment,
+      selectedModel?.name,
+      selectedTaskDetail?.id,
+      contextStartStream,
+      forceOverride,
+      enableWebSearch,
+      selectedSearchEngine,
+      enableClarification,
+      refreshTasks,
+      searchParams,
+      router,
+      refreshSelectedTaskDetail,
+      contextResetStream,
+      resetStreamingState,
+      scrollToBottom,
+      externalApiParams,
+      showRepositorySelector,
+      selectedRepo,
+      selectedBranch,
+      taskType,
+      setSelectedTask,
+    ]
+  );
 
   const [isCancelling, setIsCancelling] = useState(false);
 
@@ -962,23 +1107,6 @@ export default function ChatArea({
       setIsCancelling(false);
     }
   };
-  const scrollToBottom = useCallback((force = false) => {
-    const container = scrollContainerRef.current;
-    if (!container) return;
-
-    if (force || isUserNearBottomRef.current) {
-      // Use requestAnimationFrame to ensure DOM is fully rendered before scrolling
-      requestAnimationFrame(() => {
-        if (container) {
-          container.scrollTop = container.scrollHeight;
-          // Force means user initiated action, treat as pinned to bottom
-          if (force) {
-            isUserNearBottomRef.current = true;
-          }
-        }
-      });
-    }
-  }, []);
 
   // Callback for MessagesArea to notify content changes (for auto-scroll during streaming)
   const handleMessagesContentChange = useCallback(() => {
