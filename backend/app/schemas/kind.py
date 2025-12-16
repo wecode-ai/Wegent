@@ -499,3 +499,71 @@ class KnowledgeBaseList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "KnowledgeBaseList"
     items: List[KnowledgeBase]
+
+
+# Retriever CRD schemas
+class IndexStrategy(BaseModel):
+    """Index naming strategy configuration"""
+
+    mode: str  # 'fixed', 'rolling', 'per_dataset', 'per_user'
+    fixedName: Optional[str] = None  # For 'fixed' mode: single index name
+    rollingStep: Optional[int] = None  # For 'rolling' mode: step size (e.g., 5000)
+    prefix: Optional[str] = None  # For 'per_dataset'/'per_user' mode: index prefix
+
+
+class StorageConfig(BaseModel):
+    """Storage backend configuration"""
+
+    type: str  # 'elasticsearch' or 'qdrant'
+    url: str  # Connection URL
+    username: Optional[str] = None  # Username for authentication
+    password: Optional[str] = None  # Password for authentication
+    apiKey: Optional[str] = None  # API key for authentication (alternative to username/password)
+    indexStrategy: IndexStrategy  # Index naming strategy
+    ext: Optional[Dict[str, Any]] = None  # Additional provider-specific config
+
+
+class RetrievalMethod(BaseModel):
+    """Retrieval method configuration"""
+
+    enabled: bool = True
+    defaultWeight: Optional[float] = None  # Default weight for hybrid search
+
+
+class RetrieverSpec(BaseModel):
+    """Retriever specification"""
+
+    storageConfig: StorageConfig
+    retrievalMethods: Dict[str, RetrievalMethod] = Field(
+        default_factory=lambda: {
+            "vector": RetrievalMethod(enabled=True, defaultWeight=0.7),
+            "keyword": RetrievalMethod(enabled=True, defaultWeight=0.3),
+            "hybrid": RetrievalMethod(enabled=True),
+        }
+    )
+    description: Optional[str] = None
+
+
+class Retriever(BaseModel):
+    """Retriever CRD"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "Retriever"
+    metadata: ObjectMeta
+    spec: RetrieverSpec
+
+
+class RetrieverRef(BaseModel):
+    """Reference to a Retriever"""
+
+    name: str
+
+
+class RetrieverList(BaseModel):
+    """Retriever list"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "RetrieverList"
+    items: List[Retriever]
+
+    namespace: str = "default"
