@@ -88,8 +88,8 @@ async function getLatestRequest(): Promise<RecordedRequest | null> {
  * File upload is only available for Chat Shell teams (agent_type === 'chat').
  */
 async function selectChatTeamIfAvailable(page: Page): Promise<boolean> {
-  // Look for team selector
-  const teamSelector = page.locator('[data-testid="team-selector"], [role="combobox"]').first();
+  // Look for team selector (SearchableSelect uses role="combobox")
+  const teamSelector = page.locator('[data-tour="team-selector"] [role="combobox"]').first();
 
   try {
     const isVisible = await teamSelector.isVisible({ timeout: 3000 });
@@ -104,9 +104,8 @@ async function selectChatTeamIfAvailable(page: Page): Promise<boolean> {
 
     // Look for chat-team specifically (Chat Shell team from init data)
     // The chat-team is configured with Chat Shell which supports file upload
-    const chatTeamOption = page.locator(
-      '[role="option"]:has-text("chat-team"), [data-testid="team-option"]:has-text("chat-team")'
-    );
+    // SearchableSelect uses CommandItem which renders as [cmdk-item]
+    const chatTeamOption = page.locator('[cmdk-item]:has-text("chat-team")').first();
 
     if (await chatTeamOption.isVisible({ timeout: 2000 }).catch(() => false)) {
       await chatTeamOption.click();
@@ -115,7 +114,7 @@ async function selectChatTeamIfAvailable(page: Page): Promise<boolean> {
     }
 
     // Fallback: Look for any team option that might be a Chat type
-    const teamOptions = page.locator('[role="option"], [data-testid="team-option"]');
+    const teamOptions = page.locator('[cmdk-item]');
     const count = await teamOptions.count();
 
     if (count > 0) {
