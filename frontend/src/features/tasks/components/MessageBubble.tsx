@@ -1058,7 +1058,7 @@ const MessageBubble = memo(
     };
 
     return (
-      <div className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`}>
+      <div className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
           className={`flex ${isUserMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${isUserMessage ? 'items-end' : 'items-start'}`}
         >
