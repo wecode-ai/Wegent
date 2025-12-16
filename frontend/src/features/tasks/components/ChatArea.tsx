@@ -97,11 +97,6 @@ export default function ChatArea({
   if (initialTeamIdRef.current === null && typeof window !== 'undefined') {
     // Use mode-specific preference, with fallback to generic preference
     initialTeamIdRef.current = getLastTeamIdByMode(taskType);
-    console.log(
-      '[ChatArea] Pre-loaded team ID from localStorage for mode:',
-      taskType,
-      initialTeamIdRef.current
-    );
   }
 
   const [selectedTeam, setSelectedTeam] = useState<Team | null>(null);
@@ -322,6 +317,20 @@ export default function ChatArea({
   const { selectedTaskDetail, refreshTasks, refreshSelectedTaskDetail, setSelectedTask } =
     useTaskContext();
 
+  const detailTeamId = useMemo<number | null>(() => {
+    if (!selectedTaskDetail?.team) {
+      return null;
+    }
+    if (typeof selectedTaskDetail.team === 'number') {
+      return selectedTaskDetail.team;
+    }
+    if (typeof selectedTaskDetail.team === 'object') {
+      const maybeId = (selectedTaskDetail.team as { id?: number }).id;
+      return typeof maybeId === 'number' ? maybeId : null;
+    }
+    return null;
+  }, [selectedTaskDetail?.team]);
+
   // Global Chat Stream Context - streams persist across task switches
   const {
     getStreamState,
@@ -465,15 +474,13 @@ export default function ChatArea({
   // Only runs for new tasks (no messages), not when switching to existing tasks
   useEffect(() => {
     // Skip if already restored, no teams, or viewing existing task (has messages)
-    if (hasRestoredPreferences || !teams.length || hasMessages) return;
+    if (hasRestoredPreferences || !teams.length || (!selectedTaskDetail && hasMessages)) return;
 
     const lastTeamId = initialTeamIdRef.current;
-    console.log('[ChatArea] Trying to restore team with ID:', lastTeamId);
 
     if (lastTeamId) {
       const lastTeam = teams.find(team => team.id === lastTeamId);
       if (lastTeam) {
-        console.log('[ChatArea] âœ… Restoring team from localStorage:', lastTeam.name, lastTeam.id);
         setSelectedTeam(lastTeam);
         setHasRestoredPreferences(true);
         return;
@@ -499,10 +506,25 @@ export default function ChatArea({
 
   // Handle external team selection for new tasks (from team sharing)
   useEffect(() => {
-    if (selectedTeamForNewTask && !hasMessages) {
+    if (selectedTeamForNewTask && !selectedTaskDetail) {
       setSelectedTeam(selectedTeamForNewTask);
     }
-  }, [selectedTeamForNewTask, hasMessages]);
+  }, [selectedTeamForNewTask, selectedTaskDetail]);
+
+  // Sync team selection when viewing an existing task
+  useEffect(() => {
+    if (!detailTeamId) {
+      return;
+    }
+
+    if (!selectedTeam?.id || selectedTeam.id !== detailTeamId) {
+      const matchedTeam = teams.find(team => team.id === detailTeamId) || null;
+      if (matchedTeam) {
+        setSelectedTeam(matchedTeam);
+        setHasRestoredPreferences(true);
+      }
+    }
+  }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam]);
 
   // Set model from task detail when viewing existing task
   useEffect(() => {
