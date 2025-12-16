@@ -761,7 +761,11 @@ export default function MessagesArea({
   }, [onShareButtonRender, shareButton]);
 
   return (
-    <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
+    <div
+      className="flex-1 w-full max-w-3xl mx-auto flex flex-col"
+      data-chat-container="true"
+      translate="no"
+    >
       {/* Messages Area - always render container to prevent layout shift */}
       {/* Show messages when: 1) has display messages, 2) has pending message, 3) is streaming, 4) has selected task (even if loading) */}
       {(displayMessages.length > 0 ||
