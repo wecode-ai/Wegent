@@ -75,4 +75,12 @@ export {
   logApiRequests,
   MOCK_AI_RESPONSE,
   MOCK_SSE_RESPONSE,
+  // New exports for media chat testing
+  generateMockChatStreamResponse,
+  generateMockAttachmentResponse,
+  mockChatStream,
+  mockAttachmentUpload,
+  setupMediaChatMocks,
+  MIME_TYPES,
 } from './api-mock';
+export type { MockAttachmentResponse } from './api-mock';
