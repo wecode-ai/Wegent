@@ -10,7 +10,7 @@ from datetime import timedelta
 from typing import Dict, Any, Optional, List, Tuple
 from agno.tools.mcp import MCPTools
 from agno.tools.mcp import StreamableHTTPClientParams, SSEClientParams, StdioServerParameters
-from executor.utils.mcp_utils import extract_mcp_servers_config
+from executor.utils.mcp_utils import extract_mcp_servers_config, replace_mcp_server_variables
 from shared.logger import setup_logger
 
 logger = setup_logger("agno_mcp_manager")
@@ -25,12 +25,14 @@ class MCPManager:
         self.connected_tools: List[MCPTools] = []
         self.thinking_manager = thinking_manager
     
-    async def setup_mcp_tools(self, config: Dict[str, Any]) -> Optional[List[MCPTools]]:
+    async def setup_mcp_tools(self, config: Dict[str, Any], task_data: Optional[Dict[str, Any]] = None) -> Optional[List[MCPTools]]:
         """
         Setup MCP tools if configured
         
         Args:
             config: Configuration dictionary containing MCP server settings
+            task_data: Optional task data dictionary for variable replacement in MCP config.
+                       Supports placeholders like ${{user.name}}, ${{git_repo}}, ${{bot.0.name}}
             
         Returns:
             List of MCP tools if successful, None otherwise
@@ -38,6 +40,10 @@ class MCPManager:
         mcp_servers = extract_mcp_servers_config(config)
         if mcp_servers is None:
             return None
+        
+        # Replace placeholders in MCP servers config with actual values from task_data
+        if task_data:
+            mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
 
         mcp_tools_list = []
 
