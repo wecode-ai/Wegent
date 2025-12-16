@@ -9,16 +9,19 @@ This module provides APIs for the step-by-step agent creation wizard,
 including AI-powered follow-up questions and prompt generation.
 """
 
+import asyncio
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.models.kind import Kind
 from app.models.user import User
 from app.schemas.kind import Bot, Ghost, Shell, Team
@@ -32,13 +35,17 @@ from app.schemas.wizard import (
     FollowUpResponse,
     GeneratePromptRequest,
     GeneratePromptResponse,
+    IteratePromptRequest,
+    IteratePromptResponse,
+    ModelRecommendation,
     RecommendConfigRequest,
     RecommendConfigResponse,
     ShellRecommendation,
-    ModelRecommendation,
+    TestPromptRequest,
+    TestPromptResponse,
 )
 from app.services.chat.chat_service import chat_service
-from app.services.chat.model_resolver import get_model_config_for_bot
+from app.services.chat.model_resolver import _extract_model_config
 
 logger = logging.getLogger(__name__)
 
@@ -46,42 +53,35 @@ router = APIRouter()
 
 
 def get_core_questions() -> List[CoreQuestion]:
-    """Return the 5 core questions for wizard step 1"""
+    """Return simplified core questions for wizard step 1 - designed for non-technical users"""
     return [
         CoreQuestion(
             key="purpose",
-            question="What do you want this agent to help you with?",
+            question="What do you want this AI assistant to help you with?",
             input_type="text",
             required=True,
-            placeholder="e.g., Help me write code, data analysis, content writing...",
+            placeholder="e.g., Help me write weekly reports, answer customer questions, summarize meeting notes...",
         ),
         CoreQuestion(
-            key="knowledge_domain",
-            question="What areas should the agent specialize in?",
+            key="example_input",
+            question="Give an example of what you would input",
             input_type="text",
             required=False,
-            placeholder="e.g., Frontend development, Python, Machine Learning...",
+            placeholder="e.g., Visited 5 clients this week, Signed 2 new contracts, Handled 3 customer service issues",
         ),
         CoreQuestion(
-            key="interaction_style",
-            question="What interaction style do you prefer?",
-            input_type="single_choice",
-            required=False,
-            options=["Q&A Style", "Guided Style", "Proactive Style"],
-        ),
-        CoreQuestion(
-            key="output_format",
-            question="What output formats do you expect?",
-            input_type="multiple_choice",
-            required=False,
-            options=["Code", "Documentation", "Lists", "Conversation", "Charts/Diagrams"],
-        ),
-        CoreQuestion(
-            key="constraints",
-            question="Are there any restrictions or things to avoid?",
+            key="expected_output",
+            question="What kind of result do you expect from the AI?",
             input_type="text",
             required=False,
-            placeholder="e.g., Don't use certain libraries, avoid complex terminology...",
+            placeholder="e.g., [Weekly Summary] 1. Client Visits: 5 total, 2 new clients 2. Sales Results: 2 contracts signed",
+        ),
+        CoreQuestion(
+            key="special_requirements",
+            question="Any preferences or things to note?",
+            input_type="text",
+            required=False,
+            placeholder="e.g., Keep it brief, use formal language, include bullet points...",
         ),
     ]
 
@@ -103,22 +103,67 @@ async def _call_llm_for_wizard(
     """
     Call LLM for wizard functionality using an available model.
     Returns the LLM response as a string.
+
+    Model selection priority:
+    1. If WIZARD_MODEL_NAME is configured, use that public model
+    2. Otherwise, try user's models first
+    3. Fall back to any available public model
     """
-    # Find a suitable model for the wizard
-    # First try to find user's models
-    user_models = (
-        db.query(Kind)
-        .filter(
-            Kind.user_id == user.id,
-            Kind.kind == "Model",
-            Kind.is_active == True,
-        )
-        .all()
+    model_kind = None
+
+    logger.info(
+        f"[Wizard] Looking for model. WIMODEL_NAME={settings.WIZARD_MODEL_NAME}, "
+        f"user_id={user.id}"
     )
 
-    # If no user models, try public models
-    if not user_models:
+    # Priority 1: Use configured wizard model if specified
+    if settings.WIZARD_MODEL_NAME:
+        logger.info(
+            f"[Wizard] Priority 1: Looking for configured model '{settings.WINAME}'"
+        )
+        model_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,  # Public model
+                Kind.kind == "Model",
+                Kind.name == settings.WIZARD_MODEL_NAME,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if model_kind:
+            logger.info(f"[Wizard] Found configured model: {model_kind.name}")
+        else:
+            logger.warning(
+                f"[Wizard] Configured WIZARD_MODEL_NAME '{settings.WIZARD_MODEL_NAME}' not found, "
+                "falling back to other available models"
+            )
+
+    # Priority 2: Try user's models
+    if not model_kind:
+        logger.info(
+            f"[Wizard] Priority 2: Looking for user's models (user_id={user.id})"
+        )
         user_models = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == user.id,
+                Kind.kind == "Model",
+                Kind.is_active == True,
+            )
+            .all()
+        )
+        logger.info(
+            f"[Wizard] Found {len(user_models)} user models: {[m.name for m in user_models]}"
+        )
+        if user_models:
+            model_kind = user_models[0]
+            logger.info(f"[Wizard] Using user model: {model_kind.name}")
+
+    # Priority 3: Fall back to any public model
+    if not model_kind:
+        logger.info("[Wizard] Priority 3: Looking for any public model (user_id=0)")
+        public_models = (
             db.query(Kind)
             .filter(
                 Kind.user_id == 0,
@@ -127,26 +172,39 @@ async def _call_llm_for_wizard(
             )
             .all()
         )
+        logger.info(
+            f"[Wizard] Found {len(public_models)} public models: {[m.name for m in public_models]}"
+        )
+        if public_models:
+            model_kind = public_models[0]
+            logger.info(f"[Wizard] Using public model: {model_kind.name}")
 
-    if not user_models:
+    if not model_kind:
+        # Log all models in the database for debugging
+        all_models = db.query(Kind).filter(Kind.kind == "Model").all()
+        logger.error(
+            f"[Wizard] No available models found! "
+            f"All models in DB: {[(m.id, m.name, m.user_id, m.is_active) for m in all_models]}"
+        )
         raise HTTPException(
             status_code=400,
-            detail="No available models found. Please configure a model first.",
+            detail="No available models found. Please configure a model first, "
+            "or set WIZARD_MODEL_NAME in environment variables.",
         )
 
-    # Use the first available model
-    model_kind = user_models[0]
     model_json = model_kind.json or {}
-    model_spec = model_json.get("spec", {})
-    model_config_data = model_spec.get("modelConfig", {})
+    logger.info(f"[Wizard] Model '{model_kind.name}' found, extracting config...")
 
-    model_config = {
-        "api_key": model_config_data.get("apiKey", ""),
-        "base_url": model_config_data.get("baseUrl"),
-        "model_id": model_config_data.get("modelId", ""),
-        "protocol": model_spec.get("protocol", "openai"),
-        "default_headers": model_config_data.get("defaultHeaders", {}),
-    }
+    model_spec = model_json.get("spec", {})
+
+    # Use _extract_model_config to properly decrypt API key and handle both formats
+    model_config = _extract_model_config(model_spec)
+
+    logger.info(
+        f"[Wizard] Extracted model config - model={model_config.get('model')}, "
+        f"base_url={model_config.get('base_url')}, model_id={model_config.get('model_id')}, "
+        f"has_api_key={bool(model_config.get('api_key'))}"
+    )
 
     # Use non-streaming chat
     try:
@@ -157,7 +215,7 @@ async def _call_llm_for_wizard(
         )
         return response
     except Exception as e:
-        logger.error(f"LLM call failed: {e}")
+        logger.error(f"[Wizard] LLM call failed: {e}")
         raise HTTPException(
             status_code=500,
             detail=f"Failed to generate response: {str(e)}",
@@ -173,14 +231,25 @@ async def generate_followup_questions(
     """
     Generate AI-powered follow-up questions based on user answers.
     This endpoint is called for wizard step 2.
+    Designed for non-technical users like operations, finance, sales staff.
     """
-    # Build context from answers
+    # Build context from answers - using input/output example fields
+    example_input = (
+        request.answers.example_input
+        or request.answers.example_task
+        or request.answers.knowledge_domain
+        or "Not specified"
+    )
+    expected_output = request.answers.expected_output or "Not specified"
+    special_requirements = (
+        request.answers.special_requirements or request.answers.constraints or "None"
+    )
+
     answers_text = f"""
-User's purpose: {request.answers.purpose}
-Knowledge domain: {request.answers.knowledge_domain or 'Not specified'}
-Interaction style: {request.answers.interaction_style or 'Not specified'}
-Output formats: {', '.join(request.answers.output_format) if request.answers.output_format else 'Not specified'}
-Constraints: {request.answers.constraints or 'None'}
+What the user wants help with: {request.answers.purpose}
+Example input they would provide: {example_input}
+Expected output format/content: {expected_output}
+Special requirements or preferences: {special_requirements}
 """
 
     # Add previous follow-up answers if any
@@ -191,33 +260,65 @@ Constraints: {request.answers.constraints or 'None'}
             for q, a in followup.items():
                 answers_text += f"  Q: {q}\n  A: {a}\n"
 
-    system_prompt = """You are an AI assistant helping to gather requirements for creating an AI agent.
-Based on the user's answers, generate 2-3 follow-up questions to better understand their needs.
+    system_prompt = """You are a friendly AI assistant helping non-technical users (like operations staff, finance, sales, HR) create their own AI assistant.
 
-Guidelines:
-1. Ask questions that help clarify ambiguous or incomplete information
-2. Questions should be specific and actionable
-3. Consider the user's use case and ask about details that would help create a better prompt
-4. After 4-6 rounds, you should have enough information
+Your goal is to ask ONLY the most essential follow-up questions to understand their core needs. Be efficient and focused.
+
+CRITICAL Guidelines for Question Selection:
+1. Ask 3-5 questions per round - focus on the most important gaps in understanding
+2. Prioritize questions that clarify the CORE PURPOSE and EXPECTED OUTPUT
+3. Skip questions if the user's initial description is already clear enough
+4. Do NOT ask about edge cases, rare scenarios, or nice-to-have features
+5. The user's examples are just references - focus on creating a GENERAL-PURPOSE assistant, not one tailored to specific examples
+
+Question Priority (ask in this order, skip if already answered):
+1. HIGHEST: What is the main goal/output? (if unclear)
+2. HIGH: What format or style is preferred? (if output format matters)
+3. MEDIUM: Any must-have requirements or constraints?
+4. LOW: Skip detailed workflow questions - keep it general
+
+IMPORTANT - Avoid Over-Questioning:
+- If the user has clearly stated their purpose and expected output, you likely have enough information
+- Do NOT ask about: frequency of use, who will read the output, detailed workflows, edge cases
+- The goal is to create a VERSATILE assistant, not a hyper-specialized one
+- HOWEVER: In round 1, you should ask at least 2-3 clarifying questions - never set is_complete to true in the first round
+
+Good question examples (use sparingly):
+- "What format do you prefer for the output?" (only if output format is unclear)
+- "Any specific requirements I should know about?" (catch-all for important constraints)
+
+Avoid these types of questions:
+- "How often do you need to do this?" (not essential for prompt creation)
+- "Who will be reading the results?" (over-specific)
+- "Can you give more examples?" (user's example is just a reference)
+- Technical questions of any kind
 
 Response format (JSON):
 {
   "questions": [
-    {"question": "Your question here", "input_type": "text|single_choice|multiple_choice", "options": ["option1", "option2"] (only for choice types)},
+    {"question": "Your simple question here", "input_type": "text|single_choice|multiple_choice", "options": ["option1", "option2"] (only for choice types)},
     ...
   ],
-  "is_complete": false (set to true if no more questions needed)
+  "is_complete": false (set to true if no more questions needed - PREFER true when basic info is clear)
 }
 
-IMPORTANT: Output ONLY valid JSON, no other text."""
+IMPORTANT:
+- Use the same language as the user's input (if Chinese, ask in Chinese)
+- After round 5, you MUST set is_complete to true unless critical information is missing, or earlier if you have enough info"""
 
     user_message = f"""Current round: {request.round_number}
+Maximum rounds allowed: 5 
 
 User's answers so far:
 {answers_text}
 
-Generate follow-up questions to gather more details for creating their AI agent.
-If you have enough information (usually after 4-6 rounds), set is_complete to true."""
+IMPORTANT:
+
+- Output ONLY valid JSON, no other text
+- Generate 3-5 focused questions in each round
+- If the user's purpose and expected output are reasonably clear, set is_complete to true
+- The user's examples are just references - create a GENERAL-PURPOSE assistant
+- Do NOT ask about details, edge cases, or nice-to-have features"""
 
     try:
         response = await _call_llm_for_wizard(
@@ -226,7 +327,7 @@ If you have enough information (usually after 4-6 rounds), set is_complete to tr
 
         # Parse JSON response
         # Try to extract JSON from the response
-        json_match = re.search(r'\{[\s\S]*\}', response)
+        json_match = re.search(r"\{[\s\S]*\}", response)
         if json_match:
             result = json.loads(json_match.group())
         else:
@@ -276,37 +377,84 @@ async def recommend_shell_and_model(
     """
     Recommend Shell and Model based on user's answers.
     This endpoint is called for wizard step 3.
+    For non-technical users, we use friendly descriptions instead of technical terms.
     """
     # Analyze the purpose to determine shell type
     purpose_lower = request.answers.purpose.lower()
-    domain_lower = (request.answers.knowledge_domain or "").lower()
+    # Support both old and new field names - example_input is the new primary field
+    example_input = (
+        request.answers.example_input
+        or request.answers.example_task
+        or request.answers.knowledge_domain
+        or ""
+    )
+    expected_output = request.answers.expected_output or ""
+    example_text_lower = (example_input + " " + expected_output).lower()
 
-    # Default recommendation
+    # Default recommendation - Chat mode for most non-technical users
     shell_type = "Chat"
-    shell_reason = "Suitable for general conversation and Q&A tasks"
-    confidence = 0.7
+    shell_reason = "Perfect for everyday conversations and quick Q&A"
+    shell_reason_friendly = "Best for chatting and getting quick answers"
+    confidence = 0.85  # Higher confidence for Chat as default for non-tech users
 
     # Determine shell type based on keywords
     code_keywords = [
-        "code", "coding", "programming", "develop", "debug", "bug", "fix",
-        "implement", "build", "feature", "refactor", "test", "api",
-        "frontend", "backend", "database", "script", "automation",
-        "代码", "编程", "开发", "调试", "实现", "构建", "重构", "测试",
+        "code",
+        "coding",
+        "programming",
+        "develop",
+        "debug",
+        "bug",
+        "fix",
+        "implement",
+        "build",
+        "feature",
+        "refactor",
+        "test",
+        "api",
+        "frontend",
+        "backend",
+        "database",
+        "script",
+        "automation",
+        "代码",
+        "编程",
+        "开发",
+        "调试",
+        "实现",
+        "构建",
+        "重构",
+        "测试",
     ]
 
     complex_keywords = [
-        "complex", "multi-step", "workflow", "pipeline", "coordinate",
-        "collaborate", "team", "multiple agents",
-        "复杂", "多步骤", "工作流", "协调", "协作", "团队",
+        "complex",
+        "multi-step",
+        "workflow",
+        "pipeline",
+        "coordinate",
+        "collaborate",
+        "team",
+        "multiple agents",
+        "复杂",
+        "多步骤",
+        "工作流",
+        "协调",
+        "协作",
+        "团队",
     ]
 
-    if any(kw in purpose_lower or kw in domain_lower for kw in code_keywords):
+    if any(kw in purpose_lower or kw in example_text_lower for kw in code_keywords):
         shell_type = "ClaudeCode"
-        shell_reason = "Best for code development, debugging, and repository exploration"
+        shell_reason = "Ideal for working with code and technical projects"
+        shell_reason_friendly = "Best for coding and technical work"
         confidence = 0.9
-    elif any(kw in purpose_lower or kw in domain_lower for kw in complex_keywords):
+    elif any(
+        kw in purpose_lower or kw in example_text_lower for kw in complex_keywords
+    ):
         shell_type = "Agno"
-        shell_reason = "Best for complex multi-agent collaboration and workflows"
+        shell_reason = "Great for complex tasks that need multiple steps"
+        shell_reason_friendly = "Best for complex multi-step tasks"
         confidence = 0.85
 
     # Get available shells
@@ -354,7 +502,7 @@ async def recommend_shell_and_model(
                 model_recommendation = ModelRecommendation(
                     model_name=model.name,
                     model_id=model_spec.get("modelConfig", {}).get("modelId"),
-                    reason="Anthropic models work best with Claude Code",
+                    reason="Recommended for this type of work",
                     confidence=0.9,
                 )
                 break
@@ -362,7 +510,7 @@ async def recommend_shell_and_model(
                 model_recommendation = ModelRecommendation(
                     model_name=model.name,
                     model_id=model_spec.get("modelConfig", {}).get("modelId"),
-                    reason="OpenAI compatible models work well with Agno",
+                    reason="Works great for complex tasks",
                     confidence=0.85,
                 )
                 break
@@ -375,17 +523,28 @@ async def recommend_shell_and_model(
             model_recommendation = ModelRecommendation(
                 model_name=model.name,
                 model_id=model_spec.get("modelConfig", {}).get("modelId"),
-                reason="Default available model",
-                confidence=0.6,
+                reason="Ready to use",
+                confidence=0.7,
             )
 
-    # Build alternative shells
+    # Build alternative shells with user-friendly descriptions
     alternative_shells = []
-    for alt_type, alt_reason in [
-        ("Chat", "Simple conversation without code execution"),
-        ("ClaudeCode", "Code development with repository access"),
-        ("Agno", "Multi-agent collaboration"),
-    ]:
+    friendly_shell_info = {
+        "Chat": (
+            "Simple and fast conversations",
+            "Best for quick Q&A and everyday tasks",
+        ),
+        "ClaudeCode": (
+            "For coding and technical work",
+            "Best when you need to work with code",
+        ),
+        "Agno": (
+            "For complex multi-step tasks",
+            "Best for tasks that need multiple steps",
+        ),
+    }
+
+    for alt_type, (alt_reason, _) in friendly_shell_info.items():
         if alt_type != shell_type:
             alternative_shells.append(
                 ShellRecommendation(
@@ -419,51 +578,101 @@ async def generate_system_prompt(
     Generate system prompt based on all collected answers.
     This endpoint is called for wizard step 4.
     """
-    # Build context
+    # Build context - using input/output example fields
+    example_input = (
+        request.answers.example_input
+        or request.answers.example_task
+        or request.answers.knowledge_domain
+        or "Not specified"
+    )
+    expected_output = request.answers.expected_output or "Not specified"
+    special_requirements = (
+        request.answers.special_requirements or request.answers.constraints or "None"
+    )
+
     answers_text = f"""
-Purpose: {request.answers.purpose}
-Knowledge domain: {request.answers.knowledge_domain or 'General'}
-Interaction style: {request.answers.interaction_style or 'Q&A Style'}
-Output formats: {', '.join(request.answers.output_format) if request.answers.output_format else 'Text'}
-Constraints: {request.answers.constraints or 'None'}
-Shell type: {request.shell_type}
+What the user wants help with: {request.answers.purpose}
+Example input they would provide: {example_input}
+Expected output format/content: {expected_output}
+Special requirements or preferences: {special_requirements}
 """
 
     if request.followup_answers:
-        answers_text += "\nAdditional details:\n"
+        answers_text += "\nAdditional details from conversation:\n"
         for i, followup in enumerate(request.followup_answers, 1):
             for q, a in followup.items():
                 answers_text += f"- {q}: {a}\n"
 
-    system_prompt = """You are an expert at crafting AI agent system prompts.
-Based on the user's requirements, create a well-structured system prompt.
+    system_prompt = """You are an expert at creating AI assistant configurations for non-technical users.
+Based on the user's needs, create a friendly and effective system prompt.
 
-The prompt should include:
-1. Role definition - Who is this agent?
-2. Capabilities - What can it do?
-3. Output format - How should it respond?
-4. Constraints - What should it avoid?
-5. Interaction style - How should it communicate?
+CRITICAL - Create a GENERAL-PURPOSE Assistant:
+The user's examples are just REFERENCES to help you understand their needs. Do NOT create an assistant that only handles those specific examples. Instead:
+- Extract the GENERAL CATEGORY of tasks from the examples
+- Create an assistant that can handle ANY task in that category
+- The assistant should be VERSATILE and FLEXIBLE, not narrowly specialized
 
-Also suggest a short name and description for this agent.
+Example of what NOT to do:
+- User example: "Help me write a weekly sales report"
+- BAD prompt: "I help you write weekly sales reports with client visits and contracts"
+- GOOD prompt: "I help you write various business reports and documents"
+
+The prompt should be written in a way that:
+1. Clearly defines the assistant's role in GENERAL terms (not tied to specific examples)
+2. Lists CATEGORIES of tasks the assistant can help with (not specific instances)
+3. Specifies how the assistant should communicate (friendly, professional, etc.)
+4. Mentions any special requirements or things to avoid
+5. Is easy to understand - avoid technical jargon
+
+IMPORTANT - Wegent Platform Capabilities:
+This AI assistant runs on Wegent, a conversation-based AI platform. Keep these capabilities in mind:
+
+What Wegent CAN do well:
+- Conversation-based Q&A and discussions
+- Writing, editing, summarizing, and translating text
+- Code development (with Git repository integration)
+- Analyzing data provided in the conversation
+- Generating documents, reports, and creative content
+- Explaining concepts and providing guidance
+
+What Wegent CANNOT do (unless specifically configured):
+- Automatically access external systems or databases
+- Perform scheduled/automated tasks without user interaction
+- Access real-time internet data (unless web search is enabled)
+- Interact with third-party applications directly
+
+When creating the prompt:
+- Focus on tasks achievable through conversation
+- If the user's goal requires external data, guide the assistant to ask users to provide the information in chat
+- Design realistic workflows within Wegent's conversation-based model
+- Keep the assistant GENERAL and VERSATILE - it should handle various tasks in the same category
+
+Also suggest a simple, memorable name and a brief description.
 
 Response format (JSON):
 {
   "system_prompt": "The full system prompt in markdown format",
-  "suggested_name": "short-name-for-agent",
-  "suggested_description": "Brief description of the agent"
+  "suggested_name": "simple-name",
+  "suggested_description": "A brief, friendly description of what this assistant does"
 }
 
 IMPORTANT:
 - Use the same language as the user's input (if Chinese, respond in Chinese)
 - Output ONLY valid JSON, no other text
-- The system_prompt should be comprehensive but not overly long"""
+- Keep the system_prompt clear and concise
+- Use everyday language, not technical terms
+- Ensure the assistant's capabilities align with what Wegent can actually do
+- Create a GENERAL-PURPOSE assistant, NOT one tailored to specific examples"""
 
-    user_message = f"""Create a system prompt for an AI agent based on these requirements:
+    user_message = f"""Create a system prompt for an AI assistant based on these requirements:
 
 {answers_text}
 
-Generate a professional system prompt that will make this agent effective."""
+IMPORTANT REMINDERS:
+- The user's examples are just REFERENCES - create a GENERAL-PURPOSE assistant
+- The assistant should handle ANY task in this category, not just the specific examples given
+- Keep the prompt versatile and flexible
+- This is for a non-technical user - make the prompt friendly and easy to understand"""
 
     try:
         response = await _call_llm_for_wizard(
@@ -471,7 +680,7 @@ Generate a professional system prompt that will make this agent effective."""
         )
 
         # Parse JSON response
-        json_match = re.search(r'\{[\s\S]*\}', response)
+        json_match = re.search(r"\{[\s\S]*\}", response)
         if json_match:
             result = json.loads(json_match.group())
         else:
@@ -485,27 +694,38 @@ Generate a professional system prompt that will make this agent effective."""
 
     except json.JSONDecodeError:
         logger.error(f"Failed to parse LLM response: {response}")
-        # Generate a default prompt if parsing fails
-        default_prompt = f"""# Role Definition
-You are an AI assistant specialized in {request.answers.knowledge_domain or 'general tasks'}.
+        # Generate a default prompt if parsing fails - using simplified fields
+        example_task = (
+            request.answers.example_task
+            or request.answers.knowledge_domain
+            or "general tasks"
+        )
+        special_reqs = (
+            request.answers.special_requirements
+            or request.answers.constraints
+            or "None specified"
+        )
 
-# Capabilities
-- Help with: {request.answers.purpose}
-- Expertise in: {request.answers.knowledge_domain or 'various domains'}
+        default_prompt = f"""# Your AI Assistant
 
-# Output Format
-{', '.join(request.answers.output_format) if request.answers.output_format else 'Clear and concise responses'}
+I'm here to help you with: {request.answers.purpose}
 
-# Interaction Style
-{request.answers.interaction_style or 'Professional and helpful'}
+## What I can do
+- {example_task}
 
-# Constraints
-{request.answers.constraints or 'None specified'}
+## How I work
+- I'll be friendly and helpful
+- I'll keep things simple and clear
+- {special_reqs}
 """
         return GeneratePromptResponse(
             system_prompt=default_prompt,
             suggested_name="my-agent",
-            suggested_description=request.answers.purpose[:100] if request.answers.purpose else "AI Assistant",
+            suggested_description=(
+                request.answers.purpose[:100]
+                if request.answers.purpose
+                else "AI Assistant"
+            ),
         )
 
 
@@ -593,7 +813,6 @@ async def create_all_resources(
                 "name": shell.name,
                 "namespace": shell.namespace,
             },
-            "agent_config": {},
         }
 
         # Add model reference if specified
@@ -609,8 +828,11 @@ async def create_all_resources(
                 .first()
             )
             if model:
-                bot_spec["agent_config"]["bind_model"] = request.model_name
-                bot_spec["agent_config"]["bind_model_type"] = request.model_type or "user"
+                # Set modelRef to point to the selected model
+                bot_spec["modelRef"] = {
+                    "name": request.model_name,
+                    "namespace": model.namespace,
+                }
 
         bot_json = {
             "kind": "Bot",
@@ -653,6 +875,9 @@ async def create_all_resources(
                     }
                 ],
                 "collaborationModel": "solo",
+                "bind_mode": request.bind_mode,
+                "description": request.description,
+                "icon": request.icon,
             },
         }
 
@@ -664,13 +889,6 @@ async def create_all_resources(
             json=team_json,
             is_active=True,
         )
-
-        # Add additional fields
-        team_data = team.json
-        team_data["bind_mode"] = request.bind_mode
-        team_data["icon"] = request.icon
-        team_data["description"] = request.description
-        team.json = team_data
 
         db.add(team)
         db.commit()
@@ -698,4 +916,290 @@ async def create_all_resources(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to create agent: {str(e)}",
+        )
+
+
+@router.post("/test-prompt", response_model=TestPromptResponse)
+async def test_system_prompt(
+    request: TestPromptRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Test a system prompt with a sample task message.
+    This allows users to see how the AI assistant would respond
+    before finalizing the configuration.
+    """
+    try:
+        # Find the model to use for testing
+        model_kind = None
+
+        if request.model_name:
+            model_kind = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Model",
+                    Kind.is_active == True,
+                    Kind.name == request.model_name,
+                    ((Kind.user_id == current_user.id) | (Kind.user_id == 0)),
+                )
+                .first()
+            )
+
+        # Fall back to wizard model selection logic
+        if not model_kind:
+            if settings.WIZARD_MODEL_NAME:
+                model_kind = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Model",
+                        Kind.name == settings.WIZARD_MODEL_NAME,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+
+            if not model_kind:
+                user_models = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == current_user.id,
+                        Kind.kind == "Model",
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                if user_models:
+                    model_kind = user_models[0]
+
+            if not model_kind:
+                public_models = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Model",
+                        Kind.is_active == True,
+                    )
+                    .all()
+                )
+                if public_models:
+                    model_kind = public_models[0]
+
+        if not model_kind:
+            raise HTTPException(
+                status_code=400,
+                detail="No available models found for testing.",
+            )
+
+        model_json = model_kind.json or {}
+        model_spec = model_json.get("spec", {})
+        model_config = _extract_model_config(model_spec)
+
+        # Call the model with the user's system prompt and test message
+        response = await chat_service.chat_completion(
+            message=request.test_message,
+            model_config=model_config,
+            system_prompt=request.system_prompt,
+        )
+
+        return TestPromptResponse(
+            response=response,
+            success=True,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"[Wizard] Test prompt failed: {e}")
+        return TestPromptResponse(
+            response=f"Test failed: {str(e)}",
+            success=False,
+        )
+
+
+def _get_model_for_wizard(
+    db: Session,
+    user: User,
+    model_name: Optional[str] = None,
+) -> Kind:
+    """
+    Get model for wizard functionality.
+
+    Model selection priority:
+    1. If model_name is specified, use that model
+    2. If WIZARD_MODEL_NAME is configured, use that public model
+    3. Otherwise, try user's models first
+    4. Fall back to any available public model
+    """
+    model_kind = None
+
+    # Priority 0: Use specified model if provided
+    if model_name:
+        model_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.kind == "Model",
+                Kind.is_active == True,
+                Kind.name == model_name,
+                ((Kind.user_id == user.id) | (Kind.user_id == 0)),
+            )
+            .first()
+        )
+        if model_kind:
+            return model_kind
+
+    # Priority 1: Use configured wizard model if specified
+    if settings.WIZARD_MODEL_NAME:
+        model_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.user_id == 0,  # Public model
+                Kind.kind == "Model",
+                Kind.name == settings.WIMODEL_NAME,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        if model_kind:
+            return model_kind
+
+    # Priority 2: Try user's models
+    user_models = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == user.id,
+            Kind.kind == "Model",
+            Kind.is_active == True,
+        )
+        .all()
+    )
+    if user_models:
+        return user_models[0]
+
+    # Priority 3: Fall back to any public model
+    public_models = (
+        db.query(Kind)
+        .filter(
+            Kind.user_id == 0,
+            Kind.kind == "Model",
+            Kind.is_active == True,
+        )
+        .all()
+    )
+    if public_models:
+        return public_models[0]
+
+    raise HTTPException(
+        status_code=400,
+        detail="No available models found for testing.",
+    )
+
+
+@router.post("/test-prompt/stream")
+async def test_system_prompt_stream(
+    request: TestPromptRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Test a system prompt with streaming response.
+    This allows users to see the AI response in real-time
+    before finalizing the configuration.
+    """
+    # Get model for testing
+    model_kind = _get_model_for_wizard(db, current_user, request.model_name)
+
+    model_json = model_kind.json or {}
+    model_spec = model_json.get("spec", {})
+    model_config = _extract_model_config(model_spec)
+
+    # Use chat_service.chat_stream in simple mode (no subtask_id/task_id)
+    return await chat_service.chat_stream(
+        message=request.test_message,
+        model_config=model_config,
+        system_prompt=request.system_prompt,
+    )
+
+
+@router.post("/iterate-prompt", response_model=IteratePromptResponse)
+async def iterate_system_prompt(
+    request: IteratePromptRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(security.get_current_user),
+):
+    """
+    Iterate and improve the system prompt based on user feedback.
+    This allows users to refine the prompt by describing what they want changed.
+    """
+    system_prompt = """You are an expert at improving AI assistant system prompts.
+The user has tested their AI assistant and wants to make changes based on the results.
+
+Your task is to:
+1. Understand the user's feedback about what they want changed
+2. Modify the system prompt to address their concerns
+3. Keep the overall structure and intent of the original prompt
+4. Make targeted improvements based on the specific feedback
+
+Response format (JSON):
+{
+  "improved_prompt": "The full improved system prompt",
+  "changes_summary": "A brief summary of what was changed and why"
+}
+
+IMPORTANT:
+- Use the same language as the original prompt
+- Output ONLY valid JSON, no other text
+- Keep the prompt clear and user-friendly
+- Make minimal but effective changes to address the feedback"""
+
+    user_message = f"""Here is the current system prompt:
+---
+{request.current_prompt}
+---
+
+The user tested it with this message:
+"{request.test_message}"
+
+The AI responded with:
+---
+{request.model_response}
+---
+
+The user's feedback/request for changes:
+"{request.user_feedback}"
+
+Please improve the system prompt based on this feedback."""
+
+    try:
+        response = await _call_llm_for_wizard(
+            db, current_user, system_prompt, user_message
+        )
+
+        # Parse JSON response
+        json_match = re.search(r"\{[\s\S]*\}", response)
+        if json_match:
+            result = json.loads(json_match.group())
+        else:
+            result = json.loads(response)
+
+        return IteratePromptResponse(
+            improved_prompt=result.get("improved_prompt", request.current_prompt),
+            changes_summary=result.get(
+                "changes_summary", "Prompt updated based on feedback."
+            ),
+        )
+
+    except json.JSONDecodeError:
+        logger.error(f"Failed to parse iterate prompt response: {response}")
+        # Return the original prompt with a note
+        return IteratePromptResponse(
+            improved_prompt=request.current_prompt,
+            changes_summary="Could not parse the improvement. Please try again with different feedback.",
+        )
+    except Exception as e:
+        logger.error(f"[Wizard] Iterate prompt failed: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to iterate prompt: {str(e)}",
         )

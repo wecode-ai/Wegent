@@ -857,7 +857,8 @@ const MessageBubble = memo(
       }
 
       if (!content.includes('${$$}$')) {
-        return renderPlainMessage(message);
+        // Render AI message as markdown by default
+        return renderMarkdownResult(content);
       }
 
       const [prompt, result] = content.split('${$$}$');

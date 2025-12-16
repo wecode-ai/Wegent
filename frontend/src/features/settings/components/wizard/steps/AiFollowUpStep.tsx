@@ -2,25 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { Bot, User } from 'lucide-react'
-import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Spinner } from '@/components/ui/spinner'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { FollowUpRound } from '../types'
-import { cn } from '@/lib/utils'
+import { useEffect, useRef } from 'react';
+import { Bot, User, Loader2 } from 'lucide-react';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useTranslation } from '@/hooks/useTranslation';
+import type { FollowUpRound } from '../types';
+import { cn } from '@/lib/utils';
 
 interface AiFollowUpStepProps {
-  rounds: FollowUpRound[]
-  currentRound: number
-  isComplete: boolean
-  isLoading: boolean
-  onAnswerChange: (questionKey: string, answer: string) => void
+  rounds: FollowUpRound[];
+  currentRound: number;
+  isComplete: boolean;
+  isLoading: boolean;
+  onAnswerChange: (questionKey: string, answer: string) => void;
+  onAdditionalThoughtsChange: (thoughts: string) => void;
 }
 
 export default function AiFollowUpStep({
@@ -29,16 +29,33 @@ export default function AiFollowUpStep({
   isComplete,
   isLoading,
   onAnswerChange,
+  onAdditionalThoughtsChange,
 }: AiFollowUpStepProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('common');
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll to bottom only when loading starts (to show "Thinking..." indicator)
+  useEffect(() => {
+    if (isLoading && scrollContainerRef.current) {
+      // Use setTimeout to ensure DOM has updated
+      setTimeout(() => {
+        if (scrollContainerRef.current) {
+          scrollContainerRef.current.scrollTo({
+            top: scrollContainerRef.current.scrollHeight,
+            behavior: 'smooth',
+          });
+        }
+      }, 100);
+    }
+  }, [isLoading]);
 
   if (rounds.length === 0 && isLoading) {
     return (
       <div className="flex flex-col items-center justify-center py-12">
-        <Spinner className="w-8 h-8 text-primary" />
+        <Loader2 className="w-8 h-8 text-primary animate-spin" />
         <p className="mt-4 text-text-muted">{t('wizard.generating_questions')}</p>
       </div>
-    )
+    );
   }
 
   if (rounds.length === 0) {
@@ -46,7 +63,7 @@ export default function AiFollowUpStep({
       <div className="flex flex-col items-center justify-center py-12">
         <p className="text-text-muted">{t('wizard.no_questions')}</p>
       </div>
-    )
+    );
   }
 
   return (
@@ -54,7 +71,7 @@ export default function AiFollowUpStep({
       <p className="text-sm text-text-muted">{t('wizard.followup_description')}</p>
 
       {/* Chat-like display of Q&A history */}
-      <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
+      <div ref={scrollContainerRef} className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
         {rounds.map((round, roundIndex) => (
           <div key={roundIndex} className="space-y-4">
             {/* Round header */}
@@ -68,9 +85,9 @@ export default function AiFollowUpStep({
 
             {/* Questions and answers for this round */}
             {round.questions.map((question, qIndex) => {
-              const questionKey = `${question.question.substring(0, 30)}`
-              const answer = round.answers[questionKey] || ''
-              const isCurrentRound = roundIndex === currentRound - 1
+              const questionKey = `${question.question.substring(0, 30)}`;
+              const answer = round.answers[questionKey] || '';
+              const isCurrentRound = roundIndex === currentRound - 1;
 
               return (
                 <div key={`${roundIndex}-${qIndex}`} className="space-y-3">
@@ -89,9 +106,7 @@ export default function AiFollowUpStep({
                     <div
                       className={cn(
                         'flex-1 rounded-lg p-3',
-                        isCurrentRound
-                          ? 'bg-base border border-border'
-                          : 'bg-muted/50'
+                        isCurrentRound ? 'bg-base border border-border' : 'bg-muted/50'
                       )}
                     >
                       {isCurrentRound ? (
@@ -111,8 +126,41 @@ export default function AiFollowUpStep({
                     </div>
                   </div>
                 </div>
-              )
+              );
             })}
+
+            {/* Additional thoughts input - show for every round */}
+            <div className="mt-4 pt-4 border-t border-border">
+              <div className="flex items-start gap-3">
+                <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                  <User className="w-4 h-4 text-text-muted" />
+                </div>
+                <div className="flex-1">
+                  <label className="block text-sm font-medium text-text-secondary mb-2">
+                    {t('wizard.additional_thoughts_label')}
+                  </label>
+                  {roundIndex === currentRound - 1 ? (
+                    <>
+                      <Textarea
+                        value={round.additionalThoughts || ''}
+                        onChange={e => onAdditionalThoughtsChange(e.target.value)}
+                        placeholder={t('wizard.additional_thoughts_placeholder')}
+                        className="min-h-[80px] text-sm"
+                      />
+                      <p className="mt-1 text-xs text-text-muted">
+                        {t('wizard.additional_thoughts_hint')}
+                      </p>
+                    </>
+                  ) : (
+                    <div className="bg-muted/50 rounded-lg p-3">
+                      <p className="text-sm text-text-secondary">
+                        {round.additionalThoughts || t('wizard.not_answered')}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </div>
         ))}
 
@@ -124,31 +172,37 @@ export default function AiFollowUpStep({
             </div>
             <div className="flex-1 bg-surface border border-border rounded-lg p-3">
               <div className="flex items-center gap-2">
-                <Spinner className="w-4 h-4" />
+                <Loader2 className="w-4 h-4 text-primary animate-spin" />
                 <span className="text-sm text-text-muted">{t('wizard.thinking')}</span>
               </div>
             </div>
           </div>
         )}
-      </div>
 
-      {isComplete && (
-        <div className="p-4 bg-success/10 border border-success/20 rounded-lg">
-          <p className="text-sm text-success">{t('wizard.followup_complete')}</p>
-        </div>
-      )}
+        {/* Completion message - inside scroll container */}
+        {isComplete && (
+          <div className="flex items-start gap-3">
+            <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+              <Bot className="w-4 h-4 text-primary" />
+            </div>
+            <div className="flex-1 bg-success/10 border border-success/20 rounded-lg p-3">
+              <p className="text-sm text-success">{t('wizard.followup_complete')}</p>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
-  )
+  );
 }
 
 interface QuestionInputProps {
-  question: { question: string; input_type: string; options?: string[] }
-  value: string
-  onChange: (value: string) => void
+  question: { question: string; input_type: string; options?: string[] };
+  value: string;
+  onChange: (value: string) => void;
 }
 
 function QuestionInput({ question, value, onChange }: QuestionInputProps) {
-  const { t } = useTranslation('common')
+  const { t } = useTranslation('common');
 
   if (question.input_type === 'single_choice' && question.options) {
     return (
@@ -162,15 +216,15 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
           </div>
         ))}
       </RadioGroup>
-    )
+    );
   }
 
   if (question.input_type === 'multiple_choice' && question.options) {
-    const selected = value ? value.split(',').filter(Boolean) : []
+    const selected = value ? value.split(',').filter(Boolean) : [];
     return (
       <div className="space-y-2">
         {question.options.map(option => {
-          const isChecked = selected.includes(option)
+          const isChecked = selected.includes(option);
           return (
             <div key={option} className="flex items-center space-x-2">
               <Checkbox
@@ -179,18 +233,18 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
                 onCheckedChange={checked => {
                   const newSelected = checked
                     ? [...selected, option]
-                    : selected.filter(s => s !== option)
-                  onChange(newSelected.join(','))
+                    : selected.filter(s => s !== option);
+                  onChange(newSelected.join(','));
                 }}
               />
               <Label htmlFor={`mc-${option}`} className="font-normal cursor-pointer text-sm">
                 {option}
               </Label>
             </div>
-          )
+          );
         })}
       </div>
-    )
+    );
   }
 
   // Default: text input
@@ -201,5 +255,5 @@ function QuestionInput({ question, value, onChange }: QuestionInputProps) {
       placeholder={t('wizard.answer_placeholder')}
       className="min-h-[60px] text-sm"
     />
-  )
+  );
 }

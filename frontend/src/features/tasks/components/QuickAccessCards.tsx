@@ -13,6 +13,7 @@ import {
   CheckIcon,
   MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
+import { Wand2 } from 'lucide-react';
 import { userApis } from '@/apis/user';
 import { QuickAccessTeam, Team } from '@/types/api';
 import { saveLastTeamByMode } from '@/utils/userPreferences';
@@ -22,6 +23,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { paths } from '@/config/paths';
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
+import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard';
 
 // Maximum number of quick access cards to display
 const MAX_QUICK_ACCESS_CARDS = 4;
@@ -53,6 +55,7 @@ export function QuickAccessCards({
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null);
   const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | null>(null);
   const [showMoreTeams, setShowMoreTeams] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
   const moreButtonRef = useRef<HTMLDivElement>(null);
 
   // Define the extended team type for display
@@ -492,7 +495,39 @@ export function QuickAccessCards({
             </div>
           )}
         </div>
+
+        {/* Wizard button - quick create agent */}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => setShowWizard(true)}
+                className="flex items-center justify-center w-8 h-8 rounded-full border border-dashed border-primary/50 bg-primary/5 hover:bg-primary/10 hover:border-primary cursor-pointer transition-all duration-200"
+              >
+                <Wand2 className="w-4 h-4 text-primary" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="top">
+              <p>{t('wizard.wizard_button_tooltip')}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
       </div>
+
+      {/* Team Creation Wizard Dialog */}
+      <TeamCreationWizard
+        open={showWizard}
+        onClose={() => setShowWizard(false)}
+        onSuccess={(teamId, teamName) => {
+          // Refresh teams list and select the new team
+          const newTeam = teams.find(t => t.id === teamId);
+          if (newTeam) {
+            onTeamSelect(newTeam);
+          }
+          // Show success message could be added here
+          console.log(`Created team: ${teamName} (ID: ${teamId})`);
+        }}
+      />
     </>
   );
 }

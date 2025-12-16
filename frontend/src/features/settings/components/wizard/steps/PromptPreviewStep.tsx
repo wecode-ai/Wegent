@@ -2,28 +2,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { Label } from '@/components/ui/label'
-import { Input } from '@/components/ui/input'
-import { Textarea } from '@/components/ui/textarea'
-import { Checkbox } from '@/components/ui/checkbox'
-import { Spinner } from '@/components/ui/spinner'
-import { useTranslation } from '@/hooks/useTranslation'
+import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import { Checkbox } from '@/components/ui/checkbox';
+import { useTranslation } from '@/hooks/useTranslation';
+import { FileText, Settings } from 'lucide-react';
+import GeneratingLoader from './GeneratingLoader';
 
-interface PreviewEditStepProps {
-  systemPrompt: string
-  agentName: string
-  agentDescription: string
-  bindMode: ('chat' | 'code')[]
-  onPromptChange: (prompt: string) => void
-  onNameChange: (name: string) => void
-  onDescriptionChange: (desc: string) => void
-  onBindModeChange: (mode: ('chat' | 'code')[]) => void
-  isLoading: boolean
+interface PromptPreviewStepProps {
+  systemPrompt: string;
+  agentName: string;
+  agentDescription: string;
+  bindMode: ('chat' | 'code')[];
+  onPromptChange: (prompt: string) => void;
+  onNameChange: (name: string) => void;
+  onDescriptionChange: (desc: string) => void;
+  onBindModeChange: (mode: ('chat' | 'code')[]) => void;
+  isLoading: boolean;
 }
 
-export default function PreviewEditStep({
+export default function PromptPreviewStep({
   systemPrompt,
   agentName,
   agentDescription,
@@ -33,35 +34,38 @@ export default function PreviewEditStep({
   onDescriptionChange,
   onBindModeChange,
   isLoading,
-}: PreviewEditStepProps) {
-  const { t } = useTranslation('common')
+}: PromptPreviewStepProps) {
+  const { t } = useTranslation('common');
 
   if (isLoading) {
-    return (
-      <div className="flex flex-col items-center justify-center py-12">
-        <Spinner className="w-8 h-8 text-primary" />
-        <p className="mt-4 text-text-muted">{t('wizard.generating_prompt')}</p>
-      </div>
-    )
+    return <GeneratingLoader />;
   }
 
   const handleBindModeChange = (mode: 'chat' | 'code', checked: boolean) => {
     if (checked) {
-      onBindModeChange([...bindMode, mode])
+      onBindModeChange([...bindMode, mode]);
     } else {
       // Ensure at least one mode is selected
-      const newModes = bindMode.filter(m => m !== mode)
+      const newModes = bindMode.filter(m => m !== mode);
       if (newModes.length > 0) {
-        onBindModeChange(newModes)
+        onBindModeChange(newModes);
       }
     }
-  }
+  };
 
   return (
     <div className="space-y-6">
-      <p className="text-sm text-text-muted">{t('wizard.preview_hint')}</p>
+      {/* Description */}
+      <div className="p-4 bg-primary/5 border border-primary/20 rounded-lg">
+        <div className="flex items-start gap-3">
+          <FileText className="w-5 h-5 text-primary flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="font-medium text-sm">{t('wizard.prompt_preview_title')}</p>
+            <p className="text-sm text-text-secondary mt-1">{t('wizard.prompt_preview_hint')}</p>
+          </div>
+        </div>
+      </div>
 
-      {/* Two-column layout on larger screens */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Left: System Prompt */}
         <div className="space-y-2">
@@ -70,7 +74,7 @@ export default function PreviewEditStep({
           <Textarea
             value={systemPrompt}
             onChange={e => onPromptChange(e.target.value)}
-            className="min-h-[300px] font-mono text-sm"
+            className="min-h-[280px] font-mono text-sm"
             placeholder={t('wizard.system_prompt_placeholder')}
           />
         </div>
@@ -129,16 +133,17 @@ export default function PreviewEditStep({
           </div>
 
           {/* Info card */}
-          <div className="p-4 bg-surface border border-border rounded-lg mt-4">
-            <h4 className="font-medium text-sm mb-2">{t('wizard.will_create')}</h4>
-            <ul className="text-sm text-text-secondary space-y-1">
-              <li>• Ghost: {agentName ? `${agentName}-ghost` : '-'}</li>
-              <li>• Bot: {agentName ? `${agentName}-bot` : '-'}</li>
-              <li>• Team: {agentName || '-'}</li>
-            </ul>
+          <div className="p-4 bg-muted/50 border border-border rounded-lg mt-4">
+            <div className="flex items-center gap-2 mb-2">
+              <Settings className="w-4 h-4 text-text-secondary" />
+              <h4 className="font-medium text-sm">{t('wizard.will_create')}</h4>
+            </div>
+            <p className="text-sm text-text-secondary">
+              {t('wizard.agent')}: <span className="font-medium">{agentName || '-'}</span>
+            </p>
           </div>
         </div>
       </div>
     </div>
-  )
+  );
 }

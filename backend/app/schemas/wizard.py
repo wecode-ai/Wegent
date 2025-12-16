@@ -29,9 +29,15 @@ class CoreQuestionsResponse(BaseModel):
 
 
 class WizardAnswers(BaseModel):
-    """User answers to wizard questions"""
+    """User answers to wizard questions - simplified for non-technical users"""
 
     purpose: str
+    # Input/Output example fields for better understanding user needs
+    example_input: Optional[str] = None
+    expected_output: Optional[str] = None
+    special_requirements: Optional[str] = None
+    # Legacy fields for backward compatibility
+    example_task: Optional[str] = None
     knowledge_domain: Optional[str] = None
     interaction_style: Optional[str] = None
     output_format: Optional[List[str]] = None
@@ -138,3 +144,35 @@ class CreateAllResponse(BaseModel):
     ghost_id: int
     ghost_name: str
     message: str
+
+
+class TestPromptRequest(BaseModel):
+    """Request for testing system prompt with a sample task"""
+
+    system_prompt: str
+    test_message: str
+    model_name: Optional[str] = None
+
+
+class TestPromptResponse(BaseModel):
+    """Response from testing system prompt"""
+
+    response: str
+    success: bool = True
+
+
+class IteratePromptRequest(BaseModel):
+    """Request for iterating/improving system prompt based on feedback"""
+
+    current_prompt: str
+    test_message: str
+    model_response: str
+    user_feedback: str
+    model_name: Optional[str] = None
+
+
+class IteratePromptResponse(BaseModel):
+    """Response containing improved system prompt"""
+
+    improved_prompt: str
+    changes_summary: str
