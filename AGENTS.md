@@ -340,6 +340,100 @@ frontend/src/features/
 └── [other]/         # Feature-specific components
 ```
 
+### i18n (Internationalization) Guidelines
+
+**Location:** `frontend/src/i18n/`
+
+**Structure:**
+```
+frontend/src/i18n/
+├── setup.ts                    # i18next configuration
+└── locales/
+    ├── en/                     # English translations
+    │   ├── common.json         # Common UI elements, navigation, validation
+    │   ├── bots.json           # Bot management translations
+    │   ├── teams.json          # Team (Agent) management translations
+    │   ├── models.json         # Model management translations
+    │   ├── shells.json         # Shell management translations
+    │   ├── skills.json         # Skills management translations
+    │   ├── groups.json         # Group management translations
+    │   ├── wiki.json           # Wiki/Knowledge base translations
+    │   ├── shared.json         # Shared task translations
+    │   ├── integrations.json   # Git integrations translations
+    │   ├── chat.json           # Chat interface translations
+    │   ├── tasks.json          # Task list translations
+    │   ├── settings.json       # Settings page translations
+    │   ├── admin.json          # Admin panel translations
+    │   ├── history.json        # History translations
+    │   └── prompts.json        # Prompt templates
+    └── zh-CN/                  # Chinese translations (mirror structure)
+```
+
+**Namespace Splitting Guidelines:**
+
+When adding new translations or splitting existing files:
+
+1. **File Size Threshold**: Split a namespace file when it exceeds ~300 lines or ~8KB
+2. **Domain-based Splitting**: Group translations by feature/domain, not by page
+3. **Naming Convention**: Use lowercase with hyphens for namespace files (e.g., `group-members.json`)
+
+**When to Create a New Namespace:**
+- Feature has 50+ translation keys
+- Feature is self-contained (e.g., bots, teams, models)
+- Translations are only used within that feature
+
+**When to Keep in Common:**
+- Used across 3+ different features/pages
+- Generic UI elements (buttons, labels, validation messages)
+- Navigation, authentication, notifications
+
+**Adding New Translations:**
+
+1. Add keys to both `en/` and `zh-CN/` files simultaneously
+2. Update `setup.ts` namespace array if creating new namespace:
+   ```typescript
+   const namespaces = [
+     'common',
+     'your-new-namespace',  // Add here
+     // ...
+   ];
+   ```
+3. Use consistent key naming: `section.subsection.key` format
+4. Avoid deeply nested structures (max 3 levels)
+
+**Usage in Components:**
+```tsx
+import { useTranslation } from 'react-i18next'
+
+// Using specific namespace
+const { t } = useTranslation('bots')
+t('title')              // bots:title
+t('form.name')          // bots:form.name
+
+// Using multiple namespaces
+const { t } = useTranslation(['bots', 'common'])
+t('bots:title')
+t('common:actions.save')
+```
+
+**Current Namespace Reference:**
+
+| Namespace | Description | Key Sections |
+|-----------|-------------|--------------|
+| `common` | Shared UI elements | actions, validation, navigation, theme, auth, settings, onboarding |
+| `bots` | Bot management | title, form (name, prompt, dify, mcp), errors |
+| `teams` | Team/Agent management | list, share, form, collaboration_mode |
+| `models` | Model management | CRUD, errors, task_submit |
+| `shells` | Shell management | CRUD, validation, errors |
+| `skills` | Skills management | CRUD, upload, requirements |
+| `groups` | Group management | roles, actions, messages, scope, members_dialog |
+| `wiki` | Knowledge base | repository, indexing, knowledge |
+| `shared` | Shared tasks | share actions, copy handlers |
+| `integrations` | Git integrations | git tokens, branches |
+| `chat` | Chat interface | messages, streaming |
+| `tasks` | Task history | list, search, pagination |
+| `admin` | Admin panel | user management |
+
 ---
 
 ## 🎨 Frontend Design System
