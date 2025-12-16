@@ -421,7 +421,11 @@ async def get_response(
         task_crd = Task.model_validate(task_kind.json)
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
-        model_id = task_crd.metadata.labels.get("modelId") if task_crd.metadata.labels else None
+        model_id = (
+            task_crd.metadata.labels.get("modelId")
+            if task_crd.metadata.labels
+            else None
+        )
         if model_id:
             model_string = f"{team_namespace}#{team_name}#{model_id}"
         else:
@@ -504,7 +508,11 @@ async def cancel_response(
         task_crd = Task.model_validate(task_kind.json)
         team_name = task_crd.spec.teamRef.name
         team_namespace = task_crd.spec.teamRef.namespace
-        model_id = task_crd.metadata.labels.get("modelId") if task_crd.metadata.labels else None
+        model_id = (
+            task_crd.metadata.labels.get("modelId")
+            if task_crd.metadata.labels
+            else None
+        )
         if model_id:
             model_string = f"{team_namespace}#{team_name}#{model_id}"
         else:

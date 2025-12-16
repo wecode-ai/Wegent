@@ -44,7 +44,9 @@ async def list_api_keys(
     )
 
 
-@router.post("", response_model=APIKeyCreatedResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "", response_model=APIKeyCreatedResponse, status_code=status.HTTP_201_CREATED
+)
 async def create_api_key(
     api_key_create: APIKeyCreate,
     db: Session = Depends(get_db),
