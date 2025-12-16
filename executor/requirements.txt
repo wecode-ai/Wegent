@@ -17,4 +17,5 @@ mcp==1.12.4
 sqlalchemy==2.0.43
 httpx==0.28.1
 gitpython==3.1.43
+python-gitlab==4.5.0
 cryptography==46.0.3

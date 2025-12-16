@@ -14,6 +14,8 @@ from shared.logger import setup_logger
 from .config_utils import ConfigManager
 from .model_factory import ModelFactory
 from .mcp_manager import MCPManager
+from .gitlab_tool_manager import GitLabToolManager
+from .repository_detector import RepositoryDetector
 
 logger = setup_logger("agno_member_builder")
 
@@ -70,6 +72,45 @@ class MemberBuilder:
             member_description = self._get_member_description(member_config)
             member_model = ModelFactory.create_model(agent_config, default_headers)
             
+            # Detect and load appropriate tools based on repository domain
+            all_tools = []
+            tool_type = RepositoryDetector.detect_tool_type(task_data)
+            
+            if tool_type == "github_mcp":
+                # Load GitHub MCP tools
+                if mcp_tools:
+                    all_tools.extend(mcp_tools)
+                    logger.info(f"Matched GitHub repository, loaded {len(mcp_tools)} GitHub MCP tools for member {member_name}")
+                else:
+                    logger.warning(f"Matched GitHub repository but no GitHub MCP tools available for member {member_name}")
+            elif tool_type == "gitlab_sdk":
+                # Load GitLab SDK tools
+                gitlab_tool_manager = GitLabToolManager(task_data)
+                gitlab_tools = gitlab_tool_manager.create_tools()
+                if gitlab_tools:
+                    all_tools.extend(gitlab_tools)
+                    logger.info(f"Matched GitLab repository, loaded {len(gitlab_tools)} GitLab SDK tools for member {member_name}")
+                else:
+                    logger.warning(f"Matched GitLab repository but GitLab tools are not available for member {member_name}")
+            else:
+                # No match: try all tools, if none work, log error
+                loaded_any = False
+                if mcp_tools:
+                    all_tools.extend(mcp_tools)
+                    loaded_any = True
+                gitlab_tool_manager = GitLabToolManager(task_data)
+                gitlab_tools = gitlab_tool_manager.create_tools()
+                if gitlab_tools:
+                    all_tools.extend(gitlab_tools)
+                    loaded_any = True
+                
+                if not loaded_any:
+                    supported = ", ".join(RepositoryDetector.get_supported_platforms())
+                    domain = RepositoryDetector.get_domain_from_task_data(task_data) or "unknown"
+                    logger.error(f"Repository domain '{domain}' does not match any supported platform ({supported}). No tools available for member {member_name}")
+                else:
+                    logger.info(f"Repository domain not matched, loaded all available tools for member {member_name}")
+            
             # Create the team member
             member = AgnoSdkAgent(
                 name=member_name,
@@ -77,7 +118,7 @@ class MemberBuilder:
                 role=member_description,
                 add_name_to_context=True,
                 add_datetime_to_context=True,
-                tools=mcp_tools if mcp_tools else [],
+                tools=all_tools,
                 description=member_description,
                 db=self.db,
                 add_history_to_context=True,
@@ -121,11 +162,50 @@ class MemberBuilder:
             # Build default headers with placeholders
             default_headers = self.config_manager.build_default_headers_with_placeholders(data_sources)
             
+            # Detect and load appropriate tools based on repository domain
+            all_tools = []
+            tool_type = RepositoryDetector.detect_tool_type(task_data)
+            
+            if tool_type == "github_mcp":
+                # Load GitHub MCP tools
+                if mcp_tools:
+                    all_tools.extend(mcp_tools)
+                    logger.info(f"Matched GitHub repository, loaded {len(mcp_tools)} GitHub MCP tools for default member")
+                else:
+                    logger.warning(f"Matched GitHub repository but no GitHub MCP tools available for default member")
+            elif tool_type == "gitlab_sdk":
+                # Load GitLab SDK tools
+                gitlab_tool_manager = GitLabToolManager(task_data)
+                gitlab_tools = gitlab_tool_manager.create_tools()
+                if gitlab_tools:
+                    all_tools.extend(gitlab_tools)
+                    logger.info(f"Matched GitLab repository, loaded {len(gitlab_tools)} GitLab SDK tools for default member")
+                else:
+                    logger.warning(f"Matched GitLab repository but GitLab tools are not available for default member")
+            else:
+                # No match: try all tools, if none work, log error
+                loaded_any = False
+                if mcp_tools:
+                    all_tools.extend(mcp_tools)
+                    loaded_any = True
+                gitlab_tool_manager = GitLabToolManager(task_data)
+                gitlab_tools = gitlab_tool_manager.create_tools()
+                if gitlab_tools:
+                    all_tools.extend(gitlab_tools)
+                    loaded_any = True
+                
+                if not loaded_any:
+                    supported = ", ".join(RepositoryDetector.get_supported_platforms())
+                    domain = RepositoryDetector.get_domain_from_task_data(task_data) or "unknown"
+                    logger.error(f"Repository domain '{domain}' does not match any supported platform ({supported}). No tools available for default member")
+                else:
+                    logger.info(f"Repository domain not matched, loaded all available tools for default member")
+            
             # Create the default member
             member = AgnoSdkAgent(
                 name="DefaultAgent",
                 model=ModelFactory.create_model(agent_config, default_headers),
-                tools=mcp_tools if mcp_tools else [],
+                tools=all_tools,
                 description="Default team member",
                 add_name_to_context=True,
                 add_datetime_to_context=True,
