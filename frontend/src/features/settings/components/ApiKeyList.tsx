@@ -147,7 +147,7 @@ const ApiKeyList: React.FC = () => {
       await navigator.clipboard.writeText(createdKey.key)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
-    } catch (error) {
+    } catch {
       toast({
         variant: 'destructive',
         title: 'Failed to copy',
