@@ -19,7 +19,7 @@ from app.core import security
 from app.models.kind import Kind
 from app.models.subtask import Subtask, SubtaskRole
 from app.models.user import User
-from app.schemas.kind import Bot, Team
+from app.schemas.kind import Bot, Task, Team
 from app.schemas.openapi_response import (
     OutputMessage,
     OutputTextContent,
@@ -108,7 +108,7 @@ def _task_to_response_object(
             if subtask.role == SubtaskRole.ASSISTANT and subtask.result:
                 result_text = ""
                 if isinstance(subtask.result, dict):
-                    result_text = subtask.result.get("content", "")
+                    result_text = str(subtask.result)
                 elif isinstance(subtask.result, str):
                     result_text = subtask.result
 
@@ -418,11 +418,14 @@ async def get_response(
 
     model_string = "unknown"
     if task_kind and task_kind.json:
-        task_json = task_kind.json
-        team_ref = task_json.get("spec", {}).get("teamRef", {})
-        team_name = team_ref.get("name", "")
-        team_namespace = team_ref.get("namespace", "default")
-        model_string = f"{team_namespace}#{team_name}"
+        task_crd = Task.model_validate(task_kind.json)
+        team_name = task_crd.spec.teamRef.name
+        team_namespace = task_crd.spec.teamRef.namespace
+        model_id = task_crd.metadata.labels.get("modelId") if task_crd.metadata.labels else None
+        if model_id:
+            model_string = f"{team_namespace}#{team_name}#{model_id}"
+        else:
+            model_string = f"{team_namespace}#{team_name}"
 
     return _task_to_response_object(task_dict, model_string, subtasks=subtasks)
 
@@ -498,11 +501,14 @@ async def cancel_response(
 
     model_string = "unknown"
     if task_kind and task_kind.json:
-        task_json = task_kind.json
-        team_ref = task_json.get("spec", {}).get("teamRef", {})
-        team_name = team_ref.get("name", "")
-        team_namespace = team_ref.get("namespace", "default")
-        model_string = f"{team_namespace}#{team_name}"
+        task_crd = Task.model_validate(task_kind.json)
+        team_name = task_crd.spec.teamRef.name
+        team_namespace = task_crd.spec.teamRef.namespace
+        model_id = task_crd.metadata.labels.get("modelId") if task_crd.metadata.labels else None
+        if model_id:
+            model_string = f"{team_namespace}#{team_name}#{model_id}"
+        else:
+            model_string = f"{team_namespace}#{team_name}"
 
     return _task_to_response_object(task_dict, model_string)
 
