@@ -203,6 +203,64 @@ async def create_response(
             detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' not found or not accessible",
         )
 
+    # If model_id is not provided, verify that team's bot has valid modelRef
+    if not model_info.get("model_id"):
+        team_json = team.json if team.json else {}
+        team_spec = team_json.get("spec", {})
+        members = team_spec.get("members", [])
+
+        if not members:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' has no members configured",
+            )
+
+        # Get the first member's botRef
+        first_member = members[0]
+        bot_ref = first_member.get("botRef", {})
+        bot_name = bot_ref.get("name")
+        bot_namespace = bot_ref.get("namespace", "default")
+
+        if not bot_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' has invalid bot reference",
+            )
+
+        # Query the bot from Kind table
+        bot_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.name == bot_name,
+                Kind.namespace == bot_namespace,
+                Kind.kind == "Bot",
+                Kind.user_id == current_user.id,
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if not bot_kind:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bot '{bot_namespace}/{bot_name}' not found",
+            )
+
+        # Check if bot has valid modelRef
+        bot_json = bot_kind.json if bot_kind.json else {}
+        bot_spec = bot_json.get("spec", {})
+        model_ref = bot_spec.get("modelRef", {})
+
+        # modelRef must exist and have non-empty name and namespace
+        model_ref_name = model_ref.get("name") if model_ref else None
+        model_ref_namespace = model_ref.get("namespace") if model_ref else None
+
+        if not model_ref_name or not model_ref_namespace:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Bot '{bot_namespace}/{bot_name}' does not have a valid model configured. Please specify model_id in the request or configure modelRef for the bot.",
+            )
+
     # Create task using TaskKindsService
     task_create = TaskCreate(
         prompt=request_body.input,
