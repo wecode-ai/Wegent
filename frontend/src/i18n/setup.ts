@@ -13,7 +13,24 @@ async function loadTranslations() {
   const resources: Record<string, Record<string, unknown>> = {};
 
   // Namespace list
-  const namespaces = ['common', 'chat', 'settings', 'history', 'prompts', 'tasks', 'admin'];
+  const namespaces = [
+    'common',
+    'chat',
+    'settings',
+    'history',
+    'prompts',
+    'tasks',
+    'admin',
+    'bots',
+    'teams',
+    'models',
+    'shells',
+    'skills',
+    'groups',
+    'wiki',
+    'shared',
+    'integrations',
+  ];
 
   for (const lng of supportedLanguages) {
     resources[lng] = {};
@@ -49,7 +66,24 @@ export async function initI18n() {
     debug: process.env.NODE_ENV === 'development',
     // Namespace configuration
     defaultNS: 'common',
-    ns: ['common', 'chat', 'settings', 'history', 'prompts', 'tasks', 'admin'],
+    ns: [
+      'common',
+      'chat',
+      'settings',
+      'history',
+      'prompts',
+      'tasks',
+      'admin',
+      'bots',
+      'teams',
+      'models',
+      'shells',
+      'skills',
+      'groups',
+      'wiki',
+      'shared',
+      'integrations',
+    ],
   });
 
   return i18next;

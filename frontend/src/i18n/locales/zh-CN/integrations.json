@@ -1,0 +1,79 @@
+{
+  "title": "集成",
+  "description": "设置外部服务以增强您的工作流程",
+  "loading": "加载 Git 集成中...",
+  "edit_token": "编辑令牌",
+  "delete": "删除",
+  "no_tokens": "没有配置 Git 令牌",
+  "new_token": "新建令牌",
+  "git": {
+    "error": {
+      "required": "请填写所有必填项",
+      "save_failed": "保存失败",
+      "invalid_domain": "请输入有效的域名(如 gitlab.example.com 或 http://gitlab.internal.com)",
+      "gerrit_username_required": "Gerrit 需要填写用户名"
+    },
+    "modal": {
+      "title_edit": "编辑令牌",
+      "title_add": "新增 Git 令牌"
+    },
+    "platform": "平台",
+    "platform_github": "GitHub",
+    "platform_gitlab": "GitLab",
+    "platform_gitea": "Gitea",
+    "platform_gerrit": "Gerrit",
+    "domain": "平台域名",
+    "username": "用户名",
+    "token": {
+      "title": "个人访问令牌",
+      "title_gerrit": "HTTP password",
+      "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gitea": "gitea 个人访问令牌",
+      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gerrit": "从 Gerrit 设置中获取的 HTTP password"
+    },
+    "howto": {
+      "step1_visit": "1. 访问",
+      "github": {
+        "title": "如何获取 GitHub 令牌：",
+        "step2": "2. 点击 \"Generate new token (classic)\"",
+        "step3": "3. 选择合适的权限范围并复制生成的令牌"
+      },
+      "gitea": {
+        "title": "如何获取 Gitea Token：",
+        "step2": "2. 点击 \"Generate new token\"",
+        "step3": "3. 选择权限范围并复制生成的 Token",
+        "step4": "⚠️ 注意：Token 必须勾选 user 权限（用于获取用户信息）"
+      },
+      "gitlab": {
+        "title": "如何获取 GitLab 令牌：",
+        "step2": "2. 点击 \"Add new token\"",
+        "step3": "3. 选择合适的权限范围并复制生成的令牌"
+      },
+      "gerrit": {
+        "title": "如何获取 Gerrit HTTP password：",
+        "step2": "2. 在 \"HTTP Credentials\" 下生成新的 HTTP password",
+        "step3": "3. 复制用户名和password,并粘贴到此处"
+      }
+    },
+    "saving": "保存中...",
+    "save_token": "保存令牌"
+  },
+  "branches": {
+    "load_failed": "加载分支失败",
+    "search_repository": "搜索仓库...",
+    "select_repository": "选择仓库...",
+    "search_branch": "搜索分支...",
+    "select_branch": "选择分支...",
+    "loading": "加载分支中...",
+    "no_branch": "未找到分支",
+    "no_match": "没有匹配的结果",
+    "default": "(默认)",
+    "set_token": "设置token",
+    "configure_integration": "配置仓库集成",
+    "load_more": "刷新仓库列表",
+    "refreshing": "刷新中...",
+    "refresh_success": "仓库列表已刷新",
+    "refresh_failed": "刷新失败，请重试"
+  }
+}

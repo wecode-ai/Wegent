@@ -1,0 +1,79 @@
+{
+  "title": "Integrations",
+  "description": "Setting external services to enhance your workflow",
+  "loading": "Loading Git integrations...",
+  "edit_token": "Edit Token",
+  "delete": "Delete",
+  "no_tokens": "No git tokens configured",
+  "new_token": "New Token",
+  "git": {
+    "error": {
+      "required": "Please fill in all required fields",
+      "save_failed": "Save failed",
+      "invalid_domain": "Please enter a valid domain (e.g. gitlab.example.com or http://gitlab.internal.com)",
+      "gerrit_username_required": "Username is required for Gerrit"
+    },
+    "modal": {
+      "title_edit": "Edit Token",
+      "title_add": "Add Git Token"
+    },
+    "platform": "Platform",
+    "platform_github": "GitHub",
+    "platform_gitlab": "GitLab",
+    "platform_gitea": "Gitea",
+    "platform_gerrit": "Gerrit",
+    "domain": "Platform Domain",
+    "username": "Username",
+    "token": {
+      "title": "Personal Access Token",
+      "title_gerrit": "HTTP password",
+      "placeholder_github": "ghp_xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gitea": "gitea-personal-access-token",
+      "placeholder_gitlab": "glpat-xxxxxxxxxxxxxxxxxxxx",
+      "placeholder_gerrit": "HTTP password from Gerrit Settings"
+    },
+    "howto": {
+      "step1_visit": "1. Visit",
+      "github": {
+        "title": "How to get your GitHub token:",
+        "step2": "2. Click \"Generate new token (classic)\"",
+        "step3": "3. Select appropriate scopes and copy the generated token"
+      },
+      "gitea": {
+        "title": "How to get your Gitea token:",
+        "step2": "2. Click \"Generate new token\"",
+        "step3": "3. Select appropriate scopes and copy the generated token",
+        "step4": "⚠️ Note: Token must have 'user' permission enabled (for fetching user info)"
+      },
+      "gitlab": {
+        "title": "How to get your GitLab token:",
+        "step2": "2. Click \"Add new token\"",
+        "step3": "3. Select appropriate scopes and copy the generated token"
+      },
+      "gerrit": {
+        "title": "How to get Gerrit HTTP password:",
+        "step2": "2. Generate a new HTTP password under \"HTTP Credentials\"",
+        "step3": "3. Copy the username and password, and paste them here"
+      }
+    },
+    "saving": "Saving...",
+    "save_token": "Save Token"
+  },
+  "branches": {
+    "load_failed": "Failed to load branches",
+    "search_repository": "Search Repository...",
+    "select_repository": "Select Repository...",
+    "search_branch": "Select Branch...",
+    "select_branch": "Select Branch...",
+    "loading": "loading branch...",
+    "no_branch": "No Branch Found",
+    "no_match": "No matching results",
+    "default": "(default)",
+    "set_token": "Set Token",
+    "configure_integration": "Configure Repository Integration",
+    "load_more": "Refresh repository list",
+    "refreshing": "Refreshing...",
+    "refresh_success": "Repository list refreshed",
+    "refresh_failed": "Failed to refresh, please try again"
+  }
+}
