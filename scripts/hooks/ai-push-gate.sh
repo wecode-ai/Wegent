@@ -386,6 +386,38 @@ if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
 fi
 
 # -----------------------------------------------------------------------------
+# Settings Configuration Check (if backend files changed)
+# -----------------------------------------------------------------------------
+if [ "$BACKEND_COUNT" -gt 0 ] 2>/dev/null; then
+    echo -e "${BLUE}🔍 Settings Configuration Check:${NC}"
+    
+    # Get script directory and run settings check
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SETTINGS_CHECK_SCRIPT="$SCRIPT_DIR/check-settings-config.sh"
+    
+    if [ -x "$SETTINGS_CHECK_SCRIPT" ]; then
+        "$SETTINGS_CHECK_SCRIPT" > "$TEMP_DIR/settings.log" 2>&1
+        SETTINGS_EXIT=$?
+        
+        if [ $SETTINGS_EXIT -eq 0 ]; then
+            echo -e "   ${GREEN}✅ Settings Configuration: PASSED${NC}"
+        elif [ $SETTINGS_EXIT -eq 1 ]; then
+            echo -e "   ${RED}❌ Settings Configuration: FAILED${NC}"
+            CHECK_FAILED=1
+            FAILED_CHECKS+=("Settings Configuration")
+            FAILED_LOGS+=("$TEMP_DIR/settings.log")
+        else
+            echo -e "   ${YELLOW}⚠️ Settings check could not determine status${NC}"
+            WARNINGS+=("Settings: check returned unexpected exit code $SETTINGS_EXIT")
+        fi
+    else
+        echo -e "   ${YELLOW}⚠️ SKIP: Settings check script not found${NC}"
+        WARNINGS+=("Settings: check script not found at $SETTINGS_CHECK_SCRIPT")
+    fi
+    echo ""
+fi
+
+# -----------------------------------------------------------------------------
 # Executor Checks (if executor files changed)
 # -----------------------------------------------------------------------------
 if [ "$EXECUTOR_COUNT" -gt 0 ] 2>/dev/null; then
