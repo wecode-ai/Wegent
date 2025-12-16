@@ -151,10 +151,10 @@ jobs:
         working-directory: ./frontend
         run: |
           echo "Starting mock model server..."
-          nohup npx ts-node e2e/mock-server/model-mock-server.ts > mock-model.log 2>&1 &
+          nohup node e2e/mock-server/model-mock-server.mjs > mock-model.log 2>&1 &
           echo $! > mock-model.pid
           echo "Mock model server PID: $(cat mock-model.pid)"
-          sleep 5
+          sleep 3
 
       - name: Verify mock model server is running
         working-directory: ./frontend
