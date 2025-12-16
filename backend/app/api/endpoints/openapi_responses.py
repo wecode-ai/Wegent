@@ -176,6 +176,23 @@ async def create_response(
                     detail=f"Invalid previous_response_id format: '{request_body.previous_response_id}'",
                 )
 
+            # Verify previous task exists and belongs to the current user
+            existing_task = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == previous_task_id,
+                    Kind.kind == "Task",
+                    Kind.user_id == current_user.id,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+            if not existing_task:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Previous response '{request_body.previous_response_id}' not found",
+                )
+
     # Verify team exists and user has access
     team = team_kinds_service.get_team_by_name_and_namespace(
         db, model_info["team_name"], model_info["namespace"], current_user.id
