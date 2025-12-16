@@ -10,6 +10,7 @@ import Link from 'next/link';
 import { useUser } from '@/features/common/UserContext';
 import { useTranslation } from '@/hooks/useTranslation';
 import { DocsButton } from '@/features/layout/DocsButton';
+import { FeedbackButton } from '@/features/layout/FeedbackButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { paths } from '@/config/paths';
 import {
@@ -124,6 +125,13 @@ export function UserFloatingMenu({ className = '' }: UserFloatingMenuProps) {
 
           {/* Docs */}
           <DocsButton showLabel className="w-full px-3 py-2" onClick={() => setIsExpanded(false)} />
+
+          {/* Feedback */}
+          <FeedbackButton
+            showLabel
+            className="w-full px-3 py-2"
+            onClick={() => setIsExpanded(false)}
+          />
 
           {/* Theme toggle */}
           <ThemeToggle

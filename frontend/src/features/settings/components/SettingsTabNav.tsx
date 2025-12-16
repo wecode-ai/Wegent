@@ -36,6 +36,7 @@ export type SettingsTabId =
   | 'group-shells'
   | 'general'
   | 'integrations'
+  | 'api-keys'
   | 'group-team';
 
 // Scope type for resource tabs
@@ -121,12 +122,13 @@ export function SettingsTabNav({
     [t]
   );
 
-  // Other tabs (not resource-based) - order: general, integrations
+  // Other tabs (not resource-based) - order: general, integrations, api-keys
   // Note: group-manager is now accessed via the group dropdown menu
   const otherTabs: TabItem[] = useMemo(
     () => [
       { id: 'general', label: t('settings.sections.general'), category: 'other' },
       { id: 'integrations', label: t('settings.integrations'), category: 'other' },
+      { id: 'api-keys', label: t('settings.api_keys'), category: 'other' },
     ],
     [t]
   );

@@ -16,6 +16,7 @@ import { GroupManager } from '@/features/settings/components/groups/GroupManager
 import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope';
 import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope';
 import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope';
+import ApiKeyList from '@/features/settings/components/ApiKeyList';
 import { useTranslation } from '@/hooks/useTranslation';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
@@ -151,6 +152,8 @@ function SettingsContent() {
         return <GitHubIntegration />;
       case 'general':
         return <NotificationSettings />;
+      case 'api-keys':
+        return <ApiKeyList />;
       default:
         // Default to personal-team (智能体)
         return <TeamListWithScope scope="personal" />;

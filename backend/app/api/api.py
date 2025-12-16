@@ -4,10 +4,12 @@
 
 from app.api.endpoints import (
     admin,
+    api_keys,
     auth,
     groups,
     health,
     oidc,
+    openapi_responses,
     quota,
     repository,
     users,
@@ -35,6 +37,7 @@ api_router.include_router(oidc.router, prefix="/auth/oidc", tags=["auth", "oidc"
 api_router.include_router(users.router, prefix="/users", tags=["users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["admin"])
 api_router.include_router(groups.router, prefix="/groups", tags=["groups"])
+api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"])
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["public-models"])
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
@@ -52,5 +55,8 @@ api_router.include_router(dify.router, prefix="/dify", tags=["dify"])
 api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]
+)
+api_router.include_router(
+    openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )
 api_router.include_router(k_router)
