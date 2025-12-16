@@ -15,6 +15,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.api import api_router
+from app.api import rag
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,
@@ -576,6 +577,7 @@ def create_app():
 
     # Include API routes
     app.include_router(api_router, prefix=settings.API_PREFIX)
+    app.include_router(rag.router)
 
     return app
 
