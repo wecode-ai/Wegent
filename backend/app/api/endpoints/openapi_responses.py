@@ -204,8 +204,68 @@ async def create_response(
             detail=f"Team '{model_info['namespace']}#{model_info['team_name']}' not found or not accessible",
         )
 
-    # If model_id is not provided, verify that all team's bots have valid modelRef
-    if not model_info.get("model_id"):
+    # If model_id is provided, verify that the model exists
+    if model_info.get("model_id"):
+        model_name = model_info["model_id"]
+        model_namespace = model_info["namespace"]
+
+        model_exists = False
+
+        if model_namespace == "default":
+            # First, query personal model (user's own model)
+            personal_model = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == current_user.id,
+                    Kind.kind == "Model",
+                    Kind.name == model_name,
+                    Kind.namespace == model_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if personal_model:
+                model_exists = True
+            else:
+                # If personal model not found, query public model (user_id = 0)
+                public_model = (
+                    db.query(Kind)
+                    .filter(
+                        Kind.user_id == 0,
+                        Kind.kind == "Model",
+                        Kind.name == model_name,
+                        Kind.namespace == model_namespace,
+                        Kind.is_active == True,
+                    )
+                    .first()
+                )
+
+                if public_model:
+                    model_exists = True
+        else:
+            # If namespace is not default, query group model
+            group_model = (
+                db.query(Kind)
+                .filter(
+                    Kind.kind == "Model",
+                    Kind.name == model_name,
+                    Kind.namespace == model_namespace,
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if group_model:
+                model_exists = True
+
+        if not model_exists:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Model '{model_namespace}/{model_name}' not found",
+            )
+    else:
+        # If model_id is not provided, verify that all team's bots have valid modelRef
         # Parse team JSON to Team CRD object
         team_crd = Team.model_validate(team.json)
 
