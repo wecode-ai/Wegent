@@ -289,10 +289,14 @@ def get_current_user_from_api_key(
         return None
 
     key_hash = hashlib.sha256(api_key.encode()).hexdigest()
-    api_key_record = db.query(APIKey).filter(
-        APIKey.key_hash == key_hash,
-        APIKey.is_active == True,
-    ).first()
+    api_key_record = (
+        db.query(APIKey)
+        .filter(
+            APIKey.key_hash == key_hash,
+            APIKey.is_active == True,
+        )
+        .first()
+    )
 
     if not api_key_record:
         return None
