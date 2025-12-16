@@ -14,7 +14,7 @@ import type {
   GitBranch,
   Attachment,
 } from '@/types/api';
-import { Share2, FileText, ChevronDown, Download } from 'lucide-react';
+import { Share2, FileText, ChevronDown, Download, MessageSquare } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -711,6 +711,22 @@ export default function MessagesArea({
               </span>
             </DropdownMenuItem>
           </DropdownMenuContent>
+
+          {/* Feedback Button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              const feedbackUrl =
+                process.env.NEXT_PUBLIC_FEEDBACK_URL ||
+                'https://github.com/wecode-ai/wegent/issues/new';
+              window.open(feedbackUrl, '_blank');
+            }}
+            className="flex items-center gap-2"
+          >
+            <MessageSquare className="h-4 w-4" />
+            {tCommon('navigation.feedback')}
+          </Button>
         </DropdownMenu>
       </div>
     );
