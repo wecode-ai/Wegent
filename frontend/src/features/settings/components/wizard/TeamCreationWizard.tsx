@@ -55,14 +55,25 @@ export default function TeamCreationWizard({
     dispatch({ type: 'SET_CORE_ANSWERS', answers });
   }, []);
 
-  // Follow-up answer change handler
-  const handleFollowupAnswerChange = useCallback((questionKey: string, answer: string) => {
-    dispatch({ type: 'SET_FOLLOWUP_ANSWER', questionKey, answer });
-  }, []);
+  // Follow-up answer change handler - supports editing any round
+  const handleFollowupAnswerChange = useCallback(
+    (questionKey: string, answer: string, roundIndex?: number) => {
+      if (roundIndex !== undefined) {
+        dispatch({ type: 'SET_HISTORICAL_FOLLOWUP_ANSWER', roundIndex, questionKey, answer });
+      } else {
+        dispatch({ type: 'SET_FOLLOWUP_ANSWER', questionKey, answer });
+      }
+    },
+    []
+  );
 
-  // Additional thoughts change handler
-  const handleAdditionalThoughtsChange = useCallback((thoughts: string) => {
-    dispatch({ type: 'SET_ADDITIONAL_THOUGHTS', thoughts });
+  // Additional thoughts change handler - supports editing any round
+  const handleAdditionalThoughtsChange = useCallback((thoughts: string, roundIndex?: number) => {
+    if (roundIndex !== undefined) {
+      dispatch({ type: 'SET_HISTORICAL_ADDITIONAL_THOUGHTS', roundIndex, thoughts });
+    } else {
+      dispatch({ type: 'SET_ADDITIONAL_THOUGHTS', thoughts });
+    }
   }, []);
 
   // Generate follow-up questions
@@ -118,6 +129,7 @@ export default function TeamCreationWizard({
         prompt: response.system_prompt,
         name: response.suggested_name,
         description: response.suggested_description,
+        sampleTestMessage: response.sample_test_message || '',
       });
     } catch (error) {
       dispatch({ type: 'SET_ERROR', error: (error as Error).message });
@@ -158,7 +170,7 @@ export default function TeamCreationWizard({
         );
 
         // Consume the stream
-         
+
         for await (const _ of stream) {
           // Chunks are handled by the onChunk callback
         }
@@ -173,7 +185,7 @@ export default function TeamCreationWizard({
 
   // Iterate prompt based on user feedback
   const handleIteratePrompt = useCallback(
-    async (feedback: string) => {
+    async (feedback: string, selectedText?: string) => {
       const lastConversation = state.testConversations[state.testConversations.length - 1];
 
       dispatch({ type: 'SET_ITERATING_PROMPT', isIteratingPrompt: true });
@@ -185,7 +197,8 @@ export default function TeamCreationWizard({
           lastConversation?.testMessage || '',
           lastConversation?.modelResponse || '',
           feedback,
-          state.selectedModel?.model_name
+          state.selectedModel?.model_name,
+          selectedText
         );
 
         // Update the prompt with the improved version
@@ -254,6 +267,18 @@ export default function TeamCreationWizard({
     handleClose,
   ]);
 
+  // Helper function to check if core answers have changed
+  const hasCoreAnswersChanged = useCallback(() => {
+    if (!state.lastGeneratedCoreAnswers) {
+      return true; // No previous snapshot, need to generate
+    }
+    // Compare purpose and special_requirements (the main fields)
+    return (
+      state.coreAnswers.purpose !== state.lastGeneratedCoreAnswers.purpose ||
+      state.coreAnswers.special_requirements !== state.lastGeneratedCoreAnswers.special_requirements
+    );
+  }, [state.coreAnswers, state.lastGeneratedCoreAnswers]);
+
   // Navigation handlers
   const handleNext = useCallback(async () => {
     const { currentStep } = state;
@@ -264,8 +289,19 @@ export default function TeamCreationWizard({
         dispatch({ type: 'SET_ERROR', error: t('wizard.purpose_required') });
         return;
       }
-      dispatch({ type: 'SET_STEP', step: 2 });
-      await generateFollowUp();
+
+      // Check if core answers have changed since last generation
+      if (hasCoreAnswersChanged()) {
+        // Clear all follow-up data if answers changed
+        dispatch({ type: 'CLEAR_FOLLOWUP_DATA' });
+        // Save current answers as snapshot
+        dispatch({ type: 'SAVE_CORE_ANSWERS_SNAPSHOT', answers: state.coreAnswers });
+        dispatch({ type: 'SET_STEP', step: 2 });
+        await generateFollowUp();
+      } else {
+        // Answers haven't changed, just go to step 2 without regenerating
+        dispatch({ type: 'SET_STEP', step: 2 });
+      }
       return;
     }
 
@@ -296,10 +332,14 @@ export default function TeamCreationWizard({
       }
       await handleCreate();
     }
-  }, [state, t, generateFollowUp, generatePrompt, handleCreate]);
+  }, [state, t, generateFollowUp, generatePrompt, handleCreate, hasCoreAnswersChanged]);
 
   const handleBack = useCallback(() => {
     if (state.currentStep > 1) {
+      // Clear test conversations when leaving step 3 (Preview Adjust)
+      if (state.currentStep === 3) {
+        dispatch({ type: 'CLEAR_TEST_CONVERSATIONS' });
+      }
       dispatch({ type: 'SET_STEP', step: state.currentStep - 1 });
     }
   }, [state.currentStep]);
@@ -345,6 +385,7 @@ export default function TeamCreationWizard({
             onClearConversations={handleClearConversations}
             isLoading={state.isLoading}
             promptRefreshed={state.promptRefreshed}
+            sampleTestMessage={state.sampleTestMessage}
           />
         );
       case 4:
@@ -353,19 +394,14 @@ export default function TeamCreationWizard({
             systemPrompt={state.systemPrompt}
             agentName={state.agentName}
             agentDescription={state.agentDescription}
-            bindMode={state.bindMode}
             onPromptChange={(prompt: string) => dispatch({ type: 'SET_SYSTEM_PROMPT', prompt })}
             onNameChange={(name: string) => dispatch({ type: 'SET_AGENT_NAME', name })}
             onDescriptionChange={(desc: string) =>
               dispatch({ type: 'SET_AGENT_DESCRIPTION', description: desc })
             }
-            onBindModeChange={(mode: ('chat' | 'code')[]) =>
-              dispatch({ type: 'SET_BIND_MODE', mode })
-            }
             isLoading={false}
           />
         );
-      default:
         return null;
     }
   };
@@ -384,10 +420,17 @@ export default function TeamCreationWizard({
     return t('common.next');
   };
 
+  // Step 3 (Preview Adjust) needs full height dialog
+  const isPreviewStep = state.currentStep === 3;
+
   return (
     <Dialog open={open} onOpenChange={open => !open && handleClose()}>
-      <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
-        <DialogHeader>
+      <DialogContent
+        className={`max-w-5xl overflow-hidden flex flex-col ${
+          isPreviewStep ? 'h-[90vh]' : 'max-h-[90vh]'
+        }`}
+      >
+        <DialogHeader className="flex-shrink-0">
           <DialogTitle className="flex items-center gap-2">
             <Wand2 className="w-5 h-5 text-primary" />
             {t('wizard.title')}
@@ -395,18 +438,24 @@ export default function TeamCreationWizard({
         </DialogHeader>
 
         {/* Step indicator */}
-        <WizardStepIndicator currentStep={state.currentStep} totalSteps={TOTAL_STEPS} />
+        <div className="flex-shrink-0">
+          <WizardStepIndicator currentStep={state.currentStep} totalSteps={TOTAL_STEPS} />
+        </div>
 
         {/* Error display */}
         {state.error && (
-          <div className="p-3 bg-error/10 border border-error/20 rounded-lg flex items-center gap-2 text-error text-sm">
+          <div className="flex-shrink-0 p-3 bg-error/10 border border-error/20 rounded-lg flex items-center gap-2 text-error text-sm">
             <X className="w-4 h-4" />
             {state.error}
           </div>
         )}
 
         {/* Step content */}
-        <div className="flex-1 overflow-y-auto py-4">{renderStepContent()}</div>
+        <div
+          className={`flex-1 min-h-0 py-4 ${isPreviewStep ? 'overflow-hidden' : 'overflow-y-auto'}`}
+        >
+          {renderStepContent()}
+        </div>
 
         {/* Footer navigation */}
         <DialogFooter className="flex-shrink-0 flex justify-between items-center">
@@ -421,7 +470,7 @@ export default function TeamCreationWizard({
             {state.currentStep > 1 && (
               <Button variant="outline" onClick={handleBack} disabled={state.isLoading}>
                 <ArrowLeft className="w-4 h-4 mr-2" />
-                {t('common.back')}
+                {t('common.previous')}
               </Button>
             )}
             <Button variant="primary" onClick={handleNext} disabled={state.isLoading}>

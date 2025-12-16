@@ -4,7 +4,7 @@
 
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Bot, User, Loader2 } from 'lucide-react';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
@@ -12,20 +12,19 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useTranslation } from '@/hooks/useTranslation';
 import type { FollowUpRound } from '../types';
-import { cn } from '@/lib/utils';
 
 interface AiFollowUpStepProps {
   rounds: FollowUpRound[];
   currentRound: number;
   isComplete: boolean;
   isLoading: boolean;
-  onAnswerChange: (questionKey: string, answer: string) => void;
-  onAdditionalThoughtsChange: (thoughts: string) => void;
+  onAnswerChange: (questionKey: string, answer: string, roundIndex?: number) => void;
+  onAdditionalThoughtsChange: (thoughts: string, roundIndex?: number) => void;
 }
 
 export default function AiFollowUpStep({
   rounds,
-  currentRound,
+  currentRound: _currentRound,
   isComplete,
   isLoading,
   onAnswerChange,
@@ -33,6 +32,9 @@ export default function AiFollowUpStep({
 }: AiFollowUpStepProps) {
   const { t } = useTranslation('common');
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const roundRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const [highlightedRound, setHighlightedRound] = useState<number | null>(null);
+  const prevRoundsLengthRef = useRef(rounds.length);
 
   // Auto-scroll to bottom only when loading starts (to show "Thinking..." indicator)
   useEffect(() => {
@@ -48,6 +50,44 @@ export default function AiFollowUpStep({
       }, 100);
     }
   }, [isLoading]);
+
+  // When new round is added, scroll to show the first question at the top and highlight it
+  useEffect(() => {
+    const prevLength = prevRoundsLengthRef.current;
+    const currentLength = rounds.length;
+
+    // Check if a new round was added (not the initial load)
+    if (currentLength > prevLength && prevLength > 0) {
+      const newRoundIndex = currentLength - 1;
+
+      // Highlight the new round
+      setHighlightedRound(newRoundIndex);
+
+      // Scroll to the new round's first question
+      setTimeout(() => {
+        const roundElement = roundRefs.current.get(newRoundIndex);
+        if (roundElement && scrollContainerRef.current) {
+          // Calculate the position to scroll to (element top relative to container)
+          const containerRect = scrollContainerRef.current.getBoundingClientRect();
+          const elementRect = roundElement.getBoundingClientRect();
+          const scrollTop =
+            scrollContainerRef.current.scrollTop + (elementRect.top - containerRect.top) - 16; // 16px padding from top
+
+          scrollContainerRef.current.scrollTo({
+            top: scrollTop,
+            behavior: 'smooth',
+          });
+        }
+      }, 100);
+
+      // Remove highlight after animation completes
+      setTimeout(() => {
+        setHighlightedRound(null);
+      }, 2000);
+    }
+
+    prevRoundsLengthRef.current = currentLength;
+  }, [rounds.length]);
 
   if (rounds.length === 0 && isLoading) {
     return (
@@ -73,7 +113,17 @@ export default function AiFollowUpStep({
       {/* Chat-like display of Q&A history */}
       <div ref={scrollContainerRef} className="space-y-4 max-h-[400px] overflow-y-auto pr-2">
         {rounds.map((round, roundIndex) => (
-          <div key={roundIndex} className="space-y-4">
+          <div
+            key={roundIndex}
+            ref={el => {
+              if (el) roundRefs.current.set(roundIndex, el);
+            }}
+            className={`space-y-4 transition-all duration-500 ${
+              highlightedRound === roundIndex
+                ? 'bg-primary/5 -mx-2 px-2 py-2 rounded-lg ring-2 ring-primary/30 animate-fade-in'
+                : ''
+            }`}
+          >
             {/* Round header */}
             {rounds.length > 1 && (
               <div className="flex items-center gap-2 text-xs text-text-muted">
@@ -87,39 +137,37 @@ export default function AiFollowUpStep({
             {round.questions.map((question, qIndex) => {
               const questionKey = `${question.question.substring(0, 30)}`;
               const answer = round.answers[questionKey] || '';
-              const isCurrentRound = roundIndex === currentRound - 1;
 
               return (
                 <div key={`${roundIndex}-${qIndex}`} className="space-y-3">
                   {/* AI Question bubble */}
                   <div className="flex items-start gap-3">
-                    <div className="flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center">
+                    <div
+                      className={`flex-shrink-0 w-8 h-8 rounded-full bg-primary/10 flex items-center justify-center ${
+                        highlightedRound === roundIndex && qIndex === 0 ? 'animate-pulse' : ''
+                      }`}
+                    >
                       <Bot className="w-4 h-4 text-primary" />
                     </div>
-                    <div className="flex-1 bg-surface border border-border rounded-lg p-3">
+                    <div
+                      className={`flex-1 bg-surface border rounded-lg p-3 transition-all duration-300 ${
+                        highlightedRound === roundIndex && qIndex === 0
+                          ? 'border-primary/50 shadow-sm'
+                          : 'border-border'
+                      }`}
+                    >
                       <p className="text-sm">{question.question}</p>
                     </div>
                   </div>
 
-                  {/* User Answer */}
+                  {/* User Answer - all rounds are editable */}
                   <div className="flex items-start gap-3 pl-11">
-                    <div
-                      className={cn(
-                        'flex-1 rounded-lg p-3',
-                        isCurrentRound ? 'bg-base border border-border' : 'bg-muted/50'
-                      )}
-                    >
-                      {isCurrentRound ? (
-                        <QuestionInput
-                          question={question}
-                          value={answer}
-                          onChange={value => onAnswerChange(questionKey, value)}
-                        />
-                      ) : (
-                        <p className="text-sm text-text-secondary">
-                          {answer || t('wizard.not_answered')}
-                        </p>
-                      )}
+                    <div className="flex-1 rounded-lg p-3 bg-base border border-border">
+                      <QuestionInput
+                        question={question}
+                        value={answer}
+                        onChange={value => onAnswerChange(questionKey, value, roundIndex)}
+                      />
                     </div>
                     <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
                       <User className="w-4 h-4 text-text-muted" />
@@ -129,7 +177,7 @@ export default function AiFollowUpStep({
               );
             })}
 
-            {/* Additional thoughts input - show for every round */}
+            {/* Additional thoughts input - all rounds are editable */}
             <div className="mt-4 pt-4 border-t border-border">
               <div className="flex items-start gap-3">
                 <div className="flex-shrink-0 w-8 h-8 rounded-full bg-muted flex items-center justify-center">
@@ -139,25 +187,15 @@ export default function AiFollowUpStep({
                   <label className="block text-sm font-medium text-text-secondary mb-2">
                     {t('wizard.additional_thoughts_label')}
                   </label>
-                  {roundIndex === currentRound - 1 ? (
-                    <>
-                      <Textarea
-                        value={round.additionalThoughts || ''}
-                        onChange={e => onAdditionalThoughtsChange(e.target.value)}
-                        placeholder={t('wizard.additional_thoughts_placeholder')}
-                        className="min-h-[80px] text-sm"
-                      />
-                      <p className="mt-1 text-xs text-text-muted">
-                        {t('wizard.additional_thoughts_hint')}
-                      </p>
-                    </>
-                  ) : (
-                    <div className="bg-muted/50 rounded-lg p-3">
-                      <p className="text-sm text-text-secondary">
-                        {round.additionalThoughts || t('wizard.not_answered')}
-                      </p>
-                    </div>
-                  )}
+                  <Textarea
+                    value={round.additionalThoughts || ''}
+                    onChange={e => onAdditionalThoughtsChange(e.target.value, roundIndex)}
+                    placeholder={t('wizard.additional_thoughts_placeholder')}
+                    className="min-h-[80px] text-sm"
+                  />
+                  <p className="mt-1 text-xs text-text-muted">
+                    {t('wizard.additional_thoughts_hint')}
+                  </p>
                 </div>
               </div>
             </div>

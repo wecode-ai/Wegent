@@ -19,6 +19,8 @@ export interface WizardState {
   currentStep: number;
   // Step 1: Core answers
   coreAnswers: WizardAnswers;
+  // Track the core answers when questions were generated (for change detection)
+  lastGeneratedCoreAnswers: WizardAnswers | null;
   // Step 2: Follow-up Q&A
   followupRounds: FollowUpRound[];
   currentFollowupRound: number;
@@ -36,6 +38,7 @@ export interface WizardState {
   selectedModel: ModelRecommendation | null;
   bindMode: ('chat' | 'code')[];
   icon: string | null;
+  sampleTestMessage: string;
   // Step 4: Test conversation
   testConversations: TestConversation[];
   isTestingPrompt: boolean;
@@ -57,6 +60,13 @@ export type WizardAction =
   | { type: 'SET_CORE_ANSWERS'; answers: Partial<WizardAnswers> }
   | { type: 'SET_FOLLOWUP_QUESTIONS'; questions: FollowUpQuestion[]; roundNumber: number }
   | { type: 'SET_FOLLOWUP_ANSWER'; questionKey: string; answer: string }
+  | {
+      type: 'SET_HISTORICAL_FOLLOWUP_ANSWER';
+      roundIndex: number;
+      questionKey: string;
+      answer: string;
+    }
+  | { type: 'SET_HISTORICAL_ADDITIONAL_THOUGHTS'; roundIndex: number; thoughts: string }
   | { type: 'SET_ADDITIONAL_THOUGHTS'; thoughts: string }
   | { type: 'SET_FOLLOWUP_COMPLETE'; isComplete: boolean }
   | { type: 'NEXT_FOLLOWUP_ROUND' }
@@ -69,7 +79,13 @@ export type WizardAction =
     }
   | { type: 'SET_SELECTED_SHELL'; shell: ShellRecommendation }
   | { type: 'SET_SELECTED_MODEL'; model: ModelRecommendation | null }
-  | { type: 'SET_GENERATED_PROMPT'; prompt: string; name: string; description: string }
+  | {
+      type: 'SET_GENERATED_PROMPT';
+      prompt: string;
+      name: string;
+      description: string;
+      sampleTestMessage: string;
+    }
   | { type: 'SET_SYSTEM_PROMPT'; prompt: string }
   | { type: 'SET_AGENT_NAME'; name: string }
   | { type: 'SET_AGENT_DESCRIPTION'; description: string }
@@ -84,6 +100,8 @@ export type WizardAction =
   | { type: 'UPDATE_LAST_TEST_RESPONSE'; response: string }
   | { type: 'UPDATE_LAST_TEST_FEEDBACK'; feedback: string }
   | { type: 'CLEAR_TEST_CONVERSATIONS' }
+  | { type: 'CLEAR_FOLLOWUP_DATA' }
+  | { type: 'SAVE_CORE_ANSWERS_SNAPSHOT'; answers: WizardAnswers }
   | { type: 'RESET' };
 
 // Default Chat Shell configuration
@@ -106,6 +124,7 @@ export const initialWizardState: WizardState = {
     output_format: [],
     constraints: '',
   },
+  lastGeneratedCoreAnswers: null,
   followupRounds: [],
   currentFollowupRound: 0,
   isFollowupComplete: false,
@@ -120,6 +139,7 @@ export const initialWizardState: WizardState = {
   selectedModel: null,
   bindMode: ['chat'],
   icon: null,
+  sampleTestMessage: '',
   testConversations: [],
   isTestingPrompt: false,
   isIteratingPrompt: false,
@@ -139,12 +159,21 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       };
     case 'SET_FOLLOWUP_QUESTIONS': {
       const newRounds = [...state.followupRounds];
+      // Pre-populate answers with default_answer from questions
+      const defaultAnswers: Record<string, string> = {};
+      action.questions.forEach(q => {
+        const questionKey = `${q.question.substring(0, 30)}`;
+        if (q.default_answer) {
+          defaultAnswers[questionKey] = q.default_answer;
+        }
+      });
       if (action.roundNumber > newRounds.length) {
-        newRounds.push({ questions: action.questions, answers: {} });
+        newRounds.push({ questions: action.questions, answers: defaultAnswers });
       } else {
         newRounds[action.roundNumber - 1] = {
           ...newRounds[action.roundNumber - 1],
           questions: action.questions,
+          answers: { ...defaultAnswers, ...newRounds[action.roundNumber - 1]?.answers },
         };
       }
       return {
@@ -172,6 +201,25 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
       }
       return { ...state, followupRounds: rounds };
     }
+    case 'SET_HISTORICAL_FOLLOWUP_ANSWER': {
+      const rounds = [...state.followupRounds];
+      const targetRound = rounds[action.roundIndex];
+      if (targetRound) {
+        targetRound.answers = {
+          ...targetRound.answers,
+          [action.questionKey]: action.answer,
+        };
+      }
+      return { ...state, followupRounds: rounds };
+    }
+    case 'SET_HISTORICAL_ADDITIONAL_THOUGHTS': {
+      const rounds = [...state.followupRounds];
+      const targetRound = rounds[action.roundIndex];
+      if (targetRound) {
+        targetRound.additionalThoughts = action.thoughts;
+      }
+      return { ...state, followupRounds: rounds };
+    }
     case 'SET_FOLLOWUP_COMPLETE':
       return { ...state, isFollowupComplete: action.isComplete };
     case 'NEXT_FOLLOWUP_ROUND':
@@ -196,6 +244,7 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
         systemPrompt: action.prompt,
         agentName: action.name,
         agentDescription: action.description,
+        sampleTestMessage: action.sampleTestMessage,
       };
     case 'SET_SYSTEM_PROMPT':
       return { ...state, systemPrompt: action.prompt };
@@ -242,6 +291,23 @@ export function wizardReducer(state: WizardState, action: WizardAction): WizardS
     }
     case 'CLEAR_TEST_CONVERSATIONS':
       return { ...state, testConversations: [] };
+    case 'CLEAR_FOLLOWUP_DATA':
+      // Clear all follow-up related data when core answers change
+      return {
+        ...state,
+        followupRounds: [],
+        currentFollowupRound: 0,
+        isFollowupComplete: false,
+        systemPrompt: '',
+        agentName: '',
+        agentDescription: '',
+        sampleTestMessage: '',
+        testConversations: [],
+        lastGeneratedCoreAnswers: null,
+      };
+    case 'SAVE_CORE_ANSWERS_SNAPSHOT':
+      // Save a snapshot of core answers when generating questions
+      return { ...state, lastGeneratedCoreAnswers: { ...action.answers } };
     case 'RESET':
       return initialWizardState;
     default:

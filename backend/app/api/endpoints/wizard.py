@@ -283,20 +283,48 @@ IMPORTANT - Avoid Over-Questioning:
 - The goal is to create a VERSATILE assistant, not a hyper-specialized one
 - HOWEVER: In round 1, you should ask at least 2-3 clarifying questions - never set is_complete to true in the first round
 
-Good question examples (use sparingly):
-- "What format do you prefer for the output?" (only if output format is unclear)
-- "Any specific requirements I should know about?" (catch-all for important constraints)
+CRITICAL - Question Input Type Selection:
+You MUST prefer choice-based questions (single_choice or multiple_choice) over text input whenever possible!
 
-Avoid these types of questions:
-- "How often do you need to do this?" (not essential for prompt creation)
-- "Who will be reading the results?" (over-specific)
-- "Can you give more examples?" (user's example is just a reference)
-- Technical questions of any kind
+Use single_choice when:
+- There are 2-5 clear, mutually exclusive options
+- Asking about preferences, styles, formats, levels, or categories
+- Examples: output format (简洁/详细), tone (正式/轻松), language style, expertise level
+
+Use multiple_choice when:
+- User can select multiple applicable options
+- Asking about features, capabilities, or requirements that can combine
+- Examples: output elements to include, types of content to handle, features needed
+
+Use text input ONLY when:
+- The answer is truly open-ended and cannot be categorized
+- You need specific names, numbers, or unique information
+- No reasonable set of options can cover the answer
+
+Good question examples with CHOICE types:
+- "你希望输出的风格是？" → single_choice: ["简洁明了", "详细完整", "要点列表", "正式报告"]
+- "输出需要包含哪些元素？" → multiple_choice: ["标题", "摘要", "要点", "数据", "建议", "结论"]
+- "你的专业水平是？" → single_choice: ["初学者", "有一定经验", "专业人士"]
+- "AI助手的语气应该是？" → single_choice: ["专业正式", "友好亲切", "简洁直接", "耐心详细"]
+- "需要处理哪些类型的内容？" → multiple_choice: ["文字", "数据", "表格", "代码", "图片描述"]
+
+BAD examples (avoid these text questions):
+- "你希望什么样的输出格式？" → Should be single_choice with options!
+- "有什么特殊要求？" → Too vague, should be multiple_choice with common requirements
+- "你的使用场景是什么？" → Should be single_choice with common scenarios
+
+IMPORTANT - Provide Default Answers:
+For EACH question, you MUST provide a reasonable default_answer based on the user's context:
+- For single_choice questions: pick the most likely option as default
+- For multiple_choice questions: pick the most common/relevant options as default (comma-separated)
+- For text questions (use sparingly): suggest a sensible default based on what the user has described
+- The default should be helpful but not overly specific - users can modify it if needed
 
 Response format (JSON):
 {
   "questions": [
-    {"question": "Your simple question here", "input_type": "text|single_choice|multiple_choice", "options": ["option1", "option2"] (only for choice types)},
+    {"question": "Your simple question here", "input_type": "single_choice", "options": ["选项1", "选项2", "选项3"], "default_answer": "选项1"},
+    {"question": "Another question", "input_type": "multiple_choice", "options": ["功能A", "功能B", "功能C", "功能D"], "default_answer": "功能A,功能B"},
     ...
   ],
   "is_complete": false (set to true if no more questions needed - PREFER true when basic info is clear)
@@ -304,7 +332,9 @@ Response format (JSON):
 
 IMPORTANT:
 - Use the same language as the user's input (if Chinese, ask in Chinese)
-- After round 5, you MUST set is_complete to true unless critical information is missing, or earlier if you have enough info"""
+- After round 5, you MUST set is_complete to true unless critical information is missing, or earlier if you have enough info
+- ALWAYS provide a default_answer for each question - this helps users save time
+- At least 80% of your questions should be single_choice or multiple_choice, NOT text!"""
 
     user_message = f"""Current round: {request.round_number}
 Maximum rounds allowed: 5 
@@ -338,6 +368,7 @@ IMPORTANT:
                 question=q.get("question", ""),
                 input_type=q.get("input_type", "text"),
                 options=q.get("options"),
+                default_answer=q.get("default_answer"),
             )
             for q in result.get("questions", [])
         ]
@@ -649,11 +680,50 @@ When creating the prompt:
 
 Also suggest a simple, memorable name and a brief description.
 
+IMPORTANT - Generate a Sample Test Message:
+Generate ONE sample test message that users can use to preview how the AI assistant would respond.
+
+CRITICAL RULES for the test message - READ CAREFULLY:
+- KEEP IT SHORT: The test message should be 50-150 characters max
+- ONLY provide the RAW INPUT DATA or CONTENT - absolutely nothing else
+- The message must start DIRECTLY with the actual data/content
+- Do NOT include ANY introductory or framing text such as:
+  - "以下是..." / "Here is..." / "Below is..."
+  - "请根据..." / "Please..." / "请帮我..."
+  - "我想要..." / "I want..." / "帮我..."
+  - Any sentence that describes what the data is or what to do with it
+- Do NOT include ANY of the following anywhere in the message:
+  - Goals or objectives
+  - Requirements or expectations (e.g., "要求...", "需要...", "希望...")
+  - Instructions to the AI
+  - Descriptions of what the user wants
+  - Context-setting sentences
+- The message should look like raw data that someone would directly paste
+- Be in the same language as the user's input
+- Be simple and concise - just enough to demonstrate the assistant's capability
+
+Examples of GOOD vs BAD test messages:
+- For a weekly report assistant:
+  - BAD: "帮我写周报，要求简洁明了" (contains goal and requirement)
+  - BAD: "以下是本周工作内容，请帮我整理成周报：拜访了5个客户" (contains framing text and instruction)
+  - BAD: Long detailed content with multiple sections (too long)
+  - GOOD: "本周拜访了5个客户，签了2份合同，处理了3个投诉" (short, pure data only)
+- For a translation assistant:
+  - BAD: "请帮我翻译这段话：Hello world" (contains instruction)
+  - GOOD: "Hello world" (just the content to translate)
+- For a code review assistant:
+  - BAD: "请审查以下代码，检查是否有bug" (contains instruction and requirement)
+  - GOOD: "def add(a, b): return a + b" (just the code)
+- For a meeting summary assistant:
+  - BAD: "请帮我总结会议内容，要点要清晰" (contains instruction and requirement)
+  - GOOD: "张三介绍了Q3销售，李四提出新策略" (short meeting notes)
+
 Response format (JSON):
 {
   "system_prompt": "The full system prompt in markdown format",
   "suggested_name": "simple-name",
-  "suggested_description": "A brief, friendly description of what this assistant does"
+  "suggested_description": "A brief, friendly description of what this assistant does",
+  "sample_test_message": "The actual input data/content for the assistant to process (NOT a description of the task)"
 }
 
 IMPORTANT:
@@ -662,7 +732,8 @@ IMPORTANT:
 - Keep the system_prompt clear and concise
 - Use everyday language, not technical terms
 - Ensure the assistant's capabilities align with what Wegent can actually do
-- Create a GENERAL-PURPOSE assistant, NOT one tailored to specific examples"""
+- Create a GENERAL-PURPOSE assistant, NOT one tailored to specific examples
+- Generate a meaningful sample test message that showcases the assistant's capabilities"""
 
     user_message = f"""Create a system prompt for an AI assistant based on these requirements:
 
@@ -690,6 +761,7 @@ IMPORTANT REMINDERS:
             system_prompt=result.get("system_prompt", ""),
             suggested_name=result.get("suggested_name", "my-agent"),
             suggested_description=result.get("suggested_description", ""),
+            sample_test_message=result.get("sample_test_message", ""),
         )
 
     except json.JSONDecodeError:
@@ -726,6 +798,7 @@ I'm here to help you with: {request.answers.purpose}
                 if request.answers.purpose
                 else "AI Assistant"
             ),
+            sample_test_message="",
         )
 
 
@@ -1135,23 +1208,69 @@ async def iterate_system_prompt(
     system_prompt = """You are an expert at improving AI assistant system prompts.
 The user has tested their AI assistant and wants to make changes based on the results.
 
+CRITICAL - Follow User Instructions with Smart Generalization:
+The user's feedback is a DIRECT INSTRUCTION, but you must understand the INTENT behind it and generalize appropriately.
+
+KEY PRINCIPLE - Generalize User Feedback:
+When a user gives a specific example, understand the CATEGORY of change they want, not just the literal text.
+
+Generalization Rules:
+1. QUOTED UNWANTED TEXT → Generalize to the TYPE of content
+   - User quotes an opening phrase they don't want → Remove ALL opening/introductory phrases
+   - User quotes a filler sentence → Remove ALL similar filler content
+   
+2. SPECIFIC VALUE ASSIGNMENT → Use EXACT value
+   - User says "X should be Y" → Change X to exactly Y, no interpretation
+   - User provides a specific name/title → Use that exact name/title
+   
+3. STYLE/TONE FEEDBACK → Apply broadly
+   - User wants more formal tone → Apply formal tone throughout
+   - User wants shorter responses → Make the entire output more concise
+   
+4. STRUCTURAL FEEDBACK → Modify that specific structure
+   - User says remove point 3 → Remove only point 3
+   - User says add a section → Add that specific section
+
+HOW TO DETERMINE GENERALIZATION LEVEL:
+- Quoted phrase/sentence → Eliminate that TYPE of content (generalize)
+- Specific value (name, title, number) → Use EXACT value (no generalization)
+- Style description → Apply broadly (generalize)
+- Structural reference → Modify specific structure (no generalization)
+
+DO NOT:
+- Add unrelated rules beyond the scope of user's feedback
+- Over-engineer with excessive rules when a simple change suffices
+- Interpret value assignments as preferences - they are direct commands
+- Be too literal when user clearly means a category of content
+
 Your task is to:
-1. Understand the user's feedback about what they want changed
-2. Modify the system prompt to address their concerns
-3. Keep the overall structure and intent of the original prompt
-4. Make targeted improvements based on the specific feedback
+1. Understand the user's feedback and identify the INTENT
+2. Determine if generalization is needed (specific example → general rule)
+3. Make the appropriate change - generalized for examples, exact for values
+4. Keep everything else in the prompt unchanged
 
 Response format (JSON):
 {
-  "improved_prompt": "The full improved system prompt",
-  "changes_summary": "A brief summary of what was changed and why"
+  "improved_prompt": "The full improved system prompt with the change applied",
+  "changes_summary": "A brief summary of what was changed and why (mention if generalized)"
 }
 
 IMPORTANT:
 - Use the same language as the original prompt
 - Output ONLY valid JSON, no other text
-- Keep the prompt clear and user-friendly
-- Make minimal but effective changes to address the feedback"""
+- When user gives a specific example of unwanted content, add a GENERAL rule to avoid that type
+- When user gives a specific value they want, use that EXACT value
+- Treat user feedback as a command, but understand the underlying intent"""
+
+    # Build user message with optional selected text context
+    selected_text_section = ""
+    if request.selected_text:
+        selected_text_section = f"""
+The user selected this specific part of the AI response:
+>>> {request.selected_text} <<<
+
+This selection helps you understand which part of the response the user's feedback refers to.
+"""
 
     user_message = f"""Here is the current system prompt:
 ---
@@ -1165,11 +1284,11 @@ The AI responded with:
 ---
 {request.model_response}
 ---
-
+{selected_text_section}
 The user's feedback/request for changes:
 "{request.user_feedback}"
 
-Please improve the system prompt based on this feedback."""
+Please improve the system prompt based on this feedback. The full response context above helps you understand the structure and location of the selected content."""
 
     try:
         response = await _call_llm_for_wizard(

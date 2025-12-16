@@ -36,6 +36,8 @@ interface QuickAccessCardsProps {
   isLoading?: boolean;
   isTeamsLoading?: boolean;
   hideSelected?: boolean; // Whether to hide the selected team from the cards
+  onRefreshTeams?: () => Promise<Team[]>;
+  showWizardButton?: boolean; // Whether to show the wizard button (only for chat mode)
 }
 
 export function QuickAccessCards({
@@ -46,6 +48,8 @@ export function QuickAccessCards({
   isLoading,
   isTeamsLoading,
   hideSelected = false,
+  onRefreshTeams,
+  showWizardButton = false,
 }: QuickAccessCardsProps) {
   const router = useRouter();
   const { t } = useTranslation('common');
@@ -496,38 +500,51 @@ export function QuickAccessCards({
           )}
         </div>
 
-        {/* Wizard button - quick create agent */}
-        <TooltipProvider>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={() => setShowWizard(true)}
-                className="flex items-center justify-center w-8 h-8 rounded-full border border-dashed border-primary/50 bg-primary/5 hover:bg-primary/10 hover:border-primary cursor-pointer transition-all duration-200"
-              >
-                <Wand2 className="w-4 h-4 text-primary" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="top">
-              <p>{t('wizard.wizard_button_tooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </TooltipProvider>
+        {/* Wizard button - quick create agent (only show in chat mode) */}
+        {showWizardButton && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowWizard(true)}
+                  className="flex items-center justify-center w-8 h-8 rounded-full border border-dashed border-primary/50 bg-primary/5 hover:bg-primary/10 hover:border-primary cursor-pointer transition-all duration-200"
+                >
+                  <Wand2 className="w-4 h-4 text-primary" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p>{t('wizard.wizard_button_tooltip')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
 
       {/* Team Creation Wizard Dialog */}
-      <TeamCreationWizard
-        open={showWizard}
-        onClose={() => setShowWizard(false)}
-        onSuccess={(teamId, teamName) => {
-          // Refresh teams list and select the new team
-          const newTeam = teams.find(t => t.id === teamId);
-          if (newTeam) {
-            onTeamSelect(newTeam);
-          }
-          // Show success message could be added here
-          console.log(`Created team: ${teamName} (ID: ${teamId})`);
-        }}
-      />
+      {showWizardButton && (
+        <TeamCreationWizard
+          open={showWizard}
+          onClose={() => setShowWizard(false)}
+          onSuccess={async (teamId, teamName) => {
+            // Refresh teams list first to get the new team
+            if (onRefreshTeams) {
+              const refreshedTeams = await onRefreshTeams();
+              // Find and select the new team from refreshed list
+              const newTeam = refreshedTeams.find(t => t.id === teamId);
+              if (newTeam) {
+                onTeamSelect(newTeam);
+              }
+            } else {
+              // Fallback: try to find in current teams (may not work for newly created)
+              const newTeam = teams.find(t => t.id === teamId);
+              if (newTeam) {
+                onTeamSelect(newTeam);
+              }
+            }
+            console.log(`Created team: ${teamName} (ID: ${teamId})`);
+          }}
+        />
+      )}
     </>
   );
 }

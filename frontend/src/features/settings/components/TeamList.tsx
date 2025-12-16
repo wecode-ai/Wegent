@@ -416,7 +416,13 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                         <ResourceListItem
                           name={team.name}
                           description={team.description}
-                          icon={<TeamIconDisplay iconId={team.icon} size="md" className="text-primary" />}
+                          icon={
+                            <TeamIconDisplay
+                              iconId={team.icon}
+                              size="md"
+                              className="text-primary"
+                            />
+                          }
                           tags={[
                             ...(team.workflow?.mode
                               ? [
@@ -558,11 +564,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
-                        <Button
-                          variant="primary"
-                          onClick={handleOpenWizard}
-                          className="gap-2"
-                        >
+                        <Button variant="primary" onClick={handleOpenWizard} className="gap-2">
                           <SparklesIcon className="w-4 h-4" />
                           {t('wizard.wizard_button')}
                         </Button>
@@ -760,7 +762,7 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
         open={wizardOpen}
         onClose={() => setWizardOpen(false)}
         onSuccess={handleWizardSuccess}
-        scope={scope}
+        scope={scope === 'all' ? undefined : scope}
         groupName={groupName}
       />
       {/* Error prompt unified with antd message, no local rendering */}

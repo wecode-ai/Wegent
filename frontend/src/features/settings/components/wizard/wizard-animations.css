@@ -167,3 +167,9 @@
 .refresh-toast {
   animation: toast-slide-in 0.3s ease-out;
 }
+
+/* Vertical text for collapsed panel button */
+.writing-mode-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}

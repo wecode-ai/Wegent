@@ -33,6 +33,7 @@ export interface FollowUpQuestion {
   question: string;
   input_type: 'text' | 'single_choice' | 'multiple_choice';
   options?: string[];
+  default_answer?: string; // AI-suggested default answer
 }
 
 export interface FollowUpResponse {
@@ -66,6 +67,7 @@ export interface GeneratePromptResponse {
   system_prompt: string;
   suggested_name: string;
   suggested_description: string;
+  sample_test_message: string;
 }
 
 export interface TestPromptRequest {
@@ -84,6 +86,7 @@ export interface IteratePromptRequest {
   test_message: string;
   model_response: string;
   user_feedback: string;
+  selected_text?: string; // Text selected by user from model_response
   model_name?: string;
 }
 
@@ -247,19 +250,20 @@ export const wizardApis = {
 
     return fullContent;
   },
-
   iteratePrompt: async (
     currentPrompt: string,
     testMessage: string,
     modelResponse: string,
     userFeedback: string,
-    modelName?: string
+    modelName?: string,
+    selectedText?: string
   ): Promise<IteratePromptResponse> => {
     return apiClient.post('/wizard/iterate-prompt', {
       current_prompt: currentPrompt,
       test_message: testMessage,
       model_response: modelResponse,
       user_feedback: userFeedback,
+      selected_text: selectedText,
       model_name: modelName,
     });
   },

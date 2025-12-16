@@ -7,7 +7,6 @@
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import { Checkbox } from '@/components/ui/checkbox';
 import { useTranslation } from '@/hooks/useTranslation';
 import { FileText, Settings } from 'lucide-react';
 import GeneratingLoader from './GeneratingLoader';
@@ -16,11 +15,9 @@ interface PromptPreviewStepProps {
   systemPrompt: string;
   agentName: string;
   agentDescription: string;
-  bindMode: ('chat' | 'code')[];
   onPromptChange: (prompt: string) => void;
   onNameChange: (name: string) => void;
   onDescriptionChange: (desc: string) => void;
-  onBindModeChange: (mode: ('chat' | 'code')[]) => void;
   isLoading: boolean;
 }
 
@@ -28,11 +25,9 @@ export default function PromptPreviewStep({
   systemPrompt,
   agentName,
   agentDescription,
-  bindMode,
   onPromptChange,
   onNameChange,
   onDescriptionChange,
-  onBindModeChange,
   isLoading,
 }: PromptPreviewStepProps) {
   const { t } = useTranslation('common');
@@ -40,18 +35,6 @@ export default function PromptPreviewStep({
   if (isLoading) {
     return <GeneratingLoader />;
   }
-
-  const handleBindModeChange = (mode: 'chat' | 'code', checked: boolean) => {
-    if (checked) {
-      onBindModeChange([...bindMode, mode]);
-    } else {
-      // Ensure at least one mode is selected
-      const newModes = bindMode.filter(m => m !== mode);
-      if (newModes.length > 0) {
-        onBindModeChange(newModes);
-      }
-    }
-  };
 
   return (
     <div className="space-y-6">
@@ -102,34 +85,6 @@ export default function PromptPreviewStep({
               placeholder={t('wizard.agent_description_placeholder')}
               className="min-h-[80px]"
             />
-          </div>
-
-          {/* Bind Mode */}
-          <div className="space-y-2">
-            <Label className="text-base font-medium">{t('team.bind_mode')}</Label>
-            <p className="text-xs text-text-muted">{t('wizard.bind_mode_hint')}</p>
-            <div className="flex gap-4 mt-2">
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="mode-chat"
-                  checked={bindMode.includes('chat')}
-                  onCheckedChange={checked => handleBindModeChange('chat', !!checked)}
-                />
-                <Label htmlFor="mode-chat" className="font-normal cursor-pointer">
-                  {t('team.bind_mode_chat')}
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Checkbox
-                  id="mode-code"
-                  checked={bindMode.includes('code')}
-                  onCheckedChange={checked => handleBindModeChange('code', !!checked)}
-                />
-                <Label htmlFor="mode-code" className="font-normal cursor-pointer">
-                  {t('team.bind_mode_code')}
-                </Label>
-              </div>
-            </div>
           </div>
 
           {/* Info card */}

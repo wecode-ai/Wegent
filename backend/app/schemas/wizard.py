@@ -58,6 +58,7 @@ class FollowUpQuestion(BaseModel):
     question: str
     input_type: str  # text, single_choice, multiple_choice
     options: Optional[List[str]] = None
+    default_answer: Optional[str] = None  # AI-suggested default answer
 
 
 class FollowUpResponse(BaseModel):
@@ -117,6 +118,7 @@ class GeneratePromptResponse(BaseModel):
     system_prompt: str
     suggested_name: str
     suggested_description: str
+    sample_test_message: str = ""  # AI-generated sample test message for preview
 
 
 class CreateAllRequest(BaseModel):
@@ -168,6 +170,7 @@ class IteratePromptRequest(BaseModel):
     test_message: str
     model_response: str
     user_feedback: str
+    selected_text: Optional[str] = None  # Text selected by user from model_response
     model_name: Optional[str] = None
 
 
