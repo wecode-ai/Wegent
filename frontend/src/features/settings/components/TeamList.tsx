@@ -16,6 +16,7 @@ import {
   ShareIcon,
   CodeBracketIcon,
   LinkSlashIcon,
+  ClipboardDocumentIcon,
 } from '@heroicons/react/24/outline';
 import { Bot, Team } from '@/types/api';
 import { fetchTeamsList, deleteTeam, shareTeam, checkTeamRunningTasks } from '../services/teams';
@@ -155,6 +156,22 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
     setPrefillTeam(clone);
     setEditingTeamId(0);
     setEditDialogOpen(true);
+  };
+
+  const handleCopyTeamName = async (team: Team) => {
+    const teamNameString = `${team.namespace || 'default'}#${team.name}`;
+    try {
+      await navigator.clipboard.writeText(teamNameString);
+      toast({
+        title: t('teams.copy_name_success'),
+        description: teamNameString,
+      });
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: t('teams.copy_name_failed'),
+      });
+    }
   };
 
   const handleCloseEditDialog = () => {
@@ -483,6 +500,15 @@ export default function TeamList({ scope = 'personal', groupName }: TeamListProp
                             className="h-7 w-7 sm:h-8 sm:w-8"
                           >
                             <DocumentDuplicateIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => handleCopyTeamName(team)}
+                            title={t('teams.copy_name')}
+                            className="h-7 w-7 sm:h-8 sm:w-8"
+                          >
+                            <ClipboardDocumentIcon className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                           </Button>
                           {shouldShowShare(team) && (
                             <Button
