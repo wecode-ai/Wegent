@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core import security
+from app.core.config import settings
 from app.models.user import User
 from app.schemas.shared_task import (
     JoinSharedTaskRequest,
