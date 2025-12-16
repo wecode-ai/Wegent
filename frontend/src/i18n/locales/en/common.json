@@ -190,6 +190,9 @@
     "chat": "Send Task",
     "delete": "Delete Team",
     "copy": "Duplicate Team",
+    "copy_name": "Copy Team Name",
+    "copy_name_success": "Team name copied",
+    "copy_name_failed": "Failed to copy team name",
     "more": "More",
     "more_teams": "View more teams",
     "more_actions": "More Actions",
@@ -394,6 +397,7 @@
     "personal": "Personal",
     "groups": "Groups",
     "groupManager": "Group Manager",
+    "api_keys": "API Keys",
     "sections": {
       "general": "General"
     }
@@ -988,6 +992,34 @@
         "transferOwnership": "Transfer ownership",
         "cannotLeave": "Cannot leave group directly (must transfer ownership first)"
       }
+    }
+  },
+  "api_keys": {
+    "title": "API Keys",
+    "description": "Manage your API keys for programmatic access to Wegent",
+    "create": "Create API Key",
+    "name": "Key Name",
+    "name_placeholder": "Enter a name for this key",
+    "key": "API Key",
+    "prefix": "Key Prefix",
+    "expires_at": "Expires At",
+    "never_expires": "Never",
+    "last_used": "Last Used",
+    "created_at": "Created At",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "delete_confirm_title": "Delete API Key",
+    "delete_confirm_message": "Are you sure you want to delete the API key \"{{name}}\"? This action cannot be undone.",
+    "create_success": "API key created successfully",
+    "delete_success": "API key deleted successfully",
+    "warning_save_key": "Please save this key now. You won't be able to see it again!",
+    "no_keys": "No API keys yet",
+    "no_keys_description": "Create an API key to access Wegent programmatically",
+    "errors": {
+      "load_failed": "Failed to load API keys",
+      "create_failed": "Failed to create API key",
+      "delete_failed": "Failed to delete API key",
+      "name_required": "Key name is required"
     }
   }
 }

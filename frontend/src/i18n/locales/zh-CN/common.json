@@ -190,6 +190,9 @@
     "chat": "发送任务",
     "delete": "删除智能体",
     "copy": "复制智能体",
+    "copy_name": "复制智能体名称",
+    "copy_name_success": "智能体名称已复制",
+    "copy_name_failed": "复制智能体名称失败",
     "more": "更多",
     "more_teams": "查看更多智能体",
     "more_actions": "更多操作",
@@ -394,6 +397,7 @@
     "personal": "个人",
     "groups": "组",
     "groupManager": "组管理",
+    "api_keys": "API 密钥",
     "sections": {
       "general": "通用"
     }
@@ -982,6 +986,34 @@
         "transferOwnership": "转让Owner权限",
         "cannotLeave": "无法直接离开群组（需先转让Owner）"
       }
+    }
+  },
+  "api_keys": {
+    "title": "API 密钥",
+    "description": "管理用于程序化访问 Wegent 的 API 密钥",
+    "create": "创建 API 密钥",
+    "name": "密钥名称",
+    "name_placeholder": "输入密钥名称",
+    "key": "API 密钥",
+    "prefix": "密钥前缀",
+    "expires_at": "过期时间",
+    "never_expires": "永不过期",
+    "last_used": "最后使用",
+    "created_at": "创建时间",
+    "copy": "复制",
+    "copied": "已复制！",
+    "delete_confirm_title": "删除 API 密钥",
+    "delete_confirm_message": "确定要删除 API 密钥 \"{{name}}\" 吗？此操作无法撤销。",
+    "create_success": "API 密钥创建成功",
+    "delete_success": "API 密钥删除成功",
+    "warning_save_key": "请立即保存此密钥，之后将无法再次查看！",
+    "no_keys": "暂无 API 密钥",
+    "no_keys_description": "创建 API 密钥以程序化方式访问 Wegent",
+    "errors": {
+      "load_failed": "加载 API 密钥失败",
+      "create_failed": "创建 API 密钥失败",
+      "delete_failed": "删除 API 密钥失败",
+      "name_required": "请输入密钥名称"
     }
   }
 }

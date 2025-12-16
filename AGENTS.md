@@ -941,6 +941,8 @@ spec:
 | `/api/dify` | Dify app info, parameters |
 | `/api/v1/namespaces/{ns}/{kinds}` | Kubernetes-style Kind API |
 | `/api/v1/kinds/skills` | Skill upload/management |
+| `/api/v1/responses` | OpenAI-compatible Responses API |
+| `/api/v1/api-keys` | API Key management for programmatic access |
 | `/api/admin` | Admin operations (user management, public models, system stats) |
 
 ### Admin API Endpoints (`/api/admin`)
@@ -986,6 +988,45 @@ spec:
 | `/executor-manager/tasks/receive` | Batch task submission |
 | `/executor-manager/tasks/cancel` | Cancel running task |
 | `/executor-manager/images/validate` | Validate base image |
+
+### OpenAPI v1 Endpoints (OpenAI-Compatible)
+
+**Purpose:** Provides OpenAI Responses API-compatible endpoints for programmatic task execution via API Key.
+
+**Authentication:** API Key via `Authorization: Bearer <api_key>` or `X-API-Key: <api_key>` header.
+
+#### API Key Management (`/api/v1/api-keys`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/` | GET | List user's API keys |
+| `/` | POST | Create new API key (returns key only once) |
+| `/{key_id}` | DELETE | Delete API key |
+
+#### Responses API (`/api/v1/responses`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/` | POST | Create response (execute task) |
+| `/{response_id}` | GET | Get response status and output |
+| `/{response_id}/cancel` | POST | Cancel running response |
+| `/{response_id}` | DELETE | Delete response |
+
+**Model String Format:** `namespace#team_name` or `namespace#team_name#model_id`
+
+**Example Usage:**
+```bash
+# Create API Key (via UI or authenticated API)
+# Then use the key to create a response:
+curl -X POST https://your-wegent-instance/api/v1/responses \
+  -H "Authorization: Bearer wg_xxxx" \
+  -H "Content-Type: application/json" \
+  -d '{"model": "default#my-team", "input": "Hello, world!"}'
+
+# Poll for completion
+curl https://your-wegent-instance/api/v1/responses/resp_123 \
+  -H "Authorization: Bearer wg_xxxx"
+```
 
 ---
 
