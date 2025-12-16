@@ -12,30 +12,99 @@
  *   - POST /v1/chat/completions - OpenAI-compatible chat completions endpoint
  *   - POST /v1/messages - Anthropic-compatible messages endpoint
  *   - GET /health - Health check endpoint
+ *   - GET /requests - Get recorded requests for verification
+ *   - DELETE /requests - Clear recorded requests
  */
 
-import http from 'http'
+import http from 'http';
 
-const PORT = process.env.MOCK_MODEL_PORT || 9999
-const HOST = '0.0.0.0'
+const PORT = process.env.MOCK_MODEL_PORT || 9999;
+const HOST = '0.0.0.0';
 
 // Mock response content
 const MOCK_RESPONSE_CONTENT =
-  'This is a mock response from the model server. I received your message and I am responding with this test content to verify the chat functionality is working correctly.'
+  'This is a mock response from the model server. I received your message and I am responding with this test content to verify the chat functionality is working correctly.';
+
+// Store received requests for verification
+interface RecordedRequest {
+  timestamp: number;
+  endpoint: string;
+  body: Record<string, unknown>;
+  hasImageContent: boolean;
+  hasTextContent: boolean;
+  extractedTextLength: number;
+  imageFormat: string | null;
+}
+
+const recordedRequests: RecordedRequest[] = [];
+
+/**
+ * Analyze request content to detect attachments
+ */
+function analyzeRequestContent(body: Record<string, unknown>): {
+  hasImageContent: boolean;
+  hasTextContent: boolean;
+  extractedTextLength: number;
+  imageFormat: string | null;
+} {
+  let hasImageContent = false;
+  let hasTextContent = false;
+  let extractedTextLength = 0;
+  let imageFormat: string | null = null;
+
+  const messages = body.messages as
+    | Array<{
+        role: string;
+        content: string | Array<{ type: string; text?: string; image_url?: { url: string } }>;
+      }>
+    | undefined;
+
+  if (messages) {
+    for (const message of messages) {
+      if (typeof message.content === 'string') {
+        hasTextContent = true;
+        extractedTextLength += message.content.length;
+      } else if (Array.isArray(message.content)) {
+        for (const part of message.content) {
+          if (part.type === 'text' && part.text) {
+            hasTextContent = true;
+            extractedTextLength += part.text.length;
+          } else if (part.type === 'image_url' && part.image_url?.url) {
+            hasImageContent = true;
+            // Detect image format from data URL or URL
+            const url = part.image_url.url;
+            if (url.startsWith('data:image/')) {
+              const match = url.match(/^data:image\/(\w+);/);
+              imageFormat = match ? match[1] : 'unknown';
+            } else if (url.includes('.png')) {
+              imageFormat = 'png';
+            } else if (url.includes('.jpg') || url.includes('.jpeg')) {
+              imageFormat = 'jpeg';
+            } else {
+              imageFormat = 'url';
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { hasImageContent, hasTextContent, extractedTextLength, imageFormat };
+}
 
 /**
  * Generate OpenAI-compatible SSE stream
  */
 function generateOpenAIStream(content: string): string[] {
-  const chunks: string[] = []
+  const chunks: string[] = [];
 
   // Split content into words for streaming
-  const words = content.split(' ')
-  let currentIndex = 0
+  const words = content.split(' ');
+  let currentIndex = 0;
 
   while (currentIndex < words.length) {
-    const chunkSize = Math.min(3, words.length - currentIndex)
-    const chunkContent = words.slice(currentIndex, currentIndex + chunkSize).join(' ') + ' '
+    const chunkSize = Math.min(3, words.length - currentIndex);
+    const chunkContent = words.slice(currentIndex, currentIndex + chunkSize).join(' ') + ' ';
 
     const chunk = {
       id: `chatcmpl-${Date.now()}`,
@@ -49,10 +118,10 @@ function generateOpenAIStream(content: string): string[] {
           finish_reason: null,
         },
       ],
-    }
+    };
 
-    chunks.push(`data: ${JSON.stringify(chunk)}\n\n`)
-    currentIndex += chunkSize
+    chunks.push(`data: ${JSON.stringify(chunk)}\n\n`);
+    currentIndex += chunkSize;
   }
 
   // Final chunk with finish_reason
@@ -68,18 +137,18 @@ function generateOpenAIStream(content: string): string[] {
         finish_reason: 'stop',
       },
     ],
-  }
-  chunks.push(`data: ${JSON.stringify(finalChunk)}\n\n`)
-  chunks.push('data: [DONE]\n\n')
+  };
+  chunks.push(`data: ${JSON.stringify(finalChunk)}\n\n`);
+  chunks.push('data: [DONE]\n\n');
 
-  return chunks
+  return chunks;
 }
 
 /**
  * Generate Anthropic-compatible SSE stream
  */
 function generateAnthropicStream(content: string): string[] {
-  const chunks: string[] = []
+  const chunks: string[] = [];
 
   // Message start
   chunks.push(
@@ -93,7 +162,7 @@ function generateAnthropicStream(content: string): string[] {
         model: 'mock-model',
       },
     })}\n\n`
-  )
+  );
 
   // Content block start
   chunks.push(
@@ -102,15 +171,15 @@ function generateAnthropicStream(content: string): string[] {
       index: 0,
       content_block: { type: 'text', text: '' },
     })}\n\n`
-  )
+  );
 
   // Split content into words for streaming
-  const words = content.split(' ')
-  let currentIndex = 0
+  const words = content.split(' ');
+  let currentIndex = 0;
 
   while (currentIndex < words.length) {
-    const chunkSize = Math.min(3, words.length - currentIndex)
-    const chunkContent = words.slice(currentIndex, currentIndex + chunkSize).join(' ') + ' '
+    const chunkSize = Math.min(3, words.length - currentIndex);
+    const chunkContent = words.slice(currentIndex, currentIndex + chunkSize).join(' ') + ' ';
 
     chunks.push(
       `data: ${JSON.stringify({
@@ -118,8 +187,8 @@ function generateAnthropicStream(content: string): string[] {
         index: 0,
         delta: { type: 'text_delta', text: chunkContent },
       })}\n\n`
-    )
-    currentIndex += chunkSize
+    );
+    currentIndex += chunkSize;
   }
 
   // Content block stop
@@ -128,16 +197,16 @@ function generateAnthropicStream(content: string): string[] {
       type: 'content_block_stop',
       index: 0,
     })}\n\n`
-  )
+  );
 
   // Message stop
   chunks.push(
     `data: ${JSON.stringify({
       type: 'message_stop',
     })}\n\n`
-  )
+  );
 
-  return chunks
+  return chunks;
 }
 
 /**
@@ -149,10 +218,10 @@ async function streamResponse(
   delayMs: number = 50
 ): Promise<void> {
   for (const chunk of chunks) {
-    res.write(chunk)
-    await new Promise(resolve => setTimeout(resolve, delayMs))
+    res.write(chunk);
+    await new Promise(resolve => setTimeout(resolve, delayMs));
   }
-  res.end()
+  res.end();
 }
 
 /**
@@ -160,19 +229,19 @@ async function streamResponse(
  */
 function parseBody(req: http.IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
-    let body = ''
+    let body = '';
     req.on('data', chunk => {
-      body += chunk.toString()
-    })
+      body += chunk.toString();
+    });
     req.on('end', () => {
       try {
-        resolve(body ? JSON.parse(body) : {})
+        resolve(body ? JSON.parse(body) : {});
       } catch (e) {
-        reject(e)
+        reject(e);
       }
-    })
-    req.on('error', reject)
-  })
+    });
+    req.on('error', reject);
+  });
 }
 
 /**
@@ -180,45 +249,79 @@ function parseBody(req: http.IncomingMessage): Promise<Record<string, unknown>> 
  */
 const server = http.createServer(async (req, res) => {
   // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key')
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-API-Key');
 
   // Handle preflight
   if (req.method === 'OPTIONS') {
-    res.writeHead(204)
-    res.end()
-    return
+    res.writeHead(204);
+    res.end();
+    return;
   }
 
-  const url = req.url || ''
+  const url = req.url || '';
 
   // Health check
   if (url === '/health' && req.method === 'GET') {
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ status: 'ok', server: 'mock-model-server' }))
-    return
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(
+      JSON.stringify({
+        status: 'ok',
+        server: 'mock-model-server',
+        requestCount: recordedRequests.length,
+      })
+    );
+    return;
+  }
+
+  // Get recorded requests for verification
+  if (url === '/requests' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ requests: recordedRequests }));
+    return;
+  }
+
+  // Clear recorded requests
+  if (url === '/requests' && req.method === 'DELETE') {
+    recordedRequests.length = 0;
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ message: 'Requests cleared' }));
+    return;
   }
 
   // OpenAI-compatible endpoint
   if (url === '/v1/chat/completions' && req.method === 'POST') {
     try {
-      const body = await parseBody(req)
-      const stream = (body.stream as boolean) ?? true
+      const body = await parseBody(req);
+      const stream = (body.stream as boolean) ?? true;
 
-      console.log(`[Mock Server] Received chat completions request, stream=${stream}`)
+      // Analyze and record the request
+      const analysis = analyzeRequestContent(body);
+      const record: RecordedRequest = {
+        timestamp: Date.now(),
+        endpoint: '/v1/chat/completions',
+        body: body,
+        ...analysis,
+      };
+      recordedRequests.push(record);
+
+      console.log(`[Mock Server] Received chat completions request, stream=${stream}`);
+      console.log(
+        `[Mock Server] Analysis: hasImage=${analysis.hasImageContent}, hasText=${analysis.hasTextContent}, textLen=${analysis.extractedTextLength}, imageFormat=${analysis.imageFormat}`
+      );
 
       if (stream) {
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
-        })
+        });
 
-        const chunks = generateOpenAIStream(MOCK_RESPONSE_CONTENT)
-        await streamResponse(res, chunks)
+        const chunks = generateOpenAIStream(MOCK_RESPONSE_CONTENT);
+        await streamResponse(res, chunks);
       } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
             id: `chatcmpl-${Date.now()}`,
@@ -234,35 +337,48 @@ const server = http.createServer(async (req, res) => {
             ],
             usage: { prompt_tokens: 10, completion_tokens: 50, total_tokens: 60 },
           })
-        )
+        );
       }
     } catch (error) {
-      console.error('[Mock Server] Error:', error)
-      res.writeHead(500, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Internal server error' }))
+      console.error('[Mock Server] Error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
     }
-    return
+    return;
   }
 
   // Anthropic-compatible endpoint
   if (url === '/v1/messages' && req.method === 'POST') {
     try {
-      const body = await parseBody(req)
-      const stream = (body.stream as boolean) ?? true
+      const body = await parseBody(req);
+      const stream = (body.stream as boolean) ?? true;
 
-      console.log(`[Mock Server] Received messages request, stream=${stream}`)
+      // Analyze and record the request
+      const analysis = analyzeRequestContent(body);
+      const record: RecordedRequest = {
+        timestamp: Date.now(),
+        endpoint: '/v1/messages',
+        body: body,
+        ...analysis,
+      };
+      recordedRequests.push(record);
+
+      console.log(`[Mock Server] Received messages request, stream=${stream}`);
+      console.log(
+        `[Mock Server] Analysis: hasImage=${analysis.hasImageContent}, hasText=${analysis.hasTextContent}, textLen=${analysis.extractedTextLength}, imageFormat=${analysis.imageFormat}`
+      );
 
       if (stream) {
         res.writeHead(200, {
           'Content-Type': 'text/event-stream',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
-        })
+        });
 
-        const chunks = generateAnthropicStream(MOCK_RESPONSE_CONTENT)
-        await streamResponse(res, chunks)
+        const chunks = generateAnthropicStream(MOCK_RESPONSE_CONTENT);
+        await streamResponse(res, chunks);
       } else {
-        res.writeHead(200, { 'Content-Type': 'application/json' })
+        res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(
           JSON.stringify({
             id: `msg_${Date.now()}`,
@@ -273,42 +389,44 @@ const server = http.createServer(async (req, res) => {
             stop_reason: 'end_turn',
             usage: { input_tokens: 10, output_tokens: 50 },
           })
-        )
+        );
       }
     } catch (error) {
-      console.error('[Mock Server] Error:', error)
-      res.writeHead(500, { 'Content-Type': 'application/json' })
-      res.end(JSON.stringify({ error: 'Internal server error' }))
+      console.error('[Mock Server] Error:', error);
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Internal server error' }));
     }
-    return
+    return;
   }
 
   // 404 for other routes
-  res.writeHead(404, { 'Content-Type': 'application/json' })
-  res.end(JSON.stringify({ error: 'Not found' }))
-})
+  res.writeHead(404, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify({ error: 'Not found' }));
+});
 
 server.listen(Number(PORT), HOST, () => {
-  console.log(`[Mock Model Server] Running on http://${HOST}:${PORT}`)
-  console.log('[Mock Model Server] Endpoints:')
-  console.log(`  - POST /v1/chat/completions (OpenAI-compatible)`)
-  console.log(`  - POST /v1/messages (Anthropic-compatible)`)
-  console.log(`  - GET /health`)
-})
+  console.log(`[Mock Model Server] Running on http://${HOST}:${PORT}`);
+  console.log('[Mock Model Server] Endpoints:');
+  console.log(`  - POST /v1/chat/completions (OpenAI-compatible)`);
+  console.log(`  - POST /v1/messages (Anthropic-compatible)`);
+  console.log(`  - GET /health`);
+  console.log(`  - GET /requests (get recorded requests for verification)`);
+  console.log(`  - DELETE /requests (clear recorded requests)`);
+});
 
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('[Mock Model Server] Shutting down...')
+  console.log('[Mock Model Server] Shutting down...');
   server.close(() => {
-    process.exit(0)
-  })
-})
+    process.exit(0);
+  });
+});
 
 process.on('SIGINT', () => {
-  console.log('[Mock Model Server] Shutting down...')
+  console.log('[Mock Model Server] Shutting down...');
   server.close(() => {
-    process.exit(0)
-  })
-})
+    process.exit(0);
+  });
+});
 
-export { server }
+export { server };

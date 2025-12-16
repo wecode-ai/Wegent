@@ -82,6 +82,26 @@ jobs:
           source .venv/bin/activate
           alembic upgrade head
 
+      - name: Start mock model server
+        working-directory: ./frontend
+        run: |
+          nohup npx ts-node e2e/mock-server/model-mock-server.ts > mock-model.log 2>&1 &
+          echo $! > mock-model.pid
+          sleep 3
+
+      - name: Verify mock model server is running
+        run: |
+          for i in {1..5}; do
+            if curl -f http://localhost:9999/health > /dev/null 2>&1; then
+              echo "Mock model server is responding!"
+              exit 0
+            fi
+            echo "Attempt $i failed, waiting 2 seconds..."
+            sleep 2
+          done
+          echo "Mock model server health check failed"
+          exit 1
+
       - name: Start backend server
         working-directory: ./backend
         env:
