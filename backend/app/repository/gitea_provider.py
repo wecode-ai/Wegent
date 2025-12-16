@@ -145,8 +145,7 @@ class GiteaProvider(RepositoryProvider):
                             id=repo["id"],
                             name=repo["name"],
                             full_name=repo.get("full_name", repo.get("name", "")),
-                            clone_url=repo.get("clone_url")
-                            or repo.get("html_url", ""),
+                            clone_url=repo.get("clone_url") or repo.get("html_url", ""),
                             git_domain=git_domain,
                             type=self.type,
                             private=repo.get("private", False),
@@ -171,8 +170,7 @@ class GiteaProvider(RepositoryProvider):
                         "id": repo.get("id"),
                         "name": repo.get("name", ""),
                         "full_name": repo.get("full_name", repo.get("name", "")),
-                        "clone_url": repo.get("clone_url")
-                        or repo.get("html_url", ""),
+                        "clone_url": repo.get("clone_url") or repo.get("html_url", ""),
                         "git_domain": git_domain,
                         "type": self.type,
                         "private": repo.get("private", False),
@@ -194,18 +192,20 @@ class GiteaProvider(RepositoryProvider):
                         self._fetch_all_repositories_async(user, git_token, git_domain)
                     )
 
-                all_repos.extend([
-                    Repository(
-                        id=repo["id"],
-                        name=repo["name"],
-                        full_name=repo.get("full_name", ""),
-                        clone_url=repo.get("clone_url", ""),
-                        git_domain=git_domain,
-                        type=self.type,
-                        private=repo.get("private", False),
-                    ).model_dump()
-                    for repo in mapped_repos
-                ])
+                all_repos.extend(
+                    [
+                        Repository(
+                            id=repo["id"],
+                            name=repo["name"],
+                            full_name=repo.get("full_name", ""),
+                            clone_url=repo.get("clone_url", ""),
+                            git_domain=git_domain,
+                            type=self.type,
+                            private=repo.get("private", False),
+                        ).model_dump()
+                        for repo in mapped_repos
+                    ]
+                )
             except requests.exceptions.RequestException:
                 continue
 
@@ -517,8 +517,7 @@ class GiteaProvider(RepositoryProvider):
                         "id": repo["id"],
                         "name": repo["name"],
                         "full_name": repo.get("full_name", repo.get("name", "")),
-                        "clone_url": repo.get("clone_url")
-                        or repo.get("html_url", ""),
+                        "clone_url": repo.get("clone_url") or repo.get("html_url", ""),
                         "git_domain": git_domain,
                         "type": self.type,
                         "private": repo.get("private", False),
@@ -605,8 +604,7 @@ class GiteaProvider(RepositoryProvider):
                         "id": repo["id"],
                         "name": repo["name"],
                         "full_name": repo.get("full_name", repo.get("name", "")),
-                        "clone_url": repo.get("clone_url")
-                        or repo.get("html_url", ""),
+                        "clone_url": repo.get("clone_url") or repo.get("html_url", ""),
                         "git_domain": git_domain,
                         "type": self.type,
                         "private": repo.get("private", False),
@@ -725,7 +723,9 @@ class GiteaProvider(RepositoryProvider):
             total_commits = compare_data.get("total_commits", len(commits))
 
             return {
-                "status": compare_data.get("status", "ahead" if total_commits else "identical"),
+                "status": compare_data.get(
+                    "status", "ahead" if total_commits else "identical"
+                ),
                 "ahead_by": compare_data.get("ahead_by", total_commits),
                 "behind_by": compare_data.get("behind_by", 0),
                 "total_commits": total_commits,
