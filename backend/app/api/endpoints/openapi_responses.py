@@ -11,7 +11,7 @@ import logging
 from datetime import datetime
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
@@ -28,7 +28,7 @@ from app.schemas.openapi_response import (
     ResponseError,
     ResponseObject,
 )
-from app.schemas.task import TaskCreate, TaskStatus
+from app.schemas.task import TaskCreate
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.adapters.team_kinds import team_kinds_service
 
@@ -370,6 +370,7 @@ async def get_response(
 @router.post("/{response_id}/cancel", response_model=ResponseObject)
 async def cancel_response(
     response_id: str,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user_flexible),
 ):
@@ -380,7 +381,7 @@ async def cancel_response(
         response_id: Response ID in format "resp_{task_id}"
 
     Returns:
-        ResponseObject with status 'cancelled'
+        ResponseObject with status 'cancelled' or current status
     """
     # Extract task_id from response_id
     if not response_id.startswith("resp_"):
@@ -397,15 +398,13 @@ async def cancel_response(
             detail=f"Invalid response_id format: '{response_id}'",
         )
 
-    # Update task status to CANCELLED
-    from app.schemas.task import TaskUpdate
-
+    # Cancel task using service (includes executor_manager call)
     try:
-        task_dict = task_kinds_service.update_task(
-            db,
+        await task_kinds_service.cancel_task(
+            db=db,
             task_id=task_id,
-            obj_in=TaskUpdate(status=TaskStatus.CANCELLED),
             user_id=current_user.id,
+            background_task_runner=background_tasks.add_task,
         )
     except HTTPException as e:
         if e.status_code == 404:
@@ -414,6 +413,21 @@ async def cancel_response(
                 detail=f"Response '{response_id}' not found",
             )
         raise
+
+    # Get updated task data for response
+    try:
+        task_dict = task_kinds_service.get_task_by_id(
+            db, task_id=task_id, user_id=current_user.id
+        )
+    except HTTPException:
+        # If task not found after cancel, return minimal response
+        return ResponseObject(
+            id=response_id,
+            created_at=int(datetime.now().timestamp()),
+            status="cancelled",
+            model="unknown",
+            output=[],
+        )
 
     # Reconstruct model string
     task_kind = (
