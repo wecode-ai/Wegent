@@ -16,13 +16,6 @@ from app.services.chat.providers.base import (
 
 logger = logging.getLogger(__name__)
 
-# Domains known to support vision
-_VISION_DOMAINS = (
-    "api.openai.com",
-    "api.anthropic.com",
-    "generativelanguage.googleapis.com",
-)
-
 
 class OpenAIProvider(LLMProvider):
     """OpenAI-compatible LLM provider with streaming and tool calling."""
@@ -31,14 +24,9 @@ class OpenAIProvider(LLMProvider):
     def provider_name(self) -> str:
         return "openai"
 
-    def supports_vision(self) -> bool:
-        """Check if the configured endpoint supports vision."""
-        return any(d in self.config.base_url.lower() for d in _VISION_DOMAINS)
-
     def format_messages(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Format messages for OpenAI API."""
         processed = []
-        supports_vision = self.supports_vision()
 
         for msg in messages:
             role = msg.get("role", "user")
@@ -58,30 +46,11 @@ class OpenAIProvider(LLMProvider):
                 )
             # Handle multi-part content (vision)
             elif isinstance(content, list):
-                if supports_vision:
-                    processed.append(msg)
-                else:
-                    processed.append(
-                        {
-                            "role": role,
-                            "content": self._flatten_vision_content(content),
-                        }
-                    )
+                processed.append(msg)
             else:
                 processed.append({"role": role, "content": content})
 
         return processed
-
-    def _flatten_vision_content(self, content: list[dict]) -> str:
-        """Convert vision content to text for non-vision endpoints."""
-        parts, img_count = [], 0
-        for block in content:
-            if block.get("type") == "text":
-                parts.append(block.get("text", ""))
-            elif block.get("type") == "image_url":
-                img_count += 1
-                parts.append(f"[用户上传了图片 {img_count},但当前模型不支持图片识别]")
-        return "\n".join(parts)
 
     def format_tools(self, tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Format tools for OpenAI API (pass through)."""

@@ -158,10 +158,6 @@ class LLMProvider(ABC):
         """Format tools for this provider's API."""
         pass
 
-    def supports_vision(self) -> bool:
-        """Check if this provider supports vision inputs."""
-        return True
-
     def _build_headers(self) -> dict[str, str]:
         """Build HTTP headers for API requests."""
         headers = {"Content-Type": "application/json"}
