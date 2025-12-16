@@ -685,6 +685,7 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 | **Task** | Execution unit | 任务 | `title`, `prompt`, `teamRef`, `workspaceRef` |
 | **Workspace** | Git repository | 工作空间 | `repository{gitUrl, gitRepo, branchName, gitDomain}` |
 | **Skill** | Claude Code skill | 技能 | `description`, `version`, `author`, `tags` |
+| **Retriever** | RAG storage config | 检索引擎 | `storageConfig`, `retrievalMethods`, `description` |
 
 ### Shell Types
 
@@ -708,11 +709,143 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 - `app/services/adapters/` - CRD service implementations
 - `app/services/chat/` - Streaming chat with model resolver
 - `app/services/attachment/` - File attachment storage with pluggable backends
+- `app/services/rag/` - RAG (Retrieval-Augmented Generation) services
 - `app/repository/` - Git providers (GitHub, GitLab, Gitee, Gerrit)
 
 **Common tasks:**
 - Add endpoint: Create in `app/api/`, schema in `app/schemas/`, logic in `app/services/`
 - Add model: Create in `app/models/`, run `alembic revision --autogenerate -m "description"`
+
+#### RAG Services
+
+**Location:** `app/services/rag/`
+
+**Architecture:** Modular design with pluggable storage backends configured via Retriever CRD
+
+**Components:**
+- `storage/factory.py` - Storage backend factory (creates backends from Retriever CRD)
+- `storage/elasticsearch_backend.py` - Elasticsearch storage implementation
+- `storage/base.py` - Base storage backend interface
+- `embedding/factory.py` - Embedding model factory (OpenAI + custom API support)
+- `document_service.py` - Document indexing, deletion, and management
+- `retrieval_service.py` - Vector search and hybrid retrieval (vector + BM25)
+- `index.py` - Document indexing with semantic chunking
+- `retrieval.py` - Document retrieval with metadata filtering
+
+**Features:**
+- **Retriever CRD Configuration**: Storage backends configured via Retriever Kind (no global config)
+- **Document indexing**: Support for MD, PDF, TXT, DOCX, and code files
+- **Semantic chunking**: Uses LlamaIndex `SemanticSplitterNodeParser`
+- **Vector storage**: Elasticsearch (Qdrant support planned)
+- **Embedding providers**: OpenAI and custom API support with retry mechanism
+- **Index strategies**: Fixed, rolling (hash-based sharding), or per-dataset
+- **Rollback protection**: Automatic cleanup on indexing failures
+- **Metadata filtering**: Knowledge base and custom metadata filtering
+- **Hybrid search**: Combines vector similarity and BM25 keyword matching with configurable weights
+
+**Retrieval Modes:**
+- **Vector mode** (`retrieval_mode="vector"`): Pure vector similarity search (default)
+- **Hybrid mode** (`retrieval_mode="hybrid"`): Combines vector search (default 0.7) + BM25 keyword search (default 0.3)
+
+**Retriever CRD Example:**
+```yaml
+apiVersion: agent.wecode.io/v1
+kind: Retriever
+metadata:
+  name: my-es-retriever
+  namespace: default
+  displayName: "My Elasticsearch Retriever"
+spec:
+  storageConfig:
+    type: elasticsearch
+    url: "http://elasticsearch:9200"
+    username: "elastic"  # Optional
+    password: "password"  # Optional
+    apiKey: "api-key"  # Optional (alternative to username/password)
+    indexStrategy:
+      mode: per_user  # 'fixed', 'rolling', 'per_dataset', or 'per_user' (recommended for ES)
+      prefix: "wegent"  # For per_dataset/per_user mode (default: wegent)
+      # fixedName: "rag_documents"  # For fixed mode
+      # rollingStep: 5000  # For rolling mode
+  retrievalMethods:
+    vector:
+      enabled: true
+      defaultWeight: 0.7
+    keyword:
+      enabled: true
+      defaultWeight: 0.3
+    hybrid:
+      enabled: true
+  description: "Elasticsearch retriever for RAG"
+```
+
+**API Usage:**
+```python
+# 1. Create Retriever (via /api/retrievers)
+POST /api/retrievers
+JSON: {Retriever CRD}
+
+# 2. Upload and index document
+POST /api/rag/documents/upload
+Form data:
+  - knowledge_id: "kb_001"
+  - retriever_name: "my-es-retriever"
+  - retriever_namespace: "default"
+  - file: <file>
+  - embedding_config: JSON string
+
+# 3. Retrieve relevant chunks (vector search)
+POST /api/rag/retrieve
+JSON: {
+  query: "search query",
+  knowledge_id: "kb_001",
+  retriever_ref: {
+    name: "my-es-retriever",
+    namespace: "default"
+  },
+  embedding_config: {...},
+  top_k: 5,
+  score_threshold: 0.7,
+  retrieval_mode: "vector"  # default
+}
+
+# 4. Retrieve with hybrid search (vector + BM25)
+POST /api/rag/retrieve
+JSON: {
+  query: "search query",
+  knowledge_id: "kb_001",
+  retriever_ref: {
+    name: "my-es-retriever",
+    namespace: "default"
+  },
+  embedding_config: {...},
+  top_k: 5,
+  score_threshold: 0.7,
+  retrieval_mode: "hybrid",
+  hybrid_weights: {
+    vector_weight: 0.7,    # 0.0-1.0
+    keyword_weight: 0.3    # 0.0-1.0, must sum to 1.0
+  }
+}
+
+# 5. Document management
+DELETE /api/rag/documents/{document_id}?knowledge_id=kb_001&retriever_name=my-es-retriever
+GET /api/rag/documents/{document_id}?knowledge_id=kb_001&retriever_name=my-es-retriever
+GET /api/rag/documents?knowledge_id=kb_001&retriever_name=my-es-retriever&page=1&page_size=20
+
+# 6. Test retriever connection
+POST /api/rag/test-connection?retriever_name=my-es-retriever&retriever_namespace=default
+```
+
+**Hybrid Search Weight Recommendations:**
+- **Conceptual queries** (0.8/0.2): Understanding questions, concept explanations
+- **Balanced queries** (0.7/0.3): General purpose (default)
+- **Precise matching** (0.3/0.7): Code search, API names, specific terms
+
+**Migration from Global Config:**
+- Old: RAG used global `ELASTICSEARCH_URL` and `DATASET_INDEX_STEP` environment variables
+- New: Each Retriever CRD defines its own storage configuration
+- Benefit: Multiple storage backends, per-user/group configurations, flexible index strategies
 
 **Key environment variables:**
 - `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ALGORITHM`
@@ -939,6 +1072,8 @@ spec:
 | `/api/git` | Repository, branches, diff |
 | `/api/executors` | Task dispatch, status updates |
 | `/api/dify` | Dify app info, parameters |
+| `/api/rag` | RAG document upload, retrieval, and management (requires retriever_ref) |
+| `/api/retrievers` | Retriever CRUD (storage backend configuration for RAG) |
 | `/api/v1/namespaces/{ns}/{kinds}` | Kubernetes-style Kind API |
 | `/api/v1/kinds/skills` | Skill upload/management |
 | `/api/v1/responses` | OpenAI-compatible Responses API |
@@ -963,6 +1098,30 @@ spec:
 | `/public-models/{model_id}` | PUT | Update public model |
 | `/public-models/{model_id}` | DELETE | Delete public model |
 | `/stats` | GET | Get system statistics |
+
+### RAG API Endpoints (`/api/rag`)
+
+**Note:** All RAG endpoints now require `retriever_ref` (retriever_name + retriever_namespace) to specify which storage backend to use.
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/documents/upload` | POST | Upload and index document (requires retriever_name, retriever_namespace) |
+| `/retrieve` | POST | Retrieve relevant document chunks (requires retriever_ref in body) |
+| `/documents/{document_id}` | DELETE | Delete a document (requires retriever_name, retriever_namespace) |
+| `/documents/{document_id}` | GET | Get document details with all chunks (requires retriever_name, retriever_namespace) |
+| `/documents` | GET | List documents in a knowledge base (requires retriever_name, retriever_namespace) |
+| `/test-connection` | POST | Test retriever storage connection (requires retriever_name, retriever_namespace) |
+
+### Retriever API Endpoints (`/api/retrievers`)
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/` | GET | List retrievers (supports scope: personal/group/all) |
+| `/{retriever_name}` | GET | Get a specific retriever by name |
+| `/` | POST | Create a new Retriever |
+| `/{retriever_name}` | PUT | Update an existing Retriever |
+| `/{retriever_name}` | DELETE | Delete a Retriever (soft delete) |
+| `/test-connection` | POST | Test retriever storage connection (for validation before creation) |
 
 ### Group API Endpoints (`/api/groups`)
 
