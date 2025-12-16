@@ -382,10 +382,6 @@ class UserService(BaseService[User, UserUpdate, UserUpdate]):
             if is_token_encrypted(plain_token):
                 git_item["git_token"] = decrypt_git_token(plain_token)
 
-            # Generate unique ID for legacy data that doesn't have one
-            if not git_item.get("id"):
-                git_item["id"] = str(uuid.uuid4())
-
             decrypt_git_info.append(git_item)
         user.git_info = decrypt_git_info
         return user
