@@ -50,7 +50,6 @@ export function saveLastTeam(teamId: number): void {
       console.warn('[userPreferences] Invalid team ID, not saving:', teamId);
       return;
     }
-    console.log('[userPreferences] Saving team to localStorage:', teamId);
     localStorage.setItem(STORAGE_KEYS.LAST_TEAM_ID, String(teamId));
   } catch (error) {
     console.warn('Failed to save last team to localStorage:', error);
@@ -90,7 +89,6 @@ export function saveLastTeamByMode(teamId: number, mode: 'chat' | 'code'): void 
       return;
     }
     const key = mode === 'chat' ? STORAGE_KEYS.LAST_TEAM_ID_CHAT : STORAGE_KEYS.LAST_TEAM_ID_CODE;
-    console.log(`[userPreferences] Saving team to localStorage for ${mode} mode:`, teamId);
     localStorage.setItem(key, String(teamId));
     // Also save to the generic key for backward compatibility
     localStorage.setItem(STORAGE_KEYS.LAST_TEAM_ID, String(teamId));

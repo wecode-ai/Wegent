@@ -354,9 +354,19 @@ export default function MessagesArea({
     }
   }, [selectedTaskDetail, toast, t, tCommon]);
 
+  // Determine the effective team to use for type checking
+  // Priority logic:
+  // - When viewing historical tasks (selectedTaskDetail?.id exists), use selectedTaskDetail.team
+  //   because it contains the correct team info for that specific task
+  // - When creating new tasks (no selectedTaskDetail), use selectedTeam from ChatArea
+  // This ensures correct team type detection when switching between different task types
+  const effectiveTeam = selectedTaskDetail?.id
+    ? selectedTaskDetail?.team || selectedTeam || null
+    : selectedTeam || selectedTaskDetail?.team || null;
+
   // Check if team uses Chat Shell (streaming mode, no polling needed)
   // Case-insensitive comparison since backend may return 'chat' or 'Chat'
-  const isChatShell = selectedTeam?.agent_type?.toLowerCase() === 'chat';
+  const isChatShell = effectiveTeam?.agent_type?.toLowerCase() === 'chat';
 
   useEffect(() => {
     let intervalId: NodeJS.Timeout | null = null;
@@ -751,7 +761,11 @@ export default function MessagesArea({
   }, [onShareButtonRender, shareButton]);
 
   return (
-    <div className="flex-1 w-full max-w-3xl mx-auto flex flex-col" data-chat-container="true">
+    <div
+      className="flex-1 w-full max-w-3xl mx-auto flex flex-col"
+      data-chat-container="true"
+      translate="no"
+    >
       {/* Messages Area - always render container to prevent layout shift */}
       {/* Show messages when: 1) has display messages, 2) has pending message, 3) is streaming, 4) has selected task (even if loading) */}
       {(displayMessages.length > 0 ||
