@@ -15,6 +15,7 @@ from executor_manager.wecode.executors.k8s.binary_extractor import (
     get_init_container_config,
     should_use_init_container
 )
+from shared.telemetry.config import get_otel_config
 
 def to_nice_yaml(value, indent=2):
     """
@@ -94,6 +95,9 @@ def build_pod_configuration(
             volumes_info["volume_mounts"] = []
         volumes_info["volume_mounts"].append(init_container_volume_mount)
 
+    # Get OpenTelemetry configuration
+    otel_config = get_otel_config()
+
     # Prepare template parameters
     template_params = {
         'username': username,
@@ -111,7 +115,18 @@ def build_pod_configuration(
         'init_container': init_container,
         'container_entrypoint': container_entrypoint,
         'use_base_image': use_init_container,
-        'task_api_domain': os.getenv("TASK_API_DOMAIN", "http://wegent-backend-web.wb-plat-ide:8080")
+        'task_api_domain': os.getenv("TASK_API_DOMAIN", "http://wegent-backend-web.wb-plat-ide:8080"),
+        # OpenTelemetry configuration
+        'otel_enabled': otel_config.enabled,
+        'otel_service_name': 'wegent-executor',
+        'otel_otlp_endpoint': otel_config.otlp_endpoint,
+        'otel_sampler_ratio': otel_config.sampler_ratio,
+        'otel_metrics_enabled': otel_config.metrics_enabled,
+        'otel_capture_request_headers': otel_config.capture_request_headers,
+        'otel_capture_request_body': otel_config.capture_request_body,
+        'otel_capture_response_headers': otel_config.capture_response_headers,
+        'otel_capture_response_body': otel_config.capture_response_body,
+        'otel_max_body_size': otel_config.max_body_size,
     }
 
     # Render the template

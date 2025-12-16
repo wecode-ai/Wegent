@@ -20,7 +20,7 @@ class TaskShareInfo(BaseModel):
     git_repo_id: Optional[int] = None  # Repository ID
     git_repo: Optional[str] = None  # Repository full name (e.g., "owner/repo")
     git_domain: Optional[str] = None  # Git domain (e.g., "github.com")
-    git_type: Optional[str] = None  # Git type: "github", "gitlab", "gitee"
+    git_type: Optional[str] = None  # Git type: "github", "gitlab", "gitee", "gitea"
     branch_name: Optional[str] = None  # Branch name
 
 

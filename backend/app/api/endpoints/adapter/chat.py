@@ -236,6 +236,10 @@ async def _create_task_and_subtasks(
 
         # Create task
         title = message[:50] + "..." if len(message) > 50 else message
+
+        # Auto-detect task type based on git_url presence
+        task_type = "code" if request.git_url else "chat"
+
         task_json = {
             "kind": "Task",
             "spec": {
@@ -259,7 +263,7 @@ async def _create_task_and_subtasks(
                 "namespace": "default",
                 "labels": {
                     "type": "online",
-                    "taskType": "chat",
+                    "taskType": task_type,
                     "autoDeleteExecutor": "false",
                     "source": "chat_shell",
                     **({"modelId": request.model_id} if request.model_id else {}),
@@ -485,14 +489,14 @@ async def stream_chat(
     tools = None
     if request.enable_web_search:
         from app.core.config import settings
-        from app.services.chat.tools import get_web_search_mcp
+        from app.services.chat.tools import get_web_search_tool
 
         # Check if web search is enabled globally
         if settings.WEB_SEARCH_ENABLED:
-            # Pass the FastMCP tool object directly
-            web_search_mcp = get_web_search_mcp(engine_name=request.search_engine)
-            if web_search_mcp:
-                tools = [web_search_mcp]
+            # Get web search tool
+            web_search_tool = get_web_search_tool(engine_name=request.search_engine)
+            if web_search_tool:
+                tools = [web_search_tool]
         else:
             logger.warning("Web search requested but disabled in configuration")
 

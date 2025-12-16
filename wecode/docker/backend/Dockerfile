@@ -23,7 +23,16 @@ ENV UV_EXTRA_INDEX_URL=""
 
 # Copy pyproject.toml and install dependencies
 COPY backend/pyproject.toml .
-ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"agno"}}'
+ENV EXECUTOR_ENV='{"DEFAULT_HEADERS":{"wecode-source":"agent","wecode-user":"${task_data.user.name}","wecode-action":"wegent","wecode-executor":"chat"}}'
+
+# OpenTelemetry configuration
+ENV OTEL_ENABLED=true
+ENV OTEL_MAX_BODY_SIZE=1048576
+ENV OTEL_CAPTURE_REQUEST_HEADERS=true
+ENV OTEL_CAPTURE_REQUEST_BODY=true
+ENV OTEL_TRACES_SAMPLER_ARG=1.0
+ENV OTEL_EXPORTER_OTLP_ENDPOINT=http://wegent-otel-web.wb-plat-ide.svc.cluster.local:4317
+
 RUN uv pip install --system --no-cache -r pyproject.toml
 
 # Copy application code

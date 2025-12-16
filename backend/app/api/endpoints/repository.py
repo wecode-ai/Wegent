@@ -70,10 +70,12 @@ async def get_repositories(
 @router.get("/repositories/branches", response_model=List[Branch])
 async def get_branches(
     git_repo: str = Query(..., description="owner/repository_name"),
-    type: str = Query(..., description="Repository provider type (github/gitlab)"),
+    type: str = Query(
+        ..., description="Repository provider type (github/gitlab/gitee/gitea)"
+    ),
     git_domain: str = Query(
         ...,
-        description="Repository git domain, required (e.g., github.com, gitlab.com)",
+        description="Repository git domain, required (e.g., github.com, gitlab.com, gitea.example.com)",
     ),
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),
@@ -89,10 +91,12 @@ async def get_branch_diff(
     git_repo: str = Query(..., description="owner/repository_name"),
     source_branch: str = Query(..., description="Source branch name"),
     target_branch: str = Query(..., description="Target branch name"),
-    type: str = Query(..., description="Repository provider type (github/gitlab)"),
+    type: str = Query(
+        ..., description="Repository provider type (github/gitlab/gitee/gitea)"
+    ),
     git_domain: str = Query(
         ...,
-        description="Repository git domain, required (e.g., github.com, gitlab.com)",
+        description="Repository git domain, required (e.g., github.com, gitlab.com, gitea.example.com)",
     ),
     current_user: User = Depends(security.get_current_user),
     db: AsyncSession = Depends(get_db),

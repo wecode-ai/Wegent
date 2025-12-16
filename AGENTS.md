@@ -732,6 +732,11 @@ Task (Team + Workspace) → Subtasks (messages/steps)
 - `WEB_SEARCH_*` - Web search configuration (see `backend/app/services/search/README.md`)
   - `WEB_SEARCH_ENABLED` - Enable/disable web search feature (default: false)
   - `WEB_SEARCH_ENGINES` - JSON string containing adapter configuration
+- `CHAT_MCP_*` - MCP (Model Context Protocol) configuration for Chat Shell (see `backend/app/services/chat/tools/README.md`)
+  - `CHAT_MCP_ENABLED` - Enable/disable MCP tools in Chat Shell mode (default: false)
+  - `CHAT_MCP_SERVERS` - JSON configuration for MCP servers (similar to Claude Desktop format)
+    - Supported server types: `stdio`, `sse`, `streamable-http`
+    - Example: `{"mcpServers":{"image-gen":{"type":"sse","url":"http://localhost:8080/sse"}}}`
 
 #### Database Migrations (Alembic)
 
