@@ -18,10 +18,6 @@ Architecture (Refactored):
 - model_resolver.py: Model configuration resolution
 """
 
-# Legacy imports (for backward compatibility)
-from app.services.chat.model_resolver import get_model_config_for_bot
-from app.services.chat.session_manager import session_manager
-
 # New modular imports
 from app.services.chat.chat_service import chat_service
 from app.services.chat.db_handler import db_handler
@@ -31,8 +27,9 @@ from app.services.chat.message_builder import (
     message_builder,
     normalize_user_content,
 )
-from app.services.chat.stream_manager import stream_manager
-from app.services.chat.tool_handler import ToolCallAccumulator, ToolHandler
+
+# Legacy imports (for backward compatibility)
+from app.services.chat.model_resolver import get_model_config_for_bot
 
 # Provider imports
 from app.services.chat.providers import (
@@ -44,6 +41,9 @@ from app.services.chat.providers import (
     StreamChunk,
     get_provider,
 )
+from app.services.chat.session_manager import session_manager
+from app.services.chat.stream_manager import stream_manager
+from app.services.chat.tool_handler import ToolCallAccumulator, ToolHandler
 
 __all__ = [
     # Core services
