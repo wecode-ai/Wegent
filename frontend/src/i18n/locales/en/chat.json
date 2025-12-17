@@ -253,7 +253,7 @@
     "addMembers": {
       "title": "Add Group Members",
       "description": "Search and add users to \"{{taskTitle}}\"",
-      "searchPlaceholder": "Search by username or email...",
+      "searchPlaceholder": "Search by username...",
       "searching": "Searching...",
       "noResults": "No users found",
       "addAsUnregistered": "Add \"{{name}}\" (Unregistered User)",

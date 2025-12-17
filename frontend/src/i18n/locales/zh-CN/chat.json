@@ -252,7 +252,7 @@
     "addMembers": {
       "title": "添加群聊成员",
       "description": "搜索并添加用户到「{{taskTitle}}」",
-      "searchPlaceholder": "搜索用户名或邮箱...",
+      "searchPlaceholder": "搜索用户名...",
       "searching": "搜索中...",
       "noResults": "未找到用户",
       "addAsUnregistered": "添加「{{name}}」（未注册用户）",
