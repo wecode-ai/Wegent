@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+# Public tool configurations
+# These tools are available to all users as system-provided tools (user_id=0)
+---
+apiVersion: agent.wecode.io/v1
+kind: Tool
+metadata:
+  name: web-search
+  namespace: default
+  displayName: Web Search
+  labels:
+    type: builtin
+spec:
+  type: builtin
+  description: Search the web for real-time information. Returns search results with titles, URLs, and snippets.
+  builtinName: web_search
+  parameters:
+    type: object
+    properties:
+      query:
+        type: string
+        description: The search query string
+      limit:
+        type: integer
+        description: Maximum number of results (default 5)
+        default: 5
+    required:
+      - query
+status:
+  state: Available

@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundException
 from app.models.kind import Kind
 from app.models.subtask import Subtask
-from app.schemas.kind import Bot, Model, Task, Team
+from app.schemas.kind import Bot, Model, Task, Team, Tool
 from app.services.adapters.task_kinds import task_kinds_service
 from app.services.kind_base import KindBaseService
 
@@ -578,3 +578,48 @@ class TaskKindService(KindBaseService):
         self, db: Session, user_id: int, db_resource: Kind
     ) -> bool:
         return False
+
+
+class ToolKindService(KindBaseService):
+    """Service for Tool resources"""
+
+    def __init__(self):
+        super().__init__("Tool")
+
+    def _validate_references(
+        self, db: Session, user_id: int, resource: Dict[str, Any]
+    ) -> None:
+        """Validate Tool configuration"""
+        tool_crd = Tool.model_validate(resource)
+
+        # Validate tool type
+        valid_types = ["builtin", "mcp"]
+        if tool_crd.spec.type not in valid_types:
+            raise ValueError(
+                f"Invalid Tool type '{tool_crd.spec.type}'. Must be one of: {valid_types}"
+            )
+
+        # Validate builtin configuration
+        if tool_crd.spec.type == "builtin":
+            if not tool_crd.spec.builtinName:
+                raise ValueError("builtinName is required for builtin type Tools")
+
+        # Validate mcp configuration
+        if tool_crd.spec.type == "mcp":
+            if not tool_crd.spec.mcpServer:
+                raise ValueError("mcpServer configuration is required for mcp type Tools")
+            mcp_config = tool_crd.spec.mcpServer
+            valid_mcp_types = ["stdio", "sse", "streamable-http"]
+            if mcp_config.type not in valid_mcp_types:
+                raise ValueError(
+                    f"Invalid MCP server type '{mcp_config.type}'. Must be one of: {valid_mcp_types}"
+                )
+            # Validate required fields based on MCP type
+            if mcp_config.type == "stdio":
+                if not mcp_config.command:
+                    raise ValueError("command is required for stdio type MCP servers")
+            else:  # sse or streamable-http
+                if not mcp_config.url:
+                    raise ValueError(
+                        f"url is required for {mcp_config.type} type MCP servers"
+                    )

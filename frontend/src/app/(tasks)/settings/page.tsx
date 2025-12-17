@@ -15,6 +15,7 @@ import NotificationSettings from '@/features/settings/components/NotificationSet
 import { GroupManager } from '@/features/settings/components/groups/GroupManager';
 import { ModelListWithScope } from '@/features/settings/components/ModelListWithScope';
 import { ShellListWithScope } from '@/features/settings/components/ShellListWithScope';
+import { ToolListWithScope } from '@/features/settings/components/ToolListWithScope';
 import { TeamListWithScope } from '@/features/settings/components/TeamListWithScope';
 import ApiKeyList from '@/features/settings/components/ApiKeyList';
 import { useTranslation } from '@/hooks/useTranslation';
@@ -120,6 +121,8 @@ function SettingsContent() {
         return <ModelListWithScope scope="personal" />;
       case 'personal-shells':
         return <ShellListWithScope scope="personal" />;
+      case 'personal-tools':
+        return <ToolListWithScope scope="personal" />;
       case 'personal-team':
         return <TeamListWithScope scope="personal" />;
       case 'group-manager':
@@ -135,6 +138,14 @@ function SettingsContent() {
       case 'group-shells':
         return (
           <ShellListWithScope
+            scope="group"
+            selectedGroup={selectedGroup}
+            onGroupChange={setSelectedGroup}
+          />
+        );
+      case 'group-tools':
+        return (
+          <ToolListWithScope
             scope="group"
             selectedGroup={selectedGroup}
             onGroupChange={setSelectedGroup}
