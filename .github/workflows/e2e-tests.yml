@@ -147,6 +147,33 @@ jobs:
         working-directory: ./frontend
         run: npx playwright install --with-deps chromium
 
+      - name: Start mock model server
+        working-directory: ./frontend
+        run: |
+          echo "Starting mock model server..."
+          nohup node e2e/mock-server/model-mock-server.mjs > mock-model.log 2>&1 &
+          echo $! > mock-model.pid
+          echo "Mock model server PID: $(cat mock-model.pid)"
+          sleep 3
+
+      - name: Verify mock model server is running
+        working-directory: ./frontend
+        run: |
+          echo "Checking mock model server..."
+          for i in {1..10}; do
+            if curl -f http://localhost:9999/health > /dev/null 2>&1; then
+              echo "Mock model server is responding!"
+              curl http://localhost:9999/health
+              exit 0
+            fi
+            echo "Attempt $i failed, waiting 2 seconds..."
+            sleep 2
+          done
+          echo "Mock model server health check failed"
+          echo "=== Mock model server logs ==="
+          cat mock-model.log || echo "No log file found"
+          exit 1
+
       - name: Build frontend
         working-directory: ./frontend
         env:
@@ -170,6 +197,7 @@ jobs:
         env:
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
           CI: true
         run: npx playwright test --project=chromium --project=api
 
@@ -203,6 +231,14 @@ jobs:
         with:
           name: backend-logs-e2e
           path: backend/backend.log
+          retention-days: 7
+
+      - name: Upload mock model server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-model-logs
+          path: frontend/mock-model.log
           retention-days: 7
 
   api-tests:

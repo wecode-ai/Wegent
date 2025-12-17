@@ -174,8 +174,13 @@ jobs:
 
       - name: Run shared tests
         working-directory: ./shared
+        env:
+          # Prevent pytest-cov daemon thread issues at interpreter shutdown
+          COVERAGE_CORE: sysmon
+          PYTHONUNBUFFERED: "1"
+          PYTHONFAULTHANDLER: "1"
         run: |
-          pytest tests/ --cov=utils --cov-report=xml --cov-report=term-missing -v
+          pytest tests/ --cov=utils --cov-report=xml --cov-report=term-missing -v -p no:faulthandler
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v3
