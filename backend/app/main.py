@@ -334,7 +334,12 @@ def create_app():
         client_ip = request.client.host if request.client else "Unknown"
 
         # Always set request context for logging (works even without OTEL)
-        from shared.telemetry.context import set_request_context, set_user_context, set_task_context
+        from shared.telemetry.context import (
+            set_request_context,
+            set_task_context,
+            set_user_context,
+        )
+
         set_request_context(request_id)
         if username:
             set_user_context(user_name=username)
@@ -372,6 +377,7 @@ def create_app():
                 if request_body:
                     try:
                         import json
+
                         body_json = json.loads(request_body)
                         task_id = body_json.get("task_id")
                         subtask_id = body_json.get("subtask_id")
