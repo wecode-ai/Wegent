@@ -7,6 +7,7 @@
 import { UserProvider } from '@/features/common/UserContext';
 import { TaskContextProvider } from '@/features/tasks/contexts/taskContext';
 import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext';
+import { AnalyticsProvider } from '@/features/analytics';
 
 /**
  * Shared layout for chat and code pages to reuse TaskContextProvider and ChatStreamProvider
@@ -16,9 +17,11 @@ import { ChatStreamProvider } from '@/features/tasks/contexts/chatStreamContext'
 export default function TasksLayout({ children }: { children: React.ReactNode }) {
   return (
     <UserProvider>
-      <TaskContextProvider>
-        <ChatStreamProvider>{children}</ChatStreamProvider>
-      </TaskContextProvider>
+      <AnalyticsProvider>
+        <TaskContextProvider>
+          <ChatStreamProvider>{children}</ChatStreamProvider>
+        </TaskContextProvider>
+      </AnalyticsProvider>
     </UserProvider>
   );
 }
