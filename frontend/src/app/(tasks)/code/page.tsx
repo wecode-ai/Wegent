@@ -23,7 +23,6 @@ import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
-import PoweredByFooter from '@/components/common/PoweredByFooter';
 import { Team } from '@/types/api';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
@@ -244,8 +243,6 @@ export default function CodePage() {
           </div>
         </div>
       </div>
-      {/* Show footer only when no task is selected */}
-      {!hasTaskId && <PoweredByFooter />}
     </>
   );
 }
