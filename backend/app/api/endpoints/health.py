@@ -2,6 +2,8 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -9,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.graceful_shutdown import (
+    GracefulShutdownManager,
     ServiceStatus,
     graceful_shutdown_manager,
 )
@@ -22,7 +25,7 @@ class ServiceStatusResponse(BaseModel):
     status: str
     http_code: int
     active_requests: int
-    pod_id: str
+    worker_pid: int
 
 
 class SetServiceStatusRequest(BaseModel):
@@ -37,7 +40,7 @@ class SetServiceStatusResponse(BaseModel):
     success: bool
     status: str
     message: str
-    pod_id: str
+    worker_pid: int
 
 
 class ActiveRequestsResponse(BaseModel):
@@ -45,6 +48,28 @@ class ActiveRequestsResponse(BaseModel):
 
     active_requests: int
     has_active_requests: bool
+
+
+class WorkerInfo(BaseModel):
+    """Information about a single worker."""
+
+    pid: int
+    active_requests: int
+    service_status: str
+    last_heartbeat: float
+    last_heartbeat_ago: float
+    is_stale: bool
+    is_current: bool
+
+
+class AllWorkersStatusResponse(BaseModel):
+    """Response model for all workers status."""
+
+    total_active_requests: int
+    workers: List[Dict[str, Any]]
+    healthy_workers: int
+    draining_workers: int
+    stale_workers: int
 
 
 @router.get("/health")
@@ -128,7 +153,7 @@ async def get_service_status(response: Response):
         - 503 with {"status": "draining", "http_code": 503} when draining
     """
     status = await graceful_shutdown_manager.get_service_status()
-    active_requests = await graceful_shutdown_manager.get_active_requests_count()
+    active_requests = graceful_shutdown_manager.get_active_requests_count()
 
     if status == ServiceStatus.DRAINING:
         response.status_code = 503
@@ -136,14 +161,14 @@ async def get_service_status(response: Response):
             status=ServiceStatus.DRAINING.value,
             http_code=503,
             active_requests=active_requests,
-            pod_id=graceful_shutdown_manager.pod_id,
+            worker_pid=graceful_shutdown_manager.worker_pid,
         )
 
     return ServiceStatusResponse(
         status=ServiceStatus.HEALTHY.value,
         http_code=200,
         active_requests=active_requests,
-        pod_id=graceful_shutdown_manager.pod_id,
+        worker_pid=graceful_shutdown_manager.worker_pid,
     )
 
 
@@ -188,23 +213,23 @@ async def set_service_status(request: SetServiceStatusRequest):
     if not success:
         raise HTTPException(
             status_code=500,
-            detail="Failed to set service status. Redis may not be available.",
+            detail="Failed to set service status.",
         )
 
     return SetServiceStatusResponse(
         success=True,
         status=new_status.value,
         message=f"Service status set to {new_status.value}",
-        pod_id=graceful_shutdown_manager.pod_id,
+        worker_pid=graceful_shutdown_manager.worker_pid,
     )
 
 
 @router.get(
     "/active-requests",
     response_model=ActiveRequestsResponse,
-    summary="Get active requests count",
+    summary="Get active requests count for current worker",
     description="""
-    Get the count of currently active HTTP requests being processed.
+    Get the count of currently active HTTP requests being processed by this worker.
 
     This endpoint is used for graceful shutdown coordination to check
     if all in-flight requests have completed before shutting down.
@@ -216,17 +241,20 @@ async def set_service_status(request: SetServiceStatusRequest):
 
     Returns the count of active requests and a boolean indicating
     if there are any active requests.
+    
+    Note: This returns the count for the current worker only.
+    Use /active-requests/all to get counts from all workers.
     """,
 )
 async def get_active_requests():
     """
-    Get the count of active requests.
+    Get the count of active requests for current worker.
 
     Returns:
         - active_requests: Number of currently active requests
         - has_active_requests: Boolean indicating if there are active requests
     """
-    count = await graceful_shutdown_manager.get_active_requests_count()
+    count = graceful_shutdown_manager.get_active_requests_count()
 
     return ActiveRequestsResponse(
         active_requests=count,
@@ -234,68 +262,70 @@ async def get_active_requests():
     )
 
 
-@router.post(
-    "/active-requests/reset",
-    summary="Reset active requests counter",
+@router.get(
+    "/active-requests/all",
+    response_model=AllWorkersStatusResponse,
+    summary="Get active requests from all workers",
     description="""
-    Reset the active requests counter to 0.
+    Get the count of currently active HTTP requests from all workers.
 
-    This is useful when:
-    - The counter has become out of sync due to errors
-    - After a service crash where requests were not properly cleaned up
-    - For debugging and testing purposes
-
-    **Warning**: Only use this when you are sure there are no active requests,
-    as it may cause the graceful shutdown to behave incorrectly.
-    """,
-)
-async def reset_active_requests():
-    """
-    Reset the active requests counter to 0.
+    This endpoint scans all worker files and aggregates the active request counts.
+    Stale workers (no heartbeat for 60+ seconds) are automatically cleaned up.
 
     Returns:
-        Success status and message
+    - total_active_requests: Sum of active requests from all non-stale workers
+    - workers: List of all worker statuses
+    - healthy_workers: Count of workers in healthy status
+    - draining_workers: Count of workers in draining status
+    - stale_workers: Count of stale workers (cleaned up)
+    """,
+)
+async def get_all_workers_status():
     """
-    # Also cleanup orphaned request tracking keys
-    orphaned_count = await graceful_shutdown_manager.cleanup_orphaned_requests()
+    Get the status of all workers.
 
-    success = await graceful_shutdown_manager.reset_active_requests()
-
-    if not success:
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to reset active requests counter. Redis may not be available.",
-        )
-
-    return {
-        "success": True,
-        "message": "Active requests counter reset to 0",
-        "orphaned_requests_cleaned": orphaned_count,
-    }
+    Returns:
+        Aggregated status from all workers
+    """
+    status = GracefulShutdownManager.get_all_workers_status()
+    return AllWorkersStatusResponse(**status)
 
 
 @router.get(
     "/active-requests/diagnostics",
     summary="Get active requests diagnostics",
     description="""
-    Get detailed diagnostic information about the active requests counter.
+    Get detailed diagnostic information about the active requests.
 
     This endpoint provides:
-    - Current counter value
-    - Number of individually tracked requests
-    - Whether counter matches tracked requests
-    - Anomaly detection count
-    - Configuration values
+    - Current worker's active request count
+    - Worker file path
+    - Heartbeat interval
+    - All workers status
 
-    Useful for debugging counter synchronization issues.
+    Useful for debugging and monitoring.
     """,
 )
 async def get_active_requests_diagnostics():
     """
-    Get diagnostic information about the active requests counter.
+    Get diagnostic information about the active requests.
 
     Returns:
         Detailed diagnostic information
     """
-    diagnostics = await graceful_shutdown_manager.get_diagnostics()
-    return diagnostics
+    all_workers = GracefulShutdownManager.get_all_workers_status()
+    status = await graceful_shutdown_manager.get_service_status()
+
+    return {
+        "current_worker": {
+            "pid": graceful_shutdown_manager.worker_pid,
+            "active_requests": graceful_shutdown_manager.get_active_requests_count(),
+            "service_status": status.value,
+            "worker_file": str(graceful_shutdown_manager.worker_file),
+        },
+        "all_workers": all_workers,
+        "config": {
+            "heartbeat_interval_seconds": 30,
+            "stale_threshold_seconds": 60,
+        },
+    }
