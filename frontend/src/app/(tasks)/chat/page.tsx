@@ -40,7 +40,16 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for refreshing task list
-  const { refreshTasks } = useTaskContext();
+  const { refreshTasks, selectedTaskDetail, setSelectedTask } = useTaskContext();
+
+  // Get current task title for top navigation
+  const currentTaskTitle = selectedTaskDetail?.title;
+
+  // Handle task deletion
+  const handleTaskDeleted = () => {
+    setSelectedTask(null);
+    refreshTasks();
+  };
 
   // Chat stream context
   const { clearAllStreams } = useChatStreamContext();
@@ -177,7 +186,10 @@ export default function ChatPage() {
           <TopNavigation
             activePage="chat"
             variant="with-sidebar"
+            title={currentTaskTitle}
+            taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+            onTaskDeleted={handleTaskDeleted}
           >
             {/* Create Group Chat Button - only show when no task is open */}
             {!hasOpenTask && (

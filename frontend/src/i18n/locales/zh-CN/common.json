@@ -1040,6 +1040,8 @@
       "title": "邀请加入群聊",
       "description": "生成邀请链接，分享给其他用户即可加入「{{taskTitle}}」",
       "expiresIn": "链接有效期：",
+      "permanent": "永久有效",
+      "permanentNote": "此链接永久有效",
       "hours24": "24 小时",
       "days3": "3 天",
       "days7": "7 天",
@@ -1050,7 +1052,8 @@
       "copied": "链接已复制",
       "copyFailed": "复制链接失败",
       "expiresNote": "链接有效期 {{hours}} 小时，过期后需重新生成",
-      "regenerate": "重新生成"
+      "regenerate": "重新生成",
+      "manage": "管理群组链接"
     },
     "invite": {
       "title": "加入群聊",
@@ -1068,12 +1071,17 @@
       "title": "群聊成员",
       "inviteLink": "邀请链接",
       "addMember": "添加成员",
+      "addMembers": "添加成员",
       "you": "你",
       "invitedBy": "由 {{name}} 邀请",
       "loadFailed": "加载成员失败",
       "removeSuccess": "已移除 {{name}}",
       "removeFailed": "移除成员失败",
       "notOwner": "只有任务创建者可以创建邀请链接"
+    },
+    "delete": {
+      "button": "删除群组",
+      "confirmMessage": "确定要删除这个群聊吗？此操作无法撤销。"
     }
   },
   "wizard": {

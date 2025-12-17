@@ -4,8 +4,8 @@
 
 'use client';
 
-import { useState } from 'react';
-import { Copy, Check, Link } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Copy, Check } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -40,6 +40,13 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
   const [expiresHours, setExpiresHours] = useState('0'); // 0 = permanent (no expiration)
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+
+  // Auto-generate link when dialog opens
+  useEffect(() => {
+    if (open && !inviteUrl) {
+      generateLink();
+    }
+  }, [open]);
 
   const generateLink = async () => {
     setLoading(true);
@@ -104,34 +111,11 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
         </DialogHeader>
 
         <div className="space-y-4">
-          {!inviteUrl ? (
-            <>
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-text-secondary">
-                  {t('groupChat.inviteLink.expiresIn')}
-                </span>
-                <Select value={expiresHours} onValueChange={setExpiresHours}>
-                  <SelectTrigger className="w-32">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0">{t('groupChat.inviteLink.permanent')}</SelectItem>
-                    <SelectItem value="24">{t('groupChat.inviteLink.hours24')}</SelectItem>
-                    <SelectItem value="72">{t('groupChat.inviteLink.days3')}</SelectItem>
-                    <SelectItem value="168">{t('groupChat.inviteLink.days7')}</SelectItem>
-                    <SelectItem value="720">{t('groupChat.inviteLink.days30')}</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <Button onClick={generateLink} disabled={loading} className="w-full">
-                <Link className="w-4 h-4 mr-2" />
-                {loading
-                  ? t('groupChat.inviteLink.generating')
-                  : t('groupChat.inviteLink.generate')}
-              </Button>
-            </>
-          ) : (
+          {loading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+            </div>
+          ) : inviteUrl ? (
             <>
               <div className="flex items-center gap-2">
                 <Input value={inviteUrl} readOnly className="flex-1 text-sm" />
@@ -150,11 +134,36 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
                   : t('groupChat.inviteLink.expiresNote', { hours: expiresHours })}
               </p>
 
-              <Button variant="outline" onClick={() => setInviteUrl(null)} className="w-full">
+              <div className="flex items-center gap-2 pt-2">
+                <span className="text-sm text-text-secondary">
+                  {t('groupChat.inviteLink.expiresIn')}
+                </span>
+                <Select value={expiresHours} onValueChange={setExpiresHours}>
+                  <SelectTrigger className="w-32">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0">{t('groupChat.inviteLink.permanent')}</SelectItem>
+                    <SelectItem value="24">{t('groupChat.inviteLink.hours24')}</SelectItem>
+                    <SelectItem value="72">{t('groupChat.inviteLink.days3')}</SelectItem>
+                    <SelectItem value="168">{t('groupChat.inviteLink.days7')}</SelectItem>
+                    <SelectItem value="720">{t('groupChat.inviteLink.days30')}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setInviteUrl(null);
+                  generateLink();
+                }}
+                className="w-full"
+              >
                 {t('groupChat.inviteLink.regenerate')}
               </Button>
             </>
-          )}
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

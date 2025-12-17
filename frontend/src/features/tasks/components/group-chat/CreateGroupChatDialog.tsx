@@ -100,7 +100,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
 
       // Use ChatStreamContext to start the stream
       // This ensures the stream is registered globally and the task page can display it
-      const tempTaskId = await startStream(
+      void startStream(
         {
           message: t('groupChat.create.initialMessage'),
           team_id: selectedTeam.id,
@@ -116,8 +116,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           pendingAttachment: null,
           immediateTaskId: -Date.now(), // Temporary negative ID for immediate feedback
           onTaskIdResolved: realTaskId => {
-            console.log('[CreateGroupChatDialog] Task ID resolved:', realTaskId);
-
             // Close dialog and reset form when task ID is resolved
             onOpenChange(false);
             setTitle('');
@@ -132,12 +130,7 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
             // Navigate to the new task to show streaming output
             router.push(`/chat?taskId=${realTaskId}`);
           },
-          onComplete: (completedTaskId, subtaskId) => {
-            console.log('[CreateGroupChatDialog] Stream complete:', {
-              completedTaskId,
-              subtaskId,
-            });
-
+          onComplete: () => {
             // Success toast
             toast({
               title: t('groupChat.create.success'),
@@ -147,7 +140,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
             setIsCreating(false);
           },
           onError: error => {
-            console.error('[CreateGroupChatDialog] Stream error:', error);
             toast({
               title: t('groupChat.create.failed'),
               description: error.message || t('groupChat.create.failedDesc'),
@@ -157,8 +149,6 @@ export function CreateGroupChatDialog({ open, onOpenChange }: CreateGroupChatDia
           },
         }
       );
-
-      console.log('[CreateGroupChatDialog] Stream started with temp task ID:', tempTaskId);
     } catch (error) {
       console.error('[CreateGroupChatDialog] Failed to create group chat:', error);
       toast({

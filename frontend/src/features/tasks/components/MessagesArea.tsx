@@ -680,18 +680,26 @@ export default function MessagesArea({
       return null;
     }
 
+    // Check if this is a group chat with chat agent type
+    const isGroupChat = selectedTaskDetail?.is_group_chat || false;
+    const isChatAgentType = selectedTaskDetail?.team?.agent_type === 'chat';
+    // Show members button if it's a group chat OR if agent type is chat
+    const showMembersButton = isGroupChat || isChatAgentType;
+
     return (
       <div className="flex items-center gap-2">
-        {/* Members Button */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowMembersPanel(true)}
-          className="flex items-center gap-2"
-        >
-          <Users className="h-4 w-4" />
-          {t('groupChat.members.title') || 'Members'}
-        </Button>
+        {/* Members Button - only show for group chats with chat agent type */}
+        {showMembersButton && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowMembersPanel(true)}
+            className="flex items-center gap-2"
+          >
+            <Users className="h-4 w-4" />
+            {t('groupChat.members.title') || 'Members'}
+          </Button>
+        )}
 
         {/* Share Button */}
         <Button
@@ -766,6 +774,8 @@ export default function MessagesArea({
     );
   }, [
     selectedTaskDetail?.id,
+    selectedTaskDetail?.is_group_chat,
+    selectedTaskDetail?.team?.agent_type,
     displayMessages.length,
     isSharing,
     isExportingPdf,

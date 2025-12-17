@@ -1046,6 +1046,8 @@
       "title": "Invite to Group Chat",
       "description": "Generate an invite link to share with others to join \"{{taskTitle}}\"",
       "expiresIn": "Link expires in:",
+      "permanent": "Never expires",
+      "permanentNote": "This link will never expire",
       "hours24": "24 hours",
       "days3": "3 days",
       "days7": "7 days",
@@ -1056,7 +1058,8 @@
       "copied": "Link copied to clipboard",
       "copyFailed": "Failed to copy link",
       "expiresNote": "Link expires in {{hours}} hours. Generate a new one if needed.",
-      "regenerate": "Generate New Link"
+      "regenerate": "Generate New Link",
+      "manage": "Manage Invite Links"
     },
     "invite": {
       "title": "Join Group Chat",
@@ -1074,12 +1077,17 @@
       "title": "Group Members",
       "inviteLink": "Invite Link",
       "addMember": "Add Member",
+      "addMembers": "Add Members",
       "you": "You",
       "invitedBy": "Invited by {{name}}",
       "loadFailed": "Failed to load members",
       "removeSuccess": "{{name}} has been removed",
       "removeFailed": "Failed to remove member",
       "notOwner": "Only the task owner can create invite links"
+    },
+    "delete": {
+      "button": "Delete Group",
+      "confirmMessage": "Are you sure you want to delete this group chat? This action cannot be undone."
     }
   },
   "wizard": {
