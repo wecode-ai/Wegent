@@ -9,7 +9,7 @@ import { Download, X, ChevronDown, Paperclip } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/hooks/use-toast';
-import { generateChatPdf, type ExportMessage, type ExportAttachment } from '@/utils/pdf-generator';
+import { generateChatPdf, type ExportMessage, type ExportAttachment } from '@/utils/pdf';
 import { useTranslation } from '@/hooks/useTranslation';
 import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
