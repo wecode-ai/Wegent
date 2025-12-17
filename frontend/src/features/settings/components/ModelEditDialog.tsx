@@ -309,6 +309,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         api_key: apiKey,
         base_url: baseUrl || undefined,
         custom_headers: Object.keys(parsedHeaders).length > 0 ? parsedHeaders : undefined,
+        model_category_type: modelCategoryType,
       });
 
       if (result.success) {
