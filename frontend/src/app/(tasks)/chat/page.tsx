@@ -174,6 +174,7 @@ export default function ChatPage() {
             showRepositorySelector={false}
             taskType="chat"
             onShareButtonRender={handleShareButtonRender}
+            onRefreshTeams={handleRefreshTeams}
           />
         </div>
       </div>

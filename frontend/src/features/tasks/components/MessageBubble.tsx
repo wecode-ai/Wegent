@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import MarkdownEditor from '@uiw/react-markdown-editor';
 import ThinkingComponent from './ThinkingComponent';
 import ClarificationForm from './ClarificationForm';
@@ -153,6 +154,18 @@ const BubbleTools = ({
     </div>
   );
 };
+/** Configuration for paragraph-level action button */
+export interface ParagraphAction {
+  /** Icon to display on hover */
+  icon: React.ReactNode;
+  /** Tooltip text for the action button */
+  tooltip?: string;
+  /** Callback when action is triggered - receives paragraph text and optional click event */
+  onAction: (paragraphText: string, event?: React.MouseEvent) => void;
+  /** Optional: Render a popover content instead of just calling onAction */
+  renderPopover?: (props: { paragraphText: string; onClose: () => void }) => React.ReactNode;
+}
+
 export interface MessageBubbleProps {
   msg: Message;
   index: number;
@@ -166,7 +179,103 @@ export interface MessageBubbleProps {
   isWaiting?: boolean;
   /** Generic callback when a component inside the message bubble wants to send a message (e.g., ClarificationForm) */
   onSendMessage?: (content: string) => void;
+  /** Callback when user selects text in AI message (optional) - receives selected text */
+  onTextSelect?: (selectedText: string) => void;
+  /** Paragraph-level action configuration - shows action button on hover for each paragraph in AI messages */
+  paragraphAction?: ParagraphAction;
 }
+
+// Component for rendering a paragraph with hover action button
+const ParagraphWithAction = ({
+  children,
+  paragraphText,
+  action,
+}: {
+  children: React.ReactNode;
+  paragraphText: string;
+  action: ParagraphAction;
+}) => {
+  const [isHovered, setIsHovered] = useState(false);
+  const [isPopoverOpen, setIsPopoverOpen] = useState(false);
+
+  const handleAction = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // If renderPopover is provided, the Popover will handle the action
+    // Otherwise, call onAction directly with the event for positioning
+    if (!action.renderPopover) {
+      action.onAction(paragraphText, e);
+    }
+  };
+
+  const handleClosePopover = () => {
+    setIsPopoverOpen(false);
+  };
+
+  // Render the action button
+  const renderActionButton = () => {
+    const button = (
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={handleAction}
+        className="h-7 w-7 hover:bg-primary/10 hover:text-primary"
+        title={action.tooltip}
+      >
+        {action.icon}
+      </Button>
+    );
+
+    // If renderPopover is provided, wrap button in Popover
+    if (action.renderPopover) {
+      return (
+        <Popover open={isPopoverOpen} onOpenChange={setIsPopoverOpen}>
+          <PopoverTrigger asChild>{button}</PopoverTrigger>
+          <PopoverContent
+            side="right"
+            align="start"
+            className="w-80 p-0 bg-surface border-border"
+            onInteractOutside={() => setIsPopoverOpen(false)}
+          >
+            {action.renderPopover({
+              paragraphText,
+              onClose: handleClosePopover,
+            })}
+          </PopoverContent>
+        </Popover>
+      );
+    }
+
+    // Otherwise, just show tooltip if provided
+    if (action.tooltip) {
+      return (
+        <Tooltip>
+          <TooltipTrigger asChild>{button}</TooltipTrigger>
+          <TooltipContent side="right">{action.tooltip}</TooltipContent>
+        </Tooltip>
+      );
+    }
+
+    return button;
+  };
+
+  return (
+    <div
+      className="relative group/paragraph"
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {children}
+      {/* Action button - appears on hover at the right side */}
+      <div
+        className={`absolute -right-8 top-0 transition-opacity duration-200 ${
+          isHovered || isPopoverOpen ? 'opacity-100' : 'opacity-0'
+        }`}
+      >
+        {renderActionButton()}
+      </div>
+    </div>
+  );
+};
 
 const MessageBubble = memo(
   function MessageBubble({
@@ -180,6 +289,8 @@ const MessageBubble = memo(
     t,
     isWaiting,
     onSendMessage,
+    onTextSelect,
+    paragraphAction,
   }: MessageBubbleProps) {
     const bubbleBaseClasses = `relative w-full p-5 text-text-primary ${msg.type === 'user' ? 'overflow-visible' : 'pb-10'}`;
     const bubbleTypeClasses =
@@ -319,19 +430,89 @@ const MessageBubble = memo(
         return renderProgressBar(status, progress);
       }
 
+      // Helper to extract text content from React children
+      const extractText = (node: React.ReactNode): string => {
+        if (typeof node === 'string') return node;
+        if (typeof node === 'number') return String(node);
+        if (Array.isArray(node)) return node.map(extractText).join('');
+        if (React.isValidElement(node)) {
+          const props = node.props as { children?: React.ReactNode };
+          if (props.children) {
+            return extractText(props.children);
+          }
+        }
+        return '';
+      };
+
+      // Helper to wrap content with paragraph action
+      const wrapWithAction = (element: React.ReactNode, text: string) => {
+        if (!paragraphAction || !text.trim()) return element;
+        return (
+          <ParagraphWithAction paragraphText={text} action={paragraphAction}>
+            {element}
+          </ParagraphWithAction>
+        );
+      };
+
       return (
         <>
           <MarkdownEditor.Markdown
             source={normalizedResult}
             style={{ background: 'transparent' }}
             wrapperElement={{ 'data-color-mode': theme }}
-            components={{
-              a: ({ href, children, ...props }) => (
-                <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
-                  {children}
-                </a>
-              ),
-            }}
+            components={
+              paragraphAction
+                ? {
+                    a: ({ href, children, ...props }) => (
+                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                        {children}
+                      </a>
+                    ),
+                    p: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<p>{children}</p>, text);
+                    },
+                    h1: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<h1>{children}</h1>, text);
+                    },
+                    h2: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<h2>{children}</h2>, text);
+                    },
+                    h3: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<h3>{children}</h3>, text);
+                    },
+                    h4: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<h4>{children}</h4>, text);
+                    },
+                    h5: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<h5>{children}</h5>, text);
+                    },
+                    h6: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<h6>{children}</h6>, text);
+                    },
+                    li: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<li>{children}</li>, text);
+                    },
+                    blockquote: ({ children }) => {
+                      const text = extractText(children);
+                      return wrapWithAction(<blockquote>{children}</blockquote>, text);
+                    },
+                  }
+                : {
+                    a: ({ href, children, ...props }) => (
+                      <a href={href} target="_blank" rel="noopener noreferrer" {...props}>
+                        {children}
+                      </a>
+                    ),
+                  }
+            }
           />
           <BubbleTools
             contentToCopy={`${promptPart ? promptPart + '\n\n' : ''}${normalizedResult}`}
@@ -857,7 +1038,8 @@ const MessageBubble = memo(
       }
 
       if (!content.includes('${$$}$')) {
-        return renderPlainMessage(message);
+        // Render AI message as markdown by default
+        return renderMarkdownResult(content);
       }
 
       const [prompt, result] = content.split('${$$}$');
@@ -1057,6 +1239,17 @@ const MessageBubble = memo(
       );
     };
 
+    // Handle text selection in AI messages
+    const handleTextSelection = () => {
+      if (!onTextSelect || isUserMessage) return;
+
+      const selection = window.getSelection();
+      if (selection && selection.toString().trim()) {
+        const selectedText = selection.toString().trim();
+        onTextSelect(selectedText);
+      }
+    };
+
     return (
       <div className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
@@ -1065,7 +1258,10 @@ const MessageBubble = memo(
           {msg.type === 'ai' && msg.thinking && (
             <ThinkingComponent thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
           )}
-          <div className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}>
+          <div
+            className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
+            onMouseUp={handleTextSelection}
+          >
             {!isUserMessage && (
               <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
                 {headerIcon}
@@ -1120,7 +1316,9 @@ const MessageBubble = memo(
       prevProps.msg.isIncomplete === nextProps.msg.isIncomplete &&
       prevProps.msg.isWaiting === nextProps.msg.isWaiting &&
       prevProps.isWaiting === nextProps.isWaiting &&
-      prevProps.theme === nextProps.theme
+      prevProps.theme === nextProps.theme &&
+      prevProps.onTextSelect === nextProps.onTextSelect &&
+      prevProps.paragraphAction === nextProps.paragraphAction
     );
   }
 );

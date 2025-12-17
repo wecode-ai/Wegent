@@ -15,6 +15,7 @@ from app.api.endpoints import (
     repository,
     users,
     wiki,
+    wizard,
 )
 from app.api.endpoints.adapter import (
     agents,
@@ -57,6 +58,7 @@ api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]
 )
+api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
 )

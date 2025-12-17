@@ -7,7 +7,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 import { cn } from '@/lib/utils';
 
 const spinnerVariants = cva(
-  'inline-block animate-spin rounded-full border-2 border-solid border-current border-r-transparent align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]',
+  'inline-block animate-spin rounded-full border-2 border-solid border-transparent border-t-current align-[-0.125em] motion-reduce:animate-[spin_1.5s_linear_infinite]',
   {
     variants: {
       size: {
@@ -23,8 +23,7 @@ const spinnerVariants = cva(
 );
 
 export interface SpinnerProps
-  extends React.HTMLAttributes<HTMLDivElement>,
-    VariantProps<typeof spinnerVariants> {
+  extends React.HTMLAttributes<HTMLDivElement>, VariantProps<typeof spinnerVariants> {
   text?: string;
   center?: boolean;
 }
