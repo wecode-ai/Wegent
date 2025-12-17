@@ -292,6 +292,19 @@ class BotKindService(KindBaseService):
         return model.json
 
 
+class KnowledgeBaseKindService(KindBaseService):
+    """Service for KnowledgeBase resources"""
+
+    def __init__(self):
+        super().__init__("KnowledgeBase")
+
+    def _validate_references(
+        self, db: Session, user_id: int, resource: Dict[str, Any]
+    ) -> None:
+        """No references to validate for KnowledgeBase"""
+        pass
+
+
 class TeamKindService(KindBaseService):
     """Service for Team resources"""
 

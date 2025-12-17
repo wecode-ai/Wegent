@@ -30,7 +30,8 @@
     "loading": "加载中...",
     "retry": "重试",
     "toggle_theme": "切换主题",
-    "upload": "上传"
+    "upload": "上传",
+    "view": "查看"
   },
   "validation": {
     "required": "此字段为必填项",
@@ -663,6 +664,83 @@
     "tabs": {
       "code": "代码知识",
       "document": "文档知识"
+    },
+    "document": {
+      "title": "文档知识",
+      "personal": "个人知识",
+      "team": "团队知识",
+      "documents": "个文档",
+      "noTeamHint": "您还没有加入任何团队。创建或加入团队后，可在此查看团队知识库。",
+      "noGroupHint": "您还没有加入任何组。创建或加入组后，可在此查看组知识库。",
+      "tabs": {
+        "personal": "个人知识",
+        "group": "组知识",
+        "external": "外部知识库"
+      },
+      "knowledgeBase": {
+        "title": "知识库",
+        "create": "创建知识库",
+        "createDesc": "创建您的第一个知识库",
+        "edit": "编辑知识库",
+        "delete": "删除知识库",
+        "name": "知识库名称",
+        "namePlaceholder": "请输入知识库名称",
+        "nameRequired": "请输入知识库名称",
+        "nameTooLong": "名称不能超过100个字符",
+        "description": "描述",
+        "descriptionPlaceholder": "请输入描述（可选）",
+        "documentCount": "文档数量",
+        "empty": "暂无知识库",
+        "confirmDelete": "确定要删除这个知识库吗？删除后无法恢复。",
+        "deleteWarning": "这将同时删除该知识库中的 {{count}} 个文档。",
+        "search": "搜索知识库...",
+        "noResults": "没有匹配的知识库"
+      },
+      "document": {
+        "title": "文档",
+        "upload": "上传文件",
+        "edit": "编辑文档",
+        "enable": "启用",
+        "disable": "停用",
+        "delete": "删除",
+        "status": {
+          "enabled": "已启用",
+          "disabled": "已停用"
+        },
+        "columns": {
+          "name": "名称",
+          "type": "类型",
+          "size": "大小",
+          "date": "创建时间",
+          "status": "状态",
+          "actions": "操作"
+        },
+        "search": "搜索文档",
+        "empty": "暂无文档",
+        "noResults": "没有匹配的文档",
+        "filter": {
+          "all": "全部状态",
+          "enabled": "已启用",
+          "disabled": "已停用"
+        },
+        "confirmDelete": "确定要删除这个文档吗？",
+        "nameRequired": "请输入文档名称",
+        "namePlaceholder": "输入文档名称",
+        "updateFailed": "更新文档失败",
+        "dropzone": "拖放文件到此处或点击浏览",
+        "supportedTypes": "支持 PDF、Word、PPT、Excel、TXT、MD、图片（最大 20MB）",
+        "uploading": "上传中...",
+        "uploadSuccess": "文件上传成功",
+        "batch": {
+          "selected": "已选择 {{count}} 项",
+          "enable": "批量启用",
+          "disable": "批量停用",
+          "delete": "批量删除"
+        }
+      },
+      "permission": {
+        "noAccess": "您没有操作权限"
+      }
     }
   },
   "wiki": {
