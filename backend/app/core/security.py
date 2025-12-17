@@ -2,10 +2,11 @@
 #
 # SPDX-License-Identifier: Apache-2.0
 
+import hashlib
 from datetime import datetime, timedelta
 from typing import Any, Dict, Optional, Union
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.api.dependencies import get_db
 from app.core.config import settings
+from app.models.api_key import APIKey
 from app.models.user import User
 from app.schemas.user import TokenData
 from app.services.user import user_service
@@ -23,6 +25,10 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
 # OAuth2 password mode
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_PREFIX}/auth/oauth2")
+# OAuth2 scheme that allows optional authentication (returns None instead of raising)
+oauth2_scheme_optional = OAuth2PasswordBearer(
+    tokenUrl=f"{settings.API_PREFIX}/auth/oauth2", auto_error=False
+)
 
 
 def get_current_user(
@@ -241,4 +247,109 @@ def get_current_user_from_token(token: str, db: Session) -> Optional[User]:
         return None
     except Exception:
         return None
-    return current_user
+
+
+def get_api_key_from_header(
+    authorization: str = Header(default=""),
+    x_api_key: str = Header(default="", alias="X-API-Key"),
+) -> str:
+    """
+    Extract API key from Authorization header or X-API-Key header.
+
+    Args:
+        authorization: Authorization header value
+        x_api_key: X-API-Key header value
+
+    Returns:
+        API key string or empty string if not found
+    """
+    # Priority: X-API-Key > Authorization Bearer
+    if x_api_key and x_api_key.startswith("wg-"):
+        return x_api_key
+    if authorization.startswith("Bearer wg-"):
+        return authorization[7:]  # Remove "Bearer " prefix
+    return ""
+
+
+def get_current_user_from_api_key(
+    db: Session = Depends(get_db),
+    api_key: str = Depends(get_api_key_from_header),
+) -> Optional[User]:
+    """
+    Authenticate user via API key.
+
+    Args:
+        db: Database session
+        api_key: API key string
+
+    Returns:
+        User object if API key is valid, None otherwise
+    """
+    if not api_key:
+        return None
+
+    key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+    api_key_record = (
+        db.query(APIKey)
+        .filter(
+            APIKey.key_hash == key_hash,
+            APIKey.is_active == True,
+        )
+        .first()
+    )
+
+    if not api_key_record:
+        return None
+
+    # Check expiration
+    if api_key_record.expires_at < datetime.utcnow():
+        return None
+
+    # Update last_used_at
+    api_key_record.last_used_at = datetime.utcnow()
+    db.commit()
+
+    return db.query(User).filter(User.id == api_key_record.user_id).first()
+
+
+def get_current_user_flexible(
+    token: Optional[str] = Depends(oauth2_scheme_optional),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(get_api_key_from_header),
+) -> User:
+    """
+    Flexible authentication: supports both JWT token and API key.
+
+    This function tries JWT authentication first, then falls back to API key.
+    Use this for endpoints that need to support both authentication methods.
+
+    Args:
+        token: Optional JWT token
+        db: Database session
+        api_key: API key string
+
+    Returns:
+        Authenticated User object
+
+    Raises:
+        HTTPException: If neither authentication method succeeds
+    """
+    # Try JWT first
+    if token:
+        try:
+            user = get_current_user_from_token(token, db)
+            if user and user.is_active:
+                return user
+        except Exception:
+            pass
+
+    # Try API key
+    user = get_current_user_from_api_key(db, api_key)
+    if user and user.is_active:
+        return user
+
+    raise HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Invalid authentication credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
