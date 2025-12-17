@@ -251,11 +251,18 @@ def _process_model_config_placeholders(
         "user_name": user_name or "",
     }
 
+    # Build task_data with user info if not provided
+    # This ensures ${task_data.user.name} placeholders work even without full task context
+    effective_task_data = task_data or {}
+    if "user" not in effective_task_data:
+        effective_task_data = {**effective_task_data, "user": user_info}
+
     # Build data_sources for placeholder replacement
+    # This mirrors the chat.py logic for handling ${user.name}, ${task_data.user.name}, etc.
     data_sources = {
         "agent_config": agent_config or {},
         "model_config": model_config,
-        "task_data": task_data or {},
+        "task_data": effective_task_data,
         "user": user_info,
         "env": model_config.get("default_headers", {}),
     }
