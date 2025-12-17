@@ -379,36 +379,86 @@ export default function TaskSidebar({
         </div>
       </div>
 
-      {/* New Conversation Button - always shows "New Conversation" and navigates to chat */}
-      <div className="px-1 mb-0">
-        {isCollapsed ? (
-          <TooltipProvider>
-            <Tooltip delayDuration={300}>
-              <TooltipTrigger asChild>
+      {/* New Conversation Button and Navigation Buttons - wrapped together for onboarding tour */}
+      <div data-tour="mode-toggle">
+        {/* New Conversation Button - always shows "New Conversation" and navigates to chat */}
+        <div className="px-1 mb-0">
+          {isCollapsed ? (
+            <TooltipProvider>
+              <Tooltip delayDuration={300}>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    onClick={handleNewAgentClick}
+                    className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
+                    aria-label={t('tasks.new_conversation')}
+                  >
+                    <Plus className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>{t('tasks.new_conversation')}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : (
+            <Button
+              variant="ghost"
+              onClick={handleNewAgentClick}
+              className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
+              size="sm"
+            >
+              <Plus className="h-4 w-4 mr-0.5" />
+              {t('tasks.new_conversation')}
+            </Button>
+          )}
+        </div>
+
+        {/* Navigation Buttons - hide in collapsed mode */}
+        {!isCollapsed && navigationButtons.length > 0 && (
+          <div className="px-1 mb-2">
+            {navigationButtons.map(btn => (
+              <div key={btn.path} className="relative group">
                 <Button
                   variant="ghost"
-                  onClick={handleNewAgentClick}
-                  className="w-full justify-center p-2 h-auto min-h-[44px] text-text-primary hover:bg-hover rounded-xl"
-                  aria-label={t('tasks.new_conversation')}
+                  onClick={() => handleNavigationClick(btn.path, btn.isActive)}
+                  className={`w-full justify-start px-2 py-1.5 h-8 text-sm rounded-xl transition-colors ${
+                    btn.isActive
+                      ? 'bg-primary/10 text-primary font-medium'
+                      : 'text-text-primary hover:bg-hover'
+                  }`}
+                  size="sm"
                 >
-                  <Plus className="h-4 w-4" />
+                  <btn.icon className={`h-4 w-4 mr-0.5 ${btn.isActive ? 'text-primary' : ''}`} />
+                  {btn.label}
                 </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">
-                <p>{t('tasks.new_conversation')}</p>
-              </TooltipContent>
-            </Tooltip>
-          </TooltipProvider>
-        ) : (
-          <Button
-            variant="ghost"
-            onClick={handleNewAgentClick}
-            className="w-full justify-start px-2 py-1.5 h-8 text-sm text-text-primary hover:bg-hover rounded-xl"
-            size="sm"
-          >
-            <Plus className="h-4 w-4 mr-0.5" />
-            {t('tasks.new_conversation')}
-          </Button>
+                {/* Show "New Task" button on hover when in code mode */}
+                {btn.isActive && btn.tooltip && (
+                  <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+                    <TooltipProvider>
+                      <Tooltip delayDuration={0}>
+                        <TooltipTrigger asChild>
+                          <button
+                            onClick={e => {
+                              e.stopPropagation();
+                              handleNavigationClick(btn.path, btn.isActive);
+                            }}
+                            className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
+                          >
+                            <Plus className="h-3 w-3" />
+                            <span>{t('tasks.new_task')}</span>
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">
+                          <p>{btn.tooltip}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -523,53 +573,6 @@ export default function TaskSidebar({
           </div>
         </DialogContent>
       </Dialog>
-
-      {/* Navigation Buttons - hide in collapsed mode */}
-      {!isCollapsed && navigationButtons.length > 0 && (
-        <div className="px-1 mb-2">
-          {navigationButtons.map(btn => (
-            <div key={btn.path} className="relative group">
-              <Button
-                variant="ghost"
-                onClick={() => handleNavigationClick(btn.path, btn.isActive)}
-                className={`w-full justify-start px-2 py-1.5 h-8 text-sm rounded-xl transition-colors ${
-                  btn.isActive
-                    ? 'bg-primary/10 text-primary font-medium'
-                    : 'text-text-primary hover:bg-hover'
-                }`}
-                size="sm"
-              >
-                <btn.icon className={`h-4 w-4 mr-0.5 ${btn.isActive ? 'text-primary' : ''}`} />
-                {btn.label}
-              </Button>
-              {/* Show "New Task" button on hover when in code mode */}
-              {btn.isActive && btn.tooltip && (
-                <div className="absolute right-1 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
-                  <TooltipProvider>
-                    <Tooltip delayDuration={0}>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={e => {
-                            e.stopPropagation();
-                            handleNavigationClick(btn.path, btn.isActive);
-                          }}
-                          className="flex items-center gap-1 px-1.5 py-0.5 text-xs bg-primary text-white rounded-md hover:bg-primary/90 transition-colors"
-                        >
-                          <Plus className="h-3 w-3" />
-                          <span>{t('tasks.new_task')}</span>
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        <p>{btn.tooltip}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                </div>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Tasks Section */}
       <div

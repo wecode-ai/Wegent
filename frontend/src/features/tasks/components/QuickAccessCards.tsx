@@ -380,7 +380,7 @@ export function QuickAccessCards({
           animation: slide-fade 0.2s ease-out forwards;
         }
       `}</style>
-      <div className="flex flex-wrap items-center gap-2 mt-4">
+      <div className="flex flex-wrap items-center gap-2 mt-4" data-tour="quick-access-cards">
         {displayTeams.map(team => renderTeamCard(team))}
 
         {/* More button - always show for team selection */}

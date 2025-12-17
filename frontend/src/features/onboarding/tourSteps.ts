@@ -29,50 +29,59 @@ export const getTourSteps = (
     },
   });
 
-  // Step 2: Task input
+  // Step 2: Quick access cards (switch agents)
   steps.push({
-    element: '[data-tour="task-input"]',
+    element: '[data-tour="quick-access-cards"]',
     popover: {
       title: t('onboarding.step2_title'),
       description: t('onboarding.step2_description'),
     },
   });
 
-  // Step 3: Input controls (attachment, team, model)
+  // Step 3: Task input
+  steps.push({
+    element: '[data-tour="task-input"]',
+    popover: {
+      title: t('onboarding.step3_title'),
+      description: t('onboarding.step3_description'),
+    },
+  });
+
+  // Step 4: Input controls (attachment, team, model)
   steps.push({
     element: '[data-tour="input-controls"]',
     popover: {
-      title: t('onboarding.step3_title'),
+      title: t('onboarding.step4_title'),
       description: hasTeams
-        ? t('onboarding.step3_description')
-        : t('onboarding.step3_description_no_team'),
+        ? t('onboarding.step4_description')
+        : t('onboarding.step4_description_no_team'),
     },
   });
 
-  // Step 4: Send button
+  // Step 5: Send button
   steps.push({
     element: '[data-tour="send-button"]',
-    popover: {
-      title: t('onboarding.step4_title'),
-      description: t('onboarding.step4_description'),
-    },
-  });
-
-  // Step 5: Task sidebar
-  steps.push({
-    element: '[data-tour="task-sidebar"]',
     popover: {
       title: t('onboarding.step5_title'),
       description: t('onboarding.step5_description'),
     },
   });
 
-  // Step 6: Settings link
+  // Step 6: Task sidebar
   steps.push({
-    element: '[data-tour="settings-link"]',
+    element: '[data-tour="task-sidebar"]',
     popover: {
       title: t('onboarding.step6_title'),
       description: t('onboarding.step6_description'),
+    },
+  });
+
+  // Step 7: Settings link
+  steps.push({
+    element: '[data-tour="settings-link"]',
+    popover: {
+      title: t('onboarding.step7_title'),
+      description: t('onboarding.step7_description'),
     },
   });
 
