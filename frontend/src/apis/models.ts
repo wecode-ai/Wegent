@@ -5,28 +5,28 @@
 import { apiClient } from './client';
 
 // Model Category Type (different from resource type public/user/group)
-export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank'
+export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank';
 
 // Type-specific configurations
 export interface TTSConfig {
-  voice?: string
-  speed?: number
-  output_format?: 'mp3' | 'wav'
+  voice?: string;
+  speed?: number;
+  output_format?: 'mp3' | 'wav';
 }
 
 export interface STTConfig {
-  language?: string
-  transcription_format?: 'text' | 'srt' | 'vtt'
+  language?: string;
+  transcription_format?: 'text' | 'srt' | 'vtt';
 }
 
 export interface EmbeddingConfig {
-  dimensions?: number
-  encoding_format?: 'float' | 'base64'
+  dimensions?: number;
+  encoding_format?: 'float' | 'base64';
 }
 
 export interface RerankConfig {
-  top_n?: number
-  return_documents?: boolean
+  top_n?: number;
+  return_documents?: boolean;
 }
 
 // Model CRD Types
@@ -125,6 +125,7 @@ export interface TestConnectionRequest {
   model_id: string;
   api_key: string;
   base_url?: string;
+  custom_headers?: Record<string, string>; // Custom HTTP headers to override defaults
 }
 
 export interface TestConnectionResponse {
@@ -225,7 +226,9 @@ export const modelApis = {
     const queryString = params.toString();
     // Use groupName as namespace when provided, otherwise use 'default'
     const namespace = groupName || 'default';
-    return apiClient.get(`/v1/namespaces/${encodeURIComponent(namespace)}/models${queryString ? `?${queryString}` : ''}`);
+    return apiClient.get(
+      `/v1/namespaces/${encodeURIComponent(namespace)}/models${queryString ? `?${queryString}` : ''}`
+    );
   },
 
   /**
@@ -241,7 +244,9 @@ export const modelApis = {
    * @param namespace - Namespace (default: 'default')
    */
   async getModel(name: string, namespace: string = 'default'): Promise<ModelCRD> {
-    return apiClient.get(`/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`);
+    return apiClient.get(
+      `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`
+    );
   },
 
   /**
@@ -260,7 +265,10 @@ export const modelApis = {
    */
   async updateModel(name: string, model: ModelCRD): Promise<ModelCRD> {
     const namespace = model.metadata.namespace || 'default';
-    return apiClient.put(`/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`, model);
+    return apiClient.put(
+      `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`,
+      model
+    );
   },
 
   /**
@@ -269,7 +277,9 @@ export const modelApis = {
    * @param namespace - Namespace (default: 'default')
    */
   async deleteModel(name: string, namespace: string = 'default'): Promise<void> {
-    return apiClient.delete(`/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`);
+    return apiClient.delete(
+      `/v1/namespaces/${encodeURIComponent(namespace)}/models/${encodeURIComponent(name)}`
+    );
   },
 
   /**
