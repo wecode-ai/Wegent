@@ -167,10 +167,26 @@ class DockerExecutor(Executor):
         return ports[0].get("host_port")
     
     def _send_task_to_container(self, task: Dict[str, Any], host: str, port: int) -> requests.Response:
-        """Send task to container API endpoint"""
+        """Send task to container API endpoint with trace context and request_id propagation"""
         endpoint = f"http://{host}:{port}{DEFAULT_API_ENDPOINT}"
         logger.info(f"Sending task to {endpoint}")
-        return self.requests.post(endpoint, json=task)
+        
+        # Propagate trace context (traceparent/tracestate) and request_id to executor via headers
+        headers = {}
+        try:
+            from shared.telemetry.context import get_request_id, inject_trace_context_to_headers
+            
+            # Inject W3C Trace Context headers for distributed tracing
+            headers = inject_trace_context_to_headers(headers)
+            
+            # Also add request_id for logging correlation
+            request_id = get_request_id()
+            if request_id:
+                headers["X-Request-ID"] = request_id
+        except Exception as e:
+            logger.debug(f"Failed to inject trace context headers: {e}")
+        
+        return self.requests.post(endpoint, json=task, headers=headers)
     
     def _create_new_container(self, task: Dict[str, Any], task_info: Dict[str, Any], status: Dict[str, Any]) -> None:
         """Create new Docker container"""
@@ -669,7 +685,22 @@ class DockerExecutor(Executor):
             logger.info(f"Calling cancel API for task {task_id} at {cancel_url}")
 
             try:
-                response = self.requests.post(cancel_url, timeout=10)
+                # Propagate trace context (traceparent/tracestate) and request_id to executor via headers
+                headers = {}
+                try:
+                    from shared.telemetry.context import get_request_id, inject_trace_context_to_headers
+                    
+                    # Inject W3C Trace Context headers for distributed tracing
+                    headers = inject_trace_context_to_headers(headers)
+                    
+                    # Also add request_id for logging correlation
+                    request_id = get_request_id()
+                    if request_id:
+                        headers["X-Request-ID"] = request_id
+                except Exception as e:
+                    logger.debug(f"Failed to inject trace context headers: {e}")
+                
+                response = self.requests.post(cancel_url, timeout=10, headers=headers)
                 response.raise_for_status()
 
                 logger.info(f"Successfully cancelled task {task_id}")

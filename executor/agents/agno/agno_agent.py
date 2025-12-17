@@ -306,9 +306,21 @@ class AgnoAgent(Agent):
                     title_key="thinking.sync_execution",
                     report_immediately=False
                 )
+                
+                # Copy ContextVars before creating new event loop
+                # ContextVars don't automatically propagate to new event loops
+                try:
+                    from shared.telemetry.context import copy_context_vars, restore_context_vars
+                    saved_context = copy_context_vars()
+                except ImportError:
+                    saved_context = None
+                
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
                 try:
+                    # Restore ContextVars in the new event loop
+                    if saved_context:
+                        restore_context_vars(saved_context)
                     return loop.run_until_complete(self._async_execute())
                 finally:
                     loop.close()
