@@ -30,7 +30,8 @@
     "loading": "Loading...",
     "retry": "Retry",
     "toggle_theme": "Toggle Theme",
-    "upload": "Upload"
+    "upload": "Upload",
+    "view": "View"
   },
   "validation": {
     "required": "This field is required",
@@ -663,6 +664,83 @@
     "tabs": {
       "code": "Code Knowledge",
       "document": "Document Knowledge"
+    },
+    "document": {
+      "title": "Document Knowledge",
+      "personal": "Personal Knowledge",
+      "team": "Team Knowledge",
+      "documents": "documents",
+      "noTeamHint": "You haven't joined any teams yet. Create or join a team to view team knowledge bases here.",
+      "noGroupHint": "You haven't joined any groups yet. Create or join a group to view group knowledge bases here.",
+      "tabs": {
+        "personal": "Personal",
+        "group": "Group",
+        "external": "External"
+      },
+      "knowledgeBase": {
+        "title": "Knowledge Base",
+        "create": "Create Knowledge Base",
+        "createDesc": "Create your first knowledge base",
+        "edit": "Edit Knowledge Base",
+        "delete": "Delete Knowledge Base",
+        "name": "Name",
+        "namePlaceholder": "Enter knowledge base name",
+        "nameRequired": "Name is required",
+        "nameTooLong": "Name must be 100 characters or less",
+        "description": "Description",
+        "descriptionPlaceholder": "Enter description (optional)",
+        "documentCount": "Documents",
+        "empty": "No knowledge bases yet",
+        "confirmDelete": "Are you sure you want to delete this knowledge base? This action cannot be undone.",
+        "deleteWarning": "This will also delete {{count}} document(s) in this knowledge base.",
+        "search": "Search knowledge bases...",
+        "noResults": "No matching knowledge bases"
+      },
+      "document": {
+        "title": "Documents",
+        "upload": "Upload File",
+        "edit": "Edit Document",
+        "enable": "Enable",
+        "disable": "Disable",
+        "delete": "Delete",
+        "status": {
+          "enabled": "Enabled",
+          "disabled": "Disabled"
+        },
+        "columns": {
+          "name": "Name",
+          "type": "Type",
+          "size": "Size",
+          "date": "Date",
+          "status": "Status",
+          "actions": "Actions"
+        },
+        "search": "Search documents",
+        "empty": "No documents yet",
+        "noResults": "No matching documents",
+        "filter": {
+          "all": "All Status",
+          "enabled": "Enabled",
+          "disabled": "Disabled"
+        },
+        "confirmDelete": "Are you sure you want to delete this document?",
+        "nameRequired": "Document name is required",
+        "namePlaceholder": "Enter document name",
+        "updateFailed": "Failed to update document",
+        "dropzone": "Drop file here or click to browse",
+        "supportedTypes": "PDF, Word, PPT, Excel, TXT, MD, Images (max 20MB)",
+        "uploading": "Uploading...",
+        "uploadSuccess": "File uploaded successfully",
+        "batch": {
+          "selected": "{{count}} selected",
+          "enable": "Enable",
+          "disable": "Disable",
+          "delete": "Delete"
+        }
+      },
+      "permission": {
+        "noAccess": "You do not have permission to perform this action"
+      }
     }
   },
   "wiki": {

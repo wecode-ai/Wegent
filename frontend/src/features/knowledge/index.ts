@@ -28,3 +28,7 @@ export type { KnowledgeModule } from './KnowledgeModuleNav';
 export { KnowledgeTabs } from './KnowledgeTabs';
 export type { KnowledgeTabType } from './KnowledgeTabs';
 export type { ContentWriteSummary, ContentWrite } from './wikiUtils';
+
+// Document Knowledge exports
+export { KnowledgeBaseList, KnowledgeDocumentPage } from './document/components';
+export { useKnowledgeBases, useDocuments } from './document/hooks';

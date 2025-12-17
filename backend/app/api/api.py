@@ -8,6 +8,7 @@ from app.api.endpoints import (
     auth,
     groups,
     health,
+    knowledge,
     oidc,
     openapi_responses,
     quota,
@@ -60,5 +61,11 @@ api_router.include_router(
 api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
+)
+api_router.include_router(
+    knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
 )
 api_router.include_router(k_router)

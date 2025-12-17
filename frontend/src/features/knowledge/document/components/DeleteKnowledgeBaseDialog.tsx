@@ -1,0 +1,84 @@
+// SPDX-FileCopyrightText: 2025 WeCode, Inc.
+//
+// SPDX-License-Identifier: Apache-2.0
+
+'use client'
+
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogDescription,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { useTranslation } from '@/hooks/useTranslation'
+import type { KnowledgeBase } from '@/types/knowledge'
+
+interface DeleteKnowledgeBaseDialogProps {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  knowledgeBase: KnowledgeBase | null
+  onConfirm: () => Promise<void>
+  loading?: boolean
+}
+
+export function DeleteKnowledgeBaseDialog({
+  open,
+  onOpenChange,
+  knowledgeBase,
+  onConfirm,
+  loading,
+}: DeleteKnowledgeBaseDialogProps) {
+  const { t } = useTranslation()
+
+  const handleConfirm = async () => {
+    try {
+      await onConfirm()
+    } catch {
+      // Error handled by parent
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t('knowledge.document.knowledgeBase.delete')}</DialogTitle>
+          <DialogDescription>
+            {t('knowledge.document.knowledgeBase.confirmDelete')}
+          </DialogDescription>
+        </DialogHeader>
+        {knowledgeBase && (
+          <div className="py-4">
+            <p className="text-text-primary font-medium">{knowledgeBase.name}</p>
+            {knowledgeBase.document_count > 0 && (
+              <p className="text-sm text-text-secondary mt-2">
+                {t('knowledge.document.knowledgeBase.deleteWarning', {
+                  count: knowledgeBase.document_count,
+                })}
+              </p>
+            )}
+          </div>
+        )}
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={loading}
+          >
+            {t('actions.cancel')}
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={handleConfirm}
+            disabled={loading}
+          >
+            {loading ? t('actions.deleting') : t('actions.delete')}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  )
+}
