@@ -126,6 +126,7 @@ export interface TestConnectionRequest {
   api_key: string;
   base_url?: string;
   custom_headers?: Record<string, string>; // Custom HTTP headers to override defaults
+  model_category_type?: ModelCategoryType; // Model category type for appropriate test method
 }
 
 export interface TestConnectionResponse {

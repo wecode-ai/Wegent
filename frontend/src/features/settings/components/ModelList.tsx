@@ -241,12 +241,14 @@ const ModelList: React.FC<ModelListProps> = ({
       }
 
       // Test connection requires api_key
+      // Pass model_category_type to use appropriate test method (e.g., embeddings for embedding models)
       const result = await modelApis.testConnection({
         provider_type: providerType,
         model_id: displayModel.modelId,
         api_key: apiKey,
         base_url: env.base_url as string | undefined,
         custom_headers: customHeaders,
+        model_category_type: displayModel.modelCategoryType,
       });
 
       if (result.success) {
