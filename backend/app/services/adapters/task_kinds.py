@@ -902,6 +902,24 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         task_dict["team"] = team
         task_dict["subtasks"] = subtasks_dict
 
+        # Add group chat information
+        from app.models.task_member import MemberStatus, TaskMember
+
+        # Check if this task has any members (indicating it's a group chat)
+        members = (
+            db.query(TaskMember)
+            .filter(
+                TaskMember.task_id == task_id,
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .all()
+        )
+
+        is_group_chat = len(members) > 0
+        task_dict["is_group_chat"] = is_group_chat
+        task_dict["is_group_owner"] = task_dict.get("user_id") == user_id
+        task_dict["member_count"] = len(members) if is_group_chat else None
+
         return task_dict
 
     def update_task(
@@ -1048,9 +1066,14 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
     def delete_task(self, db: Session, *, task_id: int, user_id: int) -> None:
         """
-        Delete user Task and handle running subtasks
+        Delete user Task and handle running subtasks.
+        For group chat tasks:
+        - If user is the owner: delete the entire task (soft delete)
+        - If user is a member: leave the group chat (remove membership)
         """
         logger.info(f"Deleting task with id: {task_id}")
+
+        # First check if user is the task owner
         task = (
             db.query(Kind)
             .filter(
@@ -1062,8 +1085,44 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .first()
         )
 
+        # If not the owner, check if user is a group chat member
         if not task:
-            raise HTTPException(status_code=404, detail="Task not found")
+            from app.models.task_member import MemberStatus, TaskMember
+
+            # Check if this is a group chat task and user is a member
+            task = (
+                db.query(Kind)
+                .filter(
+                    Kind.id == task_id,
+                    Kind.kind == "Task",
+                    Kind.is_active == True,
+                )
+                .first()
+            )
+
+            if not task:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            # Check if user is a member of this task
+            task_member = (
+                db.query(TaskMember)
+                .filter(
+                    TaskMember.task_id == task_id,
+                    TaskMember.user_id == user_id,
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .first()
+            )
+
+            if not task_member:
+                raise HTTPException(status_code=404, detail="Task not found")
+
+            # User is a member, not owner - handle as "leave group chat"
+            logger.info(f"User {user_id} leaving group chat task {task_id}")
+            task_member.status = MemberStatus.REMOVED
+            task_member.removed_at = datetime.now()
+            db.commit()
+            return
 
         # Get all subtasks for the task
         task_subtasks = db.query(Subtask).filter(Subtask.task_id == task_id).all()
