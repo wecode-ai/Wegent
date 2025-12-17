@@ -125,6 +125,26 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
             .all()
         )
 
+        # Add sender_user_name for group chat messages
+        # Query all unique sender_user_ids from subtasks
+        from app.models.user import User
+
+        sender_ids = set()
+        for subtask in subtasks:
+            if subtask.sender_user_id:
+                sender_ids.add(subtask.sender_user_id)
+
+        # Batch query users
+        user_name_map = {}
+        if sender_ids:
+            users = db.query(User).filter(User.id.in_(sender_ids)).all()
+            user_name_map = {user.id: user.user_name for user in users}
+
+        # Set sender_user_name for each subtask
+        for subtask in subtasks:
+            if subtask.sender_user_id and subtask.sender_user_id in user_name_map:
+                subtask.sender_user_name = user_name_map[subtask.sender_user_id]
+
         # Restore the original order (IN clause doesn't preserve order)
         id_to_subtask = {s.id: s for s in subtasks}
         return [id_to_subtask[sid] for sid in subtask_ids if sid in id_to_subtask]

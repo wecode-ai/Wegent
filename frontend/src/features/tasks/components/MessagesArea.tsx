@@ -554,6 +554,7 @@ export default function MessagesArea({
           recoveredContent, // Add recovered content if available
           isRecovered, // Flag to indicate this is recovered content
           isIncomplete, // Flag to indicate content is incomplete
+          senderUserName: sub.sender_user_name, // Add sender user name for group chat
         });
       });
     }

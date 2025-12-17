@@ -895,6 +895,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 ],
                 # Add attachments
                 "attachments": attachments_list,
+                # Group chat fields
+                "sender_type": (
+                    subtask.sender_type.value if subtask.sender_type else None
+                ),
+                "sender_user_id": subtask.sender_user_id,
+                "sender_user_name": getattr(subtask, "sender_user_name", None),
+                "reply_to_subtask_id": subtask.reply_to_subtask_id,
             }
             subtasks_dict.append(subtask_dict)
 

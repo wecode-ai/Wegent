@@ -36,6 +36,13 @@ class SubtaskRole(str, Enum):
     ASSISTANT = "ASSISTANT"
 
 
+class SenderType(str, Enum):
+    """Sender type for group chat messages"""
+
+    USER = "USER"  # Message sent by a user
+    TEAM = "TEAM"  # Message sent by the AI team/agent
+
+
 class SubtaskBase(BaseModel):
     """Subtask base model"""
 
@@ -102,6 +109,11 @@ class SubtaskInDB(SubtaskBase):
     completed_at: Optional[datetime] = None
     executor_deleted_at: Optional[bool] = False
     attachments: List[SubtaskAttachment] = []
+    # Group chat fields
+    sender_type: Optional[SenderType] = None  # USER or TEAM
+    sender_user_id: Optional[int] = None  # User ID when sender_type=USER
+    sender_user_name: Optional[str] = None  # User name for display
+    reply_to_subtask_id: Optional[int] = None  # Quoted message ID
 
     @field_serializer("result")
     def mask_result(self, value: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:

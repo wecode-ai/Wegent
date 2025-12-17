@@ -55,6 +55,8 @@ export interface Message {
   isIncomplete?: boolean;
   /** Flag indicating this message is waiting for first character (streaming but no content yet) */
   isWaiting?: boolean;
+  /** Group chat: sender user name (for USER type messages) */
+  senderUserName?: string;
 }
 
 // CopyButton component for copying markdown content
@@ -1272,6 +1274,13 @@ const MessageBubble = memo(
                     ({t('messages.recovered') || '已恢复'})
                   </span>
                 )}
+              </div>
+            )}
+            {/* Show sender user name for user messages in group chat */}
+            {isUserMessage && msg.senderUserName && (
+              <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                <span className="font-semibold">{msg.senderUserName}</span>
+                {timestampLabel && <span>{timestampLabel}</span>}
               </div>
             )}
             {isUserMessage && renderAttachments(msg.attachments)}
