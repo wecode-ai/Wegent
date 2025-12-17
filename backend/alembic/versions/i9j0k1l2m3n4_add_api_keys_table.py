@@ -13,8 +13,9 @@ users to access Wegent's OpenAPI endpoints programmatically.
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
+
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "i9j0k1l2m3n4"
@@ -25,7 +26,8 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Create api_keys table."""
-    op.execute("""
+    op.execute(
+        """
     CREATE TABLE IF NOT EXISTS api_keys (
         id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
         user_id INT NOT NULL DEFAULT 0 COMMENT 'User ID who owns this API key',
@@ -42,7 +44,8 @@ def upgrade() -> None:
         KEY idx_api_keys_user_id (user_id),
         KEY idx_api_keys_id (id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-    """)
+    """
+    )
 
 
 def downgrade() -> None:

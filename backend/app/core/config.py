@@ -136,6 +136,11 @@ class Settings(BaseSettings):
     WEB_SEARCH_ENABLED: bool = False  # Enable/disable web search feature
     WEB_SEARCH_ENGINES: str = "{}"  # JSON configuration for search API adapter
 
+    # Wizard configuration
+    # The name of the public model to use for wizard AI features (follow-up questions, prompt generation)
+    # If not set or empty, wizard will try to find any available model (user's first, then public)
+    WIZARD_MODEL_NAME: str = ""
+
     # MCP (Model Context Protocol) configuration for Chat Shell
     # Enable/disable MCP tools in Chat Shell mode
     CHAT_MCP_ENABLED: bool = False
