@@ -12,11 +12,11 @@ Unit tests for executor/utils/mcp_utils.py
 
 import pytest
 from executor.utils.mcp_utils import (
-    extract_mcp_servers_config,
-    replace_mcp_server_variables,
     _get_nested_value,
     _replace_placeholders_in_string,
     _replace_variables_recursive,
+    extract_mcp_servers_config,
+    replace_mcp_server_variables,
 )
 
 
@@ -84,15 +84,7 @@ class TestGetNestedValue:
 
     def test_deeply_nested_with_list(self):
         """Test deeply nested path with list access"""
-        data = {
-            "bot": [
-                {
-                    "agent_config": {
-                        "env": {"api_key": "secret123"}
-                    }
-                }
-            ]
-        }
+        data = {"bot": [{"agent_config": {"env": {"api_key": "secret123"}}}]}
         assert _get_nested_value(data, "bot.0.agent_config.env.api_key") == "secret123"
 
 
@@ -274,7 +266,7 @@ class TestReplaceMcpServerVariables:
             "user": {"git_token": "glpat-xxxxxxxxxxxx"},
         }
         result = replace_mcp_server_variables(mcp_servers, task_data)
-        
+
         assert result["gitlab"]["args"][3] == "https://gitlab.example.com"
         assert result["gitlab"]["args"][5] == "glpat-xxxxxxxxxxxx"
         assert result["gitlab"]["args"][7] == "group/project"
@@ -309,9 +301,7 @@ class TestReplaceMcpServerVariables:
                     "id": 1,
                     "name": "my-claude-bot",
                     "shell_type": "claudecode",
-                    "agent_config": {
-                        "env": {"api_key": "sk-xxx-123"}
-                    },
+                    "agent_config": {"env": {"api_key": "sk-xxx-123"}},
                     "system_prompt": "You are helpful",
                 }
             ]
@@ -336,4 +326,3 @@ class TestReplaceMcpServerVariables:
         result = replace_mcp_server_variables(mcp_servers, task_data)
         assert result["primary"] == "primary-bot"
         assert result["secondary"] == "secondary-bot"
-

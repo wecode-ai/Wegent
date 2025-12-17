@@ -221,6 +221,121 @@ def build_default_headers_with_placeholders(
     return result_headers
 
 
+def _process_model_config_placeholders(
+    model_config: Dict[str, Any],
+    user_id: int,
+    user_name: str,
+    agent_config: Optional[Dict[str, Any]] = None,
+    task_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Process placeholders in model_config (api_key and default_headers).
+
+    This is an internal function used by extract_and_process_model_config.
+    Handles placeholders like ${user.user_name}, ${agent_config.env.xxx}, etc.
+
+    Args:
+        model_config: Model configuration dict from _extract_model_config
+        user_id: Current user's ID
+        user_name: Current user's username
+        agent_config: Optional agent config from bot (for chat mode)
+        task_data: Optional task data (for chat mode)
+
+    Returns:
+        Model config with placeholders replaced in api_key and default_headers
+    """
+    # Build user info for data sources
+    user_info = {
+        "id": user_id,
+        "name": user_name or "",
+        "user_name": user_name or "",
+    }
+
+    # Build task_data with user info if not provided
+    # This ensures ${task_data.user.name} placeholders work even without full task context
+    effective_task_data = task_data or {}
+    if "user" not in effective_task_data:
+        effective_task_data = {**effective_task_data, "user": user_info}
+
+    # Build data_sources for placeholder replacement
+    # This mirrors the chat.py logic for handling ${user.name}, ${task_data.user.name}, etc.
+    data_sources = {
+        "agent_config": agent_config or {},
+        "model_config": model_config,
+        "task_data": effective_task_data,
+        "user": user_info,
+        "env": model_config.get("default_headers", {}),
+    }
+
+    # Process api_key placeholder if it contains ${...} pattern
+    api_key = model_config.get("api_key", "")
+    if api_key and "${" in api_key:
+        processed_api_key = replace_placeholders_with_sources(api_key, data_sources)
+        model_config["api_key"] = processed_api_key
+        logger.info(
+            f"[model_resolver] Processed api_key placeholder, "
+            f"has_value={bool(processed_api_key)}"
+        )
+
+    # Process DEFAULT_HEADERS with placeholder replacement
+    raw_default_headers = model_config.get("default_headers", {})
+    if raw_default_headers:
+        processed_headers = build_default_headers_with_placeholders(
+            raw_default_headers, data_sources
+        )
+        model_config["default_headers"] = processed_headers
+        logger.info(f"[model_resolver] Processed default_headers with placeholders")
+
+    return model_config
+
+
+def extract_and_process_model_config(
+    model_spec: Dict[str, Any],
+    user_id: int,
+    user_name: str,
+    agent_config: Optional[Dict[str, Any]] = None,
+    task_data: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Extract model configuration from spec and process all placeholders.
+
+    This is the main public function that combines _extract_model_config
+    and _process_model_config_placeholders into a single call.
+
+    Used by both chat and wizard to get a fully processed model config.
+
+    Args:
+        model_spec: Model specification dictionary (from model.json.spec)
+        user_id: Current user's ID
+        user_name: Current user's username
+        agent_config: Optional agent config from bot (for chat mode)
+        task_data: Optional task data (for chat mode)
+
+    Returns:
+        Dict with fully processed model configuration:
+        {
+            "api_key": "sk-xxx",  # decrypted and placeholders resolved
+            "base_url": "https://api.openai.com/v1",
+            "model_id": "gpt-4",
+            "model": "openai",
+            "default_headers": {...}  # placeholders resolved
+        }
+    """
+    # Step 1: Extract basic model config (handles env var placeholders and decryption)
+    model_config = _extract_model_config(model_spec)
+
+    # Step 2: Process data source placeholders (${user.xxx}, ${agent_config.xxx}, etc.)
+    model_config = _process_model_config_placeholders(
+        model_config=model_config,
+        user_id=user_id,
+        user_name=user_name,
+        agent_config=agent_config,
+        task_data=task_data,
+    )
+
+    return model_config
+
+
 def get_model_config_for_bot(
     db: Session,
     bot: Kind,
