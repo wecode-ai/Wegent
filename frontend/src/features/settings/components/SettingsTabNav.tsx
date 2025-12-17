@@ -30,10 +30,12 @@ import type { Group } from '@/types/group';
 export type SettingsTabId =
   | 'personal-models'
   | 'personal-shells'
+  | 'personal-tools'
   | 'personal-team'
   | 'group-manager'
   | 'group-models'
   | 'group-shells'
+  | 'group-tools'
   | 'general'
   | 'integrations'
   | 'api-keys'
@@ -117,6 +119,12 @@ export function SettingsTabNav({
         personalId: 'personal-shells',
         groupId: 'group-shells',
         label: t('settings.shells'),
+      },
+      {
+        key: 'tools',
+        personalId: 'personal-tools',
+        groupId: 'group-tools',
+        label: t('settings.tools'),
       },
     ],
     [t]

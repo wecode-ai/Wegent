@@ -16,6 +16,7 @@ from app.services.kind_impl import (
     ShellKindService,
     TaskKindService,
     TeamKindService,
+    ToolKindService,
     WorkspaceKindService,
 )
 
@@ -51,5 +52,7 @@ class KindServiceFactory:
             return TaskKindService()
         elif kind == "KnowledgeBase":
             return KnowledgeBaseKindService()
+        elif kind == "Tool":
+            return ToolKindService()
         else:
             raise ValueError(f"Unknown kind: {kind}")

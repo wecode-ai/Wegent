@@ -484,3 +484,55 @@ export interface SystemConfigResponse {
 export interface SystemConfigUpdate {
   teams: number[];
 }
+
+// Tool Types (CRD format)
+export type ToolKindType = 'builtin' | 'mcp';
+export type McpServerType = 'stdio' | 'sse' | 'streamable-http';
+
+export interface McpServerConfig {
+  type: McpServerType;
+  url?: string | null;
+  command?: string | null;
+  args?: string[] | null;
+  env?: Record<string, string> | null;
+  headers?: Record<string, string> | null;
+  timeout?: number | null;
+}
+
+export interface ToolMetadata {
+  name: string;
+  namespace: string;
+  displayName?: string | null;
+  labels?: Record<string, string>;
+}
+
+export interface ToolSpec {
+  type: ToolKindType;
+  description: string;
+  builtinName?: string | null;
+  mcpServer?: McpServerConfig | null;
+  parameters?: Record<string, unknown> | null;
+}
+
+export interface ToolStatus {
+  state: 'Available' | 'Unavailable';
+}
+
+export interface Tool {
+  apiVersion: string;
+  kind: 'Tool';
+  metadata: ToolMetadata;
+  spec: ToolSpec;
+  status?: ToolStatus;
+}
+
+export interface ToolList {
+  items: Tool[];
+}
+
+// ToolRef for Ghost to reference Tool
+export interface ToolRef {
+  name: string;
+  enabled?: boolean;
+  configOverrides?: Record<string, unknown>;
+}

@@ -28,6 +28,7 @@ from app.api.endpoints.adapter import (
     shells,
     tasks,
     teams,
+    tools,
 )
 from app.api.endpoints.kind import k_router
 from app.api.router import api_router
@@ -43,6 +44,7 @@ api_router.include_router(api_keys.router, prefix="/api-keys", tags=["api-keys"]
 api_router.include_router(bots.router, prefix="/bots", tags=["bots"])
 api_router.include_router(models.router, prefix="/models", tags=["public-models"])
 api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
+api_router.include_router(tools.router, prefix="/tools", tags=["tools"])
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])

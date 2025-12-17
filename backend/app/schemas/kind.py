@@ -30,12 +30,21 @@ class Status(BaseModel):
 
 
 # Ghost CRD schemas
+class ToolRefInGhost(BaseModel):
+    """Reference to a Tool in Ghost spec"""
+
+    name: str  # Tool Kind name
+    enabled: bool = True  # Whether this tool is enabled
+    configOverrides: Optional[Dict[str, Any]] = None  # Override Tool configuration
+
+
 class GhostSpec(BaseModel):
     """Ghost specification"""
 
     systemPrompt: str
     mcpServers: Optional[Dict[str, Any]] = None
     skills: Optional[List[str]] = None  # Skill names list
+    toolRefs: Optional[List[ToolRefInGhost]] = None  # Tool references
 
 
 class GhostStatus(Status):
@@ -118,6 +127,7 @@ class ShellSpec(BaseModel):
     baseShellRef: Optional[str] = (
         None  # Reference to base public shell (e.g., "ClaudeCode")
     )
+    supportedTools: Optional[List[str]] = None  # Supported Tool names. 'mcp' means all MCP type Tools
 
 
 class ShellStatus(Status):
@@ -415,3 +425,65 @@ class KnowledgeBaseList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "KnowledgeBaseList"
     items: List[KnowledgeBase]
+
+
+# Tool CRD schemas
+class McpServerConfig(BaseModel):
+    """MCP Server configuration for Tool"""
+
+    type: str  # stdio | sse | streamable-http
+    url: Optional[str] = None  # For sse and streamable-http types
+    command: Optional[str] = None  # For stdio type
+    args: Optional[List[str]] = None  # Command arguments for stdio
+    env: Optional[Dict[str, str]] = None  # Environment variables
+    headers: Optional[Dict[str, str]] = None  # HTTP headers for sse/streamable-http
+    timeout: Optional[int] = 300  # Connection timeout in seconds
+
+
+class ToolSpec(BaseModel):
+    """Tool specification"""
+
+    type: str  # builtin | mcp
+    description: str  # Description for model to understand tool usage
+
+    # For builtin type
+    builtinName: Optional[str] = None  # Built-in tool identifier (e.g., web_search)
+
+    # For mcp type (one Tool = one MCP Server)
+    mcpServer: Optional[McpServerConfig] = None
+
+    # Optional: JSON Schema for parameters (for UI display)
+    parameters: Optional[Dict[str, Any]] = None
+
+
+class ToolStatus(Status):
+    """Tool status"""
+
+    state: str = "Available"  # Available, Unavailable
+
+
+class Tool(BaseModel):
+    """Tool CRD"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "Tool"
+    metadata: ObjectMeta
+    spec: ToolSpec
+    status: Optional[ToolStatus] = None
+
+
+class ToolList(BaseModel):
+    """Tool list"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "ToolList"
+    items: List[Tool]
+
+
+# ToolRef for Ghost to reference Tool
+class ToolRef(BaseModel):
+    """Reference to a Tool in Ghost"""
+
+    name: str  # Tool Kind name
+    enabled: bool = True  # Whether this tool is enabled
+    configOverrides: Optional[Dict[str, Any]] = None  # Override Tool configuration
