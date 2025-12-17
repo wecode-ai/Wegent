@@ -319,10 +319,11 @@ def test_model_connection(
 
     Request body:
     {
-      "provider_type": "openai" | "anthropic",
+      "provider_type": "openai" | "anthropic" | "gemini",
       "model_id": "gpt-4",
       "api_key": "sk-...",
-      "base_url": "https://api.openai.com/v1"  // optional
+      "base_url": "https://api.openai.com/v1",  // optional
+      "custom_headers": {"header-name": "header-value"}  // optional, custom HTTP headers
     }
 
     Response:
@@ -335,6 +336,7 @@ def test_model_connection(
     model_id = test_data.get("model_id")
     api_key = test_data.get("api_key")
     base_url = test_data.get("base_url")
+    custom_headers = test_data.get("custom_headers", {})
 
     if not provider_type or not model_id or not api_key:
         return {
@@ -342,12 +344,18 @@ def test_model_connection(
             "message": "Missing required fields: provider_type, model_id, api_key",
         }
 
+    # Ensure custom_headers is a dict
+    if not isinstance(custom_headers, dict):
+        custom_headers = {}
+
     try:
         if provider_type == "openai":
             import openai
 
             client = openai.OpenAI(
-                api_key=api_key, base_url=base_url or "https://api.openai.com/v1"
+                api_key=api_key,
+                base_url=base_url or "https://api.openai.com/v1",
+                default_headers=custom_headers if custom_headers else None,
             )
             # Send minimal test request
             response = client.chat.completions.create(
@@ -365,6 +373,8 @@ def test_model_connection(
             client_kwargs = {"auth_token": api_key}
             if base_url:
                 client_kwargs["base_url"] = base_url
+            if custom_headers:
+                client_kwargs["default_headers"] = custom_headers
 
             client = anthropic.Anthropic(**client_kwargs)
 
@@ -392,6 +402,9 @@ def test_model_connection(
                 "Content-Type": "application/json",
                 "x-goog-api-key": api_key,
             }
+            # Merge custom headers (custom headers take precedence)
+            if custom_headers:
+                headers.update(custom_headers)
 
             payload = {
                 "contents": [{"role": "user", "parts": [{"text": "hi"}]}],
