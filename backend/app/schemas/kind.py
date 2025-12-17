@@ -150,7 +150,8 @@ class ModelSpec(BaseModel):
         None, description="STT-specific configuration (when modelType='stt')"
     )
     embeddingConfig: Optional[EmbeddingConfig] = Field(
-        None, description="Embedding-specific configuration (when modelType='embedding')"
+        None,
+        description="Embedding-specific configuration (when modelType='embedding')",
     )
     rerankConfig: Optional[RerankConfig] = Field(
         None, description="Rerank-specific configuration (when modelType='rerank')"
