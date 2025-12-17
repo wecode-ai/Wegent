@@ -1,17 +1,26 @@
 #!/usr/bin/env python
 import json
 from datetime import timedelta
+from typing import Any, Dict, List, Optional, Tuple
+
+from agno.tools.mcp import (
+    MCPTools,
+    SSEClientParams,
+    StdioServerParameters,
+    StreamableHTTPClientParams,
+)
+from executor.utils.mcp_utils import (
+    extract_mcp_servers_config,
+    replace_mcp_server_variables,
+)
+from shared.logger import setup_logger
+
 # SPDX-FileCopyrightText: 2025 Weibo, Inc.
 #
 # SPDX-License-Identifier: Apache-2.0
 
 # -*- coding: utf-8 -*-
 
-from typing import Dict, Any, Optional, List, Tuple
-from agno.tools.mcp import MCPTools
-from agno.tools.mcp import StreamableHTTPClientParams, SSEClientParams, StdioServerParameters
-from executor.utils.mcp_utils import extract_mcp_servers_config
-from shared.logger import setup_logger
 
 logger = setup_logger("agno_mcp_manager")
 
@@ -20,24 +29,32 @@ class MCPManager:
     """
     Manages MCP (Model Context Protocol) tools configuration and connections
     """
-    
+
     def __init__(self, thinking_manager=None):
         self.connected_tools: List[MCPTools] = []
         self.thinking_manager = thinking_manager
-    
-    async def setup_mcp_tools(self, config: Dict[str, Any]) -> Optional[List[MCPTools]]:
+
+    async def setup_mcp_tools(
+        self, config: Dict[str, Any], task_data: Optional[Dict[str, Any]] = None
+    ) -> Optional[List[MCPTools]]:
         """
         Setup MCP tools if configured
-        
+
         Args:
             config: Configuration dictionary containing MCP server settings
-            
+            task_data: Optional task data dictionary for variable replacement in MCP config.
+                       Supports placeholders like ${{user.name}}, ${{git_repo}}, ${{bot.0.name}}
+
         Returns:
             List of MCP tools if successful, None otherwise
         """
         mcp_servers = extract_mcp_servers_config(config)
         if mcp_servers is None:
             return None
+
+        # Replace placeholders in MCP servers config with actual values from task_data
+        if task_data:
+            mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
 
         mcp_tools_list = []
 
@@ -77,20 +94,23 @@ class MCPManager:
             self.add_thinking_step_by_key(
                 title_key="thinking.mcp_init_fail",
                 report_immediately=True,
-                details={"error_message": f"Failed to setup MCP tools. \nerror message: {str(e)}. \ntools: {json.dumps(mcp_servers, ensure_ascii=False)}"}
+                details={
+                    "error_message": f"Failed to setup MCP tools. \nerror message: {str(e)}. \ntools: {json.dumps(mcp_servers, ensure_ascii=False)}"
+                },
             )
 
         return None
-    
 
-    async def _create_mcp_tools(self, server_config: Dict[str, Any], server_name: str) -> Optional[MCPTools]:
+    async def _create_mcp_tools(
+        self, server_config: Dict[str, Any], server_name: str
+    ) -> Optional[MCPTools]:
         """
         Create MCP tools for a specific server configuration
-        
+
         Args:
             server_config: Server configuration dictionary
             server_name: Name of the server
-            
+
         Returns:
             MCPTools instance if successful, None otherwise
         """
@@ -109,22 +129,27 @@ class MCPManager:
                 logger.error(f"Unsupported MCP type: {mcp_type}")
                 return None
         except Exception as e:
-            logger.error(f"Failed to create MCP tools for server {server_name}: {str(e)}")
+            logger.error(
+                f"Failed to create MCP tools for server {server_name}: {str(e)}"
+            )
             # Add thinking step for MCP tools creation failure
             self.add_thinking_step_by_key(
                 title_key="thinking.mcp_init_fail",
                 report_immediately=False,
-                details={"error_message": f"Failed to create MCP tools for server. error message: {str(e)}", "server_name": server_name}
+                details={
+                    "error_message": f"Failed to create MCP tools for server. error message: {str(e)}",
+                    "server_name": server_name,
+                },
             )
             return None
-    
+
     def _create_streamable_http_tools(self, server_config: Dict[str, Any]) -> MCPTools:
         """
         Create MCP tools for streamable HTTP transport
-        
+
         Args:
             server_config: Server configuration dictionary
-            
+
         Returns:
             MCPTools instance
         """
@@ -134,7 +159,10 @@ class MCPManager:
             self.add_thinking_step_by_key(
                 title_key="thinking.mcp_init_fail",
                 report_immediately=False,
-                details={"error_message": "Server URL is required for streamable HTTP transport", "transport_type": "streamable-http"}
+                details={
+                    "error_message": "Server URL is required for streamable HTTP transport",
+                    "transport_type": "streamable-http",
+                },
             )
             return None
 
@@ -146,18 +174,30 @@ class MCPManager:
         server_params = StreamableHTTPClientParams(
             url=server_config.get("url"),
             headers=server_config.get("headers", {}),
-            timeout=timedelta(seconds=timeout_value) if timeout_value is not None else timedelta(seconds=60 * 5),
-            sse_read_timeout=timedelta(seconds=sse_read_timeout_value) if sse_read_timeout_value is not None else timedelta(seconds=60 * 5)
+            timeout=(
+                timedelta(seconds=timeout_value)
+                if timeout_value is not None
+                else timedelta(seconds=60 * 5)
+            ),
+            sse_read_timeout=(
+                timedelta(seconds=sse_read_timeout_value)
+                if sse_read_timeout_value is not None
+                else timedelta(seconds=60 * 5)
+            ),
         )
-        return MCPTools(transport="streamable-http", server_params=server_params, timeout_seconds=timeout_seconds)
-    
+        return MCPTools(
+            transport="streamable-http",
+            server_params=server_params,
+            timeout_seconds=timeout_seconds,
+        )
+
     def _create_sse_tools(self, server_config: Dict[str, Any]) -> MCPTools:
         """
         Create MCP tools for SSE (Server-Sent Events) transport
-        
+
         Args:
             server_config: Server configuration dictionary
-            
+
         Returns:
             MCPTools instance
         """
@@ -167,7 +207,10 @@ class MCPManager:
             self.add_thinking_step_by_key(
                 title_key="thinking.mcp_init_fail",
                 report_immediately=False,
-                details={"error_message": "Server URL is required for SSE transport", "transport_type": "sse"}
+                details={
+                    "error_message": "Server URL is required for SSE transport",
+                    "transport_type": "sse",
+                },
             )
             return None
 
@@ -180,18 +223,24 @@ class MCPManager:
             url=server_config.get("url"),
             headers=server_config.get("headers", {}),
             timeout=timeout_value if timeout_value is not None else 60 * 5,
-            sse_read_timeout=sse_read_timeout_value if sse_read_timeout_value is not None else 60 * 5
+            sse_read_timeout=(
+                sse_read_timeout_value if sse_read_timeout_value is not None else 60 * 5
+            ),
         )
 
-        return MCPTools(transport="sse", server_params=server_params, timeout_seconds=timeout_seconds)
-    
+        return MCPTools(
+            transport="sse",
+            server_params=server_params,
+            timeout_seconds=timeout_seconds,
+        )
+
     def _create_stdio_tools(self, server_config: Dict[str, Any]) -> MCPTools:
         """
         Create MCP tools for stdio transport
-        
+
         Args:
             server_config: Server configuration dictionary
-            
+
         Returns:
             MCPTools instance
         """
@@ -217,12 +266,17 @@ class MCPManager:
         #     }
         # }
         if not server_config.get("command"):
-            logger.error(f"Server command is required for Stdio transport: server_config: {server_config}")
+            logger.error(
+                f"Server command is required for Stdio transport: server_config: {server_config}"
+            )
             # Add thinking step for missing command configuration
             self.add_thinking_step_by_key(
                 title_key="thinking.mcp_init_fail",
                 report_immediately=False,
-                details={"error_message": "Server command is required for Stdio transport", "transport_type": "stdio"}
+                details={
+                    "error_message": "Server command is required for Stdio transport",
+                    "transport_type": "stdio",
+                },
             )
             return None
         server_params = StdioServerParameters(
@@ -232,8 +286,12 @@ class MCPManager:
         )
         timeout_value = server_config.get("timeout")
         timeout_seconds = timeout_value if timeout_value is not None else 60 * 5
-        return MCPTools(transport="stdio", server_params=server_params, timeout_seconds=timeout_seconds)
-    
+        return MCPTools(
+            transport="stdio",
+            server_params=server_params,
+            timeout_seconds=timeout_seconds,
+        )
+
     async def cleanup_tools(self) -> None:
         """
         Clean up all connected MCP tools
@@ -242,7 +300,7 @@ class MCPManager:
         for tools in self.connected_tools:
             try:
                 # Disconnect MCP tools if they have a disconnect method
-                if hasattr(tools, 'disconnect'):
+                if hasattr(tools, "disconnect"):
                     await tools.disconnect()
             except Exception as e:
                 logger.warning(f"Failed to disconnect MCP tools: {str(e)}")
@@ -250,33 +308,40 @@ class MCPManager:
                 self.add_thinking_step_by_key(
                     title_key="thinking.mcp_init_fail",
                     report_immediately=False,
-                    details={"error_message": f"Failed to disconnect MCP tools. \nerror message: {str(e)}. \ntools: {json.dumps(tools, ensure_ascii=False)}"}
+                    details={
+                        "error_message": f"Failed to disconnect MCP tools. \nerror message: {str(e)}. \ntools: {json.dumps(tools, ensure_ascii=False)}"
+                    },
                 )
-        
+
         self.connected_tools.clear()
-    
+
     def get_connected_tools_count(self) -> int:
         """
         Get the number of connected MCP tools
-        
+
         Returns:
             Number of connected tools
         """
         return len(self.connected_tools)
-    
+
     def is_tools_connected(self) -> bool:
         """
         Check if any MCP tools are connected
-        
+
         Returns:
             True if tools are connected, False otherwise
         """
         return len(self.connected_tools) > 0
-    
-    def add_thinking_step_by_key(self, title_key: str, report_immediately: bool = True, details: Optional[Dict[str, Any]] = None) -> None:
+
+    def add_thinking_step_by_key(
+        self,
+        title_key: str,
+        report_immediately: bool = True,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Add a thinking step using i18n key
-        
+
         Args:
             title_key: i18n key for step title
             report_immediately: Whether to report this thinking step immediately (default True)
@@ -286,5 +351,5 @@ class MCPManager:
             self.thinking_manager.add_thinking_step_by_key(
                 title_key=title_key,
                 report_immediately=report_immediately,
-                details=details
+                details=details,
             )

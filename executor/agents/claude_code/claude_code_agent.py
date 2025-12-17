@@ -7,34 +7,36 @@
 # -*- coding: utf-8 -*-
 
 import asyncio
-import os
-import json
 import importlib
+import json
+import os
 import random
+import re
 import string
 import subprocess
-import re
 import time
-from typing import Dict, Any, List, Optional
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
-from executor.agents.claude_code.response_processor import process_response
-from executor.agents.claude_code.progress_state_manager import ProgressStateManager
-from executor.agents.base import Agent
+from claude_agent_sdk import ClaudeAgentOptions, ClaudeSDKClient
 from executor.agents.agno.thinking_step_manager import ThinkingStepManager
+from executor.agents.base import Agent
+from executor.agents.claude_code.progress_state_manager import ProgressStateManager
+from executor.agents.claude_code.response_processor import process_response
 from executor.config import config
-from shared.logger import setup_logger
-from shared.status import TaskStatus
-from shared.models.task import ThinkingStep, ExecutionResult
-from shared.utils.crypto import is_token_encrypted, decrypt_git_token
-from shared.utils.sensitive_data_masker import mask_sensitive_data
-from shared.telemetry.decorators import trace_async, add_span_event
-
-from executor.utils.mcp_utils import extract_mcp_servers_config
-from executor.tasks.task_state_manager import TaskStateManager, TaskState
 from executor.tasks.resource_manager import ResourceManager
+from executor.tasks.task_state_manager import TaskState, TaskStateManager
+from executor.utils.mcp_utils import (
+    extract_mcp_servers_config,
+    replace_mcp_server_variables,
+)
+from shared.logger import setup_logger
+from shared.models.task import ExecutionResult, ThinkingStep
+from shared.status import TaskStatus
+from shared.telemetry.decorators import add_span_event, trace_async
+from shared.utils.crypto import decrypt_git_token, is_token_encrypted
+from shared.utils.sensitive_data_masker import mask_sensitive_data
 
 logger = setup_logger("claude_code_agent")
 
@@ -50,7 +52,7 @@ def _extract_claude_agent_attributes(self, *args, **kwargs) -> Dict[str, Any]:
 
 
 def _generate_claude_code_user_id() -> str:
-    return ''.join(random.choices(string.ascii_lowercase + string.digits, k=64))
+    return "".join(random.choices(string.ascii_lowercase + string.digits, k=64))
 
 
 class ClaudeCodeAgent(Agent):
@@ -60,7 +62,7 @@ class ClaudeCodeAgent(Agent):
 
     # Static dictionary for storing client connections to enable connection reuse
     _clients: Dict[str, ClaudeSDKClient] = {}
-    
+
     # Static dictionary for storing hook functions
     _hooks: Dict[str, Any] = {}
 
@@ -77,32 +79,40 @@ class ClaudeCodeAgent(Agent):
         if cls._hooks:
             # Hooks already loaded
             return
-            
+
         hook_config_path = Path("/app/config/claude_hooks.json")
         if not hook_config_path.exists():
-            logger.debug("No hook configuration file found at /app/config/claude_hooks.json")
+            logger.debug(
+                "No hook configuration file found at /app/config/claude_hooks.json"
+            )
             return
-            
+
         try:
-            with open(hook_config_path, 'r') as f:
+            with open(hook_config_path, "r") as f:
                 hook_config = json.load(f)
                 logger.info(f"Loading hook configuration from {hook_config_path}")
-                
+
                 for hook_name, hook_path in hook_config.items():
                     try:
                         # Parse module path and function name
-                        module_path, func_name = hook_path.rsplit('.', 1)
+                        module_path, func_name = hook_path.rsplit(".", 1)
                         # Dynamically import the module
                         module = importlib.import_module(module_path)
                         # Get the function from the module
                         hook_func = getattr(module, func_name)
                         # Store the hook function
                         cls._hooks[hook_name] = hook_func
-                        logger.info(f"Successfully loaded hook: {hook_name} from {hook_path}")
+                        logger.info(
+                            f"Successfully loaded hook: {hook_name} from {hook_path}"
+                        )
                     except Exception as e:
-                        logger.warning(f"Failed to load hook {hook_name} from {hook_path}: {e}")
+                        logger.warning(
+                            f"Failed to load hook {hook_name} from {hook_path}: {e}"
+                        )
         except Exception as e:
-            logger.warning(f"Failed to load hook configuration from {hook_config_path}: {e}")
+            logger.warning(
+                f"Failed to load hook configuration from {hook_config_path}: {e}"
+            )
 
     def __init__(self, task_data: Dict[str, Any]):
         """
@@ -128,22 +138,24 @@ class ClaudeCodeAgent(Agent):
         self._set_git_env_variables(task_data)
 
         # Initialize thinking step manager
-        self.thinking_manager = ThinkingStepManager(progress_reporter=self.report_progress)
-        
+        self.thinking_manager = ThinkingStepManager(
+            progress_reporter=self.report_progress
+        )
+
         # Initialize progress state manager - will be fully initialized when task starts
         self.state_manager: Optional[ProgressStateManager] = None
-        
+
         # Initialize task state manager and resource manager
         self.task_state_manager = TaskStateManager()
         self.resource_manager = ResourceManager()
-        
+
         # Set initial task state to RUNNING
         self.task_state_manager.set_state(self.task_id, TaskState.RUNNING)
 
     def _set_git_env_variables(self, task_data: Dict[str, Any]) -> None:
         """
         Extract git-related fields from task_data and set them as environment variables
-        
+
         Args:
             task_data: The task data dictionary
         """
@@ -152,16 +164,16 @@ class ClaudeCodeAgent(Agent):
             "git_repo": "GIT_REPO",
             "git_repo_id": "GIT_REPO_ID",
             "branch_name": "BRANCH_NAME",
-            "git_url": "GIT_URL"
+            "git_url": "GIT_URL",
         }
-        
+
         env_values = {}
         for source_key, env_key in git_fields.items():
             value = task_data.get(source_key)
             if value is not None:
                 os.environ[env_key] = str(value)
                 env_values[env_key] = value
-                
+
         if env_values:
             logger.info(f"Set git environment variables: {env_values}")
 
@@ -173,11 +185,12 @@ class ClaudeCodeAgent(Agent):
 
         git_token = self._get_git_token(git_domain, task_data)
         if not git_token:
-            logger.warning(f"No valid token found for {git_domain}, skipping authentication.")
+            logger.warning(
+                f"No valid token found for {git_domain}, skipping authentication."
+            )
             return
 
         self._authenticate_cli(git_domain, git_token)
-
 
     def _authenticate_cli(self, git_domain: str, git_token: str) -> None:
 
@@ -201,7 +214,9 @@ class ClaudeCodeAgent(Agent):
                 text=True,
                 check=True,
             )
-            logger.info(f"{'GitHub' if is_github else 'GitLab'} CLI authenticated for {git_domain}")
+            logger.info(
+                f"{'GitHub' if is_github else 'GitLab'} CLI authenticated for {git_domain}"
+            )
             if result.stdout.strip():
                 logger.debug(f"CLI output: {result.stdout.strip()}")
 
@@ -209,7 +224,9 @@ class ClaudeCodeAgent(Agent):
             stderr = e.stderr.strip() if e.stderr else str(e)
             logger.warning(f"CLI authentication failed for {git_domain}: {stderr}")
         except Exception as e:
-            logger.warning(f"Unexpected error during CLI authentication for {git_domain}: {e}")
+            logger.warning(
+                f"Unexpected error during CLI authentication for {git_domain}: {e}"
+            )
 
     def _configure_repo_proxy(self, git_domain: str) -> None:
         """
@@ -220,7 +237,9 @@ class ClaudeCodeAgent(Agent):
         """
         proxy_config_raw = os.getenv("REPO_PROXY_CONFIG")
         if not proxy_config_raw:
-            logger.info("No REPO_PROXY_CONFIG environment variable set, skipping proxy configuration.")
+            logger.info(
+                "No REPO_PROXY_CONFIG environment variable set, skipping proxy configuration."
+            )
             return
 
         try:
@@ -229,7 +248,11 @@ class ClaudeCodeAgent(Agent):
             logger.warning(f"Invalid REPO_PROXY_CONFIG JSON: {e}")
             return
 
-        domain_config = proxy_config.get(git_domain) or proxy_config.get(git_domain.lower()) or proxy_config.get("*")
+        domain_config = (
+            proxy_config.get(git_domain)
+            or proxy_config.get(git_domain.lower())
+            or proxy_config.get("*")
+        )
         if not isinstance(domain_config, dict):
             logger.info(f"No proxy configuration found for domain {git_domain}")
             return
@@ -241,11 +264,13 @@ class ClaudeCodeAgent(Agent):
         }
 
         if not proxy_values:
-            logger.info(f"Proxy configuration for domain {git_domain} is empty, skipping.")
+            logger.info(
+                f"Proxy configuration for domain {git_domain} is empty, skipping."
+            )
             return
 
         for proxy_key, proxy_value in proxy_values.items():
-            cmd = f'git config --global {proxy_key} {proxy_value}'
+            cmd = f"git config --global {proxy_key} {proxy_value}"
             try:
                 subprocess.run(
                     cmd,
@@ -254,12 +279,16 @@ class ClaudeCodeAgent(Agent):
                     text=True,
                     check=True,
                 )
-                logger.info(f"Configured environment {proxy_key} for domain {git_domain}")
+                logger.info(
+                    f"Configured environment {proxy_key} for domain {git_domain}"
+                )
             except subprocess.CalledProcessError as e:
                 stderr = e.stderr.strip() if e.stderr else str(e)
                 logger.warning(f"Proxy configuration failed: {stderr}")
 
-    def _get_git_token(self, git_domain: str, task_data: Dict[str, Any]) -> Optional[str]:
+    def _get_git_token(
+        self, git_domain: str, task_data: Dict[str, Any]
+    ) -> Optional[str]:
         user_cfg = task_data.get("user", {})
         git_token = user_cfg.get("git_token")
 
@@ -277,16 +306,27 @@ class ClaudeCodeAgent(Agent):
                     token = f.read().strip()
                     # Check if the token is encrypted and decrypt if needed
                     if is_token_encrypted(token):
-                        logger.debug(f"Decrypting git token from file for domain: {git_domain}")
+                        logger.debug(
+                            f"Decrypting git token from file for domain: {git_domain}"
+                        )
                         return decrypt_git_token(token)
                     return token
             except Exception as e:
                 logger.warning(f"Failed to read token from {token_path}: {e}")
         return None
-    def add_thinking_step(self, title: str, action: str = "", reasoning: str = "",
-                         result: str = "", confidence: float = -1,
-                         next_action: str = "continue", report_immediately: bool = True,
-                         use_i18n_keys: bool = False, details: Optional[Dict[str, Any]] = None) -> None:
+
+    def add_thinking_step(
+        self,
+        title: str,
+        action: str = "",
+        reasoning: str = "",
+        result: str = "",
+        confidence: float = -1,
+        next_action: str = "continue",
+        report_immediately: bool = True,
+        use_i18n_keys: bool = False,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Add a thinking step (wrapper for backward compatibility)
 
@@ -305,10 +345,15 @@ class ClaudeCodeAgent(Agent):
             title=title,
             report_immediately=report_immediately,
             use_i18n_keys=use_i18n_keys,
-            details=details
+            details=details,
         )
-    
-    def add_thinking_step_by_key(self, title_key: str, report_immediately: bool = True, details: Optional[Dict[str, Any]] = None) -> None:
+
+    def add_thinking_step_by_key(
+        self,
+        title_key: str,
+        report_immediately: bool = True,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
         """
         Add a thinking step using i18n key (wrapper for backward compatibility)
 
@@ -323,9 +368,7 @@ class ClaudeCodeAgent(Agent):
             details: Additional details for thinking step (optional)
         """
         self.thinking_manager.add_thinking_step_by_key(
-            title_key=title_key,
-            report_immediately=report_immediately,
-            details=details
+            title_key=title_key, report_immediately=report_immediately, details=details
         )
 
     def _text_to_i18n_key(self, text: str) -> str:
@@ -363,6 +406,7 @@ class ClaudeCodeAgent(Agent):
         Clear all thinking steps
         """
         self.thinking_manager.clear_thinking_steps()
+
     def _initialize_state_manager(self) -> None:
         """
         Initialize the progress state manager
@@ -370,17 +414,17 @@ class ClaudeCodeAgent(Agent):
         if self.state_manager is None:
             # Get project path from options or use default
             project_path = self.options.get("cwd", self.project_path)
-            
+
             self.state_manager = ProgressStateManager(
                 thinking_manager=self.thinking_manager,
                 task_data=self.task_data,
                 report_progress_callback=self.report_progress,
-                project_path=project_path
+                project_path=project_path,
             )
-            
+
             # Set state_manager to thinking_manager for immediate reporting
             self.thinking_manager.set_state_manager(self.state_manager)
-            
+
             logger.info("Initialized progress state manager")
 
     def update_prompt(self, new_prompt: str) -> None:
@@ -407,10 +451,9 @@ class ClaudeCodeAgent(Agent):
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} was cancelled before initialization")
                 return TaskStatus.COMPLETED
-            
+
             self.add_thinking_step_by_key(
-                title_key="thinking.initialize_agent",
-                report_immediately=False
+                title_key="thinking.initialize_agent", report_immediately=False
             )
 
             # Check if bot config is available
@@ -419,7 +462,9 @@ class ClaudeCodeAgent(Agent):
                 user_name = self.task_data["user"]["name"]
                 git_url = self.task_data["git_url"]
                 # Get config from bot
-                agent_config = self._create_claude_model(bot_config, user_name=user_name, git_url=git_url)
+                agent_config = self._create_claude_model(
+                    bot_config, user_name=user_name, git_url=git_url
+                )
                 if agent_config:
                     # Ensure ~/.claude directory exists
                     claude_dir = os.path.expanduser("~/.claude")
@@ -430,7 +475,7 @@ class ClaudeCodeAgent(Agent):
                     with open(settings_path, "w") as f:
                         json.dump(agent_config, f, indent=2)
                     logger.info(f"Saved Claude Code settings to {settings_path}")
-                    
+
                     # Save claude.json config
                     claude_json_path = os.path.expanduser("~/.claude.json")
                     claude_json_config = {
@@ -444,7 +489,7 @@ class ClaudeCodeAgent(Agent):
                         "bypassPermissionsModeAccepted": True,
                         "hasOpusPlanDefault": False,
                         "lastReleaseNotesSeen": "2.0.14",
-                        "isQualifiedForDataSharing": False
+                        "isQualifiedForDataSharing": False,
                     }
                     with open(claude_json_path, "w") as f:
                         json.dump(claude_json_config, f, indent=2)
@@ -459,13 +504,13 @@ class ClaudeCodeAgent(Agent):
         except Exception as e:
             logger.error(f"Failed to initialize Claude Code Agent: {str(e)}")
             self.add_thinking_step_by_key(
-                title_key="thinking.initialize_failed",
-                report_immediately=False
+                title_key="thinking.initialize_failed", report_immediately=False
             )
             return TaskStatus.FAILED
 
-
-    def _create_claude_model(self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None) -> Dict[str, Any]:
+    def _create_claude_model(
+        self, bot_config: Dict[str, Any], user_name: str = None, git_url: str = None
+    ) -> Dict[str, Any]:
         """
         claude code settings: https://docs.claude.com/en/docs/claude-code/settings
         """
@@ -474,47 +519,56 @@ class ClaudeCodeAgent(Agent):
         # Using user-defined input model configuration
         if not env.get("model"):
             return agent_config
-        
+
         model_id = env.get("model_id", "")
-        
-        # Note: ANTHROPIC_SMALL_FAST_MODEL is deprecated in favor of ANTHROPIC_DEFAULT_HAIKU_MODEL. 
+
+        # Note: ANTHROPIC_SMALL_FAST_MODEL is deprecated in favor of ANTHROPIC_DEFAULT_HAIKU_MODEL.
         env_config = {
             "ANTHROPIC_MODEL": model_id,
             "ANTHROPIC_SMALL_FAST_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_DEFAULT_HAIKU_MODEL": env.get("small_model", model_id),
             "ANTHROPIC_AUTH_TOKEN": env.get("api_key", ""),
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")),
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": int(
+                os.getenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "0")
+            ),
         }
-        
+
         base_url = env.get("base_url", "")
         if base_url:
             env_config["ANTHROPIC_BASE_URL"] = base_url.removesuffix("/v1")
-        
+
         # Add other environment variables except model_id, api_key, base_url
         excluded_keys = {"model_id", "api_key", "base_url", "model", "small_model"}
         for key, value in env.items():
             if key not in excluded_keys and value is not None:
                 env_config[key] = value
-        
+
         # Apply post-creation hook if available
         if "post_create_claude_model" in self._hooks:
             try:
-                final_claude_code_config_with_hook = self._hooks["post_create_claude_model"](
-                    env_config, model_id, bot_config, user_name, git_url
-                )
+                final_claude_code_config_with_hook = self._hooks[
+                    "post_create_claude_model"
+                ](env_config, model_id, bot_config, user_name, git_url)
                 logger.info("Applied post_create_claude_model hook")
-                logger.info(f"Created Claude Code model config with hook: {mask_sensitive_data(final_claude_code_config_with_hook)}")
-        
+                logger.info(
+                    f"Created Claude Code model config with hook: {mask_sensitive_data(final_claude_code_config_with_hook)}"
+                )
+
                 return final_claude_code_config_with_hook
             except Exception as e:
                 logger.warning(f"Hook execution failed: {e}")
 
         final_claude_code_config = {
             "env": env_config,
-            "includeCoAuthoredBy": os.getenv("CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY", "true").lower() != "false",
+            "includeCoAuthoredBy": os.getenv(
+                "CLAUDE_CODE_INCLUDE_CO_AUTHORED_BY", "true"
+            ).lower()
+            != "false",
         }
-        logger.info(f"Created Claude Code model config: {mask_sensitive_data(final_claude_code_config)}")
-        
+        logger.info(
+            f"Created Claude Code model config: {mask_sensitive_data(final_claude_code_config)}"
+        )
+
         return final_claude_code_config
 
     def _extract_claude_options(self, task_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -546,12 +600,12 @@ class ClaudeCodeAgent(Agent):
             "cwd",
         ]
 
-        logger.info(f"Extracting Claude options from task data: {mask_sensitive_data(task_data)}")
+        logger.info(
+            f"Extracting Claude options from task data: {mask_sensitive_data(task_data)}"
+        )
 
         # Collect all non-None configuration parameters
-        options = {
-            "setting_sources": ["user", "project", "local"]
-        }
+        options = {"setting_sources": ["user", "project", "local"]}
         bots = task_data.get("bot", [])
         bot_config = bots[0]
         # Extract all non-None parameters from bot_config
@@ -559,6 +613,8 @@ class ClaudeCodeAgent(Agent):
             # Extract MCP servers configuration
             mcp_servers = extract_mcp_servers_config(bot_config)
             if mcp_servers:
+                # Replace placeholders in MCP servers config with actual values from task_data
+                mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
                 logger.info(f"Detected MCP servers configuration: {mcp_servers}")
                 bot_config["mcp_servers"] = mcp_servers
 
@@ -583,7 +639,11 @@ class ClaudeCodeAgent(Agent):
                 self.download_code()
 
                 # Update cwd in options if not already set
-                if "cwd" not in self.options and self.project_path is not None and os.path.exists(self.project_path):
+                if (
+                    "cwd" not in self.options
+                    and self.project_path is not None
+                    and os.path.exists(self.project_path)
+                ):
                     self.options["cwd"] = self.project_path
                     logger.info(f"Set cwd to {self.project_path}")
 
@@ -598,7 +658,9 @@ class ClaudeCodeAgent(Agent):
                         # Update .git/info/exclude to ignore .claudecode
                         self._update_git_exclude(self.project_path)
 
-                        logger.info(f"Setup Claude Code custom instructions with {len(custom_rules)} files")
+                        logger.info(
+                            f"Setup Claude Code custom instructions with {len(custom_rules)} files"
+                        )
 
                     # Setup Claude.md symlink from Agents.md if exists
                     self._setup_claude_md_symlink(self.project_path)
@@ -614,7 +676,7 @@ class ClaudeCodeAgent(Agent):
                 title="Pre-execution Failed",
                 report_immediately=True,
                 use_i18n_keys=False,
-                details={"error": str(e)}
+                details={"error": str(e)},
             )
             return TaskStatus.FAILED
 
@@ -630,11 +692,11 @@ class ClaudeCodeAgent(Agent):
             progress = 55
             # Update current progress
             self._update_progress(progress)
-            
+
             # Initialize state manager and workbench at task start
             self._initialize_state_manager()
             self.state_manager.initialize_workbench("running")
-            
+
             # Report starting progress using state manager
             self.state_manager.report_progress(
                 progress, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}"
@@ -660,7 +722,7 @@ class ClaudeCodeAgent(Agent):
                 self.add_thinking_step(
                     title="Sync Execution",
                     report_immediately=False,
-                    use_i18n_keys=False
+                    use_i18n_keys=False,
                 )
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -674,7 +736,7 @@ class ClaudeCodeAgent(Agent):
     @trace_async(
         span_name="claude_code_execute_async",
         tracer_name="executor.agents.claude_code",
-        extract_attributes=_extract_claude_agent_attributes
+        extract_attributes=_extract_claude_agent_attributes,
     )
     async def execute_async(self) -> TaskStatus:
         """
@@ -687,20 +749,20 @@ class ClaudeCodeAgent(Agent):
         try:
             # Update current progress
             self._update_progress(60)
-            
+
             # Initialize state manager and workbench if not already initialized
             if self.state_manager is None:
                 self._initialize_state_manager()
                 self.state_manager.initialize_workbench("running")
-            
+
             # Report starting progress using state manager
             self.state_manager.report_progress(
                 60, TaskStatus.RUNNING.value, "${{thinking.initialize_agent}}"
             )
-            
+
             # Add trace event for state manager initialization
             add_span_event("state_manager_initialized")
-            
+
             return await self._async_execute()
         except Exception as e:
             return self._handle_execution_error(e, "Claude Code Agent async execution")
@@ -717,7 +779,7 @@ class ClaudeCodeAgent(Agent):
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} was cancelled before execution")
                 return TaskStatus.COMPLETED
-            
+
             progress = 65
             # Update current progress
             self._update_progress(progress)
@@ -729,7 +791,7 @@ class ClaudeCodeAgent(Agent):
                 # Verify the cached client is still valid
                 # Check if client process is still running
                 try:
-                    if hasattr(cached_client, '_process') and cached_client._process:
+                    if hasattr(cached_client, "_process") and cached_client._process:
                         if cached_client._process.poll() is not None:
                             # Process has terminated, remove from cache
                             logger.warning(
@@ -746,7 +808,7 @@ class ClaudeCodeAgent(Agent):
                                 title="Reuse Existing Client",
                                 report_immediately=False,
                                 use_i18n_keys=False,
-                                details={"session_id": self.session_id}
+                                details={"session_id": self.session_id},
                             )
                             self.client = cached_client
                     else:
@@ -756,7 +818,9 @@ class ClaudeCodeAgent(Agent):
                         )
                         self.client = cached_client
                 except Exception as e:
-                    logger.warning(f"Error checking client validity: {e}, creating new client")
+                    logger.warning(
+                        f"Error checking client validity: {e}, creating new client"
+                    )
                     # Remove potentially invalid client from cache
                     if self.session_id in self._clients:
                         del self._clients[self.session_id]
@@ -767,10 +831,12 @@ class ClaudeCodeAgent(Agent):
                 logger.info(
                     f"Creating new Claude client for session_id: {self.session_id}"
                 )
-                logger.info(f"Initializing Claude client with options: {mask_sensitive_data(self.options)}")
+                logger.info(
+                    f"Initializing Claude client with options: {mask_sensitive_data(self.options)}"
+                )
 
                 if self.options.get("cwd") is None or self.options.get("cwd") == "":
-                    cwd =os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
+                    cwd = os.path.join(config.WORKSPACE_ROOT, str(self.task_id))
                     os.makedirs(cwd, exist_ok=True)
                     self.options["cwd"] = cwd
 
@@ -785,12 +851,12 @@ class ClaudeCodeAgent(Agent):
 
                 # Store client connection for reuse
                 self._clients[self.session_id] = self.client
-                
+
                 # Register client as a resource for cleanup
                 self.resource_manager.register_resource(
                     task_id=self.task_id,
                     resource_id=f"claude_client_{self.session_id}",
-                    is_async=True
+                    is_async=True,
                 )
 
             # Check cancellation again before proceeding
@@ -801,17 +867,23 @@ class ClaudeCodeAgent(Agent):
             # Prepare prompt
             prompt = self.prompt
             if self.options.get("cwd"):
-                prompt = prompt + "\nCurrent working directory: " + self.options.get("cwd") + "\n project url:"+ self.task_data.get("git_url")
+                prompt = (
+                    prompt
+                    + "\nCurrent working directory: "
+                    + self.options.get("cwd")
+                    + "\n project url:"
+                    + self.task_data.get("git_url")
+                )
 
             progress = 75
             # Update current progress
             self._update_progress(progress)
-            
+
             # Check cancellation before sending query
             if self.task_state_manager.is_cancelled(self.task_id):
                 logger.info(f"Task {self.task_id} cancelled before sending query")
                 return TaskStatus.COMPLETED
-            
+
             # Use session_id to send messages, ensuring messages are in the same session
             # Use the current updated prompt for each execution, even with the same session ID
             logger.info(
@@ -823,22 +895,27 @@ class ClaudeCodeAgent(Agent):
             logger.info(f"Waiting for response for prompt: {prompt}")
             # Process and handle the response using the external processor
             result = await process_response(
-                self.client, self.state_manager, self.thinking_manager, 
-                self.task_state_manager, session_id=self.session_id
+                self.client,
+                self.state_manager,
+                self.thinking_manager,
+                self.task_state_manager,
+                session_id=self.session_id,
             )
-            
+
             # Update task state based on result
             if result == TaskStatus.COMPLETED:
                 self.task_state_manager.set_state(self.task_id, TaskState.COMPLETED)
             elif result == TaskStatus.FAILED:
                 self.task_state_manager.set_state(self.task_id, TaskState.FAILED)
-            
+
             return result
 
         except Exception as e:
             return self._handle_execution_error(e, "async execution")
 
-    def _handle_execution_result(self, result_content: str, execution_type: str = "execution") -> TaskStatus:
+    def _handle_execution_result(
+        self, result_content: str, execution_type: str = "execution"
+    ) -> TaskStatus:
         """
         Handle the execution result and report progress
 
@@ -860,14 +937,21 @@ class ClaudeCodeAgent(Agent):
                 details={
                     "execution_type": execution_type,
                     "content_length": len(result_content),
-                    "result_preview": result_content[:200] + "..." if len(result_content) > 200 else result_content
-                }
+                    "result_preview": (
+                        result_content[:200] + "..."
+                        if len(result_content) > 200
+                        else result_content
+                    ),
+                },
             )
             self.report_progress(
                 100,
                 TaskStatus.COMPLETED.value,
                 f"${{thinking.execution_completed}} {execution_type}",
-                result=ExecutionResult(value=result_content, thinking=self.thinking_manager.get_thinking_steps()).dict(),
+                result=ExecutionResult(
+                    value=result_content,
+                    thinking=self.thinking_manager.get_thinking_steps(),
+                ).dict(),
             )
             return TaskStatus.COMPLETED
         else:
@@ -876,17 +960,21 @@ class ClaudeCodeAgent(Agent):
                 title="Execution Failed",
                 report_immediately=False,
                 use_i18n_keys=False,
-                details={"execution_type": execution_type}
+                details={"execution_type": execution_type},
             )
             self.report_progress(
                 100,
                 TaskStatus.FAILED.value,
                 f"${{thinking.failed_no_content}} {execution_type}",
-                result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict(),
+                result=ExecutionResult(
+                    thinking=self.thinking_manager.get_thinking_steps()
+                ).dict(),
             )
             return TaskStatus.FAILED
 
-    def _handle_execution_error(self, error: Exception, execution_type: str = "execution") -> TaskStatus:
+    def _handle_execution_error(
+        self, error: Exception, execution_type: str = "execution"
+    ) -> TaskStatus:
         """
         Handle execution error and report progress
 
@@ -904,17 +992,16 @@ class ClaudeCodeAgent(Agent):
             title="thinking.execution_failed",
             report_immediately=False,
             use_i18n_keys=False,
-            details={
-                "execution_type": execution_type,
-                "error_message": error_message
-            }
+            details={"execution_type": execution_type, "error_message": error_message},
         )
 
         self.report_progress(
             100,
             TaskStatus.FAILED.value,
             f"${{thinking.execution_failed}} {execution_type}: {error_message}",
-            result=ExecutionResult(thinking=self.thinking_manager.get_thinking_steps()).dict()
+            result=ExecutionResult(
+                thinking=self.thinking_manager.get_thinking_steps()
+            ).dict(),
         )
         return TaskStatus.FAILED
 
@@ -967,11 +1054,13 @@ class ClaudeCodeAgent(Agent):
             logger.info(f"Task {self.task_id} marked as cancelled immediately")
 
             # Step 2: Try SDK interrupt if client is available
-            if self.client and hasattr(self.client, 'interrupt'):
+            if self.client and hasattr(self.client, "interrupt"):
                 self._sync_cancel_run()
                 logger.info(f"Sent interrupt signal to task {self.task_id}")
             else:
-                logger.warning(f"No client or interrupt method available for task {self.task_id}")
+                logger.warning(
+                    f"No client or interrupt method available for task {self.task_id}"
+                )
 
             # Step 3: Wait briefly (2 seconds max) for graceful cleanup
             max_wait = min(config.GRACEFUL_SHUTDOWN_TIMEOUT, 2)
@@ -986,7 +1075,9 @@ class ClaudeCodeAgent(Agent):
 
             # Note: No longer send callback here
             # Callback will be sent asynchronously by background task in main.py to avoid blocking executor_manager's cancel request
-            logger.info(f"Task {self.task_id} cancelled (cleanup may continue in background), callback will be sent asynchronously")
+            logger.info(
+                f"Task {self.task_id} cancelled (cleanup may continue in background), callback will be sent asynchronously"
+            )
             return True
 
         except Exception as e:
@@ -1015,7 +1106,9 @@ class ClaudeCodeAgent(Agent):
                     finally:
                         loop.close()
         except Exception as e:
-            logger.exception(f"Error during sync interrupt for session_id {self.session_id}: {str(e)}")
+            logger.exception(
+                f"Error during sync interrupt for session_id {self.session_id}: {str(e)}"
+            )
 
     async def _async_cancel_run(self) -> None:
         """
@@ -1027,12 +1120,17 @@ class ClaudeCodeAgent(Agent):
                 await self.client.interrupt()
                 # Note: No longer send callback here
                 # Callback will be sent asynchronously by background task in main.py
-                logger.info(f"Successfully sent interrupt to client for session_id: {self.session_id}")
+                logger.info(
+                    f"Successfully sent interrupt to client for session_id: {self.session_id}"
+                )
         except Exception as e:
-            logger.exception(f"Error during async interrupt for session_id {self.session_id}: {str(e)}")
-    
+            logger.exception(
+                f"Error during async interrupt for session_id {self.session_id}: {str(e)}"
+            )
 
-    def _setup_claudecode_dir(self, project_path: str, custom_rules: Dict[str, str]) -> None:
+    def _setup_claudecode_dir(
+        self, project_path: str, custom_rules: Dict[str, str]
+    ) -> None:
         """
         Setup .claudecode directory with custom instruction files for Claude Code compatibility
 
@@ -1042,28 +1140,32 @@ class ClaudeCodeAgent(Agent):
         """
         try:
             import shutil
-            
+
             claudecode_dir = os.path.join(project_path, ".claudecode")
-            
+
             # Create .claudecode directory if it doesn't exist
             os.makedirs(claudecode_dir, exist_ok=True)
             logger.debug(f"Created .claudecode directory at {claudecode_dir}")
-            
+
             # Copy custom instruction files to .claudecode directory
             for file_path, content in custom_rules.items():
                 # Get just the filename (not the full path)
                 filename = os.path.basename(file_path)
                 target_path = os.path.join(claudecode_dir, filename)
-                
+
                 try:
-                    with open(target_path, 'w', encoding='utf-8') as f:
+                    with open(target_path, "w", encoding="utf-8") as f:
                         f.write(content)
-                    logger.info(f"Copied custom instruction file to .claudecode: {filename}")
+                    logger.info(
+                        f"Copied custom instruction file to .claudecode: {filename}"
+                    )
                 except Exception as e:
                     logger.warning(f"Failed to copy {filename} to .claudecode: {e}")
-            
-            logger.info(f"Setup .claudecode directory with {len(custom_rules)} custom instruction files")
-            
+
+            logger.info(
+                f"Setup .claudecode directory with {len(custom_rules)} custom instruction files"
+            )
+
         except Exception as e:
             logger.warning(f"Failed to setup .claudecode directory: {e}")
 
@@ -1083,9 +1185,11 @@ class ClaudeCodeAgent(Agent):
                 if os.path.exists(agents_path):
                     agents_filename = filename
                     break
-            
+
             if not agents_filename:
-                logger.debug("No agents.md file found (tried AGENTS.md, Agents.md, agents.md), skipping CLAUDE.md symlink creation")
+                logger.debug(
+                    "No agents.md file found (tried AGENTS.md, Agents.md, agents.md), skipping CLAUDE.md symlink creation"
+                )
                 return
 
             claude_md = os.path.join(project_path, "CLAUDE.md")
@@ -1096,55 +1200,59 @@ class ClaudeCodeAgent(Agent):
                     os.unlink(claude_md)
                     logger.debug("Removed existing CLAUDE.md symlink")
                 else:
-                    logger.debug("CLAUDE.md already exists as a regular file, skipping symlink creation")
+                    logger.debug(
+                        "CLAUDE.md already exists as a regular file, skipping symlink creation"
+                    )
                     return
 
             # Create symlink using the found filename
             os.symlink(agents_filename, claude_md)
             logger.info(f"Created CLAUDE.md symlink to {agents_filename}")
-            
+
             # Add CLAUDE.md to .git/info/exclude to prevent it from appearing in git diff
             self._add_to_git_exclude(project_path, "CLAUDE.md")
 
         except Exception as e:
             logger.warning(f"Failed to create CLAUDE.md symlink: {e}")
-    
+
     def _add_to_git_exclude(self, project_path: str, pattern: str) -> None:
         """
         Add a pattern to .git/info/exclude file
-        
+
         Args:
             project_path: Project root directory
             pattern: Pattern to exclude (e.g., "CLAUDE.md")
         """
         try:
             exclude_file = os.path.join(project_path, ".git", "info", "exclude")
-            
+
             # Check if .git directory exists
             git_dir = os.path.join(project_path, ".git")
             if not os.path.exists(git_dir):
-                logger.debug(".git directory does not exist, skipping git exclude update")
+                logger.debug(
+                    ".git directory does not exist, skipping git exclude update"
+                )
                 return
-            
+
             # Ensure .git/info directory exists
             info_dir = os.path.join(git_dir, "info")
             os.makedirs(info_dir, exist_ok=True)
-            
+
             # Check if file exists and read content
             content = ""
             if os.path.exists(exclude_file):
-                with open(exclude_file, 'r', encoding='utf-8') as f:
+                with open(exclude_file, "r", encoding="utf-8") as f:
                     content = f.read()
-            
+
             # Check if pattern already exists
             if pattern in content:
                 logger.debug(f"Pattern '{pattern}' already in {exclude_file}")
                 return
-            
+
             # Append pattern
-            with open(exclude_file, 'a', encoding='utf-8') as f:
-                if content and not content.endswith('\n'):
-                    f.write('\n')
+            with open(exclude_file, "a", encoding="utf-8") as f:
+                if content and not content.endswith("\n"):
+                    f.write("\n")
                 f.write(f"{pattern}\n")
             logger.info(f"Added '{pattern}' to .git/info/exclude")
 
@@ -1173,26 +1281,30 @@ class ClaudeCodeAgent(Agent):
             # Clear existing skills directory
             if os.path.exists(skills_dir):
                 import shutil
+
                 shutil.rmtree(skills_dir)
                 logger.info(f"Cleared existing skills directory: {skills_dir}")
 
             Path(skills_dir).mkdir(parents=True, exist_ok=True)
 
             # Get API base URL and auth token from task_data
-            api_base_url = os.getenv("TASK_API_DOMAIN", "http://wegent-backend:8000").rstrip("/")
+            api_base_url = os.getenv(
+                "TASK_API_DOMAIN", "http://wegent-backend:8000"
+            ).rstrip("/")
             auth_token = self.task_data.get("auth_token")
 
             if not auth_token:
                 logger.warning("No auth token available, cannot download skills")
                 return
-            
+
             logger.info(f"Auth token available for skills download")
 
             # Download each skill
-            import requests
-            import zipfile
             import io
             import shutil
+            import zipfile
+
+            import requests
 
             success_count = 0
             for skill_name in skills:
@@ -1205,7 +1317,9 @@ class ClaudeCodeAgent(Agent):
 
                     response = requests.get(list_url, headers=headers, timeout=30)
                     if response.status_code != 200:
-                        logger.error(f"Failed to query skill '{skill_name}': HTTP {response.status_code}")
+                        logger.error(
+                            f"Failed to query skill '{skill_name}': HTTP {response.status_code}"
+                        )
                         continue
 
                     skills_data = response.json()
@@ -1217,53 +1331,72 @@ class ClaudeCodeAgent(Agent):
 
                     # Extract skill ID from labels
                     skill_item = skill_items[0]
-                    skill_id = skill_item.get("metadata", {}).get("labels", {}).get("id")
+                    skill_id = (
+                        skill_item.get("metadata", {}).get("labels", {}).get("id")
+                    )
 
                     if not skill_id:
                         logger.error(f"Skill '{skill_name}' has no ID in metadata")
                         continue
 
                     # Download skill ZIP
-                    download_url = f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download"
+                    download_url = (
+                        f"{api_base_url}/api/v1/kinds/skills/{skill_id}/download"
+                    )
                     response = requests.get(download_url, headers=headers, timeout=60)
 
                     if response.status_code != 200:
-                        logger.error(f"Failed to download skill '{skill_name}': HTTP {response.status_code}")
+                        logger.error(
+                            f"Failed to download skill '{skill_name}': HTTP {response.status_code}"
+                        )
                         continue
 
                     # Extract ZIP to ~/.claude/skills/
                     # The ZIP structure is: skill-name.zip -> skill-name/SKILL.md
                     # We extract to skills_dir, which will create skills_dir/skill-name/
                     import zipfile
+
                     with zipfile.ZipFile(io.BytesIO(response.content)) as zip_file:
                         # Security check: prevent Zip Slip attacks
                         for file_info in zip_file.filelist:
-                            if file_info.filename.startswith('/') or '..' in file_info.filename:
-                                logger.error(f"Unsafe file path in skill ZIP: {file_info.filename}")
+                            if (
+                                file_info.filename.startswith("/")
+                                or ".." in file_info.filename
+                            ):
+                                logger.error(
+                                    f"Unsafe file path in skill ZIP: {file_info.filename}"
+                                )
                                 break
                         else:
                             # Extract all files to skills_dir
                             # This will create skills_dir/skill-name/ automatically
                             zip_file.extractall(skills_dir)
                             skill_target_dir = os.path.join(skills_dir, skill_name)
-                            
+
                             # Verify the skill folder was created
-                            if os.path.exists(skill_target_dir) and os.path.isdir(skill_target_dir):
-                                logger.info(f"Deployed skill '{skill_name}' to {skill_target_dir}")
+                            if os.path.exists(skill_target_dir) and os.path.isdir(
+                                skill_target_dir
+                            ):
+                                logger.info(
+                                    f"Deployed skill '{skill_name}' to {skill_target_dir}"
+                                )
                                 success_count += 1
                             else:
-                                logger.error(f"Skill folder '{skill_name}' not found after extraction")
+                                logger.error(
+                                    f"Skill folder '{skill_name}' not found after extraction"
+                                )
 
                 except Exception as e:
                     logger.warning(f"Failed to download skill '{skill_name}': {str(e)}")
                     continue
 
             if success_count > 0:
-                logger.info(f"Successfully deployed {success_count}/{len(skills)} skills to {skills_dir}")
+                logger.info(
+                    f"Successfully deployed {success_count}/{len(skills)} skills to {skills_dir}"
+                )
             else:
                 logger.warning("No skills were successfully deployed")
 
         except Exception as e:
             logger.error(f"Error in _download_and_deploy_skills: {str(e)}")
             # Don't raise - skills deployment failure shouldn't block task execution
-

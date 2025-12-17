@@ -67,10 +67,6 @@ export function markTaskAsViewed(taskId: number, status: TaskStatus, taskTimesta
   // This prevents the "unread" badge from showing due to client/server time differences
   const viewedAt = taskTimestamp || new Date().toISOString();
 
-  console.log(
-    `[markTaskAsViewed] Task ${taskId}: status=${status}, providedTimestamp=${taskTimestamp}, viewedAt=${viewedAt}`
-  );
-
   statusMap[taskId] = {
     viewedAt,
     status,
@@ -78,8 +74,6 @@ export function markTaskAsViewed(taskId: number, status: TaskStatus, taskTimesta
 
   const prunedMap = pruneOldViewStatus(statusMap);
   saveTaskViewStatusMap(prunedMap);
-
-  console.log(`[markTaskAsViewed] Task ${taskId}: saved to localStorage, viewedAt=${viewedAt}`);
 }
 
 /**
@@ -96,9 +90,6 @@ export function getTaskViewStatus(taskId: number): TaskViewStatus | null {
 export function isTaskUnread(task: Task): boolean {
   // Only show unread badge for terminal states
   if (!['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) {
-    console.log(
-      `[isTaskUnread] Task ${task.id} (${task.title.slice(0, 20)}...): status=${task.status}, not terminal state, returning false`
-    );
     return false;
   }
 
@@ -106,9 +97,6 @@ export function isTaskUnread(task: Task): boolean {
 
   // If never viewed, it's unread
   if (!viewStatus) {
-    console.log(
-      `[isTaskUnread] Task ${task.id} (${task.title.slice(0, 20)}...): no viewStatus, returning true (unread)`
-    );
     return true;
   }
 
@@ -118,10 +106,6 @@ export function isTaskUnread(task: Task): boolean {
   const viewedAt = new Date(viewStatus.viewedAt);
 
   const isUnread = taskUpdatedAt > viewedAt;
-  console.log(
-    `[isTaskUnread] Task ${task.id} (${task.title.slice(0, 20)}...): status=${task.status}, taskUpdatedAt=${task.completed_at || task.updated_at}, viewedAt=${viewStatus.viewedAt}, isUnread=${isUnread}`
-  );
-
   return isUnread;
 }
 

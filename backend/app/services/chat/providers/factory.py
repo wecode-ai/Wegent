@@ -45,16 +45,9 @@ def get_provider(
     """
     model_type = model_config.get("model", "openai")
 
-    # Validate required fields
-    base_url = model_config.get("base_url")
-    if not base_url:
-        raise ValueError(
-            "Model base_url is required. Please configure the model's baseUrl in the model settings."
-        )
-
     config = ProviderConfig(
         api_key=model_config.get("api_key", ""),
-        base_url=base_url,
+        base_url=model_config.get("base_url", ""),
         model_id=model_config.get("model_id", "gpt-4"),
         default_headers=model_config.get("default_headers", {}),
     )

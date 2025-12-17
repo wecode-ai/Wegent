@@ -6,8 +6,9 @@ import asyncio
 import json
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
+import httpx
 from fastapi import HTTPException
 from sqlalchemy import func, text
 from sqlalchemy.orm import Session
@@ -649,7 +650,8 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         if team_id:
             team = db.query(Kind).filter(Kind.id == team_id).first()
             if team:
-                team = self._convert_team_to_dict(team, db, user_id)
+                # Use team_kinds_service._convert_to_team_dict to get full team info including agent_type
+                team = team_kinds_service._convert_to_team_dict(team, db, user_id)
 
         # Get related subtasks
         subtasks = subtask_service.get_by_task(db=db, task_id=task_id, user_id=user_id)
@@ -1030,6 +1032,194 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         flag_modified(task, "json")
 
         db.commit()
+
+    async def cancel_task(
+        self,
+        db: Session,
+        *,
+        task_id: int,
+        user_id: int,
+        background_task_runner: Optional[Callable] = None,
+    ) -> Dict[str, Any]:
+        """
+        Cancel a running task by calling executor_manager or Chat Shell cancel.
+
+        Args:
+            db: Database session
+            task_id: Task ID to cancel
+            user_id: User ID who owns the task
+            background_task_runner: Optional callback to run background tasks (e.g., BackgroundTasks.add_task)
+
+        Returns:
+            Dict with message and status
+        """
+        # Verify user owns this task
+        task_dict = self.get_task_detail(db=db, task_id=task_id, user_id=user_id)
+        if not task_dict:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        # Check if task is already in a final state
+        current_status = task_dict.get("status", "")
+        final_states = ["COMPLETED", "FAILED", "CANCELLED", "DELETE"]
+
+        if current_status in final_states:
+            logger.warning(
+                f"Task {task_id} is already in final state {current_status}, cannot cancel"
+            )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task is already {current_status.lower()}, cannot cancel",
+            )
+
+        # Check if task is already being cancelled
+        if current_status == "CANCELLING":
+            logger.info(f"Task {task_id} is already being cancelled")
+            return {
+                "message": "Task is already being cancelled",
+                "status": "CANCELLING",
+            }
+
+        # Check if this is a Chat Shell task by looking at the source label
+        is_chat_shell = False
+        task_kind = (
+            db.query(Kind)
+            .filter(
+                Kind.id == task_id,
+                Kind.user_id == user_id,
+                Kind.kind == "Task",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+
+        if task_kind and task_kind.json:
+            task_crd = Task.model_validate(task_kind.json)
+            if task_crd.metadata.labels:
+                source = task_crd.metadata.labels.get("source", "")
+                is_chat_shell = source == "chat_shell"
+
+        logger.info(f"Task {task_id} is_chat_shell={is_chat_shell}")
+
+        if is_chat_shell:
+            # For Chat Shell tasks, find the running subtask and cancel via session manager
+            running_subtask = (
+                db.query(Subtask)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.user_id == user_id,
+                    Subtask.role == SubtaskRole.ASSISTANT,
+                    Subtask.status == SubtaskStatus.RUNNING,
+                )
+                .first()
+            )
+
+            if running_subtask:
+                # Cancel the Chat Shell stream in background
+                if background_task_runner:
+                    background_task_runner(
+                        self._call_chat_shell_cancel, running_subtask.id
+                    )
+
+                # Update subtask status to COMPLETED (not CANCELLED, to show partial content)
+                running_subtask.status = SubtaskStatus.COMPLETED
+                running_subtask.progress = 100
+                running_subtask.completed_at = datetime.now()
+                running_subtask.updated_at = datetime.now()
+                running_subtask.error_message = ""
+                db.commit()
+
+                # Update task status to COMPLETED (not CANCELLING, for Chat Shell)
+                try:
+                    self.update_task(
+                        db=db,
+                        task_id=task_id,
+                        obj_in=TaskUpdate(status="COMPLETED"),
+                        user_id=user_id,
+                    )
+                    logger.info(
+                        f"Chat Shell task {task_id} cancelled and marked as COMPLETED"
+                    )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to update Chat Shell task {task_id} status: {str(e)}"
+                    )
+                return {"message": "Chat stopped successfully", "status": "COMPLETED"}
+            else:
+                # No running subtask found, just mark task as completed
+                try:
+                    self.update_task(
+                        db=db,
+                        task_id=task_id,
+                        obj_in=TaskUpdate(status="COMPLETED"),
+                        user_id=user_id,
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to update task {task_id} status: {str(e)}")
+
+                return {"message": "No running stream to cancel", "status": "COMPLETED"}
+        else:
+            # For non-Chat Shell tasks, use executor_manager
+            # Update task status to CANCELLING immediately
+            try:
+                self.update_task(
+                    db=db,
+                    task_id=task_id,
+                    obj_in=TaskUpdate(status="CANCELLING"),
+                    user_id=user_id,
+                )
+                logger.info(
+                    f"Task {task_id} status updated to CANCELLING by user {user_id}"
+                )
+            except Exception as e:
+                logger.error(
+                    f"Failed to update task {task_id} status to CANCELLING: {str(e)}"
+                )
+                raise HTTPException(
+                    status_code=500, detail=f"Failed to update task status: {str(e)}"
+                )
+
+            # Call executor_manager in the background
+            if background_task_runner:
+                background_task_runner(self._call_executor_cancel, task_id)
+
+            return {"message": "Cancel request accepted", "status": "CANCELLING"}
+
+    async def _call_executor_cancel(self, task_id: int):
+        """Background task to call executor_manager cancel API"""
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    settings.EXECUTOR_CANCEL_TASK_URL,
+                    json={"task_id": task_id},
+                    timeout=60.0,
+                )
+                response.raise_for_status()
+                logger.info(
+                    f"Task {task_id} cancelled successfully via executor_manager"
+                )
+        except Exception as e:
+            logger.error(
+                f"Error calling executor_manager to cancel task {task_id}: {str(e)}"
+            )
+
+    async def _call_chat_shell_cancel(self, subtask_id: int):
+        """Background task to cancel Chat Shell streaming via session manager"""
+        try:
+            from app.services.chat.session_manager import session_manager
+
+            success = await session_manager.cancel_stream(subtask_id)
+            if success:
+                logger.info(
+                    f"Chat Shell stream cancelled successfully for subtask {subtask_id}"
+                )
+            else:
+                logger.warning(
+                    f"Failed to cancel Chat Shell stream for subtask {subtask_id}"
+                )
+        except Exception as e:
+            logger.error(
+                f"Error cancelling Chat Shell stream for subtask {subtask_id}: {str(e)}"
+            )
 
     def create_task_id(self, db: Session, user_id: int) -> int:
         """
