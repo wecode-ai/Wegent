@@ -119,7 +119,7 @@ async def _call_llm_for_wizard(
     # Priority 1: Use configured wizard model if specified
     if settings.WIZARD_MODEL_NAME:
         logger.info(
-            f"[Wizard] Priority 1: Looking for configured model '{settings.WINAME}'"
+            f"[Wizard] Priority 1: Looking for configured model '{settings.WIZARD_MODEL_NAME}'"
         )
         model_kind = (
             db.query(Kind)
@@ -1129,7 +1129,7 @@ def _get_model_for_wizard(
             .filter(
                 Kind.user_id == 0,  # Public model
                 Kind.kind == "Model",
-                Kind.name == settings.WIMODEL_NAME,
+                Kind.name == settings.WIZARD_MODEL_NAME,
                 Kind.is_active == True,
             )
             .first()
