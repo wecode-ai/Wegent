@@ -4,6 +4,31 @@
 
 import { apiClient } from './client';
 
+// Model Category Type (different from resource type public/user/group)
+export type ModelCategoryType = 'llm' | 'tts' | 'stt' | 'embedding' | 'rerank'
+
+// Type-specific configurations
+export interface TTSConfig {
+  voice?: string
+  speed?: number
+  output_format?: 'mp3' | 'wav'
+}
+
+export interface STTConfig {
+  language?: string
+  transcription_format?: 'text' | 'srt' | 'vtt'
+}
+
+export interface EmbeddingConfig {
+  dimensions?: number
+  encoding_format?: 'float' | 'base64'
+}
+
+export interface RerankConfig {
+  top_n?: number
+  return_documents?: boolean
+}
+
 // Model CRD Types
 export interface ModelCRD {
   apiVersion?: string;
@@ -23,6 +48,14 @@ export interface ModelCRD {
         custom_headers?: Record<string, string>; // Custom HTTP headers to override defaults
       };
     };
+    protocol?: string;
+    isCustomConfig?: boolean;
+    // New fields for multi-type model support
+    modelType?: ModelCategoryType;
+    ttsConfig?: TTSConfig;
+    sttConfig?: STTConfig;
+    embeddingConfig?: EmbeddingConfig;
+    rerankConfig?: RerankConfig;
   };
   status?: {
     state: string;
@@ -79,6 +112,7 @@ export interface UnifiedModel {
   namespace?: string; // Resource namespace (group name or 'default')
   config?: Record<string, unknown>;
   isActive?: boolean;
+  modelCategoryType?: ModelCategoryType; // New: model category type (llm, tts, stt, embedding, rerank)
 }
 
 export interface UnifiedModelListResponse {
@@ -127,12 +161,14 @@ export const modelApis = {
    * @param includeConfig - Whether to include full model config in response
    * @param scope - Resource scope: 'personal', 'group', or 'all'
    * @param groupName - Group name (required when scope is 'group')
+   * @param modelCategoryType - Optional model category type filter (llm, tts, stt, embedding, rerank)
    */
   async getUnifiedModels(
     shellType?: string,
     includeConfig: boolean = false,
     scope?: 'personal' | 'group' | 'all',
-    groupName?: string
+    groupName?: string,
+    modelCategoryType?: ModelCategoryType
   ): Promise<UnifiedModelListResponse> {
     const params = new URLSearchParams();
     if (shellType) {
@@ -146,6 +182,9 @@ export const modelApis = {
     }
     if (groupName) {
       params.append('group_name', groupName);
+    }
+    if (modelCategoryType) {
+      params.append('model_category_type', modelCategoryType);
     }
     const queryString = params.toString();
     return apiClient.get(`/models/unified${queryString ? `?${queryString}` : ''}`);
