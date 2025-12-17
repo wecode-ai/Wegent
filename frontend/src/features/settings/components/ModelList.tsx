@@ -45,19 +45,23 @@ import UnifiedAddButton from '@/components/common/UnifiedAddButton';
 const MODEL_CATEGORY_FILTER_OPTIONS: { value: ModelCategoryType | 'all'; labelKey: string }[] = [
   { value: 'all', labelKey: 'models.all_category_types' },
   { value: 'llm', labelKey: 'models.model_category_type_llm' },
-  { value: 'tts', labelKey: 'models.model_category_type_tts' },
-  { value: 'stt', labelKey: 'models.model_category_type_stt' },
+  // { value: 'tts', labelKey: 'models.model_category_type_tts' },
+  // { value: 'stt', labelKey: 'models.model_category_type_stt' },
   { value: 'embedding', labelKey: 'models.model_category_type_embedding' },
   { value: 'rerank', labelKey: 'models.model_category_type_rerank' },
 ];
 
 // Badge variant mapping for model category types
-const MODEL_CATEGORY_BADGE_VARIANT: Record<string, 'default' | 'success' | 'info' | 'warning' | 'secondary'> = {
+// Note: Using 'default' for rerank since ResourceListItem tags don't support 'secondary'
+const MODEL_CATEGORY_BADGE_VARIANT: Record<
+  string,
+  'default' | 'success' | 'info' | 'warning' | 'error'
+> = {
   llm: 'default',
   tts: 'success',
   stt: 'info',
   embedding: 'warning',
-  rerank: 'secondary',
+  rerank: 'default',
 };
 
 // Unified display model interface
@@ -104,7 +108,13 @@ const ModelList: React.FC<ModelListProps> = ({
       // Use unified API to get all models (both public and user-defined)
       // Pass category filter if not 'all'
       const modelCategoryTypeFilter = categoryFilter !== 'all' ? categoryFilter : undefined;
-      const unifiedResponse = await modelApis.getUnifiedModels(undefined, true, scope, groupName, modelCategoryTypeFilter);
+      const unifiedResponse = await modelApis.getUnifiedModels(
+        undefined,
+        true,
+        scope,
+        groupName,
+        modelCategoryTypeFilter
+      );
       setUnifiedModels(unifiedResponse.data || []);
     } catch (error) {
       console.error('Failed to fetch models:', error);
@@ -220,13 +230,23 @@ const ModelList: React.FC<ModelListProps> = ({
     try {
       const env = (displayModel.config?.env as Record<string, unknown>) || {};
       const apiKey = (env.api_key as string) || '';
+      const customHeaders = (env.custom_headers as Record<string, string>) || undefined;
+
+      // Determine provider type
+      let providerType: 'openai' | 'anthropic' | 'gemini' = 'anthropic';
+      if (displayModel.modelType === 'openai') {
+        providerType = 'openai';
+      } else if (displayModel.modelType === 'gemini') {
+        providerType = 'gemini';
+      }
 
       // Test connection requires api_key
       const result = await modelApis.testConnection({
-        provider_type: displayModel.modelType === 'openai' ? 'openai' : 'anthropic',
+        provider_type: providerType,
         model_id: displayModel.modelId,
         api_key: apiKey,
         base_url: env.base_url as string | undefined,
+        custom_headers: customHeaders,
       });
 
       if (result.success) {
@@ -332,7 +352,10 @@ const ModelList: React.FC<ModelListProps> = ({
         {/* Category Filter */}
         <div className="flex items-center gap-2">
           <span className="text-sm text-text-muted">{t('models.filter_by_category_type')}:</span>
-          <Select value={categoryFilter} onValueChange={(value: ModelCategoryType | 'all') => setCategoryFilter(value)}>
+          <Select
+            value={categoryFilter}
+            onValueChange={(value: ModelCategoryType | 'all') => setCategoryFilter(value)}
+          >
             <SelectTrigger className="w-48 bg-base">
               <SelectValue />
             </SelectTrigger>
@@ -389,8 +412,12 @@ const ModelList: React.FC<ModelListProps> = ({
                             tags={[
                               {
                                 key: 'category',
-                                label: t(`models.model_category_type_${displayModel.modelCategoryType}`),
-                                variant: MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] || 'default',
+                                label: t(
+                                  `models.model_category_type_${displayModel.modelCategoryType}`
+                                ),
+                                variant:
+                                  MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] ||
+                                  'default',
                               },
                               {
                                 key: 'provider',
@@ -473,8 +500,12 @@ const ModelList: React.FC<ModelListProps> = ({
                             tags={[
                               {
                                 key: 'category',
-                                label: t(`models.model_category_type_${displayModel.modelCategoryType}`),
-                                variant: MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] || 'default',
+                                label: t(
+                                  `models.model_category_type_${displayModel.modelCategoryType}`
+                                ),
+                                variant:
+                                  MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] ||
+                                  'default',
                               },
                               {
                                 key: 'provider',
@@ -554,8 +585,12 @@ const ModelList: React.FC<ModelListProps> = ({
                             tags={[
                               {
                                 key: 'category',
-                                label: t(`models.model_category_type_${displayModel.modelCategoryType}`),
-                                variant: MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] || 'default',
+                                label: t(
+                                  `models.model_category_type_${displayModel.modelCategoryType}`
+                                ),
+                                variant:
+                                  MODEL_CATEGORY_BADGE_VARIANT[displayModel.modelCategoryType] ||
+                                  'default',
                               },
                               {
                                 key: 'provider',
