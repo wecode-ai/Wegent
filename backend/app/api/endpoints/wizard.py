@@ -194,10 +194,11 @@ async def _call_llm_for_wizard(
 
     model_json = model_kind.json or {}
     logger.info(f"[Wizard] Model '{model_kind.name}' found, extracting config...")
-
     model_spec = model_json.get("spec", {})
 
     # Extract model config and process all placeholders (api_key, default_headers)
+    # The extract_and_process_model_config function handles both api_key and
+    # default_headers placeholder replacement internally
     model_config = extract_and_process_model_config(
         model_spec=model_spec,
         user_id=user.id,
