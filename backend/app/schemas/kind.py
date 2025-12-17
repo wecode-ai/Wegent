@@ -6,9 +6,73 @@
 Kubernetes-style API schemas for cloud-native agent management
 """
 from datetime import datetime
+from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from pydantic import AliasChoices, BaseModel, Field
+
+
+# Model Category Type Enum (different from resource type public/user/group)
+class ModelCategoryType(str, Enum):
+    """
+    Model category type enumeration for distinguishing model capabilities.
+
+    - LLM: Large Language Models for chat/code (default, backward compatible)
+    - TTS: Text-to-Speech models
+    - STT: Speech-to-Text models
+    - EMBEDDING: Vector embedding models
+    - RERANK: Reranking models
+    """
+
+    LLM = "llm"
+    TTS = "tts"
+    STT = "stt"
+    EMBEDDING = "embedding"
+    RERANK = "rerank"
+
+
+# Type-specific configurations
+class TTSConfig(BaseModel):
+    """TTS-specific configuration"""
+
+    voice: Optional[str] = Field(
+        None, description="Voice ID (e.g., 'alloy', 'echo' for OpenAI)"
+    )
+    speed: Optional[float] = Field(
+        1.0, ge=0.25, le=4.0, description="Speech speed (0.25-4.0)"
+    )
+    output_format: Optional[str] = Field("mp3", description="Output format (mp3, wav)")
+
+
+class STTConfig(BaseModel):
+    """STT-specific configuration"""
+
+    language: Optional[str] = Field(
+        None, description="Language code (e.g., 'en', 'zh')"
+    )
+    transcription_format: Optional[str] = Field(
+        "text", description="Response format (text, srt, vtt)"
+    )
+
+
+class EmbeddingConfig(BaseModel):
+    """Embedding-specific configuration"""
+
+    dimensions: Optional[int] = Field(
+        None, description="Output dimensions (e.g., 1536)"
+    )
+    encoding_format: Optional[str] = Field(
+        "float", description="Encoding format (float, base64)"
+    )
+
+
+class RerankConfig(BaseModel):
+    """Rerank-specific configuration"""
+
+    top_n: Optional[int] = Field(None, description="Number of top results to return")
+    return_documents: Optional[bool] = Field(
+        True, description="Whether to return document texts"
+    )
 
 
 class ObjectMeta(BaseModel):
@@ -72,6 +136,24 @@ class ModelSpec(BaseModel):
     )
     protocol: Optional[str] = (
         None  # Model protocol type: 'openai', 'claude', etc. Required for custom configs
+    )
+
+    # New fields for multi-type model support
+    modelType: Optional[ModelCategoryType] = Field(
+        ModelCategoryType.LLM,
+        description="Model category type (llm, tts, stt, embedding, rerank). Defaults to 'llm' for backward compatibility.",
+    )
+    ttsConfig: Optional[TTSConfig] = Field(
+        None, description="TTS-specific configuration (when modelType='tts')"
+    )
+    sttConfig: Optional[STTConfig] = Field(
+        None, description="STT-specific configuration (when modelType='stt')"
+    )
+    embeddingConfig: Optional[EmbeddingConfig] = Field(
+        None, description="Embedding-specific configuration (when modelType='embedding')"
+    )
+    rerankConfig: Optional[RerankConfig] = Field(
+        None, description="Rerank-specific configuration (when modelType='rerank')"
     )
 
 
