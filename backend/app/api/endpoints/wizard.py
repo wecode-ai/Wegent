@@ -45,7 +45,7 @@ from app.schemas.wizard import (
     TestPromptResponse,
 )
 from app.services.chat.chat_service import chat_service
-from app.services.chat.model_resolver import _extract_model_config
+from app.services.chat.model_resolver import extract_and_process_model_config
 
 logger = logging.getLogger(__name__)
 
@@ -197,8 +197,12 @@ async def _call_llm_for_wizard(
 
     model_spec = model_json.get("spec", {})
 
-    # Use _extract_model_config to properly decrypt API key and handle both formats
-    model_config = _extract_model_config(model_spec)
+    # Extract model config and process all placeholders (api_key, default_headers)
+    model_config = extract_and_process_model_config(
+        model_spec=model_spec,
+        user_id=user.id,
+        user_name=user.user_name or "",
+    )
 
     logger.info(
         f"[Wizard] Extracted model config - model={model_config.get('model')}, "
@@ -1067,7 +1071,11 @@ async def test_system_prompt(
 
         model_json = model_kind.json or {}
         model_spec = model_json.get("spec", {})
-        model_config = _extract_model_config(model_spec)
+        model_config = extract_and_process_model_config(
+            model_spec=model_spec,
+            user_id=current_user.id,
+            user_name=current_user.user_name or "",
+        )
 
         # Call the model with the user's system prompt and test message
         response = await chat_service.chat_completion(
@@ -1185,7 +1193,11 @@ async def test_system_prompt_stream(
 
     model_json = model_kind.json or {}
     model_spec = model_json.get("spec", {})
-    model_config = _extract_model_config(model_spec)
+    model_config = extract_and_process_model_config(
+        model_spec=model_spec,
+        user_id=current_user.id,
+        user_name=current_user.user_name or "",
+    )
 
     # Use chat_service.chat_stream in simple mode (no subtask_id/task_id)
     return await chat_service.chat_stream(
