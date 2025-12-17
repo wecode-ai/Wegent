@@ -81,13 +81,20 @@ class TaskInviteService:
             return None
 
     def generate_invite_token(
-        self, task_id: int, inviter_id: int, expires_hours: int = 72
+        self, task_id: int, inviter_id: int, expires_hours: int = 0
     ) -> str:
         """
         Generate a group chat invite token.
         Format: "invite#{task_id}#{inviter_id}#{expire_timestamp}"
+
+        expires_hours=0 means permanent link (set to 10 years from now)
         """
-        expire_time = datetime.utcnow() + timedelta(hours=expires_hours)
+        if expires_hours == 0:
+            # Permanent link: set expiration to 10 years from now
+            expire_time = datetime.utcnow() + timedelta(days=3650)
+        else:
+            expire_time = datetime.utcnow() + timedelta(hours=expires_hours)
+
         expire_ts = int(expire_time.timestamp())
         invite_data = f"invite#{task_id}#{inviter_id}#{expire_ts}"
         encrypted = self._aes_encrypt(invite_data)

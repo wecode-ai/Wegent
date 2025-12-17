@@ -34,10 +34,10 @@ interface InviteLinkDialogProps {
 }
 
 export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLinkDialogProps) {
-  const { t } = useTranslation();
+  const { t } = useTranslation('chat');
   const { toast } = useToast();
   const [inviteUrl, setInviteUrl] = useState<string | null>(null);
-  const [expiresHours, setExpiresHours] = useState('72');
+  const [expiresHours, setExpiresHours] = useState('0'); // 0 = permanent (no expiration)
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
 
@@ -75,7 +75,10 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
       toast({
         title: t('groupChat.inviteLink.copied'),
       });
-      setTimeout(() => setCopied(false), 2000);
+      // Close the dialog after copying
+      setTimeout(() => {
+        handleClose();
+      }, 500);
     } catch {
       toast({
         title: t('groupChat.inviteLink.copyFailed'),
@@ -112,6 +115,7 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="0">{t('groupChat.inviteLink.permanent')}</SelectItem>
                     <SelectItem value="24">{t('groupChat.inviteLink.hours24')}</SelectItem>
                     <SelectItem value="72">{t('groupChat.inviteLink.days3')}</SelectItem>
                     <SelectItem value="168">{t('groupChat.inviteLink.days7')}</SelectItem>
@@ -141,9 +145,9 @@ export function InviteLinkDialog({ open, onClose, taskId, taskTitle }: InviteLin
               </div>
 
               <p className="text-xs text-text-muted">
-                {t('groupChat.inviteLink.expiresNote', {
-                  hours: expiresHours,
-                })}
+                {expiresHours === '0'
+                  ? t('groupChat.inviteLink.permanentNote')
+                  : t('groupChat.inviteLink.expiresNote', { hours: expiresHours })}
               </p>
 
               <Button variant="outline" onClick={() => setInviteUrl(null)} className="w-full">

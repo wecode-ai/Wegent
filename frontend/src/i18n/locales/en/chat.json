@@ -208,6 +208,7 @@
       "title": "Invite to Group Chat",
       "description": "Generate an invite link to share with others to join \"{{taskTitle}}\"",
       "expiresIn": "Link expires in:",
+      "permanent": "Permanent",
       "hours24": "24 hours",
       "days3": "3 days",
       "days7": "7 days",
@@ -218,6 +219,7 @@
       "copied": "Link copied to clipboard",
       "copyFailed": "Failed to copy link",
       "expiresNote": "Link expires in {{hours}} hours. Generate a new one if needed.",
+      "permanentNote": "This link is permanent and can be revoked at any time",
       "regenerate": "Generate New Link"
     },
     "invite": {
@@ -233,15 +235,46 @@
       "invalidLink": "Invalid or expired invite link"
     },
     "members": {
-      "title": "Group Members",
+      "title": "Add Members",
       "inviteLink": "Invite Link",
+      "inviteLinkDescription": "Use the group link to invite others to join the group chat. Anyone can join the group chat through this link and view historical messages.",
+      "addMembers": "Add Members",
       "addMember": "Add Member",
       "you": "You",
       "invitedBy": "Invited by {{name}}",
       "loadFailed": "Failed to load members",
       "removeSuccess": "{{name}} has been removed",
       "removeFailed": "Failed to remove member",
-      "notOwner": "Only the task owner can create invite links"
+      "notOwner": "Only the task owner can create invite links",
+      "leaveGroupChat": "Leave Group",
+      "leaveSuccess": "Left the group chat",
+      "leaveFailed": "Failed to leave group chat"
+    },
+    "addMembers": {
+      "title": "Add Group Members",
+      "description": "Search and add users to \"{{taskTitle}}\"",
+      "searchPlaceholder": "Search by username or email...",
+      "searching": "Searching...",
+      "noResults": "No users found",
+      "addAsUnregistered": "Add \"{{name}}\" (Unregistered User)",
+      "unregistered": "Unregistered",
+      "selected": "{{count}} selected",
+      "add": "Add ({{count}})",
+      "adding": "Adding...",
+      "success": "Successfully added {{count}} members",
+      "failed": "Failed to add members",
+      "allUnregistered": "Selected users are not registered on the platform",
+      "allAlreadyMembers": "Selected users are already group members",
+      "useInviteLink": "Please use the invite link to invite these users",
+      "unregisteredUsersTitle": "The following users are not registered",
+      "unregisteredUsersDesc": "{{users}} have not logged into the platform and cannot be added directly",
+      "inviteLinkDescription": "Successfully added {{count}} members",
+      "showInviteLink": "Some users failed to add. You can generate an invite link to share with them.",
+      "generateInviteLink": "Generate Invite Link"
     }
+  },
+  "common": {
+    "cancel": "Cancel",
+    "close": "Close"
   }
 }

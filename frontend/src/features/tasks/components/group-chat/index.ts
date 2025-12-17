@@ -6,6 +6,7 @@
  * Group chat components for multi-user collaboration.
  */
 
-export { InviteLinkDialog } from './InviteLinkDialog'
-export { InviteJoinHandler } from './InviteJoinHandler'
-export { TaskMembersPanel } from './TaskMembersPanel'
+export { AddMembersDialog } from './AddMembersDialog';
+export { InviteLinkDialog } from './InviteLinkDialog';
+export { InviteJoinHandler } from './InviteJoinHandler';
+export { TaskMembersPanel } from './TaskMembersPanel';

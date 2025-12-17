@@ -2,11 +2,11 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useEffect, useState } from 'react'
-import { useSearchParams, useRouter } from 'next/navigation'
-import { Users, Bot } from 'lucide-react'
+import { useEffect, useState } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
+import { Users, Bot } from 'lucide-react';
 import {
   Dialog,
   DialogContent,
@@ -14,80 +14,78 @@ import {
   DialogTitle,
   DialogFooter,
   DialogDescription,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
-import { useToast } from '@/hooks/use-toast'
-import { taskMemberApi, InviteInfoResponse } from '@/apis/task-member'
-import { useTranslation } from '@/hooks/useTranslation'
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import { useToast } from '@/hooks/use-toast';
+import { taskMemberApi, InviteInfoResponse } from '@/apis/task-member';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export function InviteJoinHandler() {
-  const { t } = useTranslation()
-  const { toast } = useToast()
-  const searchParams = useSearchParams()
-  const router = useRouter()
-  const inviteToken = searchParams.get('invite')
+  const { t } = useTranslation('chat');
+  const { toast } = useToast();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const inviteToken = searchParams.get('invite');
 
-  const [inviteInfo, setInviteInfo] = useState<InviteInfoResponse | null>(null)
-  const [loading, setLoading] = useState(false)
-  const [joining, setJoining] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const [inviteInfo, setInviteInfo] = useState<InviteInfoResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [joining, setJoining] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!inviteToken) return
+    if (!inviteToken) return;
 
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     taskMemberApi
       .getInviteInfo(inviteToken)
       .then(setInviteInfo)
-      .catch((err) => setError(err.message || t('groupChat.invite.invalidLink')))
-      .finally(() => setLoading(false))
-  }, [inviteToken, t])
+      .catch(err => setError(err.message || t('groupChat.invite.invalidLink')))
+      .finally(() => setLoading(false));
+  }, [inviteToken, t]);
 
   const handleJoin = async () => {
-    if (!inviteToken) return
+    if (!inviteToken) return;
 
-    setJoining(true)
+    setJoining(true);
     try {
-      const result = await taskMemberApi.joinByInvite(inviteToken)
+      const result = await taskMemberApi.joinByInvite(inviteToken);
 
       if (result.already_member) {
-        toast({ title: t('groupChat.invite.alreadyMember') })
+        toast({ title: t('groupChat.invite.alreadyMember') });
       } else {
-        toast({ title: t('groupChat.invite.joinSuccess') })
+        toast({ title: t('groupChat.invite.joinSuccess') });
       }
 
       // Navigate to the group chat
-      router.replace(`/chat?taskId=${result.task_id}`)
+      router.replace(`/chat?taskId=${result.task_id}`);
     } catch (err: unknown) {
       toast({
         title: err instanceof Error ? err.message : t('groupChat.invite.joinFailed'),
         variant: 'destructive',
-      })
+      });
     } finally {
-      setJoining(false)
+      setJoining(false);
     }
-  }
+  };
 
   const handleClose = () => {
     // Remove the invite parameter from URL
-    const newParams = new URLSearchParams(searchParams.toString())
-    newParams.delete('invite')
-    const newUrl = newParams.toString() ? `/chat?${newParams.toString()}` : '/chat'
-    router.replace(newUrl)
-  }
+    const newParams = new URLSearchParams(searchParams.toString());
+    newParams.delete('invite');
+    const newUrl = newParams.toString() ? `/chat?${newParams.toString()}` : '/chat';
+    router.replace(newUrl);
+  };
 
-  if (!inviteToken) return null
+  if (!inviteToken) return null;
 
   return (
     <Dialog open={true} onOpenChange={handleClose}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle>{t('groupChat.invite.title')}</DialogTitle>
-          <DialogDescription>
-            {t('groupChat.invite.description')}
-          </DialogDescription>
+          <DialogDescription>{t('groupChat.invite.description')}</DialogDescription>
         </DialogHeader>
 
         {loading ? (
@@ -135,9 +133,7 @@ export function InviteJoinHandler() {
                   {t('common.cancel')}
                 </Button>
                 <Button onClick={handleJoin} disabled={joining}>
-                  {joining
-                    ? t('groupChat.invite.joining')
-                    : t('groupChat.invite.join')}
+                  {joining ? t('groupChat.invite.joining') : t('groupChat.invite.join')}
                 </Button>
               </DialogFooter>
             </div>
@@ -145,5 +141,5 @@ export function InviteJoinHandler() {
         )}
       </DialogContent>
     </Dialog>
-  )
+  );
 }

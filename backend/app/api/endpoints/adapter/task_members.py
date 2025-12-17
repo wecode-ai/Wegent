@@ -167,20 +167,55 @@ def remove_task_member(
     )
 
 
+@router.post("/{task_id}/leave", response_model=RemoveMemberResponse)
+def leave_group_chat(
+    task_id: int,
+    current_user: User = Depends(security.get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Leave a group chat.
+    Any member (except task owner) can leave the group chat.
+    """
+    # Check if user is a member
+    if not task_member_service.is_member(db, task_id, current_user.id):
+        raise HTTPException(
+            status_code=403, detail="You are not a member of this group chat"
+        )
+
+    # Task owner cannot leave
+    if task_member_service.is_task_owner(db, task_id, current_user.id):
+        raise HTTPException(
+            status_code=403, detail="Task owner cannot leave the group chat"
+        )
+
+    task_member_service.remove_member(
+        db=db,
+        task_id=task_id,
+        user_id=current_user.id,
+        removed_by=current_user.id,
+    )
+
+    return RemoveMemberResponse(
+        message="Successfully left the group chat",
+        user_id=current_user.id,
+    )
+
+
 # ============ Invite Link API ============
 
 
 @router.post("/{task_id}/invite-link", response_model=InviteLinkResponse)
 def generate_invite_link(
     task_id: int,
-    expires_hours: int = Query(default=72, ge=1, le=720),
+    expires_hours: int = Query(default=0, ge=0, le=720),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
     """
     Generate a group chat invite link.
     Any member can generate an invite link.
-    Default expiration: 72 hours, max: 30 days (720 hours).
+    Default: permanent (0 = no expiration), max for time-limited: 30 days (720 hours).
     """
     # Check if user is a member
     if not task_member_service.is_member(db, task_id, current_user.id):

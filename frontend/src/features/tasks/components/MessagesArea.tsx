@@ -137,7 +137,7 @@ export default function MessagesArea({
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
   const { toast } = useToast();
-  const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail, refreshSelectedTaskDetail, setSelectedTask } = useTaskContext();
   const { theme } = useTheme();
   const { user } = useUser();
 
@@ -667,6 +667,12 @@ export default function MessagesArea({
     onContentChange,
   ]);
 
+  // Handle user leaving group chat
+  const handleLeaveGroupChat = useCallback(() => {
+    // Clear the selected task to close the chat view
+    setSelectedTask(null);
+  }, [setSelectedTask]);
+
   // Memoize share and export buttons to prevent infinite re-renders
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || displayMessages.length === 0) {
@@ -905,6 +911,7 @@ export default function MessagesArea({
           taskId={selectedTaskDetail.id}
           taskTitle={selectedTaskDetail.title || selectedTaskDetail.prompt || 'Untitled Task'}
           currentUserId={user.id}
+          onLeave={handleLeaveGroupChat}
         />
       )}
     </div>

@@ -90,6 +90,13 @@ export const taskMemberApi = {
   },
 
   /**
+   * Leave a group chat (remove yourself).
+   */
+  leaveGroupChat: async (taskId: number): Promise<void> => {
+    return apiClient.post<void>(`/tasks/${taskId}/leave`);
+  },
+
+  /**
    * Generate an invite link for a group chat.
    */
   generateInviteLink: async (

@@ -208,6 +208,7 @@
       "title": "邀请加入群聊",
       "description": "生成邀请链接，分享给其他用户即可加入「{{taskTitle}}」",
       "expiresIn": "链接有效期：",
+      "permanent": "永久有效",
       "hours24": "24 小时",
       "days3": "3 天",
       "days7": "7 天",
@@ -218,6 +219,7 @@
       "copied": "链接已复制",
       "copyFailed": "复制链接失败",
       "expiresNote": "链接有效期 {{hours}} 小时，过期后需重新生成",
+      "permanentNote": "链接永久有效，可随时撤销",
       "regenerate": "重新生成"
     },
     "invite": {
@@ -233,14 +235,45 @@
       "invalidLink": "邀请链接无效或已过期"
     },
     "members": {
-      "title": "群聊成员",
+      "title": "添加成员",
       "inviteLink": "邀请链接",
+      "inviteLinkDescription": "使用群组链接邀请他人加入群聊。任何人皆可通过此链接加入群聊，并可查看本群历史消息。",
+      "addMembers": "添加成员",
       "addMember": "添加成员",
       "you": "你",
       "invitedBy": "由 {{name}} 邀请",
       "loadFailed": "加载成员失败",
       "removeSuccess": "已移除 {{name}}",
-      "removeFailed": "移除成员失败"
+      "removeFailed": "移除成员失败",
+      "leaveGroupChat": "退出群聊",
+      "leaveSuccess": "已退出群聊",
+      "leaveFailed": "退出群聊失败"
+    },
+    "addMembers": {
+      "title": "添加群聊成员",
+      "description": "搜索并添加用户到「{{taskTitle}}」",
+      "searchPlaceholder": "搜索用户名或邮箱...",
+      "searching": "搜索中...",
+      "noResults": "未找到用户",
+      "addAsUnregistered": "添加「{{name}}」（未注册用户）",
+      "unregistered": "未注册",
+      "selected": "已选择 {{count}} 人",
+      "add": "添加 ({{count}})",
+      "adding": "添加中...",
+      "success": "成功添加 {{count}} 位成员",
+      "failed": "添加成员失败",
+      "allUnregistered": "所选用户未在平台注册",
+      "allAlreadyMembers": "所选用户已经是群聊成员",
+      "useInviteLink": "请使用邀请链接邀请这些用户",
+      "unregisteredUsersTitle": "以下用户未在平台注册",
+      "unregisteredUsersDesc": "{{users}} 未在平台登录，无法直接添加",
+      "inviteLinkDescription": "已成功添加 {{count}} 位成员",
+      "showInviteLink": "部分用户添加失败，你可以生成邀请链接分享给他们",
+      "generateInviteLink": "生成邀请链接"
     }
+  },
+  "common": {
+    "cancel": "取消",
+    "close": "关闭"
   }
 }

@@ -34,6 +34,15 @@ export interface UpdateUserRequest {
   preferences?: UserPreferences;
 }
 
+export interface SearchUsersResponse {
+  users: Array<{
+    id: number;
+    user_name: string;
+    email?: string;
+  }>;
+  total: number;
+}
+
 const TOKEN_KEY = 'auth_token';
 const TOKEN_EXPIRE_KEY = 'auth_token_expire';
 
@@ -128,6 +137,10 @@ export const userApis = {
 
   async getWelcomeConfig(): Promise<WelcomeConfigResponse> {
     return apiClient.get('/users/welcome-config');
+  },
+
+  async searchUsers(query: string): Promise<SearchUsersResponse> {
+    return apiClient.get(`/users/search?q=${encodeURIComponent(query)}`);
   },
 
   isAuthenticated(): boolean {
