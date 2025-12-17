@@ -69,6 +69,12 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Failed to initialize OpenTelemetry: {e}")
     try:
         if os.getenv("TASK_INFO"):
+            # Generate a request_id for startup task execution
+            # This ensures logs have a request_id even without HTTP request
+            startup_request_id = str(uuid.uuid4())[:8]
+            from shared.telemetry.context import set_request_context
+            set_request_context(startup_request_id)
+            
             logger.info("TASK_INFO environment variable found, attempting to run task")
             status = run_task()
             logger.info(f"Task execution status: {status}")

@@ -84,13 +84,21 @@ def _get_callback_params(task_data: Dict[str, Any]) -> Dict[str, str]:
 
 def _extract_task_attributes(task_data: Dict[str, Any]) -> Dict[str, Any]:
     """Extract trace attributes from task data."""
-    return {
+    attrs = {
         "task.id": str(task_data.get("task_id", -1)),
         "task.subtask_id": str(task_data.get("subtask_id", -1)),
         "task.title": task_data.get("task_title", ""),
         "task.type": task_data.get("type", "online"),
         "executor.name": os.getenv("EXECUTOR_NAME", ""),
     }
+    # Extract user info if available
+    user_data = task_data.get("user", {})
+    if user_data:
+        if user_data.get("id"):
+            attrs["user.id"] = str(user_data.get("id"))
+        if user_data.get("name"):
+            attrs["user.name"] = user_data.get("name")
+    return attrs
 
 
 @trace_sync(
