@@ -380,3 +380,36 @@ class SkillList(BaseModel):
     apiVersion: str = "agent.wecode.io/v1"
     kind: str = "SkillList"
     items: List[Skill]
+
+
+# KnowledgeBase CRD schemas
+class KnowledgeBaseSpec(BaseModel):
+    """KnowledgeBase specification"""
+
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+    document_count: Optional[int] = Field(default=0, description="Cached document count")
+
+
+class KnowledgeBaseStatus(Status):
+    """KnowledgeBase status"""
+
+    state: str = "Available"  # Available, Unavailable
+
+
+class KnowledgeBase(BaseModel):
+    """KnowledgeBase CRD"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "KnowledgeBase"
+    metadata: ObjectMeta
+    spec: KnowledgeBaseSpec
+    status: Optional[KnowledgeBaseStatus] = None
+
+
+class KnowledgeBaseList(BaseModel):
+    """KnowledgeBase list"""
+
+    apiVersion: str = "agent.wecode.io/v1"
+    kind: str = "KnowledgeBaseList"
+    items: List[KnowledgeBase]

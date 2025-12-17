@@ -1,0 +1,25 @@
+# SPDX-FileCopyrightText: 2025 Weibo, Inc.
+#
+# SPDX-License-Identifier: Apache-2.0
+
+[run]
+source = utils
+branch = True
+parallel = False
+concurrency = thread
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    if TYPE_CHECKING:
+show_missing = True
+
+[html]
+directory = htmlcov
+
+[xml]
+output = coverage.xml
