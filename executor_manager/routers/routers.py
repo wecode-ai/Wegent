@@ -26,7 +26,7 @@ from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
 from shared.models.task import TasksRequest
 from shared.telemetry.config import get_otel_config
-from shared.telemetry.context import set_task_context
+from shared.telemetry.context import set_task_context, set_user_context
 from shared.telemetry.core import is_telemetry_enabled
 
 # Setup logger
@@ -353,6 +353,7 @@ async def receive_tasks(request: TasksRequest, http_request: Request):
         if otel_config.enabled and is_telemetry_enabled() and request.tasks:
             first_task = request.tasks[0]
             set_task_context(task_id=first_task.task_id, subtask_id=first_task.subtask_id)
+            set_user_context(user_id=str(first_task.user.id), user_name=first_task.user.name)
 
         # Call the task processor to handle the tasks
         task_processor.process_tasks([task.dict() for task in request.tasks])

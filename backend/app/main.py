@@ -376,6 +376,10 @@ def create_app():
                         subtask_id = body_json.get("subtask_id")
                         if task_id is not None or subtask_id is not None:
                             set_task_context(task_id=task_id, subtask_id=subtask_id)
+                        # Extract user_id from request body if available
+                        user_id = body_json.get("user_id")
+                        if user_id is not None:
+                            set_user_context(user_id=str(user_id))
                     except (json.JSONDecodeError, TypeError):
                         pass  # Not JSON or invalid format, skip task context extraction
 

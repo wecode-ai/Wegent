@@ -21,7 +21,7 @@ from contextlib import asynccontextmanager
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
-from shared.telemetry.context import set_task_context
+from shared.telemetry.context import set_task_context, set_user_context
 from shared.telemetry.core import is_telemetry_enabled
 from executor.tasks import process
 from executor.services.agent_service import AgentService
@@ -245,10 +245,17 @@ async def execute_task(request: Request):
     task_id = task_data.get("task_id", -1)
     subtask_id = task_data.get("subtask_id", -1)
 
-    # Set task context for tracing
+    # Set task and user context for tracing
     otel_config = get_otel_config()
     if otel_config.enabled and is_telemetry_enabled():
         set_task_context(task_id=task_id, subtask_id=subtask_id)
+        # Extract user info from task data
+        user_data = task_data.get("user", {})
+        if user_data:
+            set_user_context(
+                user_id=str(user_data.get("id", "")) if user_data.get("id") else None,
+                user_name=user_data.get("name")
+            )
 
     try:
         # Use process function to handle task uniformly
