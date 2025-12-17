@@ -581,6 +581,7 @@
     "manage_skills_button": "Manage Skills"
   },
   "models": {
+    "label": "Model",
     "title": "Model Management",
     "description": "Manage your AI model configurations",
     "public": "Public",
@@ -1021,6 +1022,64 @@
       "create_failed": "Failed to create API key",
       "delete_failed": "Failed to delete API key",
       "name_required": "Key name is required"
+    }
+  },
+  "groupChat": {
+    "create": {
+      "button": "Create Group Chat",
+      "title": "Create Group Chat",
+      "description": "Create a new group chat task and invite others to join the discussion",
+      "titleLabel": "Group Chat Title",
+      "titlePlaceholder": "Enter group chat title",
+      "titleRequired": "Please enter group chat title",
+      "teamLabel": "Select Agent",
+      "teamPlaceholder": "Select an agent",
+      "teamRequired": "Please select an agent",
+      "noChatTeams": "No chat agents available",
+      "initialMessage": "Group chat created, welcome everyone!",
+      "success": "Group chat created successfully",
+      "successDesc": "You can now invite other members to join",
+      "failed": "Failed to create group chat",
+      "failedDesc": "Please try again"
+    },
+    "inviteLink": {
+      "title": "Invite to Group Chat",
+      "description": "Generate an invite link to share with others to join \"{{taskTitle}}\"",
+      "expiresIn": "Link expires in:",
+      "hours24": "24 hours",
+      "days3": "3 days",
+      "days7": "7 days",
+      "days30": "30 days",
+      "generate": "Generate Invite Link",
+      "generating": "Generating...",
+      "generateFailed": "Failed to generate invite link",
+      "copied": "Link copied to clipboard",
+      "copyFailed": "Failed to copy link",
+      "expiresNote": "Link expires in {{hours}} hours. Generate a new one if needed.",
+      "regenerate": "Generate New Link"
+    },
+    "invite": {
+      "title": "Join Group Chat",
+      "description": "You have been invited to join a group chat",
+      "invitedBy": "{{name}} invited you to join",
+      "memberCount": "{{count}} members",
+      "join": "Join Group Chat",
+      "joining": "Joining...",
+      "joinSuccess": "Successfully joined the group chat!",
+      "joinFailed": "Failed to join group chat",
+      "alreadyMember": "You are already a member",
+      "invalidLink": "Invalid or expired invite link"
+    },
+    "members": {
+      "title": "Group Members",
+      "inviteLink": "Invite Link",
+      "addMember": "Add Member",
+      "you": "You",
+      "invitedBy": "Invited by {{name}}",
+      "loadFailed": "Failed to load members",
+      "removeSuccess": "{{name}} has been removed",
+      "removeFailed": "Failed to remove member",
+      "notOwner": "Only the task owner can create invite links"
     }
   },
   "wizard": {

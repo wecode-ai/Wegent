@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 from app.api.dependencies import get_db
 from app.core import security
 from app.models.kind import Kind
-from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
+from app.models.subtask import SenderType, Subtask, SubtaskRole, SubtaskStatus
 from app.models.user import User
 from app.schemas.kind import Bot, Shell, Task, Team
 from app.services.chat.base import ChatServiceBase
@@ -41,6 +41,7 @@ class StreamChatRequest(BaseModel):
     message: str
     team_id: int
     task_id: Optional[int] = None  # Optional for multi-turn conversations
+    title: Optional[str] = None  # Optional custom title for new tasks
     model_id: Optional[str] = None  # Optional model override
     force_override_bot_model: bool = False
     attachment_id: Optional[int] = None  # Optional attachment ID for file upload
@@ -269,7 +270,11 @@ async def _create_task_and_subtasks(
         db.add(workspace)
 
         # Create task
-        title = message[:50] + "..." if len(message) > 50 else message
+        # Use custom title if provided, otherwise generate from message
+        if request.title:
+            title = request.title
+        else:
+            title = message[:50] + "..." if len(message) > 50 else message
 
         # Auto-detect task type based on git_url presence
         task_type = "code" if request.git_url else "chat"
@@ -356,6 +361,8 @@ async def _create_task_and_subtasks(
         error_message="",
         completed_at=datetime.now(),
         result=None,
+        sender_type=SenderType.USER,  # Set sender type to USER
+        sender_user_id=user.id,  # Set actual sender user ID (not task owner)
     )
     db.add(user_subtask)
 
@@ -379,6 +386,8 @@ async def _create_task_and_subtasks(
         error_message="",
         result=None,
         completed_at=datetime.now(),  # Placeholder, will be updated when stream completes
+        sender_type=SenderType.TEAM,  # Set sender type to TEAM for AI responses
+        sender_user_id=None,  # No user ID for TEAM messages
     )
     db.add(assistant_subtask)
 

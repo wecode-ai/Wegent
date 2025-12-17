@@ -92,6 +92,7 @@ export async function sendMessage(params: {
   branch: GitBranch | null;
   task_id?: number;
   taskType?: 'chat' | 'code';
+  title?: string;
   model_id?: string;
   force_override_bot_model?: boolean;
   search_engine?: string;
@@ -105,6 +106,7 @@ export async function sendMessage(params: {
     branch,
     task_id,
     taskType = 'chat',
+    title,
     model_id,
     force_override_bot_model,
     search_engine,
@@ -142,6 +144,7 @@ export async function sendMessage(params: {
           message: trimmed,
           team_id: team?.id ?? 0,
           task_id: task_id,
+          title: title,
           model_id: model_id,
           force_override_bot_model: force_override_bot_model,
           search_engine: search_engine,

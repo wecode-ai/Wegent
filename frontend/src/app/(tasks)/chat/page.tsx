@@ -6,6 +6,7 @@
 
 import { Suspense, useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { UserGroupIcon } from '@heroicons/react/24/outline';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
@@ -15,7 +16,7 @@ import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
 import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
 import TaskShareHandler from '@/features/tasks/components/TaskShareHandler';
-import { InviteJoinHandler } from '@/features/tasks/components/group-chat';
+import { InviteJoinHandler, CreateGroupChatDialog } from '@/features/tasks/components/group-chat';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
@@ -29,8 +30,12 @@ import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import { paths } from '@/config/paths';
+import { Button } from '@/components/ui/button';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export default function ChatPage() {
+  const { t } = useTranslation();
+
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
@@ -49,6 +54,11 @@ export default function ChatPage() {
   // Check for share_id in URL
   const searchParams = useSearchParams();
   const hasShareId = !!searchParams.get('share_id');
+
+  // Check if a task is currently open (support multiple parameter formats)
+  const taskId =
+    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId');
+  const hasOpenTask = !!taskId;
 
   // Check for pending task share from public page (after login)
   useEffect(() => {
@@ -75,6 +85,9 @@ export default function ChatPage() {
 
   // Share button state
   const [shareButton, setShareButton] = useState<React.ReactNode>(null);
+
+  // Create group chat dialog state
+  const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false);
 
   const handleShareButtonRender = (button: React.ReactNode) => {
     setShareButton(button);
@@ -166,6 +179,18 @@ export default function ChatPage() {
             variant="with-sidebar"
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
           >
+            {/* Create Group Chat Button - only show when no task is open */}
+            {!hasOpenTask && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsCreateGroupChatOpen(true)}
+                className="gap-2"
+              >
+                <UserGroupIcon className="h-4 w-4" />
+                <span className="hidden sm:inline">{t('groupChat.create.button')}</span>
+              </Button>
+            )}
             {shareButton}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
@@ -181,6 +206,8 @@ export default function ChatPage() {
           />
         </div>
       </div>
+      {/* Create Group Chat Dialog */}
+      <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />
     </>
   );
 }
