@@ -942,7 +942,20 @@
     "switch_to_code_message": "This agent is recommended for Code mode. Would you like to switch?",
     "switch_to_chat_message": "This agent is recommended for Chat mode. Would you like to switch?",
     "switch_mode": "Switch Mode",
-    "stay_current": "Stay Here"
+    "stay_current": "Stay Here",
+    "settings": "Quick Card Settings",
+    "chat_mode": "Chat Mode",
+    "code_mode": "Code Mode",
+    "max_count": "Maximum display count",
+    "max_count_hint": "When pinned agents are insufficient, others will be auto-filled",
+    "pinned_agents": "Pinned Agents",
+    "available_agents": "Available Agents",
+    "no_pinned": "No pinned agents. System recommendations will be shown.",
+    "max_reached": "Maximum limit reached",
+    "search_placeholder": "Search agents...",
+    "save_success": "Quick Card settings saved",
+    "pinned_badge": "Pinned",
+    "auto_filled_badge": "Auto-filled"
   },
   "groups": {
     "title": "Groups",

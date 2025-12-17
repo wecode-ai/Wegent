@@ -936,7 +936,20 @@
     "switch_to_code_message": "该智能体推荐在「编码模式」下使用，是否切换？",
     "switch_to_chat_message": "该智能体推荐在「聊天模式」下使用，是否切换？",
     "switch_mode": "切换模式",
-    "stay_current": "留在当前"
+    "stay_current": "留在当前",
+    "settings": "Quick Card 设置",
+    "chat_mode": "Chat 模式",
+    "code_mode": "Code 模式",
+    "max_count": "最多显示数量",
+    "max_count_hint": "置顶不足时，将自动补充其他智能体",
+    "pinned_agents": "已置顶的智能体",
+    "available_agents": "可添加的智能体",
+    "no_pinned": "暂无置顶的智能体，将显示系统推荐",
+    "max_reached": "已达到最大数量",
+    "search_placeholder": "搜索智能体...",
+    "save_success": "Quick Card 配置已保存",
+    "pinned_badge": "置顶",
+    "auto_filled_badge": "自动补充"
   },
   "groups": {
     "title": "群组",

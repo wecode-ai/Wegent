@@ -118,6 +118,42 @@ class KindService:
                 formatted["agent_type"] = resource.json.get("agent_type")
             return formatted
 
+    def get_user_teams_sorted(
+        self, user_id: int, mode: Optional[str] = None
+    ) -> List[Dict[str, Any]]:
+        """
+        Get user's teams sorted by updated_at desc, optionally filtered by bind_mode.
+        Returns list of formatted team data.
+        """
+        from app.db.session import SessionLocal
+
+        with SessionLocal() as db:
+            query = db.query(Kind).filter(
+                Kind.kind == "Team",
+                Kind.user_id == user_id,
+                Kind.is_active == True,
+            )
+
+            teams = query.order_by(Kind.updated_at.desc()).limit(50).all()
+
+            result = []
+            service = KindServiceFactory.get_service("Team")
+            for team in teams:
+                # Check bind_mode filter
+                if mode and team.json:
+                    bind_mode = team.json.get("spec", {}).get("bind_mode", [])
+                    # If bind_mode is set and doesn't include the mode, skip
+                    if bind_mode and mode not in bind_mode:
+                        continue
+
+                formatted = service._format_resource(team)
+                formatted["id"] = team.id
+                if team.json:
+                    formatted["agent_type"] = team.json.get("agent_type")
+                result.append(formatted)
+
+            return result
+
 
 # Create service instance
 kind_service = KindService()

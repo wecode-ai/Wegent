@@ -443,17 +443,34 @@ export interface AttachmentUploadState {
 export interface QuickAccessTeam {
   id: number;
   name: string;
+  is_pinned: boolean; // True = user pinned, False = auto filled
   is_system: boolean; // True if from system recommendations
   recommended_mode?: 'chat' | 'code' | 'both';
   agent_type?: string;
   icon?: string; // Icon ID from preset icon library
 }
 
+export interface QuickAccessModeConfig {
+  max_count: number;
+  pinned_teams: number[]; // User pinned team IDs
+  display_teams: QuickAccessTeam[]; // Final display list (pinned + auto filled)
+}
+
 export interface QuickAccessResponse {
   system_version: number;
   user_version: number | null;
-  show_system_recommended: boolean; // True if user_version < system_version
-  teams: QuickAccessTeam[];
+  chat: QuickAccessModeConfig;
+  code: QuickAccessModeConfig;
+}
+
+export interface QuickAccessModeUpdate {
+  max_count: number;
+  pinned_teams: number[];
+}
+
+export interface QuickAccessUpdate {
+  chat?: QuickAccessModeUpdate;
+  code?: QuickAccessModeUpdate;
 }
 
 // Welcome Config Types (Slogan & Tips)
