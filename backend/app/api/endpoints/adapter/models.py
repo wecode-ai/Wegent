@@ -83,6 +83,9 @@ def list_unified_models(
     group_name: Optional[str] = Query(
         None, description="Group name (required when scope='group')"
     ),
+    model_category_type: Optional[str] = Query(
+        None, description="Filter by model category type (llm, tts, stt, embedding, rerank)"
+    ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
 ):
@@ -106,6 +109,7 @@ def list_unified_models(
     - include_config: Whether to include full model config in response
     - scope: Query scope ('personal', 'group', or 'all')
     - group_name: Group name (required when scope='group')
+    - model_category_type: Optional filter by model category type (llm, tts, stt, embedding, rerank)
 
     Response:
     {
@@ -115,7 +119,8 @@ def list_unified_models(
           "type": "public" | "user",
           "displayName": "Human Readable Name",
           "provider": "openai" | "claude",
-          "modelId": "gpt-4"
+          "modelId": "gpt-4",
+          "modelCategoryType": "llm" | "tts" | "stt" | "embedding" | "rerank"
         }
       ]
     }
@@ -127,6 +132,7 @@ def list_unified_models(
         include_config=include_config,
         scope=scope,
         group_name=group_name,
+        model_category_type=model_category_type,
     )
     return {"data": data}
 
