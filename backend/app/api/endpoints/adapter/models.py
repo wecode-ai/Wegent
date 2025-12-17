@@ -84,7 +84,8 @@ def list_unified_models(
         None, description="Group name (required when scope='group')"
     ),
     model_category_type: Optional[str] = Query(
-        None, description="Filter by model category type (llm, tts, stt, embedding, rerank)"
+        None,
+        description="Filter by model category type (llm, tts, stt, embedding, rerank)",
     ),
     db: Session = Depends(get_db),
     current_user: User = Depends(security.get_current_user),
@@ -396,7 +397,10 @@ def _test_openai_connection(
             model=model_id,
             input="test",
         )
-        return {"success": True, "message": f"Successfully connected to embedding model {model_id}"}
+        return {
+            "success": True,
+            "message": f"Successfully connected to embedding model {model_id}",
+        }
 
     elif model_category_type == "tts":
         # TTS models can't be easily tested without audio output
@@ -409,7 +413,10 @@ def _test_openai_connection(
                 voice="alloy",
                 input="hi",
             )
-            return {"success": True, "message": f"Successfully connected to TTS model {model_id}"}
+            return {
+                "success": True,
+                "message": f"Successfully connected to TTS model {model_id}",
+            }
         except openai.NotFoundError:
             return {"success": False, "message": f"TTS model {model_id} not found"}
 
@@ -510,7 +517,10 @@ def _test_gemini_connection(
             response = client.post(url, json=payload, headers=headers)
             response.raise_for_status()
 
-        return {"success": True, "message": f"Successfully connected to embedding model {model_id}"}
+        return {
+            "success": True,
+            "message": f"Successfully connected to embedding model {model_id}",
+        }
 
     else:
         # Default: LLM - use generateContent
