@@ -84,37 +84,81 @@ async function getLatestRequest(): Promise<RecordedRequest | null> {
 }
 
 /**
- * Helper to select a Chat type team from the team selector.
+ * Helper to select a Chat type team from the QuickAccessCards or dropdown.
  * File upload is only available for Chat Shell teams (agent_type === 'chat').
+ *
+ * The /chat page uses QuickAccessCards component for team selection:
+ * 1. First try to find chat-team in the quick access cards
+ * 2. If not found, click "More" button and search in dropdown
+ *
  * Throws error if chat-team cannot be selected.
  */
 async function selectChatTeam(page: Page): Promise<void> {
-  // Look for team selector (SearchableSelect uses role="combobox")
-  const teamSelector = page.locator('[data-tour="team-selector"] [role="combobox"]').first();
-
-  const isVisible = await teamSelector.isVisible({ timeout: 5000 });
-  if (!isVisible) {
-    throw new Error('Team selector not found - cannot select chat-team');
-  }
-
-  // Click to open the dropdown
-  await teamSelector.click();
-  await page.waitForTimeout(500);
-
-  // Look for chat-team specifically (Chat Shell team from init data)
-  // The chat-team is configured with Chat Shell which supports file upload
-  // SearchableSelect uses CommandItem which renders as [cmdk-item]
-  const chatTeamOption = page.locator('[cmdk-item]:has-text("chat-team")').first();
-
-  const optionVisible = await chatTeamOption.isVisible({ timeout: 3000 });
-  if (!optionVisible) {
-    // Close dropdown and throw error
-    await page.keyboard.press('Escape');
-    throw new Error('chat-team option not found in team selector dropdown');
-  }
-
-  await chatTeamOption.click();
+  // Wait for the page to fully load and teams to be fetched
   await page.waitForTimeout(1000);
+
+  // Strategy 1: Try to find chat-team in QuickAccessCards (displayed as rounded pill buttons)
+  // QuickAccessCards renders team cards with the team name as text
+  const chatTeamCard = page
+    .locator('div:has-text("chat-team")')
+    .filter({
+      has: page.locator('span.text-sm.font-medium'),
+    })
+    .first();
+
+  if (await chatTeamCard.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await chatTeamCard.click();
+    await page.waitForTimeout(1000);
+    return;
+  }
+
+  // Strategy 2: Click "More" button to open dropdown and search for chat-team
+  // The "More" button contains text from i18n key 'teams.more'
+  const moreButton = page.locator('button:has-text("More"), button:has-text("更多")').first();
+
+  if (await moreButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await moreButton.click();
+    await page.waitForTimeout(500);
+
+    // Search for chat-team in the dropdown
+    const searchInput = page
+      .locator('input[placeholder*="Search"], input[placeholder*="搜索"]')
+      .first();
+    if (await searchInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await searchInput.fill('chat-team');
+      await page.waitForTimeout(500);
+    }
+
+    // Click on chat-team in the dropdown list
+    const chatTeamOption = page
+      .locator('div:has-text("chat-team")')
+      .filter({
+        has: page.locator('span.text-sm.font-medium.truncate'),
+      })
+      .first();
+
+    if (await chatTeamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
+      await chatTeamOption.click();
+      await page.waitForTimeout(1000);
+      return;
+    }
+
+    // Close dropdown if chat-team not found
+    await page.keyboard.press('Escape');
+  }
+
+  // Strategy 3: Check if chat-team is already selected (shown in SelectedTeamBadge)
+  // The SelectedTeamBadge shows the currently selected team name
+  const selectedBadge = page
+    .locator('[class*="badge"]:has-text("chat-team"), span:has-text("chat-team")')
+    .first();
+  if (await selectedBadge.isVisible({ timeout: 2000 }).catch(() => false)) {
+    // chat-team is already selected
+    return;
+  }
+
+  // If we reach here, chat-team could not be found or selected
+  throw new Error('chat-team not found - ensure chat-team exists in the backend init data');
 }
 
 /**
