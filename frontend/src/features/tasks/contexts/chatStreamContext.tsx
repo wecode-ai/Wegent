@@ -23,6 +23,13 @@ interface StreamState {
   isStreaming: boolean;
   /** Whether stop operation is in progress */
   isStopping: boolean;
+  /**
+   * Whether the stream has completed but we're waiting for data refresh.
+   * This is critical for preventing the "flash of empty state" bug.
+   * When isCompleting is true, the UI should continue showing the messages
+   * until the task detail data is fully loaded.
+   */
+  isCompleting: boolean;
   /** Accumulated streaming content */
   streamingContent: string;
   /** Error if any */
@@ -48,6 +55,8 @@ interface ChatStreamContextType {
   getStreamState: (taskId: number) => StreamState | undefined;
   /** Check if a task is currently streaming */
   isTaskStreaming: (taskId: number) => boolean;
+  /** Check if a task is in completing state (stream ended but waiting for data refresh) */
+  isTaskCompleting: (taskId: number) => boolean;
   /** Get all currently streaming task IDs */
   getStreamingTaskIds: () => number[];
   /** Start a new stream for a task */
@@ -68,6 +77,8 @@ interface ChatStreamContextType {
   stopStream: (taskId: number) => Promise<void>;
   /** Reset stream state for a specific task */
   resetStream: (taskId: number) => void;
+  /** Mark stream as completing (stream ended, waiting for data refresh) */
+  markStreamCompleting: (taskId: number) => void;
   /** Clear all stream states */
   clearAllStreams: () => void;
 }
@@ -81,6 +92,7 @@ export const ChatStreamContext = createContext<ChatStreamContextType | undefined
 const defaultStreamState: StreamState = {
   isStreaming: false,
   isStopping: false,
+  isCompleting: false,
   streamingContent: '',
   error: null,
   subtaskId: null,
@@ -138,6 +150,18 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     (taskId: number): boolean => {
       const state = streamStates.get(taskId);
       return state?.isStreaming || false;
+    },
+    [streamStates]
+  );
+
+  /**
+   * Check if a task is in completing state (stream ended but waiting for data refresh)
+   * This is used to prevent the "flash of empty state" bug during the transition
+   */
+  const isTaskCompleting = useCallback(
+    (taskId: number): boolean => {
+      const state = streamStates.get(taskId);
+      return state?.isCompleting || false;
     },
     [streamStates]
   );
@@ -325,10 +349,14 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
           callbacks?.onError?.(err);
         },
         onComplete: (completedTaskId: number, completedSubtaskId: number) => {
-          // Don't clear state immediately to allow UI to handle transition
+          // Mark stream as completing - this keeps the UI showing messages
+          // until the task detail data is fully loaded.
           // The state will be cleared when resetStream is called by the consumer
+          // after the data refresh is complete.
           updateStreamState(completedTaskId, {
             subtaskId: completedSubtaskId,
+            isStreaming: false,
+            isCompleting: true,
           });
           const callbacks = callbacksRef.current.get(completedTaskId);
           callbacks?.onComplete?.(completedTaskId, completedSubtaskId);
@@ -418,6 +446,24 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
   }, []);
 
   /**
+   * Mark stream as completing (stream ended, waiting for data refresh)
+   * This is used to maintain UI consistency during the transition period
+   * between stream completion and task detail data being fully loaded
+   */
+  const markStreamCompleting = useCallback(
+    (taskId: number): void => {
+      const state = streamStates.get(taskId);
+      if (state) {
+        updateStreamState(taskId, {
+          isStreaming: false,
+          isCompleting: true,
+        });
+      }
+    },
+    [streamStates, updateStreamState]
+  );
+
+  /**
    * Clear all stream states
    */
   const clearAllStreams = useCallback((): void => {
@@ -434,10 +480,12 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       value={{
         getStreamState,
         isTaskStreaming,
+        isTaskCompleting,
         getStreamingTaskIds,
         startStream,
         stopStream,
         resetStream,
+        markStreamCompleting,
         clearAllStreams,
       }}
     >

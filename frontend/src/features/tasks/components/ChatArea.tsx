@@ -348,6 +348,7 @@ export default function ChatArea({
   const {
     getStreamState,
     isTaskStreaming,
+    isTaskCompleting,
     startStream: contextStartStream,
     stopStream: contextStopStream,
     resetStream: contextResetStream,
@@ -378,8 +379,14 @@ export default function ChatArea({
   // Check if the currently displayed task is streaming
   const isCurrentTaskStreaming = currentStreamState?.isStreaming || false;
 
+  // Check if the currently displayed task is in completing state (stream ended, waiting for data)
+  const isCurrentTaskCompleting = currentStreamState?.isCompleting || false;
+
   // Check if there's any active stream (for the streaming task we started)
   const isStreamingTaskActive = streamingTaskId ? isTaskStreaming(streamingTaskId) : false;
+
+  // Check if the streaming task is in completing state
+  const isStreamingTaskCompleting = streamingTaskId ? isTaskCompleting(streamingTaskId) : false;
 
   // Extract stream state values for the current display
   const isStreaming = isCurrentTaskStreaming;
@@ -421,24 +428,52 @@ export default function ChatArea({
   }, [selectedTaskDetail?.id, streamingTaskId]);
 
   // Unified effect to reset streaming state in all necessary scenarios:
-  // 1. Stream completes or is externally cleared (streamingTaskId exists but stream is not active)
+  // 1. Stream is neither active nor completing (was truly cleared)
   // 2. User navigates to a fresh new task state (no selectedTaskDetail and no streamingTaskId)
+  //
+  // IMPORTANT: We do NOT reset when isStreamingTaskCompleting is true!
+  // The completing state means the stream ended but we're waiting for task detail data.
+  // Resetting during completing would cause the "flash of empty state" bug.
   useEffect(() => {
-    // Scenario 1: Stream was cleared (either completed or externally cleared via clearAllStreams)
-    if (streamingTaskId && !isStreamingTaskActive) {
+    // Scenario 1: Stream was cleared (neither streaming nor completing)
+    if (streamingTaskId && !isStreamingTaskActive && !isStreamingTaskCompleting) {
       resetStreamingState();
     }
-    // Scenario 2: No task selected and no active streaming task
+    // Scenario 2: No task selected and no active/completing streaming task
     else if (!selectedTaskDetail?.id && !streamingTaskId) {
       resetStreamingState();
     }
-  }, [streamingTaskId, isStreamingTaskActive, selectedTaskDetail?.id, resetStreamingState]);
+  }, [streamingTaskId, isStreamingTaskActive, isStreamingTaskCompleting, selectedTaskDetail?.id, resetStreamingState]);
 
-  // Reset streaming state when task ID changes (user switches tasks)
+  // Track the previous task ID to detect user-initiated task switches
+  const prevTaskIdRef = useRef<number | undefined>(undefined);
+
+  // Reset streaming state when user SWITCHES to a different task (not on initial task ID set)
   // This ensures pending message from task A doesn't show up in task B
+  //
+  // CRITICAL: We must distinguish between:
+  // 1. User switching tasks (should reset) - prevTaskId exists and differs from new taskId
+  // 2. First task ID being set after stream completion (should NOT reset) - prevTaskId is undefined
+  //
+  // The previous logic reset on ANY selectedTaskDetail?.id change, which caused
+  // the "flash of empty state" bug when the task ID is first set after stream completion.
   useEffect(() => {
-    resetStreamingState();
-  }, [selectedTaskDetail?.id, resetStreamingState]);
+    const currentTaskId = selectedTaskDetail?.id;
+    const prevTaskId = prevTaskIdRef.current;
+
+    // Only reset if:
+    // 1. We had a previous task (not the first load)
+    // 2. The task ID actually changed (not just a re-render)
+    // 3. The new task is different from the streaming task (user switched away)
+    const isUserSwitchingTask =
+      prevTaskId !== undefined && prevTaskId !== currentTaskId && currentTaskId !== streamingTaskId;
+
+    if (isUserSwitchingTask) {
+      resetStreamingState();
+    }
+
+    prevTaskIdRef.current = currentTaskId;
+  }, [selectedTaskDetail?.id, streamingTaskId, resetStreamingState]);
 
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
@@ -454,6 +489,8 @@ export default function ChatArea({
   // 5. CRITICAL: Once we have messages, keep showing them even during data refresh
   //    to prevent the "flash of empty state" bug
   // 6. NEW: Local pending message for immediate UI feedback
+  // 7. CRITICAL: If the stream is completing (ended but waiting for data refresh),
+  //    we MUST keep showing messages to prevent the flash
   const isViewingExistingTask = Boolean(selectedTaskDetail?.id);
 
   const hasMessages = React.useMemo(() => {
@@ -461,6 +498,11 @@ export default function ChatArea({
     const hasNewTaskStream = !selectedTaskDetail?.id && streamingTaskId && isStreamingTaskActive;
     const hasSubtasks = selectedTaskDetail?.subtasks && selectedTaskDetail.subtasks.length > 0;
     const hasLocalPending = localPendingMessage !== null;
+    // CRITICAL: Check if stream is in completing state (stream ended but waiting for data)
+    // This prevents the "flash of empty state" when AI first reply ends
+    const hasCompletingStream =
+      (!selectedTaskDetail?.id && streamingTaskId && isStreamingTaskCompleting) ||
+      isCurrentTaskCompleting;
 
     // Once we have a task with subtasks, always show messages view
     // This prevents flashing back to empty state during refresh
@@ -469,7 +511,12 @@ export default function ChatArea({
     }
 
     return Boolean(
-      hasSelectedTask || pendingUserMessage || isStreaming || hasNewTaskStream || hasLocalPending
+      hasSelectedTask ||
+        pendingUserMessage ||
+        isStreaming ||
+        hasNewTaskStream ||
+        hasLocalPending ||
+        hasCompletingStream
     );
   }, [
     selectedTaskDetail,
@@ -477,6 +524,8 @@ export default function ChatArea({
     isStreaming,
     streamingTaskId,
     isStreamingTaskActive,
+    isStreamingTaskCompleting,
+    isCurrentTaskCompleting,
     localPendingMessage,
   ]);
 
