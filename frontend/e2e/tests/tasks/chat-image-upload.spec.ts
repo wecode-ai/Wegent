@@ -181,61 +181,76 @@ test.describe('Chat Image Upload UI Tests', () => {
   });
 
   /**
+   * Helper function to skip onboarding tour by setting localStorage before page load
+   * This prevents the driver.js overlay from blocking UI interactions
+   */
+  async function skipOnboardingTour(page: Page): Promise<void> {
+    // Set localStorage to mark onboarding as completed before navigating
+    await page.addInitScript(() => {
+      localStorage.setItem('user_onboarding_completed', 'true');
+    });
+  }
+
+  /**
    * Helper function to select the test team in the chat UI
+   * Flow: Click "More/更多" button -> Search for team -> Click on team in dropdown
    */
   async function selectTestTeam(page: Page): Promise<boolean> {
     try {
       // Wait for page to be ready
       await page.waitForLoadState('networkidle');
+      await page.waitForTimeout(1000);
 
-      // Look for team selector or quick access cards
-      // The team might be in the QuickAccessCards or in a dropdown selector
-      const teamCard = page.locator(`[data-testid="team-card"]:has-text("${TEST_TEAM_NAME}")`);
-      const teamButton = page.locator(`button:has-text("${TEST_TEAM_NAME}")`);
-      const teamOption = page.locator(`[role="option"]:has-text("${TEST_TEAM_NAME}")`);
+      // Step 1: Look for the "More" or "更多" button in QuickAccessCards
+      // Support both English and Chinese locales
+      const moreButton = page.locator('button:has-text("More"), button:has-text("更多")').first();
 
-      // Try clicking on team card first (QuickAccessCards)
-      if (await teamCard.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await teamCard.click();
-        await page.waitForTimeout(500);
-        return true;
-      }
-
-      // Try clicking on team button
-      if (
-        await teamButton
-          .first()
-          .isVisible({ timeout: 3000 })
-          .catch(() => false)
-      ) {
-        await teamButton.first().click();
-        await page.waitForTimeout(500);
-        return true;
-      }
-
-      // Try opening a dropdown and selecting the team
-      const teamSelector = page.locator(
-        '[data-testid="team-selector"], [data-tour="input-controls"] button'
-      );
-      if (
-        await teamSelector
-          .first()
-          .isVisible({ timeout: 3000 })
-          .catch(() => false)
-      ) {
-        await teamSelector.first().click();
+      if (await moreButton.isVisible({ timeout: 5000 }).catch(() => false)) {
+        console.log('Found More button, clicking...');
+        await moreButton.click();
         await page.waitForTimeout(500);
 
-        if (await teamOption.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await teamOption.click();
+        // Step 2: Wait for dropdown to appear and find search input
+        // Support multiple placeholder patterns
+        const searchInput = page
+          .locator(
+            'input[placeholder*="搜索智能体"], input[placeholder*="Search"], input[placeholder*="search"]'
+          )
+          .first();
+
+        if (await searchInput.isVisible({ timeout: 3000 }).catch(() => false)) {
+          console.log('Found search input, typing team name...');
+          await searchInput.fill(TEST_TEAM_NAME);
           await page.waitForTimeout(500);
-          return true;
+
+          // Step 3: Click on the team in the dropdown list
+          // Look for the team item in the dropdown (it's a div with specific structure)
+          const teamItem = page.locator(`.max-h-\\[240px\\] >> text="${TEST_TEAM_NAME}"`).first();
+
+          if (await teamItem.isVisible({ timeout: 3000 }).catch(() => false)) {
+            console.log('Found team in dropdown, clicking...');
+            await teamItem.click();
+            await page.waitForTimeout(500);
+            return true;
+          }
+
+          // Alternative: Try more generic selector
+          const teamItemAlt = page.locator(`div:has-text("${TEST_TEAM_NAME}")`).last();
+          if (await teamItemAlt.isVisible({ timeout: 2000 }).catch(() => false)) {
+            console.log('Found team item (alt), clicking...');
+            await teamItemAlt.click();
+            await page.waitForTimeout(500);
+            return true;
+          }
         }
       }
 
-      // If team is already selected (check for team badge)
-      const teamBadge = page.locator(`[class*="badge"]:has-text("${TEST_TEAM_NAME}")`);
-      if (await teamBadge.isVisible({ timeout: 1000 }).catch(() => false)) {
+      // Alternative: Try clicking directly on team card if visible in QuickAccessCards
+      const teamCard = page.locator(`div:has-text("${TEST_TEAM_NAME}")`).first();
+      if (await teamCard.isVisible({ timeout: 2000 }).catch(() => false)) {
+        console.log('Found team card directly, clicking...');
+        await teamCard.click();
+        await page.waitForTimeout(500);
         return true;
       }
 
@@ -256,6 +271,8 @@ test.describe('Chat Image Upload UI Tests', () => {
         return;
       }
 
+      // Skip onboarding tour to prevent overlay blocking clicks
+      await skipOnboardingTour(page);
       await page.goto('/chat');
       await page.waitForLoadState('domcontentloaded');
 
@@ -284,6 +301,8 @@ test.describe('Chat Image Upload UI Tests', () => {
         return;
       }
 
+      // Skip onboarding tour to prevent overlay blocking clicks
+      await skipOnboardingTour(page);
       await page.goto('/chat');
       await page.waitForLoadState('domcontentloaded');
 
@@ -331,6 +350,8 @@ test.describe('Chat Image Upload UI Tests', () => {
       // Setup mocks
       await setupImageChatMocks(page);
 
+      // Skip onboarding tour to prevent overlay blocking clicks
+      await skipOnboardingTour(page);
       await page.goto('/chat');
       await page.waitForLoadState('domcontentloaded');
 
@@ -390,6 +411,8 @@ test.describe('Chat Image Upload UI Tests', () => {
         'I can see the image you uploaded. It appears to be a small red test image.'
       );
 
+      // Skip onboarding tour to prevent overlay blocking clicks
+      await skipOnboardingTour(page);
       await page.goto('/chat');
       await page.waitForLoadState('domcontentloaded');
 
@@ -457,6 +480,8 @@ test.describe('Chat Image Upload UI Tests', () => {
         capturedRequest = request;
       });
 
+      // Skip onboarding tour to prevent overlay blocking clicks
+      await skipOnboardingTour(page);
       await page.goto('/chat');
       await page.waitForLoadState('domcontentloaded');
 
@@ -589,7 +614,6 @@ test.describe('Chat Image Upload UI Tests', () => {
       expect(result.imageUrlPrefix).toBe('data:image/webp;base64,');
     });
   });
-
   test.describe('Error Handling', () => {
     test('should handle upload failure gracefully', async ({ page }) => {
       // Skip if team was not created
@@ -609,6 +633,8 @@ test.describe('Chat Image Upload UI Tests', () => {
         });
       });
 
+      // Skip onboarding tour to prevent overlay blocking clicks
+      await skipOnboardingTour(page);
       await page.goto('/chat');
       await page.waitForLoadState('domcontentloaded');
 
@@ -664,6 +690,8 @@ test.describe('Chat Image Upload UI Tests', () => {
         });
       });
 
+      // Skip onboarding tour to prevent overlay blocking clicks
+      await skipOnboardingTour(page);
       await page.goto('/chat');
       await page.waitForLoadState('domcontentloaded');
 
@@ -727,6 +755,8 @@ test.describe('Chat Image Upload UI Tests', () => {
         });
       });
 
+      // Skip onboarding tour to prevent overlay blocking clicks
+      await skipOnboardingTour(page);
       await page.goto('/chat');
       await page.waitForLoadState('domcontentloaded');
 
