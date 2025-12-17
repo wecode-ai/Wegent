@@ -21,6 +21,10 @@ from app.core.exceptions import (
     python_exception_handler,
     validation_exception_handler,
 )
+from app.core.graceful_shutdown import (
+    ServiceStatus,
+    graceful_shutdown_manager,
+)
 from app.core.logging import setup_logging
 from app.core.yaml_init import run_yaml_initialization
 from app.db.base import Base
@@ -53,6 +57,14 @@ async def lifespan(app: FastAPI):
 
     await get_http_client()
     logger.info("✓ Chat service HTTP client initialized")
+
+    # Initialize graceful shutdown manager
+    await graceful_shutdown_manager.initialize()
+    # Reset active requests counter on startup to clear stale data
+    await graceful_shutdown_manager.reset_active_requests()
+    # Set service status to healthy on startup
+    await graceful_shutdown_manager.set_service_status(ServiceStatus.HEALTHY)
+    logger.info("✓ Graceful shutdown manager initialized")
 
     # Try to get Redis client for distributed locking
     redis_client = None
@@ -232,6 +244,23 @@ async def lifespan(app: FastAPI):
     # ==================== SHUTDOWN ====================
     logger.info("Shutting down application...")
 
+    # Set service status to draining to stop receiving new requests
+    await graceful_shutdown_manager.set_service_status(ServiceStatus.DRAINING)
+    logger.info("✓ Service status set to DRAINING")
+
+    # Wait for active requests to complete (with timeout)
+    requests_completed = await graceful_shutdown_manager.wait_for_requests_completion(
+        timeout=30.0, poll_interval=0.5
+    )
+    if requests_completed:
+        logger.info("✓ All active requests completed")
+    else:
+        logger.warning("⚠ Some requests may not have completed before shutdown")
+
+    # Close graceful shutdown manager
+    await graceful_shutdown_manager.close()
+    logger.info("✓ Graceful shutdown manager closed")
+
     # Close chat service HTTP client
     from app.services.chat.base import close_http_client
 
@@ -314,9 +343,14 @@ def create_app():
     async def log_requests(request: Request, call_next):
         from starlette.responses import StreamingResponse
 
-        # Skip logging for health check/probe requests (root path)
-        if request.url.path == "/":
+        # Skip logging and tracking for health check/probe requests (root path)
+        # Also skip for graceful shutdown related endpoints to avoid circular dependency
+        skip_paths = {"/", "/api/service-status", "/api/active-requests"}
+        if request.url.path in skip_paths:
             return await call_next(request)
+
+        # Track active request for graceful shutdown
+        await graceful_shutdown_manager.increment_active_requests()
 
         # Generate a unique request ID
         request_id = str(uuid.uuid4())[
@@ -378,82 +412,113 @@ def create_app():
             f"request : {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}]"
         )
 
-        # Process request
-        response = await call_next(request)
-        process_time = (time.time() - start_time) * 1000
+        # Process request with active request tracking
+        try:
+            response = await call_next(request)
+            process_time = (time.time() - start_time) * 1000
 
-        # Capture response headers and body if OTEL is enabled
-        if otel_config.enabled:
-            from opentelemetry import trace
-            from shared.telemetry.core import is_telemetry_enabled
+            # For streaming responses, we need to wrap the body_iterator
+            # to decrement the counter only after streaming completes
+            if isinstance(response, StreamingResponse):
+                original_body_iterator = response.body_iterator
 
-            if is_telemetry_enabled():
-                current_span = trace.get_current_span()
-                if current_span and current_span.is_recording():
-                    # Capture response headers
-                    if otel_config.capture_response_headers:
-                        for header_name, header_value in response.headers.items():
-                            # Skip sensitive headers
-                            if header_name.lower() in (
-                                "authorization",
-                                "cookie",
-                                "set-cookie",
-                            ):
-                                header_value = "[REDACTED]"
-                            current_span.set_attribute(
-                                f"http.response.header.{header_name}", header_value
-                            )
+                async def tracked_body_iterator():
+                    try:
+                        async for chunk in original_body_iterator:
+                            yield chunk
+                    finally:
+                        # Decrement active requests after streaming completes
+                        await graceful_shutdown_manager.decrement_active_requests()
 
-                    # Capture response body (only for non-streaming responses)
-                    if otel_config.capture_response_body:
-                        if not isinstance(response, StreamingResponse):
-                            try:
-                                # For regular responses, we need to read and reconstruct the body
-                                response_body_chunks = []
-                                async for chunk in response.body_iterator:
-                                    response_body_chunks.append(chunk)
+                response.body_iterator = tracked_body_iterator()
+                # Don't decrement here - it will be done when streaming completes
+                should_decrement = False
+            else:
+                should_decrement = True
 
-                                response_body = b"".join(response_body_chunks)
+            # Capture response headers and body if OTEL is enabled
+            if otel_config.enabled:
+                from opentelemetry import trace
+                from shared.telemetry.core import is_telemetry_enabled
 
-                                # Limit body size
-                                max_body_size = otel_config.max_body_size
-                                if response_body:
-                                    if len(response_body) <= max_body_size:
-                                        body_str = response_body.decode(
-                                            "utf-8", errors="replace"
-                                        )
-                                    else:
-                                        body_str = (
-                                            response_body[:max_body_size].decode(
+                if is_telemetry_enabled():
+                    current_span = trace.get_current_span()
+                    if current_span and current_span.is_recording():
+                        # Capture response headers
+                        if otel_config.capture_response_headers:
+                            for header_name, header_value in response.headers.items():
+                                # Skip sensitive headers
+                                if header_name.lower() in (
+                                    "authorization",
+                                    "cookie",
+                                    "set-cookie",
+                                ):
+                                    header_value = "[REDACTED]"
+                                current_span.set_attribute(
+                                    f"http.response.header.{header_name}", header_value
+                                )
+
+                        # Capture response body (only for non-streaming responses)
+                        if otel_config.capture_response_body:
+                            if not isinstance(response, StreamingResponse):
+                                try:
+                                    # For regular responses, we need to read and reconstruct the body
+                                    response_body_chunks = []
+                                    async for chunk in response.body_iterator:
+                                        response_body_chunks.append(chunk)
+
+                                    response_body = b"".join(response_body_chunks)
+
+                                    # Limit body size
+                                    max_body_size = otel_config.max_body_size
+                                    if response_body:
+                                        if len(response_body) <= max_body_size:
+                                            body_str = response_body.decode(
                                                 "utf-8", errors="replace"
                                             )
-                                            + f"... [truncated, total size: {len(response_body)} bytes]"
+                                        else:
+                                            body_str = (
+                                                response_body[:max_body_size].decode(
+                                                    "utf-8", errors="replace"
+                                                )
+                                                + f"... [truncated, total size: {len(response_body)} bytes]"
+                                            )
+                                        current_span.set_attribute(
+                                            "http.response.body", body_str
                                         )
-                                    current_span.set_attribute(
-                                        "http.response.body", body_str
+
+                                    # Reconstruct the response with the body
+                                    from starlette.responses import Response
+
+                                    response = Response(
+                                        content=response_body,
+                                        status_code=response.status_code,
+                                        headers=dict(response.headers),
+                                        media_type=response.media_type,
+                                    )
+                                except Exception as e:
+                                    logger.debug(
+                                        f"Failed to capture response body: {e}"
                                     )
 
-                                # Reconstruct the response with the body
-                                from starlette.responses import Response
+            # Post-request logging with request ID
+            logger.info(
+                f"response: {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms"
+            )
 
-                                response = Response(
-                                    content=response_body,
-                                    status_code=response.status_code,
-                                    headers=dict(response.headers),
-                                    media_type=response.media_type,
-                                )
-                            except Exception as e:
-                                logger.debug(f"Failed to capture response body: {e}")
+            # Add request ID to response headers for client-side tracking
+            response.headers["X-Request-ID"] = request_id
 
-        # Post-request logging with request ID
-        logger.info(
-            f"response: {request.method} {request.url.path} {request.query_params} {request_id} {client_ip} [{username}] {response.status_code} {process_time:.2f}ms"
-        )
+            # Decrement active requests for non-streaming responses
+            if should_decrement:
+                await graceful_shutdown_manager.decrement_active_requests()
 
-        # Add request ID to response headers for client-side tracking
-        response.headers["X-Request-ID"] = request_id
+            return response
 
-        return response
+        except Exception as e:
+            # Ensure we decrement on exception
+            await graceful_shutdown_manager.decrement_active_requests()
+            raise
 
     # Setup CORS
     app.add_middleware(
