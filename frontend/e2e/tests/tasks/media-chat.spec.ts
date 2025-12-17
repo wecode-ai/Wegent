@@ -84,90 +84,61 @@ async function getLatestRequest(): Promise<RecordedRequest | null> {
 }
 
 /**
- * Helper to select a Chat type team from the team selector if available.
+ * Helper to select a Chat type team from the team selector.
  * File upload is only available for Chat Shell teams (agent_type === 'chat').
+ * Throws error if chat-team cannot be selected.
  */
-async function selectChatTeamIfAvailable(page: Page): Promise<boolean> {
+async function selectChatTeam(page: Page): Promise<void> {
   // Look for team selector (SearchableSelect uses role="combobox")
   const teamSelector = page.locator('[data-tour="team-selector"] [role="combobox"]').first();
 
-  try {
-    const isVisible = await teamSelector.isVisible({ timeout: 3000 });
-    if (!isVisible) {
-      // No team selector visible, might already have a team selected
-      return true;
-    }
-
-    // Click to open the dropdown
-    await teamSelector.click();
-    await page.waitForTimeout(500);
-
-    // Look for chat-team specifically (Chat Shell team from init data)
-    // The chat-team is configured with Chat Shell which supports file upload
-    // SearchableSelect uses CommandItem which renders as [cmdk-item]
-    const chatTeamOption = page.locator('[cmdk-item]:has-text("chat-team")').first();
-
-    if (await chatTeamOption.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await chatTeamOption.click();
-      await page.waitForTimeout(1000);
-      return true;
-    }
-
-    // Fallback: Look for any team option that might be a Chat type
-    const teamOptions = page.locator('[cmdk-item]');
-    const count = await teamOptions.count();
-
-    if (count > 0) {
-      // Click the first available team
-      await teamOptions.first().click();
-      await page.waitForTimeout(1000);
-      return true;
-    }
-
-    // Close dropdown if no options found
-    await page.keyboard.press('Escape');
-    return false;
-  } catch {
-    return true; // Assume team is already selected
+  const isVisible = await teamSelector.isVisible({ timeout: 5000 });
+  if (!isVisible) {
+    throw new Error('Team selector not found - cannot select chat-team');
   }
+
+  // Click to open the dropdown
+  await teamSelector.click();
+  await page.waitForTimeout(500);
+
+  // Look for chat-team specifically (Chat Shell team from init data)
+  // The chat-team is configured with Chat Shell which supports file upload
+  // SearchableSelect uses CommandItem which renders as [cmdk-item]
+  const chatTeamOption = page.locator('[cmdk-item]:has-text("chat-team")').first();
+
+  const optionVisible = await chatTeamOption.isVisible({ timeout: 3000 });
+  if (!optionVisible) {
+    // Close dropdown and throw error
+    await page.keyboard.press('Escape');
+    throw new Error('chat-team option not found in team selector dropdown');
+  }
+
+  await chatTeamOption.click();
+  await page.waitForTimeout(1000);
 }
 
 /**
- * Helper to check if file input exists and is accessible
- * Note: File inputs are typically hidden and triggered via button clicks
+ * Helper to get file input element.
+ * Throws error if file input is not found.
  */
-async function getFileInput(page: Page): Promise<ReturnType<Page['locator']> | null> {
+async function getFileInput(page: Page): Promise<ReturnType<Page['locator']>> {
   const fileInput = page.locator('input[type="file"]').first();
 
-  try {
-    // File inputs are usually hidden, so we check for attachment (state: 'attached')
-    // instead of waiting for visibility
-    await fileInput.waitFor({ state: 'attached', timeout: 5000 });
-    return fileInput;
-  } catch {
-    return null;
-  }
+  // File inputs are usually hidden, so we check for attachment (state: 'attached')
+  // instead of waiting for visibility
+  await fileInput.waitFor({ state: 'attached', timeout: 5000 });
+  return fileInput;
 }
 
 /**
- * Helper to upload a file and wait for it to be processed
+ * Helper to upload a file and wait for it to be processed.
+ * Throws error if upload fails.
  */
-async function uploadFile(page: Page, filePath: string): Promise<boolean> {
+async function uploadFile(page: Page, filePath: string): Promise<void> {
   const fileInput = await getFileInput(page);
-  if (!fileInput) {
-    console.log('File input not found - this may indicate no Chat type team is selected');
-    return false;
-  }
-
-  try {
-    await fileInput.setInputFiles(filePath);
-    // Wait for upload to complete (look for attachment preview or success indicator)
-    await page.waitForTimeout(2000);
-    return true;
-  } catch (error) {
-    console.error('Error uploading file:', error);
-    return false;
-  }
+  await fileInput.setInputFiles(filePath);
+  // Wait for upload to complete (look for attachment preview or success indicator)
+  await page.waitForTimeout(2000);
 }
 
 /**
@@ -197,7 +168,8 @@ async function isAttachmentPreviewVisible(page: Page): Promise<boolean> {
 }
 
 /**
- * Helper to send a chat message
+ * Helper to send a chat message.
+ * Throws error if chat input is not found.
  */
 async function sendChatMessage(page: Page, message: string): Promise<void> {
   // Find the chat input
@@ -223,21 +195,33 @@ async function sendChatMessage(page: Page, message: string): Promise<void> {
     }
   }
 
-  if (inputElement) {
-    await inputElement.fill(message);
-    await page.waitForTimeout(500);
-
-    // Find and click send button
-    const sendButton = page.locator(
-      '[data-testid="send-button"], button[type="submit"], button:has-text("Send"), button[aria-label*="send" i]'
-    );
-    if (await sendButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-      await sendButton.click();
-    } else {
-      // Try pressing Enter
-      await inputElement.press('Enter');
-    }
+  if (!inputElement) {
+    throw new Error('Chat input not found');
   }
+
+  await inputElement.fill(message);
+  await page.waitForTimeout(500);
+
+  // Find and click send button
+  const sendButton = page.locator(
+    '[data-testid="send-button"], button[type="submit"], button:has-text("Send"), button[aria-label*="send" i]'
+  );
+  if (await sendButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await sendButton.click();
+  } else {
+    // Try pressing Enter
+    await inputElement.press('Enter');
+  }
+}
+
+/**
+ * Helper to wait for assistant response
+ */
+async function waitForAssistantResponse(page: Page, timeout: number = 15000): Promise<void> {
+  const responseLocator = page.locator(
+    '[data-role="assistant"], [data-testid="message-response"], .message-response'
+  );
+  await responseLocator.first().waitFor({ state: 'visible', timeout });
 }
 
 test.describe('Media File Chat Functionality', () => {
@@ -252,208 +236,163 @@ test.describe('Media File Chat Functionality', () => {
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 
-    // Try to select a Chat type team if team selector is available
-    // File upload is only available for Chat Shell teams (agent_type === 'chat')
-    await selectChatTeamIfAvailable(page);
+    // Select chat-team (required for file upload functionality)
+    await selectChatTeam(page);
   });
 
   test.describe('Image File Upload', () => {
     test('should have file upload button for images', async ({ page }) => {
       const fileInput = await getFileInput(page);
-      // File input may not exist if no Chat type team is available
-      // Use graceful assertion to handle this case
-      expect(fileInput !== null || true).toBe(true);
+      expect(fileInput).toBeTruthy();
 
-      if (fileInput) {
-        const acceptAttr = await fileInput.getAttribute('accept');
-        // File input should accept image types (among others)
-        expect(acceptAttr || '').toBeTruthy();
-      }
+      const acceptAttr = await fileInput.getAttribute('accept');
+      // File input should accept image types (among others)
+      expect(acceptAttr).toBeTruthy();
     });
 
     test('should upload PNG image file', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_IMAGE_PATH);
+      await uploadFile(page, TEST_IMAGE_PATH);
 
-      if (uploadSuccess) {
-        // Check for attachment preview or any indication of successful upload
-        const hasPreview = await isAttachmentPreviewVisible(page);
-        expect(hasPreview || true).toBe(true); // Graceful assertion
-      } else {
-        // File input might not be visible/available (no Chat type team)
-        expect(true).toBe(true);
-      }
+      // Check for attachment preview or any indication of successful upload
+      const hasPreview = await isAttachmentPreviewVisible(page);
+      expect(hasPreview).toBe(true);
     });
 
     test('should display image preview after upload', async ({ page }) => {
       const fileInput = await getFileInput(page);
+      await fileInput.setInputFiles(TEST_IMAGE_PATH);
+      await page.waitForTimeout(FILE_UPLOAD_TIMEOUT / 2);
 
-      if (fileInput) {
-        await fileInput.setInputFiles(TEST_IMAGE_PATH);
-        await page.waitForTimeout(FILE_UPLOAD_TIMEOUT / 2);
+      // Look for image preview element
+      const imagePreview = page.locator(
+        'img[src*="attachment"], img[src*="blob"], img[alt*="preview" i], [class*="attachment"]'
+      );
+      const hasImagePreview = await imagePreview.count();
 
-        // Look for image preview element
-        const imagePreview = page.locator(
-          'img[src*="attachment"], img[src*="blob"], img[alt*="preview" i]'
-        );
-        const hasImagePreview = await imagePreview.count().catch(() => 0);
-
-        // Image preview might be in lightbox or inline
-        expect(hasImagePreview >= 0).toBe(true);
-      }
+      // Image preview should be visible
+      expect(hasImagePreview).toBeGreaterThan(0);
     });
 
-    test('should send message with image attachment', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_IMAGE_PATH);
+    test('should send message with image attachment and receive response', async ({ page }) => {
+      await uploadFile(page, TEST_IMAGE_PATH);
+      await sendChatMessage(page, 'Please analyze this image');
 
-      if (uploadSuccess) {
-        await sendChatMessage(page, 'Please analyze this image');
-        await page.waitForTimeout(CHAT_RESPONSE_TIMEOUT / 3);
+      // Wait for assistant response
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-        // Check for response message or streaming indicator
-        const responseExists = await page
-          .locator('[data-role="assistant"], [data-testid="message-response"], .message-response')
-          .first()
-          .isVisible({ timeout: 10000 })
-          .catch(() => false);
-
-        expect(responseExists || true).toBe(true);
-      }
+      // Verify response exists
+      const responseCount = await page
+        .locator('[data-role="assistant"], [data-testid="message-response"], .message-response')
+        .count();
+      expect(responseCount).toBeGreaterThan(0);
     });
   });
 
   test.describe('PDF File Upload', () => {
     test('should upload PDF file', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_PDF_PATH);
+      await uploadFile(page, TEST_PDF_PATH);
 
-      if (uploadSuccess) {
-        const hasPreview = await isAttachmentPreviewVisible(page);
-        expect(hasPreview || true).toBe(true);
-      }
+      const hasPreview = await isAttachmentPreviewVisible(page);
+      expect(hasPreview).toBe(true);
     });
 
     test('should display PDF file icon after upload', async ({ page }) => {
       const fileInput = await getFileInput(page);
+      await fileInput.setInputFiles(TEST_PDF_PATH);
+      await page.waitForTimeout(FILE_UPLOAD_TIMEOUT / 2);
 
-      if (fileInput) {
-        await fileInput.setInputFiles(TEST_PDF_PATH);
-        await page.waitForTimeout(FILE_UPLOAD_TIMEOUT / 2);
+      // Look for PDF icon or file type indicator or attachment preview
+      const pdfIndicator = page.locator(
+        '[class*="pdf"], [data-file-type="pdf"], [title*="PDF" i], [class*="attachment"]'
+      );
+      const hasPdfIndicator = await pdfIndicator.count();
 
-        // Look for PDF icon or file type indicator
-        const pdfIndicator = page.locator(
-          '[class*="pdf"], [data-file-type="pdf"], [title*="PDF" i]'
-        );
-        const hasPdfIndicator = await pdfIndicator.count().catch(() => 0);
-
-        // Might show as generic file icon
-        expect(hasPdfIndicator >= 0).toBe(true);
-      }
+      expect(hasPdfIndicator).toBeGreaterThan(0);
     });
 
-    test('should send message with PDF attachment', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_PDF_PATH);
+    test('should send message with PDF attachment and receive response', async ({ page }) => {
+      await uploadFile(page, TEST_PDF_PATH);
+      await sendChatMessage(page, 'Please summarize this PDF document');
 
-      if (uploadSuccess) {
-        await sendChatMessage(page, 'Please summarize this PDF document');
-        await page.waitForTimeout(CHAT_RESPONSE_TIMEOUT / 3);
+      // Wait for assistant response
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-        const responseExists = await page
-          .locator('[data-role="assistant"], [data-testid="message-response"]')
-          .first()
-          .isVisible({ timeout: 10000 })
-          .catch(() => false);
-
-        expect(responseExists || true).toBe(true);
-      }
+      const responseCount = await page
+        .locator('[data-role="assistant"], [data-testid="message-response"]')
+        .count();
+      expect(responseCount).toBeGreaterThan(0);
     });
   });
 
   test.describe('DOCX File Upload', () => {
     test('should upload DOCX (Word) file', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_DOCX_PATH);
+      await uploadFile(page, TEST_DOCX_PATH);
 
-      if (uploadSuccess) {
-        const hasPreview = await isAttachmentPreviewVisible(page);
-        expect(hasPreview || true).toBe(true);
-      }
+      const hasPreview = await isAttachmentPreviewVisible(page);
+      expect(hasPreview).toBe(true);
     });
 
     test('should display Word document icon after upload', async ({ page }) => {
       const fileInput = await getFileInput(page);
+      await fileInput.setInputFiles(TEST_DOCX_PATH);
+      await page.waitForTimeout(FILE_UPLOAD_TIMEOUT / 2);
 
-      if (fileInput) {
-        await fileInput.setInputFiles(TEST_DOCX_PATH);
-        await page.waitForTimeout(FILE_UPLOAD_TIMEOUT / 2);
+      // Look for Word/DOCX icon or file type indicator or attachment preview
+      const docxIndicator = page.locator(
+        '[class*="docx"], [class*="word"], [data-file-type="docx"], [class*="attachment"]'
+      );
+      const hasDocxIndicator = await docxIndicator.count();
 
-        // Look for Word/DOCX icon or file type indicator
-        const docxIndicator = page.locator(
-          '[class*="docx"], [class*="word"], [data-file-type="docx"]'
-        );
-        const hasDocxIndicator = await docxIndicator.count().catch(() => 0);
-
-        expect(hasDocxIndicator >= 0).toBe(true);
-      }
+      expect(hasDocxIndicator).toBeGreaterThan(0);
     });
 
-    test('should send message with DOCX attachment', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_DOCX_PATH);
+    test('should send message with DOCX attachment and receive response', async ({ page }) => {
+      await uploadFile(page, TEST_DOCX_PATH);
+      await sendChatMessage(page, 'Please review this Word document');
 
-      if (uploadSuccess) {
-        await sendChatMessage(page, 'Please review this Word document');
-        await page.waitForTimeout(CHAT_RESPONSE_TIMEOUT / 3);
+      // Wait for assistant response
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-        const responseExists = await page
-          .locator('[data-role="assistant"], [data-testid="message-response"]')
-          .first()
-          .isVisible({ timeout: 10000 })
-          .catch(() => false);
-
-        expect(responseExists || true).toBe(true);
-      }
+      const responseCount = await page
+        .locator('[data-role="assistant"], [data-testid="message-response"]')
+        .count();
+      expect(responseCount).toBeGreaterThan(0);
     });
   });
 
   test.describe('PPTX File Upload', () => {
     test('should upload PPTX (PowerPoint) file', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_PPTX_PATH);
+      await uploadFile(page, TEST_PPTX_PATH);
 
-      if (uploadSuccess) {
-        const hasPreview = await isAttachmentPreviewVisible(page);
-        expect(hasPreview || true).toBe(true);
-      }
+      const hasPreview = await isAttachmentPreviewVisible(page);
+      expect(hasPreview).toBe(true);
     });
 
     test('should display PowerPoint icon after upload', async ({ page }) => {
       const fileInput = await getFileInput(page);
+      await fileInput.setInputFiles(TEST_PPTX_PATH);
+      await page.waitForTimeout(FILE_UPLOAD_TIMEOUT / 2);
 
-      if (fileInput) {
-        await fileInput.setInputFiles(TEST_PPTX_PATH);
-        await page.waitForTimeout(FILE_UPLOAD_TIMEOUT / 2);
+      // Look for PowerPoint/PPTX icon or file type indicator or attachment preview
+      const pptxIndicator = page.locator(
+        '[class*="pptx"], [class*="powerpoint"], [data-file-type="pptx"], [class*="attachment"]'
+      );
+      const hasPptxIndicator = await pptxIndicator.count();
 
-        // Look for PowerPoint/PPTX icon or file type indicator
-        const pptxIndicator = page.locator(
-          '[class*="pptx"], [class*="powerpoint"], [data-file-type="pptx"]'
-        );
-        const hasPptxIndicator = await pptxIndicator.count().catch(() => 0);
-
-        expect(hasPptxIndicator >= 0).toBe(true);
-      }
+      expect(hasPptxIndicator).toBeGreaterThan(0);
     });
 
-    test('should send message with PPTX attachment', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_PPTX_PATH);
+    test('should send message with PPTX attachment and receive response', async ({ page }) => {
+      await uploadFile(page, TEST_PPTX_PATH);
+      await sendChatMessage(page, 'Please analyze this presentation');
 
-      if (uploadSuccess) {
-        await sendChatMessage(page, 'Please analyze this presentation');
-        await page.waitForTimeout(CHAT_RESPONSE_TIMEOUT / 3);
+      // Wait for assistant response
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-        const responseExists = await page
-          .locator('[data-role="assistant"], [data-testid="message-response"]')
-          .first()
-          .isVisible({ timeout: 10000 })
-          .catch(() => false);
-
-        expect(responseExists || true).toBe(true);
-      }
+      const responseCount = await page
+        .locator('[data-role="assistant"], [data-testid="message-response"]')
+        .count();
+      expect(responseCount).toBeGreaterThan(0);
     });
   });
 
@@ -461,93 +400,75 @@ test.describe('Media File Chat Functionality', () => {
     test('should show upload progress indicator', async ({ page }) => {
       const fileInput = await getFileInput(page);
 
-      if (fileInput) {
-        // Watch for network request
-        const uploadPromise = page.waitForResponse(
-          response => response.url().includes('/api/attachments') && response.status() === 200,
-          { timeout: FILE_UPLOAD_TIMEOUT }
-        );
+      // Watch for network request
+      const uploadPromise = page.waitForResponse(
+        response => response.url().includes('/api/attachments') && response.status() === 200,
+        { timeout: FILE_UPLOAD_TIMEOUT }
+      );
 
-        await fileInput.setInputFiles(TEST_PDF_PATH);
+      await fileInput.setInputFiles(TEST_PDF_PATH);
 
-        try {
-          await uploadPromise;
-          // Upload completed successfully
-          expect(true).toBe(true);
-        } catch {
-          // Upload might not have triggered (no Chat type team)
-          expect(true).toBe(true);
-        }
-      }
+      // Wait for upload to complete
+      const response = await uploadPromise;
+      expect(response.status()).toBe(200);
     });
 
     test('should have remove button for uploaded files', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_IMAGE_PATH);
+      await uploadFile(page, TEST_IMAGE_PATH);
+      await page.waitForTimeout(2000);
 
-      if (uploadSuccess) {
-        await page.waitForTimeout(2000);
+      // Look for remove/delete button
+      const removeButton = page.locator(
+        'button[title*="Remove" i], button[title*="Delete" i], button[aria-label*="remove" i], button:has-text("×"), button:has-text("✕"), [class*="attachment"] button'
+      );
+      const hasRemoveButton = await removeButton.isVisible({ timeout: 3000 });
 
-        // Look for remove/delete button
-        const removeButton = page.locator(
-          'button[title*="Remove" i], button[title*="Delete" i], button[aria-label*="remove" i], button:has-text("×"), button:has-text("✕")'
-        );
-        const hasRemoveButton = await removeButton.isVisible({ timeout: 3000 }).catch(() => false);
-
-        expect(hasRemoveButton || true).toBe(true);
-      }
+      expect(hasRemoveButton).toBe(true);
     });
 
     test('should clear attachment when remove button clicked', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_IMAGE_PATH);
+      await uploadFile(page, TEST_IMAGE_PATH);
+      await page.waitForTimeout(2000);
 
-      if (uploadSuccess) {
-        await page.waitForTimeout(2000);
+      const hasPreviewBefore = await isAttachmentPreviewVisible(page);
+      expect(hasPreviewBefore).toBe(true);
 
-        const hasPreviewBefore = await isAttachmentPreviewVisible(page);
+      // Click remove button
+      const removeButton = page
+        .locator(
+          'button[title*="Remove" i], button[title*="Delete" i], button[aria-label*="remove" i], button:has-text("×"), [class*="attachment"] button'
+        )
+        .first();
 
-        if (hasPreviewBefore) {
-          // Click remove button
-          const removeButton = page
-            .locator(
-              'button[title*="Remove" i], button[title*="Delete" i], button[aria-label*="remove" i], button:has-text("×")'
-            )
-            .first();
+      await removeButton.click();
+      await page.waitForTimeout(1000);
 
-          if (await removeButton.isVisible({ timeout: 2000 }).catch(() => false)) {
-            await removeButton.click();
-            await page.waitForTimeout(1000);
-
-            // Attachment should be removed
-            const hasPreviewAfter = await isAttachmentPreviewVisible(page);
-            expect(hasPreviewAfter).toBe(false);
-          }
-        }
-      }
+      // Attachment should be removed
+      const hasPreviewAfter = await isAttachmentPreviewVisible(page);
+      expect(hasPreviewAfter).toBe(false);
     });
 
     test('should validate file type before upload', async ({ page }) => {
       // File input should have accept attribute limiting file types
       const fileInput = await getFileInput(page);
 
-      if (fileInput) {
-        const acceptAttr = await fileInput.getAttribute('accept');
-        if (acceptAttr) {
-          // Should include supported types
-          const supportedTypes = [
-            '.pdf',
-            '.docx',
-            '.pptx',
-            '.png',
-            '.jpg',
-            'image/',
-            'application/pdf',
-          ];
-          const hasValidAccept = supportedTypes.some(type =>
-            acceptAttr.toLowerCase().includes(type.toLowerCase())
-          );
-          expect(hasValidAccept || true).toBe(true);
-        }
-      }
+      const acceptAttr = await fileInput.getAttribute('accept');
+      expect(acceptAttr).toBeTruthy();
+
+      // Should include supported types
+      const supportedTypes = [
+        '.pdf',
+        '.docx',
+        '.pptx',
+        '.png',
+        '.jpg',
+        'image/',
+        'application/pdf',
+      ];
+      const hasValidAccept = supportedTypes.some(type =>
+        acceptAttr!.toLowerCase().includes(type.toLowerCase())
+      );
+      expect(hasValidAccept).toBe(true);
     });
   });
 
@@ -555,21 +476,21 @@ test.describe('Media File Chat Functionality', () => {
     test('should handle sequential file uploads', async ({ page }) => {
       const fileInput = await getFileInput(page);
 
-      if (fileInput) {
-        // Upload first file
-        await fileInput.setInputFiles(TEST_IMAGE_PATH);
-        await page.waitForTimeout(2000);
+      // Upload first file
+      await fileInput.setInputFiles(TEST_IMAGE_PATH);
+      await page.waitForTimeout(2000);
 
-        // Send message
-        await sendChatMessage(page, 'First file');
-        await page.waitForTimeout(3000);
+      // Send message
+      await sendChatMessage(page, 'First file');
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-        // Upload second file (if UI allows)
-        await fileInput.setInputFiles(TEST_PDF_PATH);
-        await page.waitForTimeout(2000);
+      // Upload second file (if UI allows)
+      await fileInput.setInputFiles(TEST_PDF_PATH);
+      await page.waitForTimeout(2000);
 
-        expect(true).toBe(true);
-      }
+      // Verify second file is attached
+      const hasPreview = await isAttachmentPreviewVisible(page);
+      expect(hasPreview).toBe(true);
     });
   });
 });
@@ -586,74 +507,53 @@ test.describe('Media Chat Integration Tests', () => {
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 
-    // Try to select a Chat type team if team selector is available
-    await selectChatTeamIfAvailable(page);
+    // Select chat-team (required for file upload functionality)
+    await selectChatTeam(page);
   });
 
   test('should complete full chat flow with image', async ({ page }) => {
     // 1. Upload file
-    const uploadSuccess = await uploadFile(page, TEST_IMAGE_PATH);
+    await uploadFile(page, TEST_IMAGE_PATH);
 
-    if (uploadSuccess) {
-      // 2. Send message
-      await sendChatMessage(page, 'What do you see in this image?');
+    // 2. Send message
+    await sendChatMessage(page, 'What do you see in this image?');
 
-      // 3. Wait for response
-      await page.waitForTimeout(5000);
+    // 3. Wait for response
+    await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-      // 4. Verify conversation exists
-      const messageCount = await page
-        .locator('[data-testid="message"], .message, [data-role]')
-        .count()
-        .catch(() => 0);
+    // 4. Verify conversation exists
+    const messageCount = await page
+      .locator('[data-testid="message"], .message, [data-role]')
+      .count();
 
-      expect(messageCount >= 0).toBe(true);
-    }
+    expect(messageCount).toBeGreaterThan(0);
   });
 
   test('should complete full chat flow with PDF', async ({ page }) => {
-    const uploadSuccess = await uploadFile(page, TEST_PDF_PATH);
+    await uploadFile(page, TEST_PDF_PATH);
+    await sendChatMessage(page, 'Summarize this document');
+    await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-    if (uploadSuccess) {
-      await sendChatMessage(page, 'Summarize this document');
-      await page.waitForTimeout(5000);
-
-      const hasContent = await page
-        .locator('[data-role], .message-content')
-        .count()
-        .catch(() => 0);
-      expect(hasContent >= 0).toBe(true);
-    }
+    const hasContent = await page.locator('[data-role], .message-content').count();
+    expect(hasContent).toBeGreaterThan(0);
   });
 
   test('should complete full chat flow with DOCX', async ({ page }) => {
-    const uploadSuccess = await uploadFile(page, TEST_DOCX_PATH);
+    await uploadFile(page, TEST_DOCX_PATH);
+    await sendChatMessage(page, 'Review this document');
+    await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-    if (uploadSuccess) {
-      await sendChatMessage(page, 'Review this document');
-      await page.waitForTimeout(5000);
-
-      const hasContent = await page
-        .locator('[data-role], .message-content')
-        .count()
-        .catch(() => 0);
-      expect(hasContent >= 0).toBe(true);
-    }
+    const hasContent = await page.locator('[data-role], .message-content').count();
+    expect(hasContent).toBeGreaterThan(0);
   });
 
   test('should complete full chat flow with PPTX', async ({ page }) => {
-    const uploadSuccess = await uploadFile(page, TEST_PPTX_PATH);
+    await uploadFile(page, TEST_PPTX_PATH);
+    await sendChatMessage(page, 'Review this presentation');
+    await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-    if (uploadSuccess) {
-      await sendChatMessage(page, 'Review this presentation');
-      await page.waitForTimeout(5000);
-
-      const hasContent = await page
-        .locator('[data-role], .message-content')
-        .count()
-        .catch(() => 0);
-      expect(hasContent >= 0).toBe(true);
-    }
+    const hasContent = await page.locator('[data-role], .message-content').count();
+    expect(hasContent).toBeGreaterThan(0);
   });
 });
 
@@ -679,8 +579,8 @@ test.describe('Media Chat Request Verification', () => {
     await page.waitForLoadState('domcontentloaded');
     await page.waitForTimeout(2000);
 
-    // Try to select a Chat type team if team selector is available
-    await selectChatTeamIfAvailable(page);
+    // Select chat-team (required for file upload functionality)
+    await selectChatTeam(page);
   });
 
   test.describe('Image Attachment Format Verification', () => {
@@ -688,41 +588,27 @@ test.describe('Media Chat Request Verification', () => {
       // Clear any previous requests
       await clearRecordedRequests();
 
-      const uploadSuccess = await uploadFile(page, TEST_IMAGE_PATH);
-      if (!uploadSuccess) {
-        test.skip();
-        return;
-      }
+      await uploadFile(page, TEST_IMAGE_PATH);
 
       // Send message with image
       await sendChatMessage(page, 'Describe this image');
 
       // Wait for the request to be processed
-      await page.waitForTimeout(5000);
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
       // Get the recorded request from mock server
       const latestRequest = await getLatestRequest();
 
-      if (latestRequest) {
-        // Verify the request was received
-        expect(latestRequest.endpoint).toBe('/v1/chat/completions');
+      expect(latestRequest).toBeTruthy();
+      expect(latestRequest!.endpoint).toBe('/v1/chat/completions');
 
-        // Verify image content was included
-        // Image should be sent as image_url with base64 data or URL
-        expect(latestRequest.hasImageContent).toBe(true);
+      // Verify image content was included
+      // Image should be sent as image_url with base64 data or URL
+      expect(latestRequest!.hasImageContent).toBe(true);
 
-        // Verify image format is detected (png, jpeg, or url)
-        expect(latestRequest.imageFormat).toBeTruthy();
-        console.log(`Image format detected: ${latestRequest.imageFormat}`);
-      } else {
-        // If mock server is not available, just verify UI response
-        const responseExists = await page
-          .locator('[data-role="assistant"]')
-          .first()
-          .isVisible({ timeout: 10000 })
-          .catch(() => false);
-        expect(responseExists || true).toBe(true);
-      }
+      // Verify image format is detected (png, jpeg, or url)
+      expect(latestRequest!.imageFormat).toBeTruthy();
+      console.log(`Image format detected: ${latestRequest!.imageFormat}`);
     });
   });
 
@@ -730,159 +616,117 @@ test.describe('Media Chat Request Verification', () => {
     test('should extract and send PDF content as text', async ({ page }) => {
       await clearRecordedRequests();
 
-      const uploadSuccess = await uploadFile(page, TEST_PDF_PATH);
-      if (!uploadSuccess) {
-        test.skip();
-        return;
-      }
-
+      await uploadFile(page, TEST_PDF_PATH);
       await sendChatMessage(page, 'Summarize this PDF');
-      await page.waitForTimeout(5000);
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
       const latestRequest = await getLatestRequest();
 
-      if (latestRequest) {
-        expect(latestRequest.endpoint).toBe('/v1/chat/completions');
+      expect(latestRequest).toBeTruthy();
+      expect(latestRequest!.endpoint).toBe('/v1/chat/completions');
 
-        // PDF content should be extracted and sent as text
-        expect(latestRequest.hasTextContent).toBe(true);
+      // PDF content should be extracted and sent as text
+      expect(latestRequest!.hasTextContent).toBe(true);
 
-        // Extracted text should have some length (PDF content was extracted)
-        expect(latestRequest.extractedTextLength).toBeGreaterThan(0);
-        console.log(`PDF extracted text length: ${latestRequest.extractedTextLength}`);
+      // Extracted text should have some length (PDF content was extracted)
+      expect(latestRequest!.extractedTextLength).toBeGreaterThan(0);
+      console.log(`PDF extracted text length: ${latestRequest!.extractedTextLength}`);
 
-        // PDF should NOT be sent as image
-        expect(latestRequest.hasImageContent).toBe(false);
-      }
+      // PDF should NOT be sent as image
+      expect(latestRequest!.hasImageContent).toBe(false);
     });
 
     test('should extract and send DOCX content as text', async ({ page }) => {
       await clearRecordedRequests();
 
-      const uploadSuccess = await uploadFile(page, TEST_DOCX_PATH);
-      if (!uploadSuccess) {
-        test.skip();
-        return;
-      }
-
+      await uploadFile(page, TEST_DOCX_PATH);
       await sendChatMessage(page, 'Review this Word document');
-      await page.waitForTimeout(5000);
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
       const latestRequest = await getLatestRequest();
 
-      if (latestRequest) {
-        expect(latestRequest.endpoint).toBe('/v1/chat/completions');
+      expect(latestRequest).toBeTruthy();
+      expect(latestRequest!.endpoint).toBe('/v1/chat/completions');
 
-        // DOCX content should be extracted and sent as text
-        expect(latestRequest.hasTextContent).toBe(true);
-        expect(latestRequest.extractedTextLength).toBeGreaterThan(0);
-        console.log(`DOCX extracted text length: ${latestRequest.extractedTextLength}`);
+      // DOCX content should be extracted and sent as text
+      expect(latestRequest!.hasTextContent).toBe(true);
+      expect(latestRequest!.extractedTextLength).toBeGreaterThan(0);
+      console.log(`DOCX extracted text length: ${latestRequest!.extractedTextLength}`);
 
-        // DOCX should NOT be sent as image
-        expect(latestRequest.hasImageContent).toBe(false);
-      }
+      // DOCX should NOT be sent as image
+      expect(latestRequest!.hasImageContent).toBe(false);
     });
 
     test('should extract and send PPTX content as text', async ({ page }) => {
       await clearRecordedRequests();
 
-      const uploadSuccess = await uploadFile(page, TEST_PPTX_PATH);
-      if (!uploadSuccess) {
-        test.skip();
-        return;
-      }
-
+      await uploadFile(page, TEST_PPTX_PATH);
       await sendChatMessage(page, 'Analyze this presentation');
-      await page.waitForTimeout(5000);
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
       const latestRequest = await getLatestRequest();
 
-      if (latestRequest) {
-        expect(latestRequest.endpoint).toBe('/v1/chat/completions');
+      expect(latestRequest).toBeTruthy();
+      expect(latestRequest!.endpoint).toBe('/v1/chat/completions');
 
-        // PPTX content should be extracted and sent as text
-        expect(latestRequest.hasTextContent).toBe(true);
-        expect(latestRequest.extractedTextLength).toBeGreaterThan(0);
-        console.log(`PPTX extracted text length: ${latestRequest.extractedTextLength}`);
+      // PPTX content should be extracted and sent as text
+      expect(latestRequest!.hasTextContent).toBe(true);
+      expect(latestRequest!.extractedTextLength).toBeGreaterThan(0);
+      console.log(`PPTX extracted text length: ${latestRequest!.extractedTextLength}`);
 
-        // PPTX should NOT be sent as image
-        expect(latestRequest.hasImageContent).toBe(false);
-      }
+      // PPTX should NOT be sent as image
+      expect(latestRequest!.hasImageContent).toBe(false);
     });
   });
 
   test.describe('Request Success Verification', () => {
     test('should receive successful response for image chat', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_IMAGE_PATH);
-      if (!uploadSuccess) {
-        test.skip();
-        return;
-      }
-
+      await uploadFile(page, TEST_IMAGE_PATH);
       await sendChatMessage(page, 'What is in this image?');
 
       // Wait for response to appear
-      const responseVisible = await page
-        .locator('[data-role="assistant"], [data-testid="message-response"]')
-        .first()
-        .isVisible({ timeout: 15000 })
-        .catch(() => false);
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-      expect(responseVisible).toBe(true);
+      const responseCount = await page
+        .locator('[data-role="assistant"], [data-testid="message-response"]')
+        .count();
+      expect(responseCount).toBeGreaterThan(0);
     });
 
     test('should receive successful response for PDF chat', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_PDF_PATH);
-      if (!uploadSuccess) {
-        test.skip();
-        return;
-      }
-
+      await uploadFile(page, TEST_PDF_PATH);
       await sendChatMessage(page, 'What does this PDF contain?');
 
-      const responseVisible = await page
-        .locator('[data-role="assistant"], [data-testid="message-response"]')
-        .first()
-        .isVisible({ timeout: 15000 })
-        .catch(() => false);
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-      expect(responseVisible).toBe(true);
+      const responseCount = await page
+        .locator('[data-role="assistant"], [data-testid="message-response"]')
+        .count();
+      expect(responseCount).toBeGreaterThan(0);
     });
 
     test('should receive successful response for DOCX chat', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_DOCX_PATH);
-      if (!uploadSuccess) {
-        test.skip();
-        return;
-      }
-
+      await uploadFile(page, TEST_DOCX_PATH);
       await sendChatMessage(page, 'Summarize this document');
 
-      const responseVisible = await page
-        .locator('[data-role="assistant"], [data-testid="message-response"]')
-        .first()
-        .isVisible({ timeout: 15000 })
-        .catch(() => false);
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-      expect(responseVisible).toBe(true);
+      const responseCount = await page
+        .locator('[data-role="assistant"], [data-testid="message-response"]')
+        .count();
+      expect(responseCount).toBeGreaterThan(0);
     });
 
     test('should receive successful response for PPTX chat', async ({ page }) => {
-      const uploadSuccess = await uploadFile(page, TEST_PPTX_PATH);
-      if (!uploadSuccess) {
-        test.skip();
-        return;
-      }
-
+      await uploadFile(page, TEST_PPTX_PATH);
       await sendChatMessage(page, 'What is this presentation about?');
 
-      const responseVisible = await page
-        .locator('[data-role="assistant"], [data-testid="message-response"]')
-        .first()
-        .isVisible({ timeout: 15000 })
-        .catch(() => false);
+      await waitForAssistantResponse(page, CHAT_RESPONSE_TIMEOUT);
 
-      expect(responseVisible).toBe(true);
+      const responseCount = await page
+        .locator('[data-role="assistant"], [data-testid="message-response"]')
+        .count();
+      expect(responseCount).toBeGreaterThan(0);
     });
   });
 });
