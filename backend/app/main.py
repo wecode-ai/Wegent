@@ -345,18 +345,24 @@ def create_app():
 
         # Skip logging and tracking for health check/probe requests (root path)
         # Also skip for graceful shutdown related endpoints to avoid circular dependency
-        skip_paths = {"/", "/api/service-status", "/api/active-requests"}
+        skip_paths = {
+            "/",
+            "/api/service-status",
+            "/api/active-requests",
+            "/api/active-requests/reset",
+            "/api/active-requests/diagnostics",
+        }
         if request.url.path in skip_paths:
             return await call_next(request)
-
-        # Track active request for graceful shutdown
-        await graceful_shutdown_manager.increment_active_requests()
 
         # Generate a unique request ID
         request_id = str(uuid.uuid4())[
             :8
         ]  # Use first 8 characters of UUID as request ID
         request.state.request_id = request_id
+
+        # Track active request for graceful shutdown (with request_id for debugging)
+        await graceful_shutdown_manager.increment_active_requests(request_id)
 
         start_time = time.time()
 
@@ -421,6 +427,8 @@ def create_app():
             # to decrement the counter only after streaming completes
             if isinstance(response, StreamingResponse):
                 original_body_iterator = response.body_iterator
+                # Capture request_id in closure for streaming cleanup
+                captured_request_id = request_id
 
                 async def tracked_body_iterator():
                     try:
@@ -428,7 +436,9 @@ def create_app():
                             yield chunk
                     finally:
                         # Decrement active requests after streaming completes
-                        await graceful_shutdown_manager.decrement_active_requests()
+                        await graceful_shutdown_manager.decrement_active_requests(
+                            captured_request_id
+                        )
 
                 response.body_iterator = tracked_body_iterator()
                 # Don't decrement here - it will be done when streaming completes
@@ -511,13 +521,13 @@ def create_app():
 
             # Decrement active requests for non-streaming responses
             if should_decrement:
-                await graceful_shutdown_manager.decrement_active_requests()
+                await graceful_shutdown_manager.decrement_active_requests(request_id)
 
             return response
 
         except Exception as e:
             # Ensure we decrement on exception
-            await graceful_shutdown_manager.decrement_active_requests()
+            await graceful_shutdown_manager.decrement_active_requests(request_id)
             raise
 
     # Setup CORS

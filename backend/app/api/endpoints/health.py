@@ -227,3 +227,70 @@ async def get_active_requests():
         active_requests=count,
         has_active_requests=count > 0,
     )
+
+
+@router.post(
+    "/active-requests/reset",
+    summary="Reset active requests counter",
+    description="""
+    Reset the active requests counter to 0.
+
+    This is useful when:
+    - The counter has become out of sync due to errors
+    - After a service crash where requests were not properly cleaned up
+    - For debugging and testing purposes
+
+    **Warning**: Only use this when you are sure there are no active requests,
+    as it may cause the graceful shutdown to behave incorrectly.
+    """,
+)
+async def reset_active_requests():
+    """
+    Reset the active requests counter to 0.
+
+    Returns:
+        Success status and message
+    """
+    # Also cleanup orphaned request tracking keys
+    orphaned_count = await graceful_shutdown_manager.cleanup_orphaned_requests()
+
+    success = await graceful_shutdown_manager.reset_active_requests()
+
+    if not success:
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to reset active requests counter. Redis may not be available.",
+        )
+
+    return {
+        "success": True,
+        "message": "Active requests counter reset to 0",
+        "orphaned_requests_cleaned": orphaned_count,
+    }
+
+
+@router.get(
+    "/active-requests/diagnostics",
+    summary="Get active requests diagnostics",
+    description="""
+    Get detailed diagnostic information about the active requests counter.
+
+    This endpoint provides:
+    - Current counter value
+    - Number of individually tracked requests
+    - Whether counter matches tracked requests
+    - Anomaly detection count
+    - Configuration values
+
+    Useful for debugging counter synchronization issues.
+    """,
+)
+async def get_active_requests_diagnostics():
+    """
+    Get diagnostic information about the active requests counter.
+
+    Returns:
+        Detailed diagnostic information
+    """
+    diagnostics = await graceful_shutdown_manager.get_diagnostics()
+    return diagnostics
