@@ -62,7 +62,9 @@ class UnifiedModel:
         config: Optional[Dict[str, Any]] = None,
         is_active: bool = True,
         namespace: str = "default",
-        model_category_type: Optional[str] = None,  # New: llm, tts, stt, embedding, rerank
+        model_category_type: Optional[
+            str
+        ] = None,  # New: llm, tts, stt, embedding, rerank
     ):
         self.name = name
         self.type = (
@@ -74,7 +76,9 @@ class UnifiedModel:
         self.config = config or {}
         self.is_active = is_active
         self.namespace = namespace  # Resource namespace (group name or 'default')
-        self.model_category_type = model_category_type or "llm"  # Default to 'llm' for backward compatibility
+        self.model_category_type = (
+            model_category_type or "llm"
+        )  # Default to 'llm' for backward compatibility
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -368,7 +372,10 @@ class ModelAggregationService:
                     continue
 
                 # Filter by model category type if specified
-                if model_category_type and info.get("model_category_type", "llm") != model_category_type:
+                if (
+                    model_category_type
+                    and info.get("model_category_type", "llm") != model_category_type
+                ):
                     continue
 
                 # Deduplicate by name
@@ -417,7 +424,10 @@ class ModelAggregationService:
                 continue
 
             # Filter by model category type if specified
-            if model_category_type and public_model_category_type != model_category_type:
+            if (
+                model_category_type
+                and public_model_category_type != model_category_type
+            ):
                 continue
 
             unified = UnifiedModel(
