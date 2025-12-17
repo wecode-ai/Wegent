@@ -32,7 +32,7 @@ from shared.utils.crypto import is_token_encrypted, decrypt_git_token
 from shared.utils.sensitive_data_masker import mask_sensitive_data
 from shared.telemetry.decorators import trace_async, add_span_event
 
-from executor.utils.mcp_utils import extract_mcp_servers_config
+from executor.utils.mcp_utils import extract_mcp_servers_config, replace_mcp_server_variables
 from executor.tasks.task_state_manager import TaskStateManager, TaskState
 from executor.tasks.resource_manager import ResourceManager
 
@@ -559,6 +559,8 @@ class ClaudeCodeAgent(Agent):
             # Extract MCP servers configuration
             mcp_servers = extract_mcp_servers_config(bot_config)
             if mcp_servers:
+                # Replace placeholders in MCP servers config with actual values from task_data
+                mcp_servers = replace_mcp_server_variables(mcp_servers, task_data)
                 logger.info(f"Detected MCP servers configuration: {mcp_servers}")
                 bot_config["mcp_servers"] = mcp_servers
 

@@ -50,8 +50,8 @@ class MemberBuilder:
         try:
             logger.info(f"Creating team member: {member_config.get('name', 'Unnamed')}")
             
-            # Setup MCP tools if available
-            mcp_tools = await self.mcp_manager.setup_mcp_tools(member_config)
+            # Setup MCP tools if available (pass task_data for variable replacement)
+            mcp_tools = await self.mcp_manager.setup_mcp_tools(member_config, task_data)
             agent_config = member_config.get("agent_config", {})
 
             # Prepare data sources for placeholder replacement
@@ -106,8 +106,8 @@ class MemberBuilder:
         try:
             logger.info("Creating default team member")
             
-            # Setup MCP tools if available
-            mcp_tools = await self.mcp_manager.setup_mcp_tools(options)
+            # Setup MCP tools if available (pass task_data for variable replacement)
+            mcp_tools = await self.mcp_manager.setup_mcp_tools(options, task_data)
             agent_config = options.get("agent_config", {})
             
             # Prepare data sources for placeholder replacement
