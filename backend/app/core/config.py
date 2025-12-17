@@ -114,8 +114,8 @@ class Settings(BaseSettings):
     EXECUTOR_ENV: str = '{"DEFAULT_HEADERS":{"user":"${task_data.user.name}"}}'
 
     # File upload configuration
-    MAX_UPLOAD_FILE_SIZE_MB: int = 50  # Maximum file size in MB
-    MAX_EXTRACTED_TEXT_LENGTH: int = 1000000  # Maximum extracted text length
+    MAX_UPLOAD_FILE_SIZE_MB: int = 100  # Maximum file size in MB
+    MAX_EXTRACTED_TEXT_LENGTH: int = 1500000  # Maximum extracted text length
 
     # Attachment storage backend configuration
     # Supported backends: "mysql" (default), "s3", "minio"
