@@ -10,12 +10,14 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.models.kind import Kind
 from app.models.knowledge import (
     DocumentStatus,
     KnowledgeDocument,
 )
-from app.models.kind import Kind
 from app.models.namespace import Namespace
+from app.schemas.kind import KnowledgeBase as KnowledgeBaseCRD
+from app.schemas.kind import KnowledgeBaseSpec, ObjectMeta
 from app.schemas.knowledge import (
     AccessibleKnowledgeBase,
     AccessibleKnowledgeResponse,
@@ -27,8 +29,6 @@ from app.schemas.knowledge import (
     ResourceScope,
     TeamKnowledgeGroup,
 )
-from app.schemas.kind import KnowledgeBase as KnowledgeBaseCRD
-from app.schemas.kind import KnowledgeBaseSpec, ObjectMeta
 from app.schemas.namespace import GroupRole
 from app.services.group_permission import (
     check_group_permission,
@@ -67,9 +67,15 @@ class KnowledgeService:
         if data.namespace != "default":
             role = get_effective_role_in_group(db, user_id, data.namespace)
             if role is None:
-                raise ValueError(f"User does not have access to group '{data.namespace}'")
-            if not check_group_permission(db, user_id, data.namespace, GroupRole.Maintainer):
-                raise ValueError("Only Owner or Maintainer can create knowledge base in this group")
+                raise ValueError(
+                    f"User does not have access to group '{data.namespace}'"
+                )
+            if not check_group_permission(
+                db, user_id, data.namespace, GroupRole.Maintainer
+            ):
+                raise ValueError(
+                    "Only Owner or Maintainer can create knowledge base in this group"
+                )
 
         # Check duplicate name
         existing = (
@@ -86,7 +92,9 @@ class KnowledgeService:
         for kb in existing:
             kb_spec = kb.json.get("spec", {})
             if kb_spec.get("name") == data.name:
-                raise ValueError(f"Knowledge base with name '{data.name}' already exists")
+                raise ValueError(
+                    f"Knowledge base with name '{data.name}' already exists"
+                )
 
         # Build CRD structure
         kb_crd = KnowledgeBaseCRD(
@@ -217,14 +225,18 @@ class KnowledgeService:
             # Get team knowledge bases from accessible groups
             accessible_groups = get_user_groups(db, user_id)
             team = (
-                db.query(Kind)
-                .filter(
-                    Kind.kind == "KnowledgeBase",
-                    Kind.namespace.in_(accessible_groups),
-                    Kind.is_active == True,
+                (
+                    db.query(Kind)
+                    .filter(
+                        Kind.kind == "KnowledgeBase",
+                        Kind.namespace.in_(accessible_groups),
+                        Kind.is_active == True,
+                    )
+                    .all()
                 )
-                .all()
-            ) if accessible_groups else []
+                if accessible_groups
+                else []
+            )
 
             return personal + team
 
@@ -256,8 +268,12 @@ class KnowledgeService:
 
         # Check permission for team knowledge base
         if kb.namespace != "default":
-            if not check_group_permission(db, user_id, kb.namespace, GroupRole.Maintainer):
-                raise ValueError("Only Owner or Maintainer can update knowledge base in this group")
+            if not check_group_permission(
+                db, user_id, kb.namespace, GroupRole.Maintainer
+            ):
+                raise ValueError(
+                    "Only Owner or Maintainer can update knowledge base in this group"
+                )
 
         # Get current spec
         kb_json = kb.json
@@ -280,7 +296,9 @@ class KnowledgeService:
             for existing_kb in existing:
                 existing_spec = existing_kb.json.get("spec", {})
                 if existing_spec.get("name") == data.name:
-                    raise ValueError(f"Knowledge base with name '{data.name}' already exists")
+                    raise ValueError(
+                        f"Knowledge base with name '{data.name}' already exists"
+                    )
 
             spec["name"] = data.name
 
@@ -320,8 +338,12 @@ class KnowledgeService:
 
         # Check permission for team knowledge base
         if kb.namespace != "default":
-            if not check_group_permission(db, user_id, kb.namespace, GroupRole.Maintainer):
-                raise ValueError("Only Owner or Maintainer can delete knowledge base in this group")
+            if not check_group_permission(
+                db, user_id, kb.namespace, GroupRole.Maintainer
+            ):
+                raise ValueError(
+                    "Only Owner or Maintainer can delete knowledge base in this group"
+                )
 
         # Physically delete all documents in this knowledge base
         db.query(KnowledgeDocument).filter(
@@ -363,8 +385,12 @@ class KnowledgeService:
 
         # Check permission for team knowledge base
         if kb.namespace != "default":
-            if not check_group_permission(db, user_id, kb.namespace, GroupRole.Maintainer):
-                raise ValueError("Only Owner or Maintainer can add documents to this knowledge base")
+            if not check_group_permission(
+                db, user_id, kb.namespace, GroupRole.Maintainer
+            ):
+                raise ValueError(
+                    "Only Owner or Maintainer can add documents to this knowledge base"
+                )
 
         document = KnowledgeDocument(
             kind_id=knowledge_base_id,
@@ -488,8 +514,12 @@ class KnowledgeService:
             .first()
         )
         if kb and kb.namespace != "default":
-            if not check_group_permission(db, user_id, kb.namespace, GroupRole.Maintainer):
-                raise ValueError("Only Owner or Maintainer can update documents in this knowledge base")
+            if not check_group_permission(
+                db, user_id, kb.namespace, GroupRole.Maintainer
+            ):
+                raise ValueError(
+                    "Only Owner or Maintainer can update documents in this knowledge base"
+                )
 
         if data.name is not None:
             doc.name = data.name
@@ -532,8 +562,12 @@ class KnowledgeService:
             .first()
         )
         if kb and kb.namespace != "default":
-            if not check_group_permission(db, user_id, kb.namespace, GroupRole.Maintainer):
-                raise ValueError("Only Owner or Maintainer can delete documents from this knowledge base")
+            if not check_group_permission(
+                db, user_id, kb.namespace, GroupRole.Maintainer
+            ):
+                raise ValueError(
+                    "Only Owner or Maintainer can delete documents from this knowledge base"
+                )
 
         # Update document count
         if kb:
@@ -627,7 +661,9 @@ class KnowledgeService:
                                 id=kb.id,
                                 name=kb.json.get("spec", {}).get("name", ""),
                                 description=kb.json.get("spec", {}).get("description"),
-                                document_count=kb.json.get("spec", {}).get("document_count", 0),
+                                document_count=kb.json.get("spec", {}).get(
+                                    "document_count", 0
+                                ),
                                 updated_at=kb.updated_at,
                             )
                             for kb in group_kbs
@@ -670,7 +706,9 @@ class KnowledgeService:
         if kb.namespace == "default":
             return kb.user_id == user_id
         else:
-            return check_group_permission(db, user_id, kb.namespace, GroupRole.Maintainer)
+            return check_group_permission(
+                db, user_id, kb.namespace, GroupRole.Maintainer
+            )
 
     # ============== Batch Document Operations ==============
 
@@ -736,7 +774,9 @@ class KnowledgeService:
 
         for doc_id in document_ids:
             try:
-                update_data = KnowledgeDocumentUpdate(status=SchemaDocumentStatus.ENABLED)
+                update_data = KnowledgeDocumentUpdate(
+                    status=SchemaDocumentStatus.ENABLED
+                )
                 doc = KnowledgeService.update_document(db, doc_id, user_id, update_data)
                 if doc:
                     success_count += 1
@@ -777,7 +817,9 @@ class KnowledgeService:
 
         for doc_id in document_ids:
             try:
-                update_data = KnowledgeDocumentUpdate(status=SchemaDocumentStatus.DISABLED)
+                update_data = KnowledgeDocumentUpdate(
+                    status=SchemaDocumentStatus.DISABLED
+                )
                 doc = KnowledgeService.update_document(db, doc_id, user_id, update_data)
                 if doc:
                     success_count += 1

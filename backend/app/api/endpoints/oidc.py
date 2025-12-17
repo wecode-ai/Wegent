@@ -170,7 +170,9 @@ async def oidc_callback(
             )
             raise Exception("User not active")
 
-        jwt_token = create_access_token(data={"sub": user.user_name})
+        jwt_token = create_access_token(
+            data={"sub": user.user_name, "user_id": user.id}
+        )
 
         logger.info(
             f"OIDC login success: user_id={user.id}, user_name={user.user_name}"
@@ -372,7 +374,9 @@ async def cli_oidc_callback(
         if not user.is_active:
             raise Exception("User not active")
 
-        jwt_token = create_access_token(data={"sub": user.user_name})
+        jwt_token = create_access_token(
+            data={"sub": user.user_name, "user_id": user.id}
+        )
 
         # Store token in Redis session
         await cache_manager.set(

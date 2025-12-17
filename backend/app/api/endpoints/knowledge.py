@@ -324,6 +324,7 @@ def update_document(
             detail=str(e),
         )
 
+
 @document_router.delete("/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(
     document_id: int,

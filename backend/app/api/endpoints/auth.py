@@ -31,7 +31,7 @@ def login_swagger(
         user.auth_source = "password"
         db.commit()
 
-    access_token = create_access_token(data={"sub": user.user_name})
+    access_token = create_access_token(data={"sub": user.user_name, "user_id": user.id})
     return {"access_token": access_token, "token_type": "bearer"}
 
 
@@ -50,6 +50,6 @@ def login(db: Session = Depends(get_db), login_data: LoginRequest = Body(...)):
         user.auth_source = "password"
         db.commit()
 
-    access_token = create_access_token(data={"sub": user.user_name})
+    access_token = create_access_token(data={"sub": user.user_name, "user_id": user.id})
 
     return LoginResponse(access_token=access_token, token_type="bearer")

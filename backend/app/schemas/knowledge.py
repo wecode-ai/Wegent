@@ -137,15 +137,21 @@ class KnowledgeDocumentListResponse(BaseModel):
 class BatchDocumentIds(BaseModel):
     """Schema for batch document operation request."""
 
-    document_ids: list[int] = Field(..., min_length=1, description="List of document IDs to operate on")
+    document_ids: list[int] = Field(
+        ..., min_length=1, description="List of document IDs to operate on"
+    )
 
 
 class BatchOperationResult(BaseModel):
     """Schema for batch operation result."""
 
-    success_count: int = Field(..., description="Number of successfully processed documents")
+    success_count: int = Field(
+        ..., description="Number of successfully processed documents"
+    )
     failed_count: int = Field(..., description="Number of failed documents")
-    failed_ids: list[int] = Field(default_factory=list, description="List of failed document IDs")
+    failed_ids: list[int] = Field(
+        default_factory=list, description="List of failed document IDs"
+    )
     message: str = Field(..., description="Operation result message")
 
 
