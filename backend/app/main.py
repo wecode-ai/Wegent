@@ -468,9 +468,7 @@ def create_app():
                                     media_type=response.media_type,
                                 )
                             except Exception as e:
-                                logger.debug(
-                                    f"Failed to capture response body: {e}"
-                                )
+                                logger.debug(f"Failed to capture response body: {e}")
 
         # Post-request logging with request ID
         logger.info(
