@@ -22,6 +22,7 @@ class ServiceStatusResponse(BaseModel):
     status: str
     http_code: int
     active_requests: int
+    pod_id: str
 
 
 class SetServiceStatusRequest(BaseModel):
@@ -36,6 +37,7 @@ class SetServiceStatusResponse(BaseModel):
     success: bool
     status: str
     message: str
+    pod_id: str
 
 
 class ActiveRequestsResponse(BaseModel):
@@ -134,12 +136,14 @@ async def get_service_status(response: Response):
             status=ServiceStatus.DRAINING.value,
             http_code=503,
             active_requests=active_requests,
+            pod_id=graceful_shutdown_manager.pod_id,
         )
 
     return ServiceStatusResponse(
         status=ServiceStatus.HEALTHY.value,
         http_code=200,
         active_requests=active_requests,
+        pod_id=graceful_shutdown_manager.pod_id,
     )
 
 
@@ -191,6 +195,7 @@ async def set_service_status(request: SetServiceStatusRequest):
         success=True,
         status=new_status.value,
         message=f"Service status set to {new_status.value}",
+        pod_id=graceful_shutdown_manager.pod_id,
     )
 
 

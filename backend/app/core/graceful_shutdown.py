@@ -6,22 +6,29 @@
 Graceful shutdown management module.
 
 This module provides process-safe service status management using Redis
-to coordinate graceful shutdown across multiple FastAPI workers.
+to coordinate graceful shutdown across multiple FastAPI workers/pods.
 
 Features:
 - Service status (200/503) management for load balancer health checks
 - Active request tracking for ongoing HTTP requests (including streams)
 - Process-safe state management via Redis
 - Robust counter management with anomaly detection and auto-correction
+- Multi-pod aware: each pod has its own status, shared request counter
+
+Architecture for multi-pod deployment:
+- service_status: Per-pod (each pod has its own status key)
+- active_requests: Shared counter (all pods contribute to the same counter)
+- request tracking: Shared (any pod can track any request)
 
 Usage:
-1. Set service status to 503 before shutdown
-2. Wait for active requests to complete
+1. Set service status to 503 before shutdown (affects only this pod)
+2. Wait for active requests to complete (shared counter)
 3. Shutdown the service
 """
 
 import asyncio
 import logging
+import os
 import time
 from enum import Enum
 from typing import Optional
@@ -32,15 +39,21 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+# Generate a unique pod identifier
+# Use hostname (which is usually the pod name in k8s) or a random ID
+POD_ID = os.environ.get("HOSTNAME", os.environ.get("POD_NAME", f"pod-{os.getpid()}"))
+
 # Redis keys for graceful shutdown management
 REDIS_KEY_PREFIX = "wegent:graceful_shutdown:"
-SERVICE_STATUS_KEY = f"{REDIS_KEY_PREFIX}service_status"
+# Per-pod service status key
+SERVICE_STATUS_KEY_PREFIX = f"{REDIS_KEY_PREFIX}service_status:"
+# Shared active requests counter
 ACTIVE_REQUESTS_KEY = f"{REDIS_KEY_PREFIX}active_requests"
 # Per-request tracking key prefix (for anomaly detection)
 REQUEST_TRACKING_KEY_PREFIX = f"{REDIS_KEY_PREFIX}request:"
-# TTL for service status key (1 hour) - prevents stale state if service crashes
-SERVICE_STATUS_TTL = 3600
-# TTL for active requests key (10 minutes) - auto-cleanup if service crashes
+# TTL for service status key (5 minutes) - auto-cleanup if pod crashes
+SERVICE_STATUS_TTL = 300
+# TTL for active requests key (10 minutes) - auto-cleanup if all pods crash
 ACTIVE_REQUESTS_TTL = 600
 # TTL for individual request tracking (5 minutes) - detect orphaned requests
 REQUEST_TRACKING_TTL = 300
@@ -62,15 +75,20 @@ class GracefulShutdownManager:
     Manager for graceful shutdown operations.
 
     This class uses Redis to maintain process-safe state that can be
-    shared across multiple FastAPI workers. It provides:
+    shared across multiple FastAPI workers/pods. It provides:
 
-    1. Service status management (healthy/draining)
-    2. Active request counter for tracking in-flight requests
+    1. Service status management (healthy/draining) - per-pod
+    2. Active request counter for tracking in-flight requests - shared
     3. Coordination for graceful shutdown process
     4. Counter anomaly detection and auto-correction
 
+    Multi-pod architecture:
+    - service_status: Each pod has its own key (wegent:graceful_shutdown:service_status:<pod_id>)
+    - active_requests: Shared counter across all pods
+    - request tracking: Shared across all pods
+
     The state is stored in Redis with TTL to prevent stale data
-    if the service crashes unexpectedly.
+    if a pod crashes unexpectedly.
     """
 
     _instance: Optional["GracefulShutdownManager"] = None
@@ -78,12 +96,19 @@ class GracefulShutdownManager:
     _initialized: bool = False
     _last_known_count: int = 0
     _anomaly_count: int = 0
+    _pod_id: str = POD_ID
+    _service_status_key: str = f"{SERVICE_STATUS_KEY_PREFIX}{POD_ID}"
 
     def __new__(cls):
         """Singleton pattern to ensure single manager instance per process."""
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
+
+    @property
+    def pod_id(self) -> str:
+        """Get the pod identifier."""
+        return self._pod_id
 
     async def initialize(self) -> None:
         """
@@ -105,13 +130,13 @@ class GracefulShutdownManager:
             self._initialized = True
             self._last_known_count = 0
             self._anomaly_count = 0
-            logger.info("Graceful shutdown manager initialized with Redis")
+            logger.info(
+                f"Graceful shutdown manager initialized with Redis (pod_id={self._pod_id})"
+            )
 
-            # Set initial status to healthy if not already set
-            current_status = await self._redis_client.get(SERVICE_STATUS_KEY)
-            if current_status is None:
-                await self.set_service_status(ServiceStatus.HEALTHY)
-                logger.info("Service status initialized to HEALTHY")
+            # Set initial status to healthy for this pod
+            await self.set_service_status(ServiceStatus.HEALTHY)
+            logger.info(f"Service status initialized to HEALTHY for pod {self._pod_id}")
 
         except Exception as e:
             logger.warning(
@@ -121,8 +146,19 @@ class GracefulShutdownManager:
             self._initialized = False
 
     async def close(self) -> None:
-        """Close the Redis connection."""
+        """
+        Close the Redis connection and cleanup this pod's status.
+
+        Should be called during application shutdown.
+        """
         if self._redis_client:
+            # Remove this pod's service status key
+            try:
+                await self._redis_client.delete(self._service_status_key)
+                logger.info(f"Removed service status key for pod {self._pod_id}")
+            except Exception as e:
+                logger.warning(f"Failed to remove service status key: {e}")
+
             await self._redis_client.aclose()
             self._redis_client = None
             self._initialized = False
@@ -130,7 +166,7 @@ class GracefulShutdownManager:
 
     async def set_service_status(self, status: ServiceStatus) -> bool:
         """
-        Set the service status.
+        Set the service status for this pod.
 
         Args:
             status: The service status to set (HEALTHY or DRAINING)
@@ -144,11 +180,11 @@ class GracefulShutdownManager:
 
         try:
             await self._redis_client.set(
-                SERVICE_STATUS_KEY,
+                self._service_status_key,
                 status.value,
                 ex=SERVICE_STATUS_TTL,
             )
-            logger.info(f"Service status set to {status.value}")
+            logger.info(f"Service status set to {status.value} for pod {self._pod_id}")
             return True
         except Exception as e:
             logger.error(f"Failed to set service status: {e}")
@@ -156,7 +192,7 @@ class GracefulShutdownManager:
 
     async def get_service_status(self) -> ServiceStatus:
         """
-        Get the current service status.
+        Get the current service status for this pod.
 
         Returns:
             ServiceStatus.HEALTHY or ServiceStatus.DRAINING
@@ -166,7 +202,7 @@ class GracefulShutdownManager:
             return ServiceStatus.HEALTHY
 
         try:
-            status = await self._redis_client.get(SERVICE_STATUS_KEY)
+            status = await self._redis_client.get(self._service_status_key)
             if status == ServiceStatus.DRAINING.value:
                 return ServiceStatus.DRAINING
             return ServiceStatus.HEALTHY
@@ -423,6 +459,7 @@ class GracefulShutdownManager:
 
         try:
             count = await self.get_active_requests_count()
+            status = await self.get_service_status()
 
             # Count tracked requests
             pattern = f"{REQUEST_TRACKING_KEY_PREFIX}*"
@@ -436,8 +473,13 @@ class GracefulShutdownManager:
                 if cursor == 0:
                     break
 
+            # Get all pods status
+            all_pods = await self.get_all_pods_status()
+
             return {
                 "initialized": True,
+                "pod_id": self._pod_id,
+                "service_status": status.value,
                 "active_requests": count,
                 "tracked_requests": tracked_count,
                 "last_known_count": self._last_known_count,
@@ -445,12 +487,53 @@ class GracefulShutdownManager:
                 "counter_matches_tracked": count == tracked_count,
                 "max_counter_value": MAX_COUNTER_VALUE,
                 "ttl_seconds": ACTIVE_REQUESTS_TTL,
+                "all_pods": all_pods,
             }
         except Exception as e:
             return {
                 "initialized": True,
+                "pod_id": self._pod_id,
                 "error": str(e),
             }
+
+    async def get_all_pods_status(self) -> dict:
+        """
+        Get the status of all pods.
+
+        Returns:
+            Dictionary mapping pod_id to status
+        """
+        if not self._initialized or not self._redis_client:
+            return {}
+
+        try:
+            pattern = f"{SERVICE_STATUS_KEY_PREFIX}*"
+            pods_status = {}
+            cursor = 0
+
+            while True:
+                cursor, keys = await self._redis_client.scan(
+                    cursor=cursor, match=pattern, count=100
+                )
+
+                for key in keys:
+                    # Extract pod_id from key
+                    pod_id = key.replace(SERVICE_STATUS_KEY_PREFIX, "")
+                    status = await self._redis_client.get(key)
+                    ttl = await self._redis_client.ttl(key)
+                    pods_status[pod_id] = {
+                        "status": status,
+                        "ttl_seconds": ttl,
+                        "is_current_pod": pod_id == self._pod_id,
+                    }
+
+                if cursor == 0:
+                    break
+
+            return pods_status
+        except Exception as e:
+            logger.error(f"Failed to get all pods status: {e}")
+            return {}
 
     async def wait_for_requests_completion(
         self,

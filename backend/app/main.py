@@ -59,11 +59,14 @@ async def lifespan(app: FastAPI):
     logger.info("✓ Chat service HTTP client initialized")
 
     # Initialize graceful shutdown manager
+    # This will:
+    # 1. Connect to Redis
+    # 2. Set this pod's status to HEALTHY
+    # NOTE: Do NOT reset shared active_requests counter here!
+    # In multi-pod deployment, other pods may have active requests.
+    # Counter reset should only be done manually via /api/active-requests/reset
+    # or automatically via TTL expiration after all pods are down.
     await graceful_shutdown_manager.initialize()
-    # Reset active requests counter on startup to clear stale data
-    await graceful_shutdown_manager.reset_active_requests()
-    # Set service status to healthy on startup
-    await graceful_shutdown_manager.set_service_status(ServiceStatus.HEALTHY)
     logger.info("✓ Graceful shutdown manager initialized")
 
     # Try to get Redis client for distributed locking
