@@ -230,7 +230,7 @@ export function SettingsTabNav({
   // Mobile: Dropdown select with groups
   if (isMobile) {
     return (
-      <div className="px-4 py-2 border-t border-border bg-white space-y-2">
+      <div className="px-4 py-2 border-t border-border bg-surface space-y-2">
         {/* Scope selector */}
         <div className="flex items-center gap-2">
           <button
@@ -327,7 +327,7 @@ export function SettingsTabNav({
   return (
     <div
       ref={indicatorContainerRef}
-      className="relative flex items-center gap-1 px-4 py-2 border-t border-border bg-white overflow-x-auto"
+      className="relative flex items-center gap-1 px-4 py-2 border-t border-border bg-surface overflow-x-auto"
     >
       {/* Sliding indicator */}
       <span
