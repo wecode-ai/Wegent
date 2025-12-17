@@ -26,6 +26,8 @@ from executor_manager.tasks.task_processor import TaskProcessor
 from shared.logger import setup_logger
 from shared.models.task import TasksRequest
 from shared.telemetry.config import get_otel_config
+from shared.telemetry.context import set_task_context
+from shared.telemetry.core import is_telemetry_enabled
 
 # Setup logger
 logger = setup_logger(__name__)
@@ -218,6 +220,11 @@ async def callback_handler(request: CallbackRequest, http_request: Request):
         client_ip = http_request.client.host if http_request.client else "unknown"
         logger.info(f"Received callback: body={request} from {client_ip}")
 
+        # Set task context for tracing
+        otel_config = get_otel_config()
+        if otel_config.enabled and is_telemetry_enabled():
+            set_task_context(task_id=request.task_id, subtask_id=request.subtask_id)
+
         # Check if this is a validation task callback
         # Primary check: task_type == "validation"
         # Fallback check: validation_id in result (for backward compatibility)
@@ -340,6 +347,13 @@ async def receive_tasks(request: TasksRequest, http_request: Request):
         logger.info(
             f"Received {len(request.tasks)} tasks, first task: {request.tasks[0].task_title if request.tasks else 'None'} from {client_ip}"
         )
+
+        # Set task context for tracing (use first task's context)
+        otel_config = get_otel_config()
+        if otel_config.enabled and is_telemetry_enabled() and request.tasks:
+            first_task = request.tasks[0]
+            set_task_context(task_id=first_task.task_id, subtask_id=first_task.subtask_id)
+
         # Call the task processor to handle the tasks
         task_processor.process_tasks([task.dict() for task in request.tasks])
         return {"code": 0}
@@ -543,6 +557,11 @@ async def cancel_task(request: CancelTaskRequest, http_request: Request):
         logger.info(
             f"Received request to cancel task {request.task_id} from {client_ip}"
         )
+
+        # Set task context for tracing
+        otel_config = get_otel_config()
+        if otel_config.enabled and is_telemetry_enabled():
+            set_task_context(task_id=request.task_id)
 
         executor = ExecutorDispatcher.get_executor(EXECUTOR_DISPATCHER_MODE)
         result = executor.cancel_task(request.task_id)

@@ -359,13 +359,25 @@ def create_app():
         # Add OpenTelemetry span attributes if enabled
         if otel_config.enabled:
             from opentelemetry import trace
-            from shared.telemetry.context import set_request_context, set_user_context
+            from shared.telemetry.context import set_request_context, set_user_context, set_task_context
             from shared.telemetry.core import is_telemetry_enabled
 
             if is_telemetry_enabled():
                 set_request_context(request_id)
                 if username:
                     set_user_context(user_name=username)
+
+                # Extract task_id and subtask_id from request body for tracing
+                if request_body:
+                    try:
+                        import json
+                        body_json = json.loads(request_body)
+                        task_id = body_json.get("task_id")
+                        subtask_id = body_json.get("subtask_id")
+                        if task_id is not None or subtask_id is not None:
+                            set_task_context(task_id=task_id, subtask_id=subtask_id)
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Not JSON or invalid format, skip task context extraction
 
                 # Add request body to current span
                 if request_body:

@@ -21,6 +21,8 @@ from contextlib import asynccontextmanager
 from shared.logger import setup_logger
 from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
+from shared.telemetry.context import set_task_context
+from shared.telemetry.core import is_telemetry_enabled
 from executor.tasks import process
 from executor.services.agent_service import AgentService
 
@@ -243,6 +245,11 @@ async def execute_task(request: Request):
     task_id = task_data.get("task_id", -1)
     subtask_id = task_data.get("subtask_id", -1)
 
+    # Set task context for tracing
+    otel_config = get_otel_config()
+    if otel_config.enabled and is_telemetry_enabled():
+        set_task_context(task_id=task_id, subtask_id=subtask_id)
+
     try:
         # Use process function to handle task uniformly
         status = process(task_data)
@@ -293,6 +300,11 @@ async def cancel_task(
     Cancel the currently running task for a specific task_id
     Returns immediately, callback is sent asynchronously in background to avoid blocking executor_manager's cancel request
     """
+    # Set task context for tracing
+    otel_config = get_otel_config()
+    if otel_config.enabled and is_telemetry_enabled():
+        set_task_context(task_id=task_id)
+
     status, message = agent_service.cancel_task(task_id)
 
     if status == TaskStatus.SUCCESS:
