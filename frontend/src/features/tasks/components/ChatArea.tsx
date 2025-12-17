@@ -80,6 +80,7 @@ interface ChatAreaProps {
   showRepositorySelector?: boolean;
   taskType?: 'chat' | 'code';
   onShareButtonRender?: (button: React.ReactNode) => void;
+  onRefreshTeams?: () => Promise<Team[]>;
 }
 
 export default function ChatArea({
@@ -89,6 +90,7 @@ export default function ChatArea({
   showRepositorySelector = true,
   taskType = 'chat',
   onShareButtonRender,
+  onRefreshTeams,
 }: ChatAreaProps) {
   const { toast } = useToast();
 
@@ -1518,7 +1520,6 @@ export default function ChatArea({
                   </div>
                 </div>
               </div>
-
               {/* Quick Access Cards - show below input card when no messages */}
               <QuickAccessCards
                 teams={teams}
@@ -1528,6 +1529,8 @@ export default function ChatArea({
                 isLoading={isTeamsLoading}
                 isTeamsLoading={isTeamsLoading}
                 hideSelected={true}
+                onRefreshTeams={onRefreshTeams}
+                showWizardButton={taskType === 'chat'}
               />
             </div>
           </div>

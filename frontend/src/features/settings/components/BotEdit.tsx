@@ -792,7 +792,7 @@ const BotEditInner: React.ForwardRefRenderFunction<BotEditRef, BotEditProps> = (
   };
   return (
     <div
-      className={`flex flex-col w-full bg-white dark:bg-white/95 rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'h-full min-h-0' : 'min-h-[650px]'}`}
+      className={`flex flex-col w-full bg-surface rounded-lg px-2 py-4 overflow-hidden ${embedded ? 'h-full min-h-0' : 'min-h-[650px]'}`}
     >
       {/* Top navigation bar */}
       <div className="flex items-center justify-between mb-4 flex-shrink-0">
