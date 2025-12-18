@@ -64,7 +64,6 @@ Docker Compose works in any Docker-supported environment.
 **A:** Yes. Besides Docker Compose:
 
 - **Source deployment**: Run Python and Node.js services directly
-- **Kubernetes**: Deploy with K8s (requires custom manifests)
 - **Binary deployment**: Build backend as executable (requires additional configuration)
 
 ---
