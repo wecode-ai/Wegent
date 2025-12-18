@@ -353,6 +353,7 @@ export default function ChatArea({
     startStream: contextStartStream,
     stopStream: contextStopStream,
     resetStream: contextResetStream,
+    resumeStream: contextResumeStream,
   } = useChatStreamContext();
 
   // Track the task ID that is currently being streamed (for new tasks before they have a real ID)
@@ -467,25 +468,66 @@ export default function ChatArea({
     }
   }, [selectedTaskDetail?.id, streamingTaskId]);
 
-  // Unified effect to reset streaming state in all necessary scenarios:
-  // 1. Stream completes or is externally cleared (streamingTaskId exists but stream is not active)
-  // 2. User navigates to a fresh new task state (no selectedTaskDetail and no streamingTaskId)
+  // Unified effect to reset streaming state in specific scenarios:
+  // Only reset when user navigates to a fresh new task state (no selectedTaskDetail and no streamingTaskId)
+  //
+  // IMPORTANT: Do NOT reset when stream completes (streamingTaskId && !isStreamingTaskActive)
+  // because we want to keep localPendingMessage visible until displayMessages is updated.
+  // The pending message will be hidden by isPendingMessageAlreadyDisplayed logic in MessagesArea.
   useEffect(() => {
-    // Scenario 1: Stream was cleared (either completed or externally cleared via clearAllStreams)
-    if (streamingTaskId && !isStreamingTaskActive) {
+    // Only reset when no task selected and no active streaming task
+    // This handles the case when user clicks "New Chat" or navigates away
+    if (!selectedTaskDetail?.id && !streamingTaskId) {
       resetStreamingState();
     }
-    // Scenario 2: No task selected and no active streaming task
-    else if (!selectedTaskDetail?.id && !streamingTaskId) {
-      resetStreamingState();
-    }
-  }, [streamingTaskId, isStreamingTaskActive, selectedTaskDetail?.id, resetStreamingState]);
+  }, [selectedTaskDetail?.id, streamingTaskId, resetStreamingState]);
 
   // Reset streaming state when task ID changes (user switches tasks)
   // This ensures pending message from task A doesn't show up in task B
   useEffect(() => {
     resetStreamingState();
   }, [selectedTaskDetail?.id, resetStreamingState]);
+
+  // Try to resume streaming when task changes or on initial load
+  // This handles the case when user refreshes the page while streaming is in progress
+  useEffect(() => {
+    const taskId = selectedTaskDetail?.id;
+    if (!taskId) return;
+
+    // Only try to resume if we're not already streaming for this task
+    if (isCurrentTaskStreaming) return;
+
+    // Only try to resume for Chat Shell tasks
+    if (!selectedTeam || !isChatShell(selectedTeam)) return;
+
+    // Try to resume the stream
+    const tryResumeStream = async () => {
+      console.log('[ChatArea] Trying to resume stream for task', taskId);
+      const resumed = await contextResumeStream(taskId, {
+        onComplete: (completedTaskId, subtaskId) => {
+          console.log('[ChatArea] Resumed stream completed', { completedTaskId, subtaskId });
+          // Refresh task detail to get the final content
+          refreshSelectedTaskDetail(false);
+        },
+        onError: error => {
+          console.error('[ChatArea] Resumed stream error', error);
+        },
+      });
+
+      if (resumed) {
+        console.log('[ChatArea] Stream resumed successfully for task', taskId);
+        setStreamingTaskId(taskId);
+      }
+    };
+
+    tryResumeStream();
+  }, [
+    selectedTaskDetail?.id,
+    selectedTeam,
+    isCurrentTaskStreaming,
+    contextResumeStream,
+    refreshSelectedTaskDetail,
+  ]);
 
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
   const lastSubtask = subtaskList.length ? subtaskList[subtaskList.length - 1] : null;
@@ -952,7 +994,7 @@ export default function ChatArea({
                 // Note: Don't call resetStreamingState here as we handle streamingTaskId separately below
                 // and we need to wait for task detail refresh before clearing
 
-                // Refresh task list after stream ends
+                // Refresh task list after stream ends (to update sidebar)
                 refreshTasks();
 
                 // If this was a new task (first message), update URL
@@ -961,34 +1003,38 @@ export default function ChatArea({
                   params.set('taskId', String(completedTaskId));
                   router.push(`?${params.toString()}`);
 
-                  // Wait for task detail to be loaded before clearing stream
-                  // This prevents the flash of empty content when URL changes
+                  // For new tasks, we need to refresh to get the full task detail
+                  // including user message subtask which was created on backend
                   try {
                     // Give TaskParamSync time to trigger and load the task detail
-                    // We use a small delay to ensure the URL change has been processed
                     await new Promise(resolve => setTimeout(resolve, 100));
-                    // Then wait for the actual refresh to complete
                     await refreshSelectedTaskDetail(false);
                   } catch (error) {
                     console.error('Failed to refresh task detail after stream:', error);
                   } finally {
-                    // Only clear stream content after data is refreshed (or failed)
                     contextResetStream(completedTaskId);
                     setStreamingTaskId(null);
                   }
                 } else if (selectedTaskDetail?.id) {
-                  // If this was a follow-up message (second+ message), refresh task detail
-                  // to show the new subtasks (user message + AI response)
-                  // Wait for the refresh to complete BEFORE clearing the stream to prevent flashing
-                  try {
-                    await refreshSelectedTaskDetail(false);
-                  } catch (error) {
-                    console.error('Failed to refresh task detail after stream:', error);
-                  } finally {
-                    // Only clear stream content after data is refreshed (or failed)
-                    contextResetStream(completedTaskId);
-                    setStreamingTaskId(null);
-                  }
+                  // For follow-up messages, the streaming content is already displayed
+                  // via streamingContent prop. The chat:done event already contains
+                  // the final content in result.value, which is stored in streamingContent.
+                  //
+                  // IMPORTANT: Don't call contextResetStream here!
+                  // MessagesArea will continue to display streamingContent until
+                  // displayMessages is updated (via isStreamingContentAlreadyDisplayed check).
+                  // This prevents the "flash of progress bar" issue.
+                  //
+                  // The stream state will be cleaned up when:
+                  // 1. User switches to another task (resetStreamingState is called)
+                  // 2. User sends a new message (new stream replaces old one)
+                  // 3. User refreshes the page (state is lost anyway)
+                  setStreamingTaskId(null);
+
+                  // Refresh in background to sync persisted data
+                  // This updates displayMessages, which will cause MessagesArea to
+                  // hide the streaming bubble (via isStreamingContentAlreadyDisplayed)
+                  refreshSelectedTaskDetail(false);
                 }
               },
               onError: error => {

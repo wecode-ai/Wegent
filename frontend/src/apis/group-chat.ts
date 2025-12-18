@@ -93,6 +93,10 @@ export async function getStreamingStatus(taskId: number): Promise<StreamingStatu
 /**
  * Subscribe to a group chat stream via SSE
  *
+ * @deprecated This function is deprecated. Use WebSocket-based streaming via
+ * `useGroupChatStream` hook instead, which uses the global Socket.IO connection.
+ * This SSE-based implementation will be removed in a future version.
+ *
  * @param taskId - Task ID
  * @param subtaskId - Subtask ID to subscribe to
  * @param offset - Character offset for resuming (optional)

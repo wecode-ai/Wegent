@@ -226,14 +226,13 @@ async def lifespan(app: FastAPI):
     start_background_jobs(app)
     logger.info("✓ Background jobs started")
 
-    # Initialize Socket.IO
+    # Initialize Socket.IO WebSocket emitter
+    # Note: Chat namespace is already registered in create_socketio_asgi_app()
     logger.info("Initializing Socket.IO...")
-    from app.api.ws import register_chat_namespace
     from app.core.socketio import get_sio
     from app.services.chat.ws_emitter import init_ws_emitter
 
     sio = get_sio()
-    register_chat_namespace(sio)
     init_ws_emitter(sio)
     logger.info("✓ Socket.IO initialized")
 
@@ -603,9 +602,16 @@ def create_socketio_asgi_app():
     Returns a combined app that routes Socket.IO traffic to Socket.IO server
     and everything else to FastAPI.
     """
+    from app.api.ws import register_chat_namespace
     from app.core.socketio import create_socketio_app, get_sio
 
     sio = get_sio()
+
+    # Register chat namespace before creating ASGI app
+    # This ensures the namespace is available when clients connect
+    register_chat_namespace(sio)
+    _logger.info("Chat namespace registered during ASGI app creation")
+
     socketio_app = create_socketio_app(sio)
 
     # Create combined ASGI app

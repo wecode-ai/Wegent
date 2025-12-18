@@ -17,7 +17,7 @@ export const ClientEvents = {
   TASK_JOIN: 'task:join',
   TASK_LEAVE: 'task:leave',
   HISTORY_SYNC: 'history:sync',
-} as const
+} as const;
 
 // ============================================================
 // Server -> Client Events
@@ -42,45 +42,46 @@ export const ServerEvents = {
   TASK_RENAMED: 'task:renamed',
   TASK_STATUS: 'task:status',
   TASK_SHARED: 'task:shared',
+  TASK_INVITED: 'task:invited', // User invited to group chat
   UNREAD_COUNT: 'unread:count',
-} as const
+} as const;
 
 // ============================================================
 // Client -> Server Payloads
 // ============================================================
 
 export interface ChatSendPayload {
-  task_id?: number
-  team_id: number
-  message: string
-  attachment_id?: number
-  enable_web_search?: boolean
-  force_override_bot_model?: string
-  force_override_bot_model_type?: string
+  task_id?: number;
+  team_id: number;
+  message: string;
+  attachment_id?: number;
+  enable_web_search?: boolean;
+  force_override_bot_model?: string;
+  force_override_bot_model_type?: string;
 }
 
 export interface ChatCancelPayload {
-  subtask_id: number
-  partial_content?: string
+  subtask_id: number;
+  partial_content?: string;
 }
 
 export interface ChatResumePayload {
-  task_id: number
-  subtask_id: number
-  offset: number
+  task_id: number;
+  subtask_id: number;
+  offset: number;
 }
 
 export interface TaskJoinPayload {
-  task_id: number
+  task_id: number;
 }
 
 export interface TaskLeavePayload {
-  task_id: number
+  task_id: number;
 }
 
 export interface HistorySyncPayload {
-  task_id: number
-  after_message_id: number
+  task_id: number;
+  after_message_id: number;
 }
 
 // ============================================================
@@ -88,95 +89,108 @@ export interface HistorySyncPayload {
 // ============================================================
 
 export interface ChatStartPayload {
-  task_id: number
-  subtask_id: number
-  bot_name?: string
+  task_id: number;
+  subtask_id: number;
+  bot_name?: string;
 }
 
 export interface ChatChunkPayload {
-  subtask_id: number
-  content: string
-  offset: number
+  subtask_id: number;
+  content: string;
+  offset: number;
 }
 
 export interface ChatDonePayload {
-  subtask_id: number
-  offset: number
-  result: Record<string, unknown>
+  subtask_id: number;
+  offset: number;
+  result: Record<string, unknown>;
 }
 
 export interface ChatErrorPayload {
-  subtask_id: number
-  error: string
-  type?: string
+  subtask_id: number;
+  error: string;
+  type?: string;
 }
 
 export interface ChatCancelledPayload {
-  subtask_id: number
+  subtask_id: number;
 }
 
 export interface ChatMessagePayload {
-  subtask_id: number
-  task_id: number
-  role: string
-  content: string
+  subtask_id: number;
+  task_id: number;
+  role: string;
+  content: string;
   sender: {
-    user_id: number
-    user_name: string
-    avatar?: string
-  }
-  created_at: string
+    user_id: number;
+    user_name: string;
+    avatar?: string;
+  };
+  created_at: string;
 }
 
 export interface ChatBotCompletePayload {
-  subtask_id: number
-  task_id: number
-  content: string
-  result: Record<string, unknown>
-  created_at?: string
+  subtask_id: number;
+  task_id: number;
+  content: string;
+  result: Record<string, unknown>;
+  created_at?: string;
 }
 
 export interface ChatSystemPayload {
-  task_id: number
-  type: string
-  content: string
-  data?: Record<string, unknown>
+  task_id: number;
+  type: string;
+  content: string;
+  data?: Record<string, unknown>;
 }
 
 export interface TaskCreatedPayload {
-  task_id: number
-  title: string
-  team_id: number
-  team_name: string
-  created_at: string
+  task_id: number;
+  title: string;
+  team_id: number;
+  team_name: string;
+  created_at: string;
 }
 
 export interface TaskDeletedPayload {
-  task_id: number
+  task_id: number;
 }
 
 export interface TaskRenamedPayload {
-  task_id: number
-  title: string
+  task_id: number;
+  title: string;
 }
 
 export interface TaskStatusPayload {
-  task_id: number
-  status: string
-  progress?: number
+  task_id: number;
+  status: string;
+  progress?: number;
 }
 
 export interface TaskSharedPayload {
-  task_id: number
-  title: string
+  task_id: number;
+  title: string;
   shared_by: {
-    user_id: number
-    user_name: string
-  }
+    user_id: number;
+    user_name: string;
+  };
+}
+
+export interface TaskInvitedPayload {
+  task_id: number;
+  title: string;
+  team_id: number;
+  team_name: string;
+  invited_by: {
+    user_id: number;
+    user_name: string;
+  };
+  is_group_chat: boolean;
+  created_at: string;
 }
 
 export interface UnreadCountPayload {
-  count: number
+  count: number;
 }
 
 // ============================================================
@@ -184,33 +198,33 @@ export interface UnreadCountPayload {
 // ============================================================
 
 export interface ChatSendAck {
-  task_id?: number
-  subtask_id?: number
-  error?: string
+  task_id?: number;
+  subtask_id?: number;
+  error?: string;
 }
 
 export interface TaskJoinAck {
   streaming?: {
-    subtask_id: number
-    offset: number
-    cached_content: string
-  }
-  error?: string
+    subtask_id: number;
+    offset: number;
+    cached_content: string;
+  };
+  error?: string;
 }
 
 export interface HistorySyncAck {
   messages: Array<{
-    subtask_id: number
-    message_id: number
-    role: string
-    content: string
-    status: string
-    created_at: string | null
-  }>
-  error?: string
+    subtask_id: number;
+    message_id: number;
+    role: string;
+    content: string;
+    status: string;
+    created_at: string | null;
+  }>;
+  error?: string;
 }
 
 export interface GenericAck {
-  success: boolean
-  error?: string
+  success: boolean;
+  error?: string;
 }

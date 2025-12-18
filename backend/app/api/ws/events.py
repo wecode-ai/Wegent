@@ -14,10 +14,10 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
-
 # ============================================================
 # Event Names
 # ============================================================
+
 
 class ClientEvents:
     """Client -> Server event names."""
@@ -56,12 +56,14 @@ class ServerEvents:
     TASK_RENAMED = "task:renamed"
     TASK_STATUS = "task:status"
     TASK_SHARED = "task:shared"
+    TASK_INVITED = "task:invited"  # User invited to group chat
     UNREAD_COUNT = "unread:count"
 
 
 # ============================================================
 # Client -> Server Payloads
 # ============================================================
+
 
 class ChatSendPayload(BaseModel):
     """Payload for chat:send event."""
@@ -71,15 +73,21 @@ class ChatSendPayload(BaseModel):
     message: str = Field(..., description="User message content")
     attachment_id: Optional[int] = Field(None, description="Optional attachment ID")
     enable_web_search: bool = Field(False, description="Enable web search")
-    force_override_bot_model: Optional[str] = Field(None, description="Override model name")
-    force_override_bot_model_type: Optional[str] = Field(None, description="Override model type")
+    force_override_bot_model: Optional[str] = Field(
+        None, description="Override model name"
+    )
+    force_override_bot_model_type: Optional[str] = Field(
+        None, description="Override model type"
+    )
 
 
 class ChatCancelPayload(BaseModel):
     """Payload for chat:cancel event."""
 
     subtask_id: int = Field(..., description="Subtask ID to cancel")
-    partial_content: Optional[str] = Field(None, description="Partial content received so far")
+    partial_content: Optional[str] = Field(
+        None, description="Partial content received so far"
+    )
 
 
 class ChatResumePayload(BaseModel):
@@ -112,6 +120,7 @@ class HistorySyncPayload(BaseModel):
 # ============================================================
 # Server -> Client Payloads
 # ============================================================
+
 
 class ChatStartPayload(BaseModel):
     """Payload for chat:start event."""
@@ -220,6 +229,18 @@ class TaskSharedPayload(BaseModel):
     shared_by: Dict[str, Any]
 
 
+class TaskInvitedPayload(BaseModel):
+    """Payload for task:invited event (user invited to group chat)."""
+
+    task_id: int
+    title: str
+    team_id: int
+    team_name: str
+    invited_by: Dict[str, Any]
+    is_group_chat: bool = True
+    created_at: str
+
+
 class UnreadCountPayload(BaseModel):
     """Payload for unread:count event."""
 
@@ -229,6 +250,7 @@ class UnreadCountPayload(BaseModel):
 # ============================================================
 # ACK Responses
 # ============================================================
+
 
 class ChatSendAck(BaseModel):
     """ACK response for chat:send event."""

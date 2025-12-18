@@ -70,11 +70,10 @@ export function GroupChatSyncManager({
     },
   });
 
-  // Stream subscription (automatically connects when streamingSubtaskId changes)
+  // Stream subscription via WebSocket (automatically connects when streamingSubtaskId changes)
   const { content: streamContent, error: streamError } = useGroupChatStream({
     taskId,
     subtaskId: streamingSubtaskId, // undefined means not subscribed
-    offset: 0,
     onChunk: chunk => {
       if (onStreamContent && chunk.subtask_id) {
         onStreamContent(chunk.content, chunk.subtask_id);

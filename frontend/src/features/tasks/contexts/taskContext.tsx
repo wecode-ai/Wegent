@@ -4,7 +4,15 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+  useRef,
+  useCallback,
+} from 'react';
 import { Task, TaskDetail, TaskStatus } from '@/types/api';
 import { taskApis } from '@/apis/tasks';
 import { notifyTaskCompletion } from '@/utils/notification';
@@ -14,6 +22,8 @@ import {
   markAllTasksAsViewed,
   initializeTaskViewStatus,
 } from '@/utils/taskViewStatus';
+import { useSocket } from '@/contexts/SocketContext';
+import { TaskCreatedPayload, TaskInvitedPayload } from '@/types/socket';
 
 type TaskContextType = {
   tasks: Task[];
@@ -57,6 +67,9 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
   // Track task status for notification
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
+
+  // WebSocket connection for real-time task updates
+  const { registerTaskHandlers, isConnected } = useSocket();
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true);
@@ -161,38 +174,116 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Poll for new tasks every 5 seconds using the maximum task ID
-  useEffect(() => {
-    const checkForNewTasks = async () => {
-      if (tasks.length === 0) return;
+  // Handle new task created via WebSocket
+  const handleTaskCreated = useCallback((data: TaskCreatedPayload) => {
+    console.log('[TaskContext] Received task:created event via WebSocket:', data);
 
-      // Get the maximum task ID from current tasks
-      const maxTaskId = Math.max(...tasks.map(task => task.id));
-
-      try {
-        const result = await taskApis.getNewTasksLite(maxTaskId);
-
-        // If there are new tasks, prepend them to the beginning
-        if (result.items.length > 0) {
-          setTasks(prev => [...result.items.reverse(), ...prev]);
-
-          // Initialize view status for new tasks
-          initializeTaskViewStatus(result.items);
-
-          console.log(`[TaskContext] Found ${result.items.length} new task(s)`);
-        }
-      } catch (error) {
-        console.error('[TaskContext] Failed to check for new tasks:', error);
+    // Check if task already exists in the list
+    setTasks(prev => {
+      const exists = prev.some(task => task.id === data.task_id);
+      if (exists) {
+        console.log(`[TaskContext] Task ${data.task_id} already exists, skipping`);
+        return prev;
       }
-    };
 
-    // Start polling every 5 seconds
-    const interval = setInterval(checkForNewTasks, 5000);
+      // Create a new task object from the WebSocket payload
+      // Note: Some fields use empty string as default since Task interface requires string type
+      const newTask: Task = {
+        id: data.task_id,
+        title: data.title,
+        team_id: data.team_id,
+        git_url: '',
+        git_repo: '',
+        git_repo_id: 0,
+        git_domain: '',
+        branch_name: '',
+        prompt: '',
+        status: 'PENDING' as TaskStatus,
+        task_type: 'chat',
+        progress: 0,
+        batch: 0,
+        result: {},
+        error_message: '',
+        user_id: 0,
+        user_name: '',
+        created_at: data.created_at,
+        updated_at: data.created_at,
+        completed_at: '',
+        is_group_chat: false,
+      };
+
+      // Initialize view status for the new task
+      initializeTaskViewStatus([newTask]);
+
+      console.log(`[TaskContext] Added new task ${data.task_id} via WebSocket`);
+      return [newTask, ...prev];
+    });
+  }, []);
+
+  // Handle user invited to group chat via WebSocket
+  const handleTaskInvited = useCallback((data: TaskInvitedPayload) => {
+    console.log('[TaskContext] Received task:invited event via WebSocket:', data);
+
+    // Check if task already exists in the list
+    setTasks(prev => {
+      const exists = prev.some(task => task.id === data.task_id);
+      if (exists) {
+        console.log(`[TaskContext] Task ${data.task_id} already exists (invited), skipping`);
+        return prev;
+      }
+
+      // Create a new task object from the WebSocket payload for invited group chat
+      const newTask: Task = {
+        id: data.task_id,
+        title: data.title,
+        team_id: data.team_id,
+        git_url: '',
+        git_repo: '',
+        git_repo_id: 0,
+        git_domain: '',
+        branch_name: '',
+        prompt: '',
+        status: 'PENDING' as TaskStatus,
+        task_type: 'chat',
+        progress: 0,
+        batch: 0,
+        result: {},
+        error_message: '',
+        user_id: 0,
+        user_name: '',
+        created_at: data.created_at,
+        updated_at: data.created_at,
+        completed_at: '',
+        is_group_chat: data.is_group_chat,
+      };
+
+      // Initialize view status for the new task
+      initializeTaskViewStatus([newTask]);
+
+      console.log(`[TaskContext] Added invited group chat task ${data.task_id} via WebSocket`);
+      return [newTask, ...prev];
+    });
+  }, []);
+
+  // Register WebSocket event handlers for real-time task updates
+  useEffect(() => {
+    // Only register handlers when WebSocket is connected
+    if (!isConnected) {
+      console.log('[TaskContext] WebSocket not connected, skipping task handler registration');
+      return;
+    }
+
+    console.log('[TaskContext] Registering WebSocket task handlers');
+    const cleanup = registerTaskHandlers({
+      onTaskCreated: handleTaskCreated,
+      onTaskInvited: handleTaskInvited,
+    });
 
     return () => {
-      clearInterval(interval);
+      console.log('[TaskContext] Cleaning up WebSocket task handlers');
+      cleanup();
     };
-  }, [tasks]);
+  }, [isConnected, registerTaskHandlers, handleTaskCreated, handleTaskInvited]);
 
   // Only refresh periodically when there are unfinished tasks OR when there's a network error
   // This ensures polling continues even after network errors to recover when connection is restored

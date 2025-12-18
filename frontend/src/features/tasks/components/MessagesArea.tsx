@@ -574,12 +574,16 @@ export default function MessagesArea({
         }
 
         // Check if we have recovered content for this subtask
+        // Only use recovery content when still actively streaming (recovery.streaming === true)
+        // Once streaming completes, the backend will have saved the content to DB,
+        // so we should use the normal content from subtask.result instead
         const recovery = recoveryMap.get(sub.id);
         let recoveredContent: string | undefined;
         let isRecovered = false;
         let isIncomplete = false;
 
-        if (recovery?.recovered && recovery.content) {
+        if (recovery?.recovered && recovery.content && recovery.streaming) {
+          // Only mark as recovered when actively streaming recovery content
           recoveredContent = recovery.content;
           isRecovered = true;
           isIncomplete = recovery.incomplete;

@@ -4,13 +4,15 @@
 
 import type { Team, GitRepoInfo, GitBranch, TaskDetail, Bot } from '@/types/api';
 import { taskApis, CreateTaskRequest } from '@/apis/tasks';
-import { chatApis, StreamChatCallbacks } from '@/apis/chat';
 
 /**
- * Check if a team uses Chat Shell type (supports direct streaming chat).
+ * Check if a team uses Chat Shell type (supports direct streaming chat via WebSocket).
  * This function checks multiple sources to determine if the team is a Chat Shell:
  * 1. team.agent_type === 'chat' (primary check)
  * 2. team.bots[0].bot.shell_type === 'Chat' (fallback for task detail teams)
+ *
+ * NOTE: Chat Shell now uses WebSocket for streaming instead of SSE.
+ * The streaming is handled by ChatStreamContext, not this service.
  *
  * @param team - Team to check
  * @returns true if the team uses Chat Shell
@@ -74,13 +76,13 @@ export function isTaskChatShell(taskDetail: TaskDetail | null): boolean {
 export interface SendMessageResult {
   error: string;
   newTask: { task_id: number } | null;
-  abort?: () => void;
 }
 
 /**
- * Send message:
- * - For Chat Shell: directly call streaming API
- * - For other shells: create task and poll for results
+ * Send message for non-Chat Shell teams.
+ *
+ * NOTE: For Chat Shell teams, use ChatStreamContext.startStream() instead.
+ * This function is only for non-streaming task creation (e.g., code tasks, Dify, etc.)
  *
  * @param params - Message parameters
  * @returns Result with error message or new task info
@@ -95,9 +97,6 @@ export async function sendMessage(params: {
   title?: string;
   model_id?: string;
   force_override_bot_model?: boolean;
-  search_engine?: string;
-  /** Stream callbacks for Chat Shell (required for Chat Shell) */
-  streamCallbacks?: StreamChatCallbacks;
 }): Promise<SendMessageResult> {
   const {
     message,
@@ -109,8 +108,6 @@ export async function sendMessage(params: {
     title,
     model_id,
     force_override_bot_model,
-    search_engine,
-    streamCallbacks,
   } = params;
   const trimmed = message?.trim() ?? '';
 
@@ -123,47 +120,6 @@ export async function sendMessage(params: {
     return { error: 'Please select Team', newTask: null };
   }
 
-  // Debug logging
-  const isChatShellResult = isChatShell(team);
-  console.log('[sendMessage] Debug info:', {
-    isChatShell: isChatShellResult,
-    hasStreamCallbacks: !!streamCallbacks,
-    team_agent_type: team?.agent_type,
-    team_bots_length: team?.bots?.length,
-    first_bot_shell_type: team?.bots?.[0]?.bot?.shell_type,
-    will_use_streaming: isChatShellResult && !!streamCallbacks,
-    team_object: team,
-  });
-
-  // Chat Shell: use streaming API directly
-  if (isChatShell(team) && streamCallbacks) {
-    console.log('[sendMessage] ✅ Using streaming API');
-    try {
-      const { taskId, abort } = await chatApis.streamChat(
-        {
-          message: trimmed,
-          team_id: team?.id ?? 0,
-          task_id: task_id,
-          title: title,
-          model_id: model_id,
-          force_override_bot_model: force_override_bot_model,
-          search_engine: search_engine,
-          git_url: repo?.git_url,
-          git_repo: repo?.git_repo,
-          git_repo_id: repo?.git_repo_id,
-          git_domain: repo?.git_domain,
-          branch_name: branch?.name,
-        },
-        streamCallbacks
-      );
-      return { error: '', newTask: { task_id: taskId }, abort };
-    } catch (error) {
-      return { error: (error as Error)?.message || 'Failed to start chat stream', newTask: null };
-    }
-  }
-
-  // Other shells: use task creation flow
-  console.log('[sendMessage] ❌ Using task creation flow (non-streaming)');
   // For code type tasks, repository is required
   if (taskType === 'code' && !repo) {
     return { error: 'Please select a repository for code tasks', newTask: null };
@@ -173,7 +129,7 @@ export async function sendMessage(params: {
   const payload: { task_id?: number; message: string } & CreateTaskRequest = {
     task_id: Number.isFinite(task_id as number) ? (task_id as number) : undefined,
     message: trimmed,
-    title: trimmed.substring(0, 100),
+    title: title || trimmed.substring(0, 100),
     team_id: team?.id ?? 0,
     git_url: repo?.git_url ?? '',
     git_repo: repo?.git_repo ?? '',

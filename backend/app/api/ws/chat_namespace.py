@@ -149,7 +149,9 @@ async def get_active_streaming(task_id: int) -> Optional[Dict[str, Any]]:
             return {
                 "subtask_id": subtask.id,
                 "user_id": subtask.user_id,
-                "started_at": subtask.created_at.isoformat() if subtask.created_at else None,
+                "started_at": (
+                    subtask.created_at.isoformat() if subtask.created_at else None
+                ),
             }
 
         return None
@@ -167,12 +169,54 @@ class ChatNamespace(socketio.AsyncNamespace):
     - Room management (user rooms, task rooms)
     - Chat message sending and streaming
     - Task events
+
+    Note: Event names with colons (e.g., 'chat:send') are handled by
+    overriding the trigger_event method to map colon-separated event names
+    to their handler methods.
     """
 
     def __init__(self, namespace: str = "/chat"):
         """Initialize the chat namespace."""
         super().__init__(namespace)
         self._active_streams: Dict[int, asyncio.Task] = {}  # subtask_id -> stream task
+
+        # Map colon-separated event names to handler methods
+        self._event_handlers: Dict[str, str] = {
+            "chat:send": "on_chat_send",
+            "chat:cancel": "on_chat_cancel",
+            "chat:resume": "on_chat_resume",
+            "task:join": "on_task_join",
+            "task:leave": "on_task_leave",
+            "history:sync": "on_history_sync",
+        }
+
+    async def trigger_event(self, event: str, sid: str, *args):
+        """
+        Override trigger_event to handle colon-separated event names.
+
+        python-socketio's default behavior converts on_xxx methods to xxx events,
+        but we need to support colon-separated event names like 'chat:send'.
+
+        Args:
+            event: Event name (e.g., 'chat:send')
+            sid: Socket ID
+            *args: Event arguments
+
+        Returns:
+            Result from the event handler
+        """
+        # Check if this is a colon-separated event we handle
+        if event in self._event_handlers:
+            handler_name = self._event_handlers[event]
+            handler = getattr(self, handler_name, None)
+            if handler:
+                logger.debug(
+                    f"[WS] Routing event '{event}' to handler '{handler_name}'"
+                )
+                return await handler(sid, *args)
+
+        # Fall back to default behavior for other events (connect, disconnect, etc.)
+        return await super().trigger_event(event, sid, *args)
 
     async def on_connect(self, sid: str, environ: dict, auth: Optional[dict] = None):
         """
@@ -217,7 +261,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Join user room
         user_room = f"user:{user.id}"
-        self.enter_room(sid, user_room)
+        await self.enter_room(sid, user_room)
 
         logger.info(f"[WS] Connected user={user.id} ({user.user_name}) sid={sid}")
 
@@ -269,7 +313,7 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Join task room
         task_room = f"task:{payload.task_id}"
-        self.enter_room(sid, task_room)
+        await self.enter_room(sid, task_room)
 
         logger.info(f"[WS] User {user_id} joined task room {payload.task_id}")
 
@@ -309,7 +353,7 @@ class ChatNamespace(socketio.AsyncNamespace):
             return {"error": f"Invalid payload: {e}"}
 
         task_room = f"task:{payload.task_id}"
-        self.leave_room(sid, task_room)
+        await self.leave_room(sid, task_room)
 
         session = await self.get_session(sid)
         user_id = session.get("user_id", "unknown")
@@ -334,16 +378,24 @@ class ChatNamespace(socketio.AsyncNamespace):
         Returns:
             {"task_id": int, "subtask_id": int} or {"error": "..."}
         """
+        logger.info(f"[WS] chat:send received sid={sid} data={data}")
+
         try:
             payload = ChatSendPayload(**data)
+            logger.info(
+                f"[WS] chat:send payload parsed: team_id={payload.team_id}, task_id={payload.task_id}, message_len={len(payload.message) if payload.message else 0}"
+            )
         except ValidationError as e:
+            logger.error(f"[WS] chat:send validation error: {e}")
             return {"error": f"Invalid payload: {e}"}
 
         session = await self.get_session(sid)
         user_id = session.get("user_id")
         user_name = session.get("user_name")
+        logger.info(f"[WS] chat:send session: user_id={user_id}, user_name={user_name}")
 
         if not user_id:
+            logger.error("[WS] chat:send error: Not authenticated")
             return {"error": "Not authenticated"}
 
         db = SessionLocal()
@@ -351,7 +403,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Get user
             user = db.query(User).filter(User.id == user_id).first()
             if not user:
+                logger.error(f"[WS] chat:send error: User not found for id={user_id}")
                 return {"error": "User not found"}
+            logger.info(f"[WS] chat:send user found: {user.user_name}")
 
             # Get team
             team = (
@@ -365,7 +419,11 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
 
             if not team:
+                logger.error(
+                    f"[WS] chat:send error: Team not found for id={payload.team_id}"
+                )
                 return {"error": "Team not found"}
+            logger.info(f"[WS] chat:send team found: {team.name} (id={team.id})")
 
             # Import existing helpers from chat endpoint
             from app.api.endpoints.adapter.chat import (
@@ -375,7 +433,10 @@ class ChatNamespace(socketio.AsyncNamespace):
             )
 
             # Check if team supports direct chat
-            if not _should_use_direct_chat(db, team, user_id):
+            supports_direct_chat = _should_use_direct_chat(db, team, user_id)
+            logger.info(f"[WS] chat:send supports_direct_chat={supports_direct_chat}")
+            if not supports_direct_chat:
+                logger.error(f"[WS] chat:send error: Team does not support direct chat")
                 return {"error": "This team does not support direct chat"}
 
             # Create StreamChatRequest
@@ -388,15 +449,69 @@ class ChatNamespace(socketio.AsyncNamespace):
                 model_id=payload.force_override_bot_model,
                 force_override_bot_model=payload.force_override_bot_model is not None,
             )
+            logger.info(f"[WS] chat:send StreamChatRequest created")
 
             # Create task and subtasks
-            task, assistant_subtask = await _create_task_and_subtasks(
+            logger.info(f"[WS] chat:send calling _create_task_and_subtasks...")
+            result = await _create_task_and_subtasks(
                 db, user, team, payload.message, request, payload.task_id
+            )
+            logger.info(
+                f"[WS] chat:send _create_task_and_subtasks returned: ai_triggered={result.get('ai_triggered')}, task_id={result.get('task').id if result.get('task') else None}"
+            )
+
+            task = result["task"]
+            assistant_subtask = result["assistant_subtask"]
+
+            # Check if AI was triggered (for group chat without @mention)
+            if not result["ai_triggered"]:
+                logger.info(
+                    f"[WS] chat:send AI not triggered (group chat without @mention)"
+                )
+                return {
+                    "error": "Message saved but AI not triggered (group chat without @mention)"
+                }
+
+            if not assistant_subtask:
+                logger.error(
+                    f"[WS] chat:send error: Failed to create assistant subtask"
+                )
+                return {"error": "Failed to create assistant subtask"}
+
+            logger.info(
+                f"[WS] chat:send task created: task_id={task.id}, subtask_id={assistant_subtask.id}"
             )
 
             # Join task room if not already joined
             task_room = f"task:{task.id}"
-            self.enter_room(sid, task_room)
+            await self.enter_room(sid, task_room)
+            logger.info(f"[WS] chat:send joined task room: {task_room}")
+
+            # Emit task:created event to user room for task list update
+            # This allows other browser tabs/devices to receive the new task notification
+            from app.api.ws.events import ServerEvents
+            from app.services.chat.ws_emitter import get_ws_emitter
+
+            ws_emitter = get_ws_emitter()
+            if ws_emitter:
+                # Get team name for the event payload
+                team_crd = Team.model_validate(team.json)
+                team_name = team_crd.metadata.name if team_crd.metadata else team.name
+
+                # Get task title
+                task_crd = Task.model_validate(task.json)
+                task_title = task_crd.spec.title or ""
+
+                await ws_emitter.emit_task_created(
+                    user_id=user_id,
+                    task_id=task.id,
+                    title=task_title,
+                    team_id=team.id,
+                    team_name=team_name,
+                )
+                logger.info(
+                    f"[WS] chat:send emitted task:created event for task_id={task.id}"
+                )
 
             # Get user subtask for broadcasting
             user_subtask = (
@@ -407,6 +522,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                     Subtask.role == SubtaskRole.USER,
                 )
                 .first()
+            )
+            logger.info(
+                f"[WS] chat:send user_subtask found: {user_subtask.id if user_subtask else None}"
             )
 
             # Broadcast user message to room (exclude sender)
@@ -429,10 +547,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                     room=task_room,
                     skip_sid=sid,
                 )
+                logger.info(f"[WS] chat:send broadcasted user message to room")
 
             # Emit chat:start
             from app.api.ws.events import ServerEvents
 
+            logger.info(f"[WS] chat:send emitting chat:start event")
             await self.emit(
                 ServerEvents.CHAT_START,
                 {
@@ -441,34 +561,54 @@ class ChatNamespace(socketio.AsyncNamespace):
                 },
                 room=task_room,
             )
+            logger.info(f"[WS] chat:send chat:start emitted")
+
+            # Extract data from ORM objects before closing the session
+            # This prevents DetachedInstanceError in the background task
+            team_data = {
+                "id": team.id,
+                "user_id": team.user_id,
+                "json": team.json,  # Access json while session is still open
+            }
+            user_data = {
+                "id": user.id,
+                "user_name": user.user_name,
+            }
 
             # Start streaming in background task
+            logger.info(f"[WS] chat:send starting background stream task")
             stream_task = asyncio.create_task(
                 self._stream_chat_response(
                     task_id=task.id,
                     subtask_id=assistant_subtask.id,
-                    team=team,
-                    user=user,
+                    team_data=team_data,
+                    user_data=user_data,
                     message=payload.message,
                     payload=payload,
                 )
             )
             self._active_streams[assistant_subtask.id] = stream_task
+            logger.info(f"[WS] chat:send background stream task started")
 
-            return {"task_id": task.id, "subtask_id": assistant_subtask.id}
+            response = {"task_id": task.id, "subtask_id": assistant_subtask.id}
+            logger.info(f"[WS] chat:send returning response: {response}")
+            return response
 
         except Exception as e:
-            logger.exception(f"[WS] chat:send error: {e}")
-            return {"error": str(e)}
+            logger.exception(f"[WS] chat:send exception: {e}")
+            error_response = {"error": str(e)}
+            logger.info(f"[WS] chat:send returning error response: {error_response}")
+            return error_response
         finally:
+            logger.info(f"[WS] chat:send finally block, closing db")
             db.close()
 
     async def _stream_chat_response(
         self,
         task_id: int,
         subtask_id: int,
-        team: Kind,
-        user: User,
+        team_data: Dict[str, Any],
+        user_data: Dict[str, Any],
         message: str,
         payload: ChatSendPayload,
     ):
@@ -478,8 +618,8 @@ class ChatNamespace(socketio.AsyncNamespace):
         Args:
             task_id: Task ID
             subtask_id: Assistant subtask ID
-            team: Team Kind object
-            user: User object
+            team_data: Dict with team info (id, user_id, json)
+            user_data: Dict with user info (id, user_name)
             message: User message
             payload: Original chat send payload
         """
@@ -499,13 +639,13 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         try:
             # Get first bot for model config
-            team_crd = Team.model_validate(team.json)
+            team_crd = Team.model_validate(team_data["json"])
             first_member = team_crd.spec.members[0]
 
             bot = (
                 db.query(Kind)
                 .filter(
-                    Kind.user_id == team.user_id,
+                    Kind.user_id == team_data["user_id"],
                     Kind.kind == "Bot",
                     Kind.name == first_member.botRef.name,
                     Kind.namespace == first_member.botRef.namespace,
@@ -526,14 +666,14 @@ class ChatNamespace(socketio.AsyncNamespace):
             model_config = get_model_config_for_bot(
                 db,
                 bot,
-                team.user_id,
+                team_data["user_id"],
                 override_model_name=payload.force_override_bot_model,
                 force_override=payload.force_override_bot_model is not None,
             )
 
             # Get system prompt
             system_prompt = get_bot_system_prompt(
-                db, bot, team.user_id, first_member.prompt
+                db, bot, team_data["user_id"], first_member.prompt
             )
 
             # Handle attachment
@@ -545,7 +685,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 attachment = attachment_service.get_attachment(
                     db=db,
                     attachment_id=payload.attachment_id,
-                    user_id=user.id,
+                    user_id=user_data["id"],
                 )
 
                 if attachment and attachment.status == AttachmentStatus.READY:
@@ -565,17 +705,17 @@ class ChatNamespace(socketio.AsyncNamespace):
             # Build data sources for placeholder replacement
             bot_spec = bot.json.get("spec", {}) if bot.json else {}
             agent_config = bot_spec.get("agent_config", {})
-            user_info = {"id": user.id, "name": user.user_name}
-            task_data = {
+            user_info = {"id": user_data["id"], "name": user_data["user_name"]}
+            task_data_dict = {
                 "task_id": task_id,
-                "team_id": team.id,
+                "team_id": team_data["id"],
                 "user": user_info,
                 "prompt": message,
             }
             data_sources = {
                 "agent_config": agent_config,
                 "model_config": model_config,
-                "task_data": task_data,
+                "task_data": task_data_dict,
                 "user": user_info,
             }
 
@@ -602,7 +742,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             from app.services.chat.providers.base import ChunkType
 
             history = await session_manager.get_chat_history(task_id)
-            messages = message_builder.build_messages(history, final_message, system_prompt)
+            messages = message_builder.build_messages(
+                history, final_message, system_prompt
+            )
 
             client = await get_http_client()
             provider = get_provider(model_config, client)
@@ -622,7 +764,9 @@ class ChatNamespace(socketio.AsyncNamespace):
             db_save_interval = settings.STREAMING_DB_SAVE_INTERVAL
 
             async for chunk in provider.stream_chat(messages, cancel_event, tools=None):
-                if cancel_event.is_set() or await session_manager.is_cancelled(subtask_id):
+                if cancel_event.is_set() or await session_manager.is_cancelled(
+                    subtask_id
+                ):
                     # Cancelled
                     await self.emit(
                         ServerEvents.CHAT_CANCELLED,
@@ -649,13 +793,19 @@ class ChatNamespace(socketio.AsyncNamespace):
                     # Save to Redis periodically
                     current_time = asyncio.get_event_loop().time()
                     if current_time - last_redis_save >= redis_save_interval:
-                        await session_manager.save_streaming_content(subtask_id, full_response)
-                        await session_manager.publish_streaming_chunk(subtask_id, chunk.content)
+                        await session_manager.save_streaming_content(
+                            subtask_id, full_response
+                        )
+                        await session_manager.publish_streaming_chunk(
+                            subtask_id, chunk.content
+                        )
                         last_redis_save = current_time
 
                     # Save to DB periodically
                     if current_time - last_db_save >= db_save_interval:
-                        await db_handler.save_partial_response(subtask_id, full_response)
+                        await db_handler.save_partial_response(
+                            subtask_id, full_response
+                        )
                         last_db_save = current_time
 
                 elif chunk.type == ChunkType.ERROR:
@@ -676,7 +826,23 @@ class ChatNamespace(socketio.AsyncNamespace):
             if not cancel_event.is_set():
                 result = {"value": full_response}
 
-                # Emit done
+                # Save to Redis and DB FIRST before emitting done event
+                # This ensures the database is updated before frontend refreshes
+                await session_manager.save_streaming_content(subtask_id, full_response)
+                await session_manager.publish_streaming_done(subtask_id, result)
+
+                # Save chat history
+                await session_manager.append_user_and_assistant_messages(
+                    task_id, message, full_response
+                )
+
+                # Update subtask to completed
+                await db_handler.update_subtask_status(
+                    subtask_id, "COMPLETED", result={"value": full_response}
+                )
+
+                # Emit done event AFTER database is updated
+                # This ensures frontend can immediately fetch the updated data
                 await self.emit(
                     ServerEvents.CHAT_DONE,
                     {
@@ -691,24 +857,12 @@ class ChatNamespace(socketio.AsyncNamespace):
                 ws_emitter = get_ws_emitter()
                 if ws_emitter:
                     await ws_emitter.emit_chat_bot_complete(
-                        user_id=user.id,
+                        user_id=user_data["id"],
                         task_id=task_id,
                         subtask_id=subtask_id,
                         content=full_response,
                         result=result,
                     )
-
-                # Save to Redis and DB
-                await session_manager.save_streaming_content(subtask_id, full_response)
-                await session_manager.publish_streaming_done(subtask_id, result)
-
-                # Save chat history
-                await session_manager.append_user_and_assistant_messages(
-                    task_id, message, full_response
-                )
-
-                # Update subtask
-                await db_handler.complete_subtask(subtask_id, full_response)
 
         except Exception as e:
             logger.exception(f"[WS] Stream error subtask={subtask_id}: {e}")
@@ -763,7 +917,9 @@ class ChatNamespace(socketio.AsyncNamespace):
                 return {"error": "Subtask not found"}
 
             if subtask.status not in [SubtaskStatus.PENDING, SubtaskStatus.RUNNING]:
-                return {"error": f"Cannot cancel subtask in {subtask.status.value} state"}
+                return {
+                    "error": f"Cannot cancel subtask in {subtask.status.value} state"
+                }
 
             # Signal cancellation
             await session_manager.cancel_stream(payload.subtask_id)
@@ -839,14 +995,14 @@ class ChatNamespace(socketio.AsyncNamespace):
 
         # Join task room
         task_room = f"task:{payload.task_id}"
-        self.enter_room(sid, task_room)
+        await self.enter_room(sid, task_room)
 
         # Get cached content
         cached_content = await session_manager.get_streaming_content(payload.subtask_id)
 
         if cached_content and payload.offset < len(cached_content):
             # Send remaining content
-            remaining = cached_content[payload.offset:]
+            remaining = cached_content[payload.offset :]
             from app.api.ws.events import ServerEvents
 
             await self.emit(
@@ -906,7 +1062,11 @@ class ChatNamespace(socketio.AsyncNamespace):
                     "subtask_id": st.id,
                     "message_id": st.message_id,
                     "role": st.role.value,
-                    "content": st.prompt if st.role == SubtaskRole.USER else (st.result.get("value", "") if st.result else ""),
+                    "content": (
+                        st.prompt
+                        if st.role == SubtaskRole.USER
+                        else (st.result.get("value", "") if st.result else "")
+                    ),
                     "status": st.status.value,
                     "created_at": st.created_at.isoformat() if st.created_at else None,
                 }

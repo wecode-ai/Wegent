@@ -41,7 +41,9 @@ def create_socketio_server() -> socketio.AsyncServer:
         mgr = socketio.AsyncRedisManager(redis_url)
         logger.info(f"Socket.IO Redis manager initialized with {redis_url}")
     except Exception as e:
-        logger.warning(f"Failed to create Redis manager: {e}, falling back to in-memory")
+        logger.warning(
+            f"Failed to create Redis manager: {e}, falling back to in-memory"
+        )
         mgr = None
 
     # Create Socket.IO server

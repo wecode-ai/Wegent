@@ -153,7 +153,9 @@ class WebSocketEmitter:
             room=f"task:{task_id}",
             namespace=self.namespace,
         )
-        logger.warning(f"[WS] emit chat:error task={task_id} subtask={subtask_id} error={error}")
+        logger.warning(
+            f"[WS] emit chat:error task={task_id} subtask={subtask_id} error={error}"
+        )
 
     async def emit_chat_cancelled(
         self,
@@ -376,7 +378,9 @@ class WebSocketEmitter:
             room=f"user:{user_id}",
             namespace=self.namespace,
         )
-        logger.debug(f"[WS] emit task:status user={user_id} task={task_id} status={status}")
+        logger.debug(
+            f"[WS] emit task:status user={user_id} task={task_id} status={status}"
+        )
 
     async def emit_task_shared(
         self,
@@ -405,6 +409,42 @@ class WebSocketEmitter:
             namespace=self.namespace,
         )
         logger.debug(f"[WS] emit task:shared user={user_id} task={task_id}")
+
+    async def emit_task_invited(
+        self,
+        user_id: int,
+        task_id: int,
+        title: str,
+        team_id: int,
+        team_name: str,
+        invited_by: Dict[str, Any],
+    ) -> None:
+        """
+        Emit task:invited event to user room when user is invited to a group chat.
+
+        Args:
+            user_id: Target user ID (who is invited)
+            task_id: Task ID
+            title: Task title
+            team_id: Team ID
+            team_name: Team name
+            invited_by: Info about who invited the user
+        """
+        await self.sio.emit(
+            ServerEvents.TASK_INVITED,
+            {
+                "task_id": task_id,
+                "title": title,
+                "team_id": team_id,
+                "team_name": team_name,
+                "invited_by": invited_by,
+                "is_group_chat": True,
+                "created_at": datetime.now().isoformat(),
+            },
+            room=f"user:{user_id}",
+            namespace=self.namespace,
+        )
+        logger.debug(f"[WS] emit task:invited user={user_id} task={task_id}")
 
     async def emit_unread_count(self, user_id: int, count: int) -> None:
         """
