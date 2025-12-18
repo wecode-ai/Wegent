@@ -355,50 +355,6 @@ def create_app():
     else:
         logger.debug("OpenTelemetry is disabled")
 
-    # Shutdown middleware - reject new requests during graceful shutdown
-    @app.middleware("http")
-    async def shutdown_middleware(request: Request, call_next):
-        """
-        Middleware to handle graceful shutdown.
-
-        During shutdown:
-        - Health check endpoints (/health, /ready, /) are always allowed
-        - New requests are rejected with 503 Service Unavailable
-        - Existing streaming requests continue until completion
-        """
-        # Always allow health check and probe endpoints
-        allowed_paths = {
-            "/",
-            "/api/health",
-            "/api/ready",
-            "/api/startup",
-            "/api/shutdown/status",
-            "/api/shutdown/reset",
-        }
-        if request.url.path in allowed_paths:
-            return await call_next(request)
-
-        # Reject new requests during shutdown if configured
-        if shutdown_manager.is_shutting_down and settings.SHUTDOWN_REJECT_NEW_REQUESTS:
-            from starlette.responses import JSONResponse
-
-            logger.warning(
-                "Rejecting request during shutdown: %s %s",
-                request.method,
-                request.url.path,
-            )
-            return JSONResponse(
-                status_code=503,
-                content={
-                    "detail": "Service is shutting down",
-                    "retry_after": 5,
-                    "active_streams": shutdown_manager.get_active_stream_count(),
-                },
-                headers={"Retry-After": "5"},
-            )
-
-        return await call_next(request)
-
     @app.middleware("http")
     async def log_requests(request: Request, call_next):
         from starlette.responses import StreamingResponse
