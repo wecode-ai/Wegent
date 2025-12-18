@@ -214,7 +214,9 @@ class TaskMemberService:
             existing.status = MemberStatus.ACTIVE
             existing.invited_by = invited_by
             existing.joined_at = datetime.utcnow()
-            existing.removed_at = None
+            existing.removed_at = datetime(
+                1970, 1, 1
+            )  # Reset to default epoch time for not removed
             existing.updated_at = datetime.utcnow()
             db.commit()
             db.refresh(existing)

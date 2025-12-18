@@ -292,9 +292,7 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
                 "progress": subtask.progress,
                 "result": subtask.result,
                 "error_message": subtask.error_message,
-                "sender_type": (
-                    subtask.sender_type.value if subtask.sender_type else None
-                ),
+                "sender_type": subtask.sender_type,  # Already a string value, not enum
                 "sender_user_id": subtask.sender_user_id,
                 "sender_username": sender_username,
                 "created_at": (

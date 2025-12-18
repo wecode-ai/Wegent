@@ -32,16 +32,16 @@ def upgrade() -> None:
         """
     CREATE TABLE IF NOT EXISTS task_members (
         id INT NOT NULL AUTO_INCREMENT COMMENT 'Primary key',
-        task_id INT NOT NULL COMMENT 'Related Task Kind.id',
-        user_id INT NOT NULL COMMENT 'Member user ID',
-        invited_by INT NOT NULL COMMENT 'Inviter user ID',
-        status ENUM('ACTIVE', 'REMOVED') NOT NULL DEFAULT 'ACTIVE' COMMENT 'Member status',
+        task_id INT NOT NULL DEFAULT 0 COMMENT 'Related Task Kind.id',
+        user_id INT NOT NULL DEFAULT 0 COMMENT 'Member user ID',
+        invited_by INT NOT NULL DEFAULT 0 COMMENT 'Inviter user ID',
+        status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' COMMENT 'Member status: ACTIVE or REMOVED',
         joined_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Join timestamp',
-        removed_at DATETIME DEFAULT NULL COMMENT 'Removal timestamp',
+        removed_at DATETIME NOT NULL DEFAULT '1970-01-01 00:00:00' COMMENT 'Removal timestamp, default epoch time for not removed',
         created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT 'Creation timestamp',
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT 'Last update timestamp',
         PRIMARY KEY (id),
-        UNIQUE KEY uq_task_member (task_id, user_id),
+        UNIQUE KEY uniq_task_member (task_id, user_id),
         KEY idx_task_members_task_id (task_id),
         KEY idx_task_members_user_id (user_id)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
@@ -52,7 +52,7 @@ def upgrade() -> None:
     op.execute(
         """
     ALTER TABLE subtasks
-    ADD COLUMN sender_type ENUM('USER', 'TEAM') DEFAULT NULL COMMENT 'Sender type: USER or TEAM' AFTER completed_at,
+    ADD COLUMN sender_type VARCHAR(20) DEFAULT NULL COMMENT 'Sender type: USER or TEAM' AFTER completed_at,
     ADD COLUMN sender_user_id INT DEFAULT NULL COMMENT 'User ID when sender_type=USER' AFTER sender_type,
     ADD COLUMN reply_to_subtask_id INT DEFAULT NULL COMMENT 'Quoted message ID for reply feature' AFTER sender_user_id
     """

@@ -62,7 +62,9 @@ class Subtask(Base):
     completed_at = Column(DateTime)
 
     # Group chat fields
-    sender_type = Column(SQLEnum(SenderType), nullable=True)  # USER or TEAM
+    sender_type = Column(
+        String(20), nullable=True
+    )  # VARCHAR instead of ENUM: USER or TEAM
     sender_user_id = Column(Integer, nullable=True)  # User ID when sender_type=USER
     reply_to_subtask_id = Column(Integer, nullable=True)  # Quoted message ID
 

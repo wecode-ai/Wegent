@@ -570,6 +570,196 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         return result, total
 
+    def get_new_tasks_since_id(
+        self, db: Session, *, user_id: int, since_id: int, limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Get new tasks created after the specified task ID.
+        Returns tasks with ID greater than since_id, ordered by ID descending.
+        Includes tasks owned by user AND tasks user is a member of (group chats).
+        """
+        # Get task IDs where user is owner OR member, with ID > since_id
+        ids_sql = text(
+            """
+            SELECT DISTINCT k.id, k.created_at
+            FROM kinds k
+            LEFT JOIN task_members tm ON k.id = tm.task_id AND tm.user_id = :user_id AND tm.status = 'ACTIVE'
+            WHERE k.kind = 'Task'
+            AND k.is_active = true
+            AND k.id > :since_id
+            AND (k.user_id = :user_id OR tm.id IS NOT NULL)
+            ORDER BY k.id DESC
+            LIMIT :limit
+        """
+        )
+        task_id_rows = db.execute(
+            ids_sql, {"user_id": user_id, "since_id": since_id, "limit": limit}
+        ).fetchall()
+        task_ids = [row[0] for row in task_id_rows]
+
+        if not task_ids:
+            return []
+
+        # Load full task data for the selected IDs
+        tasks = db.query(Kind).filter(Kind.id.in_(task_ids)).all()
+
+        # Filter out DELETE status tasks and restore order
+        id_to_task = {}
+        for t in tasks:
+            task_crd = Task.model_validate(t.json)
+            status = task_crd.status.status if task_crd.status else "PENDING"
+            if status != "DELETE":
+                id_to_task[t.id] = t
+
+        # Restore the original order (by ID descending)
+        tasks = [id_to_task[tid] for tid in task_ids if tid in id_to_task]
+
+        # Get task member counts in batch for is_group_chat detection
+        from app.models.task_member import MemberStatus, TaskMember
+
+        task_ids_for_members = [t.id for t in tasks]
+        member_counts = {}
+        if task_ids_for_members:
+            member_count_results = (
+                db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+                .filter(
+                    TaskMember.task_id.in_(task_ids_for_members),
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .group_by(TaskMember.task_id)
+                .all()
+            )
+            member_counts = {row[0]: row[1] for row in member_count_results}
+
+        # Build lightweight result (same structure as get_user_tasks_lite)
+        result = []
+        for task in tasks:
+            task_crd = Task.model_validate(task.json)
+
+            # Extract basic fields from task JSON
+            task_type = (
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("taskType")
+                or "chat"
+            )
+            type_value = (
+                task_crd.metadata.labels
+                and task_crd.metadata.labels.get("type")
+                or "online"
+            )
+            status = task_crd.status.status if task_crd.status else "PENDING"
+
+            # Parse timestamps
+            created_at = task.created_at
+            updated_at = task.updated_at
+            completed_at = None
+            if task_crd.status:
+                try:
+                    if task_crd.status.createdAt:
+                        created_at = task_crd.status.createdAt
+                    if task_crd.status.updatedAt:
+                        updated_at = task_crd.status.updatedAt
+                    if task_crd.status.completedAt:
+                        completed_at = task_crd.status.completedAt
+                except:
+                    pass
+
+            # Get team_id using direct SQL query
+            team_name = task_crd.spec.teamRef.name
+            team_namespace = task_crd.spec.teamRef.namespace
+            team_result = db.execute(
+                text(
+                    """
+                    SELECT id FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Team'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """
+                ),
+                {"user_id": user_id, "name": team_name, "namespace": team_namespace},
+            ).fetchone()
+
+            # If not found in user's teams, check shared teams
+            team_id = team_result[0] if team_result else None
+            if not team_id:
+                shared_team_result = db.execute(
+                    text(
+                        """
+                        SELECT k.id FROM kinds k
+                        INNER JOIN shared_teams st ON k.user_id = st.original_user_id
+                        WHERE st.user_id = :user_id
+                        AND st.is_active = true
+                        AND k.kind = 'Team'
+                        AND k.name = :name
+                        AND k.namespace = :namespace
+                        AND k.is_active = true
+                        LIMIT 1
+                    """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "name": team_name,
+                        "namespace": team_namespace,
+                    },
+                ).fetchone()
+                team_id = shared_team_result[0] if shared_team_result else None
+
+            # Get git_repo from workspace using direct SQL query
+            workspace_name = task_crd.spec.workspaceRef.name
+            workspace_namespace = task_crd.spec.workspaceRef.namespace
+            workspace_result = db.execute(
+                text(
+                    """
+                    SELECT JSON_EXTRACT(json, '$.spec.repository.gitRepo') as git_repo
+                    FROM kinds
+                    WHERE user_id = :user_id
+                    AND kind = 'Workspace'
+                    AND name = :name
+                    AND namespace = :namespace
+                    AND is_active = true
+                    LIMIT 1
+                """
+                ),
+                {
+                    "user_id": user_id,
+                    "name": workspace_name,
+                    "namespace": workspace_namespace,
+                },
+            ).fetchone()
+
+            git_repo = None
+            if workspace_result and workspace_result[0]:
+                # Remove JSON quotes from extracted value
+                git_repo = (
+                    workspace_result[0].strip('"')
+                    if isinstance(workspace_result[0], str)
+                    else workspace_result[0]
+                )
+
+            # Check if this is a group chat (has active members)
+            is_group_chat = member_counts.get(task.id, 0) > 0
+
+            result.append(
+                {
+                    "id": task.id,
+                    "title": task_crd.spec.title,
+                    "status": status,
+                    "task_type": task_type,
+                    "type": type_value,
+                    "created_at": created_at,
+                    "updated_at": updated_at,
+                    "completed_at": completed_at,
+                    "team_id": team_id,
+                    "git_repo": git_repo,
+                    "is_group_chat": is_group_chat,
+                }
+            )
+
+        return result
+
     def get_user_tasks_by_title_with_pagination(
         self, db: Session, *, user_id: int, title: str, skip: int = 0, limit: int = 100
     ) -> Tuple[List[Dict[str, Any]], int]:
@@ -917,9 +1107,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 # Add attachments
                 "attachments": attachments_list,
                 # Group chat fields
-                "sender_type": (
-                    subtask.sender_type.value if subtask.sender_type else None
-                ),
+                "sender_type": subtask.sender_type,  # Already a string value, not enum
                 "sender_user_id": subtask.sender_user_id,
                 "sender_user_name": getattr(subtask, "sender_user_name", None),
                 "reply_to_subtask_id": subtask.reply_to_subtask_id,
