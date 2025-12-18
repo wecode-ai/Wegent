@@ -28,7 +28,6 @@ import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { useMultipleStreamingRecovery, type RecoveryState } from '@/hooks/useStreamingRecovery';
 import MessageBubble, { type Message } from './MessageBubble';
-import { GroupChatMessageWrapper } from './MessageSenderBadge';
 import TaskShareModal from './TaskShareModal';
 import { taskApis } from '@/apis/tasks';
 import { type SelectableMessage } from './ExportPdfButton';
@@ -59,8 +58,6 @@ interface RecoveredMessageBubbleProps {
   t: (key: string) => string;
   /** Generic callback when a component inside the message bubble wants to send a message */
   onSendMessage?: (content: string) => void;
-  /** Whether this is a group chat (show sender names) */
-  isGroupChat?: boolean;
   /** Whether this message is from the current user (for group chat alignment) */
   isCurrentUserMessage?: boolean;
 }
@@ -76,7 +73,6 @@ function RecoveredMessageBubble({
   theme,
   t,
   onSendMessage,
-  isGroupChat = false,
   isCurrentUserMessage,
 }: RecoveredMessageBubbleProps) {
   // Use typewriter effect for recovered content that is still streaming
@@ -91,42 +87,19 @@ function RecoveredMessageBubble({
     isIncomplete: recovery.incomplete,
   };
 
-  // Find the corresponding subtask from selectedTaskDetail
-  const subtask = selectedTaskDetail?.subtasks?.find(s => s.id === msg.subtaskId);
-
-  // If no subtask found or not a group chat, render without wrapper
-  if (!subtask || !isGroupChat) {
-    return (
-      <MessageBubble
-        msg={modifiedMsg}
-        index={index}
-        selectedTaskDetail={selectedTaskDetail}
-        selectedTeam={selectedTeam}
-        selectedRepo={selectedRepo}
-        selectedBranch={selectedBranch}
-        theme={theme}
-        t={t}
-        onSendMessage={onSendMessage}
-        isCurrentUserMessage={isCurrentUserMessage}
-      />
-    );
-  }
-
   return (
-    <GroupChatMessageWrapper subtask={subtask} isGroupChat={isGroupChat}>
-      <MessageBubble
-        msg={modifiedMsg}
-        index={index}
-        selectedTaskDetail={selectedTaskDetail}
-        selectedTeam={selectedTeam}
-        selectedRepo={selectedRepo}
-        selectedBranch={selectedBranch}
-        theme={theme}
-        t={t}
-        onSendMessage={onSendMessage}
-        isCurrentUserMessage={isCurrentUserMessage}
-      />
-    </GroupChatMessageWrapper>
+    <MessageBubble
+      msg={modifiedMsg}
+      index={index}
+      selectedTaskDetail={selectedTaskDetail}
+      selectedTeam={selectedTeam}
+      selectedRepo={selectedRepo}
+      selectedBranch={selectedBranch}
+      theme={theme}
+      t={t}
+      onSendMessage={onSendMessage}
+      isCurrentUserMessage={isCurrentUserMessage}
+    />
   );
 }
 
@@ -929,18 +902,12 @@ export default function MessagesArea({
                   theme={theme as 'light' | 'dark'}
                   t={t}
                   onSendMessage={onSendMessage}
-                  isGroupChat={isGroupChat}
                   isCurrentUserMessage={isCurrentUserMessageForRecovery}
                 />
               );
             }
 
             // Use regular MessageBubble for other messages
-            // Find the corresponding subtask from selectedTaskDetail
-            const subtask = msg.subtaskId
-              ? selectedTaskDetail?.subtasks?.find(s => s.id === msg.subtaskId)
-              : undefined;
-
             // Determine if this is the current user's message (for group chat alignment)
             // In group chat: only current user's messages should be right-aligned
             // For user messages: compare senderUserId with current user ID
@@ -948,52 +915,30 @@ export default function MessagesArea({
             const isCurrentUserMessage =
               msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false;
 
-            // If no subtask found or not a group chat, render without wrapper
-            if (!subtask || !isGroupChat) {
-              return (
-                <MessageBubble
-                  key={messageKey}
-                  msg={msg}
-                  index={index}
-                  selectedTaskDetail={selectedTaskDetail}
-                  selectedTeam={selectedTeam}
-                  selectedRepo={selectedRepo}
-                  selectedBranch={selectedBranch}
-                  theme={theme as 'light' | 'dark'}
-                  t={t}
-                  onSendMessage={onSendMessage}
-                  isCurrentUserMessage={isCurrentUserMessage}
-                />
-              );
-            }
-
             return (
-              <GroupChatMessageWrapper key={messageKey} subtask={subtask} isGroupChat={isGroupChat}>
-                <MessageBubble
-                  msg={msg}
-                  index={index}
-                  selectedTaskDetail={selectedTaskDetail}
-                  selectedTeam={selectedTeam}
-                  selectedRepo={selectedRepo}
-                  selectedBranch={selectedBranch}
-                  theme={theme as 'light' | 'dark'}
-                  t={t}
-                  onSendMessage={onSendMessage}
-                  isCurrentUserMessage={isCurrentUserMessage}
-                />
-              </GroupChatMessageWrapper>
+              <MessageBubble
+                key={messageKey}
+                msg={msg}
+                index={index}
+                selectedTaskDetail={selectedTaskDetail}
+                selectedTeam={selectedTeam}
+                selectedRepo={selectedRepo}
+                selectedBranch={selectedBranch}
+                theme={theme as 'light' | 'dark'}
+                t={t}
+                onSendMessage={onSendMessage}
+                isCurrentUserMessage={isCurrentUserMessage}
+              />
             );
           })}
 
           {/* Pending user message (optimistic update) - only show if not already in displayMessages */}
           {/* Use MessageBubble to ensure proper rendering of special formats like ClarificationAnswerSummary */}
-          {/* In group chat, always wrap with GroupChatMessageWrapper for consistent appearance */}
           {/* In group chat, wait for user info to be loaded to prevent "no username" -> "with username" flash */}
-          {pendingUserMessage &&
-            !isPendingMessageAlreadyDisplayed &&
-            (!isGroupChat || user) &&
-            (() => {
-              const pendingMsg = {
+          {pendingUserMessage && !isPendingMessageAlreadyDisplayed && (!isGroupChat || user) && (
+            <MessageBubble
+              key="pending-user-message"
+              msg={{
                 type: 'user' as const,
                 content: pendingUserMessage,
                 timestamp: Date.now(),
@@ -1004,53 +949,19 @@ export default function MessagesArea({
                 senderUserId: isGroupChat ? user?.id : undefined,
                 // Only show sender info in group chat (consistent with normal messages)
                 shouldShowSender: isGroupChat,
-              };
-
-              const messageBubble = (
-                <MessageBubble
-                  key="pending-user-message"
-                  msg={pendingMsg}
-                  index={displayMessages.length}
-                  selectedTaskDetail={selectedTaskDetail}
-                  selectedTeam={selectedTeam}
-                  selectedRepo={selectedRepo}
-                  selectedBranch={selectedBranch}
-                  theme={theme as 'light' | 'dark'}
-                  t={t}
-                  onSendMessage={onSendMessage}
-                  // In group chat, current user's pending message should still be right-aligned
-                  isCurrentUserMessage={true}
-                />
-              );
-
-              // In group chat, always wrap with GroupChatMessageWrapper for consistent appearance
-              // This ensures the message doesn't "jump" when transitioning from pending to displayed
-              // Note: For own messages, GroupChatMessageWrapper won't show sender badge (by design)
-              if (isGroupChat) {
-                // Create a mock subtask for the wrapper
-                // Use user info if available, otherwise use placeholder values
-                const mockSubtask = {
-                  id: -1,
-                  role: 'USER' as const,
-                  sender_type: 'USER' as const,
-                  sender_user_id: user?.id || 0,
-                  sender_user_name: user?.user_name || '',
-                  user_id: user?.id || 0,
-                } as unknown as TaskDetailSubtask;
-
-                return (
-                  <GroupChatMessageWrapper
-                    key="pending-user-message-wrapper"
-                    subtask={mockSubtask}
-                    isGroupChat={true}
-                  >
-                    {messageBubble}
-                  </GroupChatMessageWrapper>
-                );
-              }
-
-              return messageBubble;
-            })()}
+              }}
+              index={displayMessages.length}
+              selectedTaskDetail={selectedTaskDetail}
+              selectedTeam={selectedTeam}
+              selectedRepo={selectedRepo}
+              selectedBranch={selectedBranch}
+              theme={theme as 'light' | 'dark'}
+              t={t}
+              onSendMessage={onSendMessage}
+              // In group chat, current user's pending message should still be right-aligned
+              isCurrentUserMessage={true}
+            />
+          )}
 
           {/* Streaming AI response - for current user's own streaming only */}
           {/* Only show when streamingSubtaskId is set, indicating AI generation was triggered by current user */}
