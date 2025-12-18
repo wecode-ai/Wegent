@@ -131,7 +131,9 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
 
         sender_ids = set()
         for subtask in subtasks:
-            if subtask.sender_user_id:
+            if (
+                subtask.sender_user_id and subtask.sender_user_id > 0
+            ):  # Check > 0 instead of truthy
                 sender_ids.add(subtask.sender_user_id)
 
         # Batch query users
@@ -142,7 +144,11 @@ class SubtaskService(BaseService[Subtask, SubtaskCreate, SubtaskUpdate]):
 
         # Set sender_user_name for each subtask
         for subtask in subtasks:
-            if subtask.sender_user_id and subtask.sender_user_id in user_name_map:
+            if (
+                subtask.sender_user_id
+                and subtask.sender_user_id > 0
+                and subtask.sender_user_id in user_name_map
+            ):  # Check > 0
                 subtask.sender_user_name = user_name_map[subtask.sender_user_id]
 
         # Restore the original order (IN clause doesn't preserve order)

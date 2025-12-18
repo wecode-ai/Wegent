@@ -52,9 +52,9 @@ def upgrade() -> None:
     op.execute(
         """
     ALTER TABLE subtasks
-    ADD COLUMN sender_type VARCHAR(20) DEFAULT NULL COMMENT 'Sender type: USER or TEAM' AFTER completed_at,
-    ADD COLUMN sender_user_id INT DEFAULT NULL COMMENT 'User ID when sender_type=USER' AFTER sender_type,
-    ADD COLUMN reply_to_subtask_id INT DEFAULT NULL COMMENT 'Quoted message ID for reply feature' AFTER sender_user_id
+    ADD COLUMN sender_type VARCHAR(20) NOT NULL DEFAULT '' COMMENT 'Sender type: USER or TEAM, empty string for non-group-chat messages' AFTER completed_at,
+    ADD COLUMN sender_user_id INT NOT NULL DEFAULT 0 COMMENT 'User ID when sender_type=USER, 0 for non-user senders' AFTER sender_type,
+    ADD COLUMN reply_to_subtask_id INT NOT NULL DEFAULT 0 COMMENT 'Quoted message ID for reply feature, 0 for no reply' AFTER sender_user_id
     """
     )
 
