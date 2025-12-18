@@ -549,8 +549,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     else workspace_result[0]
                 )
 
-            # Check if this is a group chat (has active members)
-            is_group_chat = member_counts.get(task.id, 0) > 0
+            # Check if this is a group chat
+            # First check task.json.spec.is_group_chat, fallback to member count
+            task_json = task.json or {}
+            is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+            # Fallback: if not explicitly set, check member count
+            if not is_group_chat:
+                is_group_chat = member_counts.get(task.id, 0) > 0
 
             result.append(
                 {
@@ -739,8 +744,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     else workspace_result[0]
                 )
 
-            # Check if this is a group chat (has active members)
-            is_group_chat = member_counts.get(task.id, 0) > 0
+            # Check if this is a group chat
+            # First check task.json.spec.is_group_chat, fallback to member count
+            task_json = task.json or {}
+            is_group_chat = task_json.get("spec", {}).get("is_group_chat", False)
+            # Fallback: if not explicitly set, check member count
+            if not is_group_chat:
+                is_group_chat = member_counts.get(task.id, 0) > 0
 
             result.append(
                 {
@@ -1131,7 +1141,12 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             .all()
         )
 
-        is_group_chat = len(members) > 0
+        # First check task.json.spec.is_group_chat, fallback to member count
+        # task_dict already contains the parsed task data from get_task_by_id
+        is_group_chat = task_dict.get("is_group_chat", False)
+        # If not set in task_dict, check member count
+        if not is_group_chat:
+            is_group_chat = len(members) > 0
         task_dict["is_group_chat"] = is_group_chat
         task_dict["is_group_owner"] = task_dict.get("user_id") == user_id
         task_dict["member_count"] = len(members) if is_group_chat else None
@@ -1771,6 +1786,13 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
 
         model_id = task_crd.metadata.labels and task_crd.metadata.labels.get("modelId")
 
+        # Extract is_group_chat from task spec
+        is_group_chat = (
+            task_crd.spec.is_group_chat
+            if hasattr(task_crd.spec, "is_group_chat")
+            else False
+        )
+
         return {
             "id": task.id,
             "type": type,
@@ -1793,6 +1815,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "updated_at": updated_at or task.updated_at,
             "completed_at": completed_at,
             "model_id": model_id,
+            "is_group_chat": is_group_chat,  # Add is_group_chat field
         }
 
     def _convert_team_to_dict(
@@ -2231,7 +2254,15 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Add is_group_chat to result
         for task_id_str, data in result.items():
             task_id = int(task_id_str)
-            data["is_group_chat"] = member_counts.get(task_id, 0) > 0
+            # First check task JSON, fallback to member count
+            task = db.query(Kind).filter(Kind.id == task_id).first()
+            if task and task.json:
+                is_group_chat = task.json.get("spec", {}).get("is_group_chat", False)
+                if not is_group_chat:
+                    is_group_chat = member_counts.get(task_id, 0) > 0
+            else:
+                is_group_chat = member_counts.get(task_id, 0) > 0
+            data["is_group_chat"] = is_group_chat
 
         return result
 
