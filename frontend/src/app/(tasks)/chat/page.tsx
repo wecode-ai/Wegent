@@ -6,6 +6,7 @@
 
 import { Suspense, useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import { UserGroupIcon } from '@heroicons/react/24/outline';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
@@ -22,7 +23,6 @@ import '@/features/common/scrollbar.css';
 import { GithubStarButton } from '@/features/layout/GithubStarButton';
 import { ThemeToggle } from '@/features/theme/ThemeToggle';
 import { useIsMobile } from '@/features/layout/hooks/useMediaQuery';
-import PoweredByFooter from '@/components/common/PoweredByFooter';
 import { Team } from '@/types/api';
 import ChatArea from '@/features/tasks/components/ChatArea';
 import { saveLastTab } from '@/utils/userPreferences';
@@ -30,8 +30,12 @@ import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import { paths } from '@/config/paths';
+import { Button } from '@/components/ui/button';
+import { useTranslation } from '@/hooks/useTranslation';
 
 export default function ChatPage() {
+  const { t } = useTranslation();
+
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
@@ -56,13 +60,14 @@ export default function ChatPage() {
   // Router for navigation
   const router = useRouter();
 
-  // Check for share_id and taskId in URL
+  // Check for share_id in URL
   const searchParams = useSearchParams();
   const hasShareId = !!searchParams.get('share_id');
 
   // Check if a task is currently open (support multiple parameter formats)
   const taskId =
     searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId');
+  const hasOpenTask = !!taskId;
 
   // Check for pending task share from public page (after login)
   useEffect(() => {
@@ -187,8 +192,7 @@ export default function ChatPage() {
             onTaskDeleted={handleTaskDeleted}
           >
             {/* Create Group Chat Button - only show when no task is open */}
-            {/* Hidden: Group chat creation button */}
-            {/* {!hasOpenTask && (
+            {!hasOpenTask && (
               <Button
                 variant="outline"
                 size="sm"
@@ -198,7 +202,7 @@ export default function ChatPage() {
                 <UserGroupIcon className="h-4 w-4" />
                 <span className="hidden sm:inline">{t('groupChat.create.button')}</span>
               </Button>
-            )} */}
+            )}
             {shareButton}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
@@ -216,8 +220,6 @@ export default function ChatPage() {
       </div>
       {/* Create Group Chat Dialog */}
       <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />
-      {/* Show footer only when no task is selected */}
-      {!taskId && <PoweredByFooter />}
     </>
   );
 }
