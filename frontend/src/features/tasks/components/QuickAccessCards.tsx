@@ -13,6 +13,7 @@ import {
   CheckIcon,
   MagnifyingGlassIcon,
 } from '@heroicons/react/24/outline';
+import { Wand2 } from 'lucide-react';
 import { userApis } from '@/apis/user';
 import { QuickAccessTeam, Team } from '@/types/api';
 import { saveLastTeamByMode } from '@/utils/userPreferences';
@@ -22,6 +23,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { paths } from '@/config/paths';
 import { getSharedTagStyle as getSharedBadgeStyle } from '@/utils/styles';
 import { TeamIconDisplay } from '@/features/settings/components/teams/TeamIconDisplay';
+import TeamCreationWizard from '@/features/settings/components/wizard/TeamCreationWizard';
 
 // Maximum number of quick access cards to display
 const MAX_QUICK_ACCESS_CARDS = 4;
@@ -34,6 +36,8 @@ interface QuickAccessCardsProps {
   isLoading?: boolean;
   isTeamsLoading?: boolean;
   hideSelected?: boolean; // Whether to hide the selected team from the cards
+  onRefreshTeams?: () => Promise<Team[]>;
+  showWizardButton?: boolean; // Whether to show the wizard button (only for chat mode)
 }
 
 export function QuickAccessCards({
@@ -44,6 +48,8 @@ export function QuickAccessCards({
   isLoading,
   isTeamsLoading,
   hideSelected = false,
+  onRefreshTeams,
+  showWizardButton = false,
 }: QuickAccessCardsProps) {
   const router = useRouter();
   const { t } = useTranslation('common');
@@ -53,6 +59,7 @@ export function QuickAccessCards({
   const [clickedTeamId, setClickedTeamId] = useState<number | null>(null);
   const [switchingToMode, setSwitchingToMode] = useState<'chat' | 'code' | null>(null);
   const [showMoreTeams, setShowMoreTeams] = useState(false);
+  const [showWizard, setShowWizard] = useState(false);
   const moreButtonRef = useRef<HTMLDivElement>(null);
 
   // Define the extended team type for display
@@ -85,10 +92,8 @@ export function QuickAccessCards({
 
   // Filter teams by bind_mode based on current mode (same logic as TeamSelector)
   const filteredTeams = teams.filter(team => {
-    // If bind_mode is an empty array, filter it out
-    if (Array.isArray(team.bind_mode) && team.bind_mode.length === 0) return false;
-    // If bind_mode is not set (undefined/null), show in all modes
-    if (!team.bind_mode) return true;
+    // If bind_mode is not set or is an empty array, filter it out (team has no bound mode)
+    if (!team.bind_mode || team.bind_mode.length === 0) return false;
     // Otherwise, only show if current mode is in bind_mode
     return team.bind_mode.includes(currentMode);
   });
@@ -373,7 +378,7 @@ export function QuickAccessCards({
           animation: slide-fade 0.2s ease-out forwards;
         }
       `}</style>
-      <div className="flex flex-wrap items-center gap-2 mt-4">
+      <div className="flex flex-wrap items-center gap-2 mt-4" data-tour="quick-access-cards">
         {displayTeams.map(team => renderTeamCard(team))}
 
         {/* More button - always show for team selection */}
@@ -492,7 +497,52 @@ export function QuickAccessCards({
             </div>
           )}
         </div>
+
+        {/* Wizard button - quick create agent (only show in chat mode) */}
+        {showWizardButton && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  onClick={() => setShowWizard(true)}
+                  className="flex items-center justify-center w-8 h-8 rounded-full border border-dashed border-primary/50 bg-primary/5 hover:bg-primary/10 hover:border-primary cursor-pointer transition-all duration-200"
+                >
+                  <Wand2 className="w-4 h-4 text-primary" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                <p>{t('wizard.wizard_button_tooltip')}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
       </div>
+
+      {/* Team Creation Wizard Dialog */}
+      {showWizardButton && (
+        <TeamCreationWizard
+          open={showWizard}
+          onClose={() => setShowWizard(false)}
+          onSuccess={async (teamId, teamName) => {
+            // Refresh teams list first to get the new team
+            if (onRefreshTeams) {
+              const refreshedTeams = await onRefreshTeams();
+              // Find and select the new team from refreshed list
+              const newTeam = refreshedTeams.find(t => t.id === teamId);
+              if (newTeam) {
+                onTeamSelect(newTeam);
+              }
+            } else {
+              // Fallback: try to find in current teams (may not work for newly created)
+              const newTeam = teams.find(t => t.id === teamId);
+              if (newTeam) {
+                onTeamSelect(newTeam);
+              }
+            }
+            console.log(`Created team: ${teamName} (ID: ${teamId})`);
+          }}
+        />
+      )}
     </>
   );
 }

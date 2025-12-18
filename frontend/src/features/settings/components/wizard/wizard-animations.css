@@ -1,0 +1,175 @@
+/*
+ * SPDX-FileCopyrightText: 2025 WeCode, Inc.
+ *
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+/* Refresh animation for prompt optimization - "焕然一新" effect */
+@keyframes prompt-refresh {
+  0% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  15% {
+    opacity: 0.3;
+    transform: scale(0.98);
+  }
+  30% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  50% {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  70% {
+    opacity: 0.5;
+    transform: scale(0.98);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Sparkle/shine effect overlay */
+@keyframes sparkle-sweep {
+  0% {
+    background-position: -200% 0;
+    opacity: 1;
+  }
+  80% {
+    background-position: 150% 0;
+    opacity: 1;
+  }
+  100% {
+    background-position: 200% 0;
+    opacity: 0;
+  }
+}
+
+/* Glow pulse effect for the prompt area */
+@keyframes glow-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(20, 184, 166, 0);
+  }
+  30% {
+    box-shadow: 0 0 20px 4px rgba(20, 184, 166, 0.4);
+  }
+  60% {
+    box-shadow: 0 0 30px 8px rgba(20, 184, 166, 0.2);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(20, 184, 166, 0);
+  }
+}
+
+/* Border highlight animation */
+@keyframes border-highlight {
+  0% {
+    border-color: rgb(var(--color-border));
+  }
+  30% {
+    border-color: rgb(var(--color-primary));
+  }
+  100% {
+    border-color: rgb(var(--color-border));
+  }
+}
+
+/* Combined refresh animation class */
+.prompt-refreshing {
+  animation: prompt-refresh 0.8s ease-in-out;
+}
+
+/* Glow effect for the container */
+.prompt-refresh-glow {
+  animation: glow-pulse 1s ease-out;
+}
+
+/* Border highlight effect */
+.prompt-refresh-border {
+  animation: border-highlight 1s ease-out;
+}
+
+/* Sparkle overlay effect */
+.prompt-refresh-sparkle {
+  position: relative;
+  overflow: hidden;
+}
+
+.prompt-refresh-sparkle::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(20, 184, 166, 0.15) 25%,
+    rgba(20, 184, 166, 0.3) 50%,
+    rgba(20, 184, 166, 0.15) 75%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+  animation: sparkle-sweep 0.8s ease-out forwards;
+  pointer-events: none;
+  border-radius: inherit;
+}
+
+/* Success checkmark animation */
+@keyframes check-appear {
+  0% {
+    opacity: 0;
+    transform: scale(0) rotate(-45deg);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2) rotate(0deg);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+.refresh-success-icon {
+  animation: check-appear 0.5s ease-out forwards;
+}
+
+/* Fade out animation for old messages */
+@keyframes fade-out-up {
+  0% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+}
+
+.messages-fade-out {
+  animation: fade-out-up 0.4s ease-out forwards;
+}
+
+/* Toast notification for refresh success */
+@keyframes toast-slide-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.refresh-toast {
+  animation: toast-slide-in 0.3s ease-out;
+}
+
+/* Vertical text for collapsed panel button */
+.writing-mode-vertical {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+}

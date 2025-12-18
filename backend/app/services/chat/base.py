@@ -44,8 +44,9 @@ async def get_http_client() -> httpx.AsyncClient:
             if _http_client is None:
                 _http_client = httpx.AsyncClient(
                     timeout=httpx.Timeout(
-                        settings.CHAT_API_TIMEOUT_SECONDS,  # Total timeout
+                        timeout=settings.CHAT_API_TIMEOUT_SECONDS,  # Total timeout
                         connect=10.0,  # Connection timeout
+                        read=60.0,  # Read timeout per chunk (important for streaming)
                     ),
                     limits=httpx.Limits(
                         max_connections=100,

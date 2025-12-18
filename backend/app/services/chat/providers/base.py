@@ -12,6 +12,7 @@ and tool calling support.
 import asyncio
 import json
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -190,6 +191,9 @@ class LLMProvider(ABC):
         Yields:
             Parsed JSON data from SSE events
         """
+        start_time = time.time()
+        chunk_count = 0
+
         try:
             async with self.client.stream(
                 "POST", url, json=payload, headers=headers
@@ -210,6 +214,12 @@ class LLMProvider(ABC):
 
                 async for line in response.aiter_lines():
                     if await self._check_cancellation(cancel_event):
+                        logger.info(
+                            "%s stream cancelled after %d chunks in %.2fs",
+                            self.provider_name,
+                            chunk_count,
+                            time.time() - start_time,
+                        )
                         return
 
                     if not line or line.startswith(":"):
@@ -218,12 +228,31 @@ class LLMProvider(ABC):
                     if line.startswith("data: "):
                         data = line[6:]
                         if data == "[DONE]":
-                            break
+                            # Use return instead of break to immediately exit
+                            # the generator and close the connection.
+                            # Some APIs (e.g., AI) don't close the connection
+                            # after sending [DONE], causing aiter_lines() to hang.
+                            logger.info(
+                                "%s stream completed: %d chunks in %.2fs",
+                                self.provider_name,
+                                chunk_count,
+                                time.time() - start_time,
+                            )
+                            return
 
                         try:
+                            chunk_count += 1
                             yield json.loads(data)
                         except json.JSONDecodeError:
                             continue
+
+                # If we exit the loop without [DONE], log it
+                logger.info(
+                    "%s stream ended without [DONE] marker after %d chunks in %.2fs",
+                    self.provider_name,
+                    chunk_count,
+                    time.time() - start_time,
+                )
 
         except httpx.RequestError as e:
             logger.exception("%s request error", self.provider_name)

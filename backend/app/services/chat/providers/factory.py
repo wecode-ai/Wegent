@@ -47,7 +47,7 @@ def get_provider(
 
     config = ProviderConfig(
         api_key=model_config.get("api_key", ""),
-        base_url=model_config.get("base_url", "https://api.openai.com/v1"),
+        base_url=model_config.get("base_url", ""),
         model_id=model_config.get("model_id", "gpt-4"),
         default_headers=model_config.get("default_headers", {}),
     )

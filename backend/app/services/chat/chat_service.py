@@ -16,7 +16,7 @@ from app.services.chat.base import ChatServiceBase, get_http_client
 from app.services.chat.db_handler import db_handler
 from app.services.chat.message_builder import message_builder
 from app.services.chat.providers import get_provider
-from app.services.chat.providers.base import ChunkType, StreamChunk
+from app.services.chat.providers.base import ChunkType, ProviderConfig, StreamChunk
 from app.services.chat.session_manager import session_manager
 from app.services.chat.stream_manager import StreamState, stream_manager
 from app.services.chat.tool_handler import ToolCallAccumulator, ToolHandler
@@ -54,12 +54,13 @@ class ChatService(ChatServiceBase):
 
     async def chat_stream(
         self,
-        subtask_id: int,
-        task_id: int,
         message: str | dict[str, Any],
         model_config: dict[str, Any],
         system_prompt: str = "",
         tools: list[Tool] | None = None,
+        subtask_id: int | None = None,
+        task_id: int | None = None,
+        is_group_chat: bool = False,
     ) -> StreamingResponse:
         """
         Stream chat response from LLM API with tool calling support.
@@ -68,17 +69,29 @@ class ChatService(ChatServiceBase):
         and CHAT_MCP_SERVERS is configured. MCP sessions are managed per-task
         and cleaned up when the stream ends.
 
+        When subtask_id and task_id are None, this method operates in "simple mode"
+        without database operations, session management, or MCP tools. This is useful
+        for lightweight streaming scenarios like wizard testing.
+
         Args:
-            subtask_id: The subtask ID
-            task_id: The task ID
             message: User message (string or dict with content)
             model_config: Model configuration dict
             system_prompt: System prompt for the conversation
             tools: Optional list of Tool instances (web search, etc.)
+            subtask_id: Optional subtask ID (None for simple mode)
+            task_id: Optional task ID (None for simple mode)
+            is_group_chat: Whether this is a group chat (uses special history truncation)
 
         Returns:
             StreamingResponse with SSE events
         """
+        # Simple mode: no database operations, no session management
+        is_simple_mode = subtask_id is None or task_id is None
+
+        if is_simple_mode:
+            return await self._simple_stream(message, model_config, system_prompt)
+
+        # Full mode: with database operations and session management
         semaphore = _get_chat_semaphore()
         chunk_queue: asyncio.Queue = asyncio.Queue()
         mcp_session = None
@@ -104,6 +117,12 @@ class ChatService(ChatServiceBase):
 
                 # Build messages and initialize components
                 history = await session_manager.get_chat_history(task_id)
+
+                # For group chat, apply special history truncation:
+                # Keep first N messages + last M messages (no duplicates)
+                if is_group_chat:
+                    history = self._truncate_group_chat_history(history, task_id)
+
                 messages = message_builder.build_messages(
                     history, message, system_prompt
                 )
@@ -154,6 +173,60 @@ class ChatService(ChatServiceBase):
                 # Cleanup MCP session when stream ends
                 if mcp_session:
                     await cleanup_mcp_session(task_id)
+
+        return StreamingResponse(
+            generate(), media_type="text/event-stream", headers=_SSE_HEADERS
+        )
+
+    async def _simple_stream(
+        self,
+        message: str | dict[str, Any],
+        model_config: dict[str, Any],
+        system_prompt: str = "",
+    ) -> StreamingResponse:
+        """
+        Simple streaming without database operations.
+
+        This is a lightweight streaming method for scenarios like wizard testing
+        where we don't need to persist messages or manage complex state.
+        """
+
+        async def generate() -> AsyncGenerator[str, None]:
+            cancel_event = asyncio.Event()
+
+            try:
+                # Build messages
+                messages = message_builder.build_messages(
+                    history=[],
+                    current_message=message,
+                    system_prompt=system_prompt,
+                )
+
+                # Get provider
+                client = await get_http_client()
+                provider = get_provider(model_config, client)
+                if not provider:
+                    yield _sse_data(
+                        {"error": "Failed to create provider from model config"}
+                    )
+                    return
+
+                # Stream response
+                async for chunk in provider.stream_chat(messages, cancel_event):
+                    if chunk.type == ChunkType.CONTENT and chunk.content:
+                        yield _sse_data({"content": chunk.content, "done": False})
+                    elif chunk.type == ChunkType.ERROR:
+                        yield _sse_data(
+                            {"error": chunk.error or "Unknown error from LLM"}
+                        )
+                        return
+
+                # Send done signal
+                yield _sse_data({"content": "", "done": True})
+
+            except Exception as e:
+                logger.error(f"Simple stream error: {e}")
+                yield _sse_data({"error": str(e)})
 
         return StreamingResponse(
             generate(), media_type="text/event-stream", headers=_SSE_HEADERS
@@ -251,6 +324,95 @@ class ChatService(ChatServiceBase):
                 ToolHandler.build_assistant_message(accumulated_content, tool_calls)
             )
             messages.extend(await tool_handler.execute_all(tool_calls))
+
+    def _truncate_group_chat_history(
+        self, history: list[dict[str, str]], task_id: int
+    ) -> list[dict[str, str]]:
+        """
+        Truncate chat history for group chat mode.
+
+        In group chat mode, AI-bot sees:
+        - First N messages (for context about the conversation start)
+        - Last M messages (for recent context)
+        - No duplicate messages
+
+        If total messages < N + M, all messages are kept.
+
+        Args:
+            history: Full chat history
+            task_id: Task ID for logging
+
+        Returns:
+            Truncated history list
+        """
+        first_count = settings.GROUP_CHAT_HISTORY_FIRST_MESSAGES
+        last_count = settings.GROUP_CHAT_HISTORY_LAST_MESSAGES
+        total_count = len(history)
+
+        # If total messages <= first + last, keep all messages
+        if total_count <= first_count + last_count:
+            return history
+
+        # Get first N messages and last M messages
+        first_messages = history[:first_count]
+        last_messages = history[-last_count:]
+
+        # Combine without duplicates (in case of overlap, which shouldn't happen
+        # given the check above, but we handle it for safety)
+        truncated_history = first_messages + last_messages
+
+        logger.info(
+            f"Group chat mode: truncated history for task {task_id} from {total_count} "
+            f"to {len(truncated_history)} messages (first {first_count} + last {last_count})"
+        )
+
+        return truncated_history
+
+    async def chat_completion(
+        self,
+        message: str,
+        model_config: dict[str, Any],
+        system_prompt: str = "",
+    ) -> str:
+        """
+        Non-streaming chat completion for simple LLM calls.
+
+        Args:
+            message: User message
+            model_config: Model configuration dict
+            system_prompt: System prompt for the conversation
+
+        Returns:
+            The LLM response as a string
+        """
+        # Build messages
+        messages = message_builder.build_messages(
+            history=[],
+            current_message=message,
+            system_prompt=system_prompt,
+        )
+
+        # Get provider
+        client = await get_http_client()
+        provider = get_provider(model_config, client)
+        if not provider:
+            raise ValueError("Failed to create provider from model config")
+
+        # Collect all content from streaming response
+        cancel_event = asyncio.Event()
+        accumulated_content = ""
+
+        try:
+            async for chunk in provider.stream_chat(messages, cancel_event):
+                if chunk.type == ChunkType.CONTENT and chunk.content:
+                    accumulated_content += chunk.content
+                elif chunk.type == ChunkType.ERROR:
+                    raise ValueError(chunk.error or "Unknown error from LLM")
+        except Exception as e:
+            logger.error(f"Chat completion error: {e}")
+            raise
+
+        return accumulated_content
 
 
 # Global chat service instance

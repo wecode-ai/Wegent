@@ -11,6 +11,7 @@ from app.services.kind_base import KindBaseService
 from app.services.kind_impl import (
     BotKindService,
     GhostKindService,
+    KnowledgeBaseKindService,
     ModelKindService,
     ShellKindService,
     TaskKindService,
@@ -48,5 +49,7 @@ class KindServiceFactory:
             return WorkspaceKindService()
         elif kind == "Task":
             return TaskKindService()
+        elif kind == "KnowledgeBase":
+            return KnowledgeBaseKindService()
         else:
             raise ValueError(f"Unknown kind: {kind}")

@@ -8,12 +8,15 @@ from app.api.endpoints import (
     auth,
     groups,
     health,
+    knowledge,
     oidc,
     openapi_responses,
     quota,
     repository,
+    subtasks,
     users,
     wiki,
+    wizard,
 )
 from app.api.endpoints.adapter import (
     agents,
@@ -24,6 +27,7 @@ from app.api.endpoints.adapter import (
     executors,
     models,
     shells,
+    task_members,
     tasks,
     teams,
 )
@@ -44,6 +48,8 @@ api_router.include_router(shells.router, prefix="/shells", tags=["shells"])
 api_router.include_router(agents.router, prefix="/agents", tags=["public-shell"])
 api_router.include_router(teams.router, prefix="/teams", tags=["teams"])
 api_router.include_router(tasks.router, prefix="/tasks", tags=["tasks"])
+api_router.include_router(subtasks.router, prefix="/subtasks", tags=["subtasks"])
+api_router.include_router(task_members.router, prefix="/tasks", tags=["task-members"])
 api_router.include_router(chat.router, prefix="/chat", tags=["chat"])
 api_router.include_router(
     attachments.router, prefix="/attachments", tags=["attachments"]
@@ -56,7 +62,14 @@ api_router.include_router(wiki.router, prefix="/wiki", tags=["wiki"])
 api_router.include_router(
     wiki.internal_router, prefix="/internal/wiki", tags=["wiki-internal"]
 )
+api_router.include_router(wizard.router, prefix="/wizard", tags=["wizard"])
 api_router.include_router(
     openapi_responses.router, prefix="/v1/responses", tags=["openapi-responses"]
+)
+api_router.include_router(
+    knowledge.router, prefix="/knowledge-bases", tags=["knowledge"]
+)
+api_router.include_router(
+    knowledge.document_router, prefix="/knowledge-documents", tags=["knowledge"]
 )
 api_router.include_router(k_router)
