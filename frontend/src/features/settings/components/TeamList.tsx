@@ -653,19 +653,21 @@ export default function TeamList({
                       {t('teams.new_team')}
                     </UnifiedAddButton>
                   )}
-                  <TooltipProvider>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button variant="primary" onClick={handleOpenWizard} className="gap-2">
-                          <SparklesIcon className="w-4 h-4" />
-                          {t('wizard.wizard_button')}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{t('wizard.wizard_button_tooltip')}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
+                  {(scope === 'personal' || canCreateInCurrentGroup) && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button variant="primary" onClick={handleOpenWizard} className="gap-2">
+                            <SparklesIcon className="w-4 h-4" />
+                            {t('wizard.wizard_button')}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{t('wizard.wizard_button_tooltip')}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
                   <UnifiedAddButton
                     variant="outline"
                     onClick={() => setBotListVisible(true)}
