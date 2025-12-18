@@ -87,7 +87,7 @@ export const useOnboarding = ({
       doneBtnText: t('onboarding.done'),
       showButtons: ['next', 'previous', 'close'] as AllowedButtons[],
       popoverClass: 'onboarding-popover',
-      onPopoverRender: (popover) => {
+      onPopoverRender: popover => {
         // Customize close button text to show "Skip"
         const closeBtn = popover.wrapper.querySelector('.driver-popover-close-btn');
         if (closeBtn) {

@@ -2,29 +2,29 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { useTranslation } from '@/hooks/useTranslation'
-import type { KnowledgeBase } from '@/types/knowledge'
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { useTranslation } from '@/hooks/useTranslation';
+import type { KnowledgeBase } from '@/types/knowledge';
 
 interface EditKnowledgeBaseDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  knowledgeBase: KnowledgeBase | null
-  onSubmit: (data: { name: string; description?: string }) => Promise<void>
-  loading?: boolean
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  knowledgeBase: KnowledgeBase | null;
+  onSubmit: (data: { name: string; description?: string }) => Promise<void>;
+  loading?: boolean;
 }
 
 export function EditKnowledgeBaseDialog({
@@ -34,45 +34,45 @@ export function EditKnowledgeBaseDialog({
   onSubmit,
   loading,
 }: EditKnowledgeBaseDialogProps) {
-  const { t } = useTranslation()
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [error, setError] = useState('')
+  const { t } = useTranslation();
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState('');
 
   useEffect(() => {
     if (knowledgeBase) {
-      setName(knowledgeBase.name)
-      setDescription(knowledgeBase.description || '')
+      setName(knowledgeBase.name);
+      setDescription(knowledgeBase.description || '');
     }
-  }, [knowledgeBase])
+  }, [knowledgeBase]);
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
+    e.preventDefault();
+    setError('');
 
     if (!name.trim()) {
-      setError(t('knowledge.document.knowledgeBase.nameRequired'))
-      return
+      setError(t('knowledge.document.knowledgeBase.nameRequired'));
+      return;
     }
 
     if (name.length > 100) {
-      setError(t('knowledge.document.knowledgeBase.nameTooLong'))
-      return
+      setError(t('knowledge.document.knowledgeBase.nameTooLong'));
+      return;
     }
 
     try {
-      await onSubmit({ name: name.trim(), description: description.trim() || undefined })
+      await onSubmit({ name: name.trim(), description: description.trim() || undefined });
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.error'))
+      setError(err instanceof Error ? err.message : t('common.error'));
     }
-  }
+  };
 
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen) {
-      setError('')
+      setError('');
     }
-    onOpenChange(newOpen)
-  }
+    onOpenChange(newOpen);
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -87,17 +87,19 @@ export function EditKnowledgeBaseDialog({
               <Input
                 id="edit-name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={e => setName(e.target.value)}
                 placeholder={t('knowledge.document.knowledgeBase.namePlaceholder')}
                 maxLength={100}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="edit-description">{t('knowledge.document.knowledgeBase.description')}</Label>
+              <Label htmlFor="edit-description">
+                {t('knowledge.document.knowledgeBase.description')}
+              </Label>
               <Textarea
                 id="edit-description"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={e => setDescription(e.target.value)}
                 placeholder={t('knowledge.document.knowledgeBase.descriptionPlaceholder')}
                 maxLength={500}
                 rows={3}
@@ -121,5 +123,5 @@ export function EditKnowledgeBaseDialog({
         </form>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

@@ -63,7 +63,6 @@ export function getLastTeamId(): number | null {
   try {
     const teamId = localStorage.getItem(STORAGE_KEYS.LAST_TEAM_ID);
     if (!teamId || teamId === 'undefined' || teamId === 'null' || teamId === 'NaN') {
-      console.log('[userPreferences] Invalid or missing team ID in localStorage:', teamId);
       return null;
     }
     const result = parseInt(teamId, 10);
@@ -105,10 +104,10 @@ export function getLastTeamIdByMode(mode: 'chat' | 'code'): number | null {
     const key = mode === 'chat' ? STORAGE_KEYS.LAST_TEAM_ID_CHAT : STORAGE_KEYS.LAST_TEAM_ID_CODE;
     const teamId = localStorage.getItem(key);
     if (!teamId || teamId === 'undefined' || teamId === 'null' || teamId === 'NaN') {
-      console.log(
-        `[userPreferences] Invalid or missing team ID in localStorage for ${mode} mode:`,
-        teamId
-      );
+      // console.log(
+      //   `[userPreferences] Invalid or missing team ID in localStorage for ${mode} mode:`,
+      //   teamId
+      // );
       // Fallback to generic key
       return getLastTeamId();
     }

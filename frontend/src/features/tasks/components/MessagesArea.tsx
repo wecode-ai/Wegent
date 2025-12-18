@@ -14,7 +14,7 @@ import type {
   GitBranch,
   Attachment,
 } from '@/types/api';
-import { Share2, FileText, ChevronDown, Download, MessageSquare } from 'lucide-react';
+import { Share2, FileText, ChevronDown, Download, MessageSquare, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -28,12 +28,15 @@ import { useTheme } from '@/features/theme/ThemeProvider';
 import { useTypewriter } from '@/hooks/useTypewriter';
 import { useMultipleStreamingRecovery, type RecoveryState } from '@/hooks/useStreamingRecovery';
 import MessageBubble, { type Message } from './MessageBubble';
+import { GroupChatMessageWrapper } from './MessageSenderBadge';
 import TaskShareModal from './TaskShareModal';
 import { taskApis } from '@/apis/tasks';
 import { type SelectableMessage } from './ExportPdfButton';
 import { generateChatPdf } from '@/utils/pdf';
 import { getAttachmentPreviewUrl, isImageExtension } from '@/apis/attachments';
 import { getToken } from '@/apis/user';
+import { TaskMembersPanel } from './group-chat';
+import { useUser } from '@/features/common/UserContext';
 
 interface ResultWithThinking {
   thinking?: unknown[];
@@ -56,6 +59,10 @@ interface RecoveredMessageBubbleProps {
   t: (key: string) => string;
   /** Generic callback when a component inside the message bubble wants to send a message */
   onSendMessage?: (content: string) => void;
+  /** Whether this is a group chat (show sender names) */
+  isGroupChat?: boolean;
+  /** Whether this message is from the current user (for group chat alignment) */
+  isCurrentUserMessage?: boolean;
 }
 
 function RecoveredMessageBubble({
@@ -69,6 +76,8 @@ function RecoveredMessageBubble({
   theme,
   t,
   onSendMessage,
+  isGroupChat = false,
+  isCurrentUserMessage,
 }: RecoveredMessageBubbleProps) {
   // Use typewriter effect for recovered content that is still streaming
   const displayContent = useTypewriter(recovery.content || '');
@@ -82,28 +91,72 @@ function RecoveredMessageBubble({
     isIncomplete: recovery.incomplete,
   };
 
+  // Find the corresponding subtask from selectedTaskDetail
+  const subtask = selectedTaskDetail?.subtasks?.find(s => s.id === msg.subtaskId);
+
+  // If no subtask found or not a group chat, render without wrapper
+  if (!subtask || !isGroupChat) {
+    return (
+      <MessageBubble
+        msg={modifiedMsg}
+        index={index}
+        selectedTaskDetail={selectedTaskDetail}
+        selectedTeam={selectedTeam}
+        selectedRepo={selectedRepo}
+        selectedBranch={selectedBranch}
+        theme={theme}
+        t={t}
+        onSendMessage={onSendMessage}
+        isCurrentUserMessage={isCurrentUserMessage}
+      />
+    );
+  }
+
   return (
-    <MessageBubble
-      msg={modifiedMsg}
-      index={index}
-      selectedTaskDetail={selectedTaskDetail}
-      selectedTeam={selectedTeam}
-      selectedRepo={selectedRepo}
-      selectedBranch={selectedBranch}
-      theme={theme}
-      t={t}
-      onSendMessage={onSendMessage}
-    />
+    <GroupChatMessageWrapper subtask={subtask} isGroupChat={isGroupChat}>
+      <MessageBubble
+        msg={modifiedMsg}
+        index={index}
+        selectedTaskDetail={selectedTaskDetail}
+        selectedTeam={selectedTeam}
+        selectedRepo={selectedRepo}
+        selectedBranch={selectedBranch}
+        theme={theme}
+        t={t}
+        onSendMessage={onSendMessage}
+        isCurrentUserMessage={isCurrentUserMessage}
+      />
+    </GroupChatMessageWrapper>
   );
+}
+
+/**
+ * Check if a message contains an @ mention for a specific bot/team name
+ * This is used in group chat to determine if AI should respond
+ * @param message - The message content to check
+ * @param botName - The bot/team name to look for (e.g., "MyBot", "智能助手")
+ * @returns true if the message contains @botName
+ */
+function containsBotMention(
+  message: string | null | undefined,
+  botName: string | null | undefined
+): boolean {
+  if (!message || !botName) return false;
+  // Escape special regex characters in bot name
+  const escapedBotName = botName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  // Match @botName (case-insensitive, supports Chinese and other characters)
+  // The bot name can be followed by whitespace, punctuation, or end of string
+  const atMentionPattern = new RegExp(`@${escapedBotName}(?:\\s|$|[,，。.!！?？])`, 'i');
+  return atMentionPattern.test(message);
 }
 
 interface MessagesAreaProps {
   selectedTeam?: Team | null;
   selectedRepo?: GitRepoInfo | null;
   selectedBranch?: GitBranch | null;
-  /** Streaming content for Chat Shell (optional) */
+  /** Streaming content for Chat Shell (optional) - for current user's own streaming */
   streamingContent?: string;
-  /** Whether streaming is in progress */
+  /** Whether streaming is in progress - for current user's own streaming */
   isStreaming?: boolean;
   /** Pending user message for optimistic update */
   pendingUserMessage?: string | null;
@@ -113,10 +166,12 @@ interface MessagesAreaProps {
   pendingAttachment?: Attachment | null;
   /** Callback to notify parent when content changes and scroll may be needed */
   onContentChange?: () => void;
-  /** Current streaming subtask ID (for deduplication) */
+  /** Current streaming subtask ID (for deduplication) - for current user's own streaming */
   streamingSubtaskId?: number | null;
   /** Generic callback when a component inside the message bubble wants to send a message */
   onSendMessage?: (content: string) => void;
+  /** Whether this is a group chat (show sender names) */
+  isGroupChat?: boolean;
 }
 
 export default function MessagesArea({
@@ -131,12 +186,14 @@ export default function MessagesArea({
   streamingSubtaskId,
   onShareButtonRender,
   onSendMessage,
+  isGroupChat = false,
 }: MessagesAreaProps) {
   const { t } = useTranslation('chat');
   const { t: tCommon } = useTranslation('common');
   const { toast } = useToast();
-  const { selectedTaskDetail, refreshSelectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail, refreshSelectedTaskDetail, setSelectedTask } = useTaskContext();
   const { theme } = useTheme();
+  const { user } = useUser();
 
   // Task share modal state
   const [showShareModal, setShowShareModal] = useState(false);
@@ -145,7 +202,12 @@ export default function MessagesArea({
   const [isExportingPdf, setIsExportingPdf] = useState(false);
   const [isExportingDocx, setIsExportingDocx] = useState(false);
 
-  // Use Typewriter effect for streaming content
+  // Group chat members panel state
+  const [showMembersPanel, setShowMembersPanel] = useState(false);
+
+  // Use Typewriter effect for streaming content (current user's own streaming only)
+  // Note: For other users' streaming in group chat, useMultipleStreamingRecovery handles
+  // the content recovery and RecoveredMessageBubble applies its own typewriter effect
   const displayContent = useTypewriter(streamingContent || '');
 
   // Handle task share - wrapped in useCallback to prevent infinite loops
@@ -394,14 +456,30 @@ export default function MessagesArea({
   }, [selectedTaskDetail?.id, selectedTaskDetail?.status, refreshSelectedTaskDetail, isChatShell]);
 
   // Prepare subtasks for recovery check
+  // Use JSON.stringify to create a stable dependency that changes when subtask content changes
+  // This ensures the hook re-runs when new RUNNING subtasks appear
+  const subtasksKey = useMemo(() => {
+    if (!selectedTaskDetail?.subtasks) return '';
+    return selectedTaskDetail.subtasks.map(sub => `${sub.id}:${sub.status}:${sub.role}`).join(',');
+  }, [selectedTaskDetail?.subtasks]);
+
   const subtasksForRecovery = useMemo(() => {
     if (!selectedTaskDetail?.subtasks) return null;
-    return selectedTaskDetail.subtasks.map(sub => ({
+    const result = selectedTaskDetail.subtasks.map(sub => ({
       id: sub.id,
       status: sub.status,
       role: sub.role,
     }));
-  }, [selectedTaskDetail?.subtasks]);
+    console.log('[MessagesArea] subtasksForRecovery updated:', {
+      count: result.length,
+      runningAssistants: result
+        .filter(s => s.status === 'RUNNING' && s.role === 'ASSISTANT')
+        .map(s => s.id),
+      streamingSubtaskId,
+      subtasksKey,
+    });
+    return result;
+  }, [subtasksKey, selectedTaskDetail?.subtasks, streamingSubtaskId]);
 
   // Get team ID for offset-based streaming recovery
   const teamId = selectedTeam?.id || selectedTaskDetail?.team?.id || null;
@@ -533,6 +611,11 @@ export default function MessagesArea({
           isIncomplete = recovery.incomplete;
         }
 
+        // Get sender user ID for group chat alignment
+        // For USER messages: use sender_user_id or user_id
+        // For AI messages: no sender user ID (always left-aligned)
+        const senderUserId = msgType === 'user' ? sub.sender_user_id || sub.user_id : undefined;
+
         messages.push({
           type: msgType,
           content: content,
@@ -548,6 +631,9 @@ export default function MessagesArea({
           recoveredContent, // Add recovered content if available
           isRecovered, // Flag to indicate this is recovered content
           isIncomplete, // Flag to indicate content is incomplete
+          senderUserName: sub.sender_user_name, // Add sender user name for group chat
+          senderUserId, // Add sender user ID for group chat alignment
+          shouldShowSender: detail.is_group_chat === true, // Only show sender in group chat
         });
       });
     }
@@ -562,15 +648,9 @@ export default function MessagesArea({
   );
 
   // Check if pending user message is already in displayMessages (to avoid duplication)
-  // Check if pending user message is already in displayMessages (to avoid duplication)
   // This happens when refreshTasks() is called and the backend returns the message
   const isPendingMessageAlreadyDisplayed = useMemo(() => {
     if (!pendingUserMessage) return false;
-
-    // IMPORTANT: Don't hide pending message while streaming is active
-    // The user message subtask might be filtered out by streamingSubtaskId logic,
-    // so we need to keep showing the pending message until streaming completes
-    if (isStreaming) return false;
 
     // Check if ANY user message in displayMessages matches the pending message
     // This handles the case where the message might not be the last one
@@ -589,8 +669,11 @@ export default function MessagesArea({
       return false;
     });
 
+    // If the message is already displayed in displayMessages, hide the pending message
+    // This prevents duplicate bubbles in group chat scenarios where the backend
+    // returns the user message quickly while AI is still streaming
     return isDisplayed;
-  }, [displayMessages, pendingUserMessage, isStreaming]);
+  }, [displayMessages, pendingUserMessage]);
   // Check if streaming content is already in displayMessages (to avoid duplication)
   // This happens when the stream completes and the backend returns the AI response
   const isStreamingContentAlreadyDisplayed = useMemo(() => {
@@ -661,14 +744,39 @@ export default function MessagesArea({
     onContentChange,
   ]);
 
+  // Handle user leaving group chat
+  const handleLeaveGroupChat = useCallback(() => {
+    // Clear the selected task to close the chat view
+    setSelectedTask(null);
+  }, [setSelectedTask]);
+
   // Memoize share and export buttons to prevent infinite re-renders
   const shareButton = useMemo(() => {
     if (!selectedTaskDetail?.id || displayMessages.length === 0) {
       return null;
     }
 
+    // Check if this is a group chat with chat agent type
+    const isGroupChat = selectedTaskDetail?.is_group_chat || false;
+    const isChatAgentType = selectedTaskDetail?.team?.agent_type === 'chat';
+    // Show members button if it's a group chat OR if agent type is chat
+    const showMembersButton = isGroupChat || isChatAgentType;
+
     return (
       <div className="flex items-center gap-2">
+        {/* Members Button - only show for group chats with chat agent type */}
+        {showMembersButton && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setShowMembersPanel(true)}
+            className="flex items-center gap-2"
+          >
+            <Users className="h-4 w-4" />
+            {t('groupChat.members.title') || 'Members'}
+          </Button>
+        )}
+
         {/* Share Button */}
         <Button
           variant="outline"
@@ -742,6 +850,8 @@ export default function MessagesArea({
     );
   }, [
     selectedTaskDetail?.id,
+    selectedTaskDetail?.is_group_chat,
+    selectedTaskDetail?.team?.agent_type,
     displayMessages.length,
     isSharing,
     isExportingPdf,
@@ -767,10 +877,12 @@ export default function MessagesArea({
       translate="no"
     >
       {/* Messages Area - always render container to prevent layout shift */}
-      {/* Show messages when: 1) has display messages, 2) has pending message, 3) is streaming, 4) has selected task (even if loading) */}
+      {/* Show messages when: 1) has display messages, 2) has pending message, 3) is streaming with subtask ID, 4) has selected task (even if loading) */}
+      {/* IMPORTANT: For streaming, only consider it "active" when streamingSubtaskId is set */}
+      {/* This prevents showing empty streaming state before AI generation is triggered */}
       {(displayMessages.length > 0 ||
         pendingUserMessage ||
-        isStreaming ||
+        (isStreaming && streamingSubtaskId) ||
         selectedTaskDetail?.id) && (
         <div className="flex-1 space-y-8 messages-container">
           {displayMessages.map((msg, index) => {
@@ -782,6 +894,13 @@ export default function MessagesArea({
             const messageKey = msg.subtaskId
               ? `${msg.type}-${msg.subtaskId}`
               : `msg-${index}-${msg.timestamp}`;
+
+            // Determine if this is the current user's message (for group chat alignment)
+            // In group chat: only current user's messages should be right-aligned
+            // For user messages: compare senderUserId with current user ID
+            // For AI messages: always left-aligned (isCurrentUserMessage = false)
+            const isCurrentUserMessageForRecovery =
+              msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false;
 
             // Use RecoveredMessageBubble for messages with active recovery (streaming)
             if (recovery?.recovered && recovery.streaming) {
@@ -798,56 +917,158 @@ export default function MessagesArea({
                   theme={theme as 'light' | 'dark'}
                   t={t}
                   onSendMessage={onSendMessage}
+                  isGroupChat={isGroupChat}
+                  isCurrentUserMessage={isCurrentUserMessageForRecovery}
                 />
               );
             }
 
             // Use regular MessageBubble for other messages
+            // Find the corresponding subtask from selectedTaskDetail
+            const subtask = msg.subtaskId
+              ? selectedTaskDetail?.subtasks?.find(s => s.id === msg.subtaskId)
+              : undefined;
+
+            // Determine if this is the current user's message (for group chat alignment)
+            // In group chat: only current user's messages should be right-aligned
+            // For user messages: compare senderUserId with current user ID
+            // For AI messages: always left-aligned (isCurrentUserMessage = false)
+            const isCurrentUserMessage =
+              msg.type === 'user' ? (isGroupChat ? msg.senderUserId === user?.id : true) : false;
+
+            // If no subtask found or not a group chat, render without wrapper
+            if (!subtask || !isGroupChat) {
+              return (
+                <MessageBubble
+                  key={messageKey}
+                  msg={msg}
+                  index={index}
+                  selectedTaskDetail={selectedTaskDetail}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  theme={theme as 'light' | 'dark'}
+                  t={t}
+                  onSendMessage={onSendMessage}
+                  isCurrentUserMessage={isCurrentUserMessage}
+                />
+              );
+            }
+
             return (
-              <MessageBubble
-                key={messageKey}
-                msg={msg}
-                index={index}
-                selectedTaskDetail={selectedTaskDetail}
-                selectedTeam={selectedTeam}
-                selectedRepo={selectedRepo}
-                selectedBranch={selectedBranch}
-                theme={theme as 'light' | 'dark'}
-                t={t}
-                onSendMessage={onSendMessage}
-              />
+              <GroupChatMessageWrapper key={messageKey} subtask={subtask} isGroupChat={isGroupChat}>
+                <MessageBubble
+                  msg={msg}
+                  index={index}
+                  selectedTaskDetail={selectedTaskDetail}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  theme={theme as 'light' | 'dark'}
+                  t={t}
+                  onSendMessage={onSendMessage}
+                  isCurrentUserMessage={isCurrentUserMessage}
+                />
+              </GroupChatMessageWrapper>
             );
           })}
 
           {/* Pending user message (optimistic update) - only show if not already in displayMessages */}
           {/* Use MessageBubble to ensure proper rendering of special formats like ClarificationAnswerSummary */}
-          {pendingUserMessage && !isPendingMessageAlreadyDisplayed && (
-            <MessageBubble
-              key="pending-user-message"
-              msg={{
-                type: 'user',
+          {/* In group chat, always wrap with GroupChatMessageWrapper for consistent appearance */}
+          {/* In group chat, wait for user info to be loaded to prevent "no username" -> "with username" flash */}
+          {pendingUserMessage &&
+            !isPendingMessageAlreadyDisplayed &&
+            (!isGroupChat || user) &&
+            (() => {
+              const pendingMsg = {
+                type: 'user' as const,
                 content: pendingUserMessage,
                 timestamp: Date.now(),
                 attachments: pendingAttachment ? [pendingAttachment] : undefined,
-              }}
-              index={displayMessages.length}
-              selectedTaskDetail={selectedTaskDetail}
-              selectedTeam={selectedTeam}
-              selectedRepo={selectedRepo}
-              selectedBranch={selectedBranch}
-              theme={theme as 'light' | 'dark'}
-              t={t}
-              onSendMessage={onSendMessage}
-            />
-          )}
+                // Add sender info for group chat to show username and timestamp
+                // In non-group chat, don't show sender info (consistent with normal messages)
+                senderUserName: isGroupChat ? user?.user_name : undefined,
+                senderUserId: isGroupChat ? user?.id : undefined,
+                // Only show sender info in group chat (consistent with normal messages)
+                shouldShowSender: isGroupChat,
+              };
 
-          {/* Streaming AI response - use MessageBubble component for consistency */}
-          {/* Show waiting indicator inside MessageBubble when streaming but no content yet */}
-          {(isStreaming || streamingContent) &&
-            streamingContent !== undefined &&
-            !isStreamingContentAlreadyDisplayed && (
+              const messageBubble = (
+                <MessageBubble
+                  key="pending-user-message"
+                  msg={pendingMsg}
+                  index={displayMessages.length}
+                  selectedTaskDetail={selectedTaskDetail}
+                  selectedTeam={selectedTeam}
+                  selectedRepo={selectedRepo}
+                  selectedBranch={selectedBranch}
+                  theme={theme as 'light' | 'dark'}
+                  t={t}
+                  onSendMessage={onSendMessage}
+                  // In group chat, current user's pending message should still be right-aligned
+                  isCurrentUserMessage={true}
+                />
+              );
+
+              // In group chat, always wrap with GroupChatMessageWrapper for consistent appearance
+              // This ensures the message doesn't "jump" when transitioning from pending to displayed
+              // Note: For own messages, GroupChatMessageWrapper won't show sender badge (by design)
+              if (isGroupChat) {
+                // Create a mock subtask for the wrapper
+                // Use user info if available, otherwise use placeholder values
+                const mockSubtask = {
+                  id: -1,
+                  role: 'USER' as const,
+                  sender_type: 'USER' as const,
+                  sender_user_id: user?.id || 0,
+                  sender_user_name: user?.user_name || '',
+                  user_id: user?.id || 0,
+                } as unknown as TaskDetailSubtask;
+
+                return (
+                  <GroupChatMessageWrapper
+                    key="pending-user-message-wrapper"
+                    subtask={mockSubtask}
+                    isGroupChat={true}
+                  >
+                    {messageBubble}
+                  </GroupChatMessageWrapper>
+                );
+              }
+
+              return messageBubble;
+            })()}
+
+          {/* Streaming AI response - for current user's own streaming only */}
+          {/* Only show when streamingSubtaskId is set, indicating AI generation was triggered by current user */}
+          {/* Note: For other users' streaming in group chat, useMultipleStreamingRecovery handles */}
+          {/* the content recovery and displays it via RecoveredMessageBubble with "(已恢复)" label */}
+          {(() => {
+            // Only render for current user's own streaming
+            if (!streamingSubtaskId) return null;
+
+            // Check if content is already displayed (stream completed and backend returned the response)
+            if (isStreamingContentAlreadyDisplayed) return null;
+
+            // For group chat: only show streaming indicator if pending message contains @bot mention
+            // This prevents showing streaming indicator when user sends a message without @bot
+            // Note: This only affects the "waiting" state before content arrives
+            // Once content starts streaming (streamingContent is not empty), we always show it
+            if (isGroupChat && !streamingContent) {
+              // Get the bot/team name from task detail or selected team
+              const botName = selectedTaskDetail?.team?.name || selectedTeam?.name;
+              // Check if the pending message contains @botName mention
+              const hasBotMention = containsBotMention(pendingUserMessage, botName);
+              if (!hasBotMention) {
+                // No @bot mention in group chat, don't show streaming indicator
+                return null;
+              }
+            }
+
+            return (
               <MessageBubble
-                key="streaming-message"
+                key={`streaming-${streamingSubtaskId}`}
                 msg={{
                   type: 'ai',
                   content: `\${$$}$${streamingContent || ''}`,
@@ -857,6 +1078,7 @@ export default function MessagesArea({
                   recoveredContent: displayContent,
                   isRecovered: false,
                   isIncomplete: false,
+                  subtaskId: streamingSubtaskId,
                 }}
                 index={displayMessages.length}
                 selectedTaskDetail={selectedTaskDetail}
@@ -868,9 +1090,11 @@ export default function MessagesArea({
                 isWaiting={Boolean(isStreaming && !streamingContent)}
                 onSendMessage={onSendMessage}
               />
-            )}
+            );
+          })()}
         </div>
       )}
+
       {/* Task Share Modal */}
       <TaskShareModal
         visible={showShareModal}
@@ -878,6 +1102,18 @@ export default function MessagesArea({
         taskTitle={selectedTaskDetail?.title || 'Untitled Task'}
         shareUrl={shareUrl}
       />
+
+      {/* Group Chat Members Panel */}
+      {selectedTaskDetail?.id && user?.id && (
+        <TaskMembersPanel
+          open={showMembersPanel}
+          onClose={() => setShowMembersPanel(false)}
+          taskId={selectedTaskDetail.id}
+          taskTitle={selectedTaskDetail.title || selectedTaskDetail.prompt || 'Untitled Task'}
+          currentUserId={user.id}
+          onLeave={handleLeaveGroupChat}
+        />
+      )}
     </div>
   );
 }

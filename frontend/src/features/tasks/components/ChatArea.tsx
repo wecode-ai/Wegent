@@ -47,6 +47,8 @@ import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
 import { chatApis, SearchEngine } from '@/apis/chat';
+import { GroupChatSyncManager } from './group-chat';
+import type { SubtaskWithSender } from '@/apis/group-chat';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -412,6 +414,28 @@ export default function ChatArea({
     setStreamingTaskId(null);
   }, [currentDisplayTaskId, streamingTaskId, contextResetStream]);
 
+  // Group chat message handlers
+  // Note: Group chat streaming from other users is now handled by useMultipleStreamingRecovery
+  // in MessagesArea, which detects RUNNING ASSISTANT subtasks and recovers their streaming content.
+  // This simplifies the architecture by using a single mechanism for all streaming recovery.
+  const handleNewMessages = useCallback(
+    (messages: SubtaskWithSender[]) => {
+      if (messages.length > 0) {
+        refreshSelectedTaskDetail();
+      }
+    },
+    [refreshSelectedTaskDetail]
+  );
+
+  // When group chat stream completes, refresh to get the final message
+  const handleStreamComplete = useCallback(
+    (_subtaskId: number, _result?: Record<string, unknown>) => {
+      // Refresh to get the final message
+      refreshSelectedTaskDetail();
+    },
+    [refreshSelectedTaskDetail]
+  );
+
   // Clear streamingTaskId when the streaming task completes or when we switch to a different task
   useEffect(() => {
     if (streamingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== streamingTaskId) {
@@ -424,21 +448,61 @@ export default function ChatArea({
   // Unified effect to reset streaming state in all necessary scenarios:
   // 1. Stream completes or is externally cleared (streamingTaskId exists but stream is not active)
   // 2. User navigates to a fresh new task state (no selectedTaskDetail and no streamingTaskId)
+  // Track whether we've started a stream to avoid premature reset
+  const hasStartedStreamRef = useRef(false);
   useEffect(() => {
+    // If streamingTaskId is set, mark that we've started a stream
+    if (streamingTaskId) {
+      hasStartedStreamRef.current = true;
+    }
+
     // Scenario 1: Stream was cleared (either completed or externally cleared via clearAllStreams)
-    if (streamingTaskId && !isStreamingTaskActive) {
-      resetStreamingState();
+    // Only reset if we've actually started a stream before (hasStartedStreamRef.current is true)
+    // This prevents resetting when streamingTaskId is just set but stream hasn't started yet
+    if (streamingTaskId && !isStreamingTaskActive && hasStartedStreamRef.current) {
+      // Check if the stream context actually has this task registered
+      // If not, it means the stream hasn't started yet, so don't reset
+      const streamState = getStreamState(streamingTaskId);
+      if (streamState) {
+        resetStreamingState();
+        hasStartedStreamRef.current = false;
+      }
     }
     // Scenario 2: No task selected and no active streaming task
     else if (!selectedTaskDetail?.id && !streamingTaskId) {
       resetStreamingState();
+      hasStartedStreamRef.current = false;
     }
-  }, [streamingTaskId, isStreamingTaskActive, selectedTaskDetail?.id, resetStreamingState]);
+  }, [
+    streamingTaskId,
+    isStreamingTaskActive,
+    selectedTaskDetail?.id,
+    resetStreamingState,
+    getStreamState,
+  ]);
 
   // Reset streaming state when task ID changes (user switches tasks)
   // This ensures pending message from task A doesn't show up in task B
+  // IMPORTANT: Only reset when switching to a DIFFERENT task, not when the current task gets an ID
+  // This prevents clearing the pending message when a new task is created and gets its ID
+  const previousTaskIdRef = useRef<number | null | undefined>(undefined);
   useEffect(() => {
-    resetStreamingState();
+    const currentTaskId = selectedTaskDetail?.id;
+    const previousTaskId = previousTaskIdRef.current;
+
+    // Only reset if:
+    // 1. We had a previous task ID (not undefined, meaning this isn't the first render)
+    // 2. The task ID actually changed to a different value
+    // 3. We're not transitioning from null/undefined to a new ID (which happens when creating a new task)
+    if (
+      previousTaskId !== undefined &&
+      currentTaskId !== previousTaskId &&
+      previousTaskId !== null // Don't reset when going from null to a new ID
+    ) {
+      resetStreamingState();
+    }
+
+    previousTaskIdRef.current = currentTaskId;
   }, [selectedTaskDetail?.id, resetStreamingState]);
 
   const subtaskList = selectedTaskDetail?.subtasks ?? [];
@@ -574,13 +638,28 @@ export default function ChatArea({
     }
 
     if (!selectedTeam?.id || selectedTeam.id !== detailTeamId) {
+      // Try to find team in teams list first
       const matchedTeam = teams.find(team => team.id === detailTeamId) || null;
       if (matchedTeam) {
         setSelectedTeam(matchedTeam);
         setHasRestoredPreferences(true);
+      } else {
+        // For group chat members: team might not be in teams list
+        // Use team object directly from selectedTaskDetail if available
+        if (selectedTaskDetail?.team && typeof selectedTaskDetail.team === 'object') {
+          const teamFromDetail = selectedTaskDetail.team as Team;
+          if (teamFromDetail.id === detailTeamId) {
+            console.log(
+              '[ChatArea] Using team from task detail (group chat member):',
+              teamFromDetail.name
+            );
+            setSelectedTeam(teamFromDetail);
+            setHasRestoredPreferences(true);
+          }
+        }
       }
     }
-  }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam]);
+  }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam, selectedTaskDetail?.team]);
 
   // Set model and override flag when viewing existing task
   useEffect(() => {
@@ -913,7 +992,9 @@ export default function ChatArea({
                   } finally {
                     // Only clear stream content after data is refreshed (or failed)
                     contextResetStream(completedTaskId);
-                    setStreamingTaskId(null);
+                    // Clear local pending state after task detail is refreshed
+                    // This ensures the saved message appears before pending message disappears
+                    resetStreamingState();
                   }
                 } else if (selectedTaskDetail?.id) {
                   // If this was a follow-up message (second+ message), refresh task detail
@@ -926,7 +1007,9 @@ export default function ChatArea({
                   } finally {
                     // Only clear stream content after data is refreshed (or failed)
                     contextResetStream(completedTaskId);
-                    setStreamingTaskId(null);
+                    // Clear local pending state after task detail is refreshed
+                    // This ensures the saved message appears before pending message disappears
+                    resetStreamingState();
                   }
                 }
               },
@@ -1249,6 +1332,18 @@ export default function ChatArea({
       className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
+      {/* Group Chat Sync Manager - zero UI, handles polling for new messages */}
+      {/* Note: Streaming content recovery is handled by useMultipleStreamingRecovery in MessagesArea */}
+      {selectedTaskDetail?.is_group_chat && selectedTaskDetail.id && (
+        <GroupChatSyncManager
+          taskId={selectedTaskDetail.id}
+          isGroupChat={true}
+          enabled={true}
+          onNewMessages={handleNewMessages}
+          onStreamComplete={handleStreamComplete}
+        />
+      )}
+
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
         {/* Top gradient fade effect - only show when has messages */}
@@ -1284,6 +1379,7 @@ export default function ChatArea({
               streamingSubtaskId={streamingSubtaskId}
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
+              isGroupChat={selectedTaskDetail?.is_group_chat || false}
             />
           </div>
         </div>
@@ -1363,6 +1459,13 @@ export default function ChatArea({
                         canSubmit={canSubmit}
                         tipText={randomTip}
                         badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
+                        isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                        team={selectedTeam}
+                        onPasteFile={
+                          isChatShell(selectedTeam) && !attachmentState.attachment
+                            ? handleFileSelect
+                            : undefined
+                        }
                       />
                     </div>
                   )}
@@ -1622,6 +1725,13 @@ export default function ChatArea({
                       taskType={taskType}
                       canSubmit={canSubmit}
                       tipText={randomTip}
+                      isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                      team={selectedTeam}
+                      onPasteFile={
+                        isChatShell(selectedTeam) && !attachmentState.attachment
+                          ? handleFileSelect
+                          : undefined
+                      }
                     />
                   </div>
                 )}

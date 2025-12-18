@@ -2,37 +2,44 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState, useMemo, useCallback } from 'react'
-import { ArrowLeft, Upload, FileText, Search, ChevronUp, ChevronDown, FolderOpen, Trash2, ToggleLeft, ToggleRight } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
-import { Checkbox } from '@/components/ui/checkbox'
-import { DocumentItem } from './DocumentItem'
-import { DocumentUpload } from './DocumentUpload'
-import { DeleteDocumentDialog } from './DeleteDocumentDialog'
-import { EditDocumentDialog } from './EditDocumentDialog'
-import { useDocuments } from '../hooks/useDocuments'
-import type { KnowledgeBase, KnowledgeDocument } from '@/types/knowledge'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useState, useMemo, useCallback } from 'react';
+import {
+  ArrowLeft,
+  Upload,
+  FileText,
+  Search,
+  ChevronUp,
+  ChevronDown,
+  FolderOpen,
+  Trash2,
+  ToggleLeft,
+  ToggleRight,
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import { Checkbox } from '@/components/ui/checkbox';
+import { DocumentItem } from './DocumentItem';
+import { DocumentUpload } from './DocumentUpload';
+import { DeleteDocumentDialog } from './DeleteDocumentDialog';
+import { EditDocumentDialog } from './EditDocumentDialog';
+import { useDocuments } from '../hooks/useDocuments';
+import type { KnowledgeBase, KnowledgeDocument } from '@/types/knowledge';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface DocumentListProps {
-  knowledgeBase: KnowledgeBase
-  onBack?: () => void
-  canManage?: boolean
+  knowledgeBase: KnowledgeBase;
+  onBack?: () => void;
+  canManage?: boolean;
 }
 
-type SortField = 'name' | 'size' | 'date'
-type SortOrder = 'asc' | 'desc'
-type StatusFilter = 'all' | 'enabled' | 'disabled'
+type SortField = 'name' | 'size' | 'date';
+type SortOrder = 'asc' | 'desc';
+type StatusFilter = 'all' | 'enabled' | 'disabled';
 
-export function DocumentList({
-  knowledgeBase,
-  onBack,
-  canManage = true,
-}: DocumentListProps) {
-  const { t } = useTranslation()
+export function DocumentList({ knowledgeBase, onBack, canManage = true }: DocumentListProps) {
+  const { t } = useTranslation();
   const {
     documents,
     loading,
@@ -44,184 +51,180 @@ export function DocumentList({
     batchDelete,
     batchEnable,
     batchDisable,
-  } = useDocuments({ knowledgeBaseId: knowledgeBase.id })
+  } = useDocuments({ knowledgeBaseId: knowledgeBase.id });
 
   // Only show error on page for initial load failures (when documents list is empty)
   // Operation errors are shown via toast notifications
-  const showLoadError = error && documents.length === 0
+  const showLoadError = error && documents.length === 0;
 
-  const [showUpload, setShowUpload] = useState(false)
-  const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null)
-  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
-  const [sortField, setSortField] = useState<SortField>('date')
-  const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const [batchLoading, setBatchLoading] = useState(false)
+  const [showUpload, setShowUpload] = useState(false);
+  const [editingDoc, setEditingDoc] = useState<KnowledgeDocument | null>(null);
+  const [deletingDoc, setDeletingDoc] = useState<KnowledgeDocument | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>('all');
+  const [sortField, setSortField] = useState<SortField>('date');
+  const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [batchLoading, setBatchLoading] = useState(false);
 
   const filteredAndSortedDocuments = useMemo(() => {
-    let result = [...documents]
+    let result = [...documents];
 
     // Filter by status
     if (statusFilter !== 'all') {
-      result = result.filter((doc) => doc.status === statusFilter)
+      result = result.filter(doc => doc.status === statusFilter);
     }
 
     // Filter by search query
     if (searchQuery.trim()) {
-      const query = searchQuery.toLowerCase()
-      result = result.filter((doc) =>
-        doc.name.toLowerCase().includes(query)
-      )
+      const query = searchQuery.toLowerCase();
+      result = result.filter(doc => doc.name.toLowerCase().includes(query));
     }
 
     // Sort
     result.sort((a, b) => {
-      let comparison = 0
+      let comparison = 0;
       switch (sortField) {
         case 'name':
-          comparison = a.name.localeCompare(b.name)
-          break
+          comparison = a.name.localeCompare(b.name);
+          break;
         case 'size':
-          comparison = a.file_size - b.file_size
-          break
+          comparison = a.file_size - b.file_size;
+          break;
         case 'date':
-          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
-          break
+          comparison = new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+          break;
       }
-      return sortOrder === 'asc' ? comparison : -comparison
-    })
+      return sortOrder === 'asc' ? comparison : -comparison;
+    });
 
-    return result
-  }, [documents, searchQuery, statusFilter, sortField, sortOrder])
+    return result;
+  }, [documents, searchQuery, statusFilter, sortField, sortOrder]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc')
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
     } else {
-      setSortField(field)
-      setSortOrder('desc')
+      setSortField(field);
+      setSortOrder('desc');
     }
-  }
+  };
 
   const SortIcon = ({ field }: { field: SortField }) => {
-    if (sortField !== field) return null
+    if (sortField !== field) return null;
     return sortOrder === 'asc' ? (
       <ChevronUp className="w-3 h-3 inline ml-1" />
     ) : (
       <ChevronDown className="w-3 h-3 inline ml-1" />
-    )
-  }
+    );
+  };
 
   const handleUploadComplete = async (attachmentId: number, file: File) => {
-    const extension = file.name.split('.').pop() || ''
+    const extension = file.name.split('.').pop() || '';
     try {
       await create({
         attachment_id: attachmentId,
         name: file.name,
         file_extension: extension,
         file_size: file.size,
-      })
-      setShowUpload(false)
+      });
+      setShowUpload(false);
     } catch {
       // Error handled by hook
     }
-  }
+  };
 
   const handleDelete = async () => {
-    if (!deletingDoc) return
+    if (!deletingDoc) return;
     try {
-      await remove(deletingDoc.id)
-      setDeletingDoc(null)
+      await remove(deletingDoc.id);
+      setDeletingDoc(null);
     } catch {
       // Error handled by hook
     }
-  }
+  };
 
   // Handle inline dropzone - open upload dialog
   const handleDropzoneClick = useCallback(() => {
-    setShowUpload(true)
-  }, [])
+    setShowUpload(true);
+  }, []);
 
-  const handleInlineDrop = useCallback(
-    (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      // Open upload dialog when file is dropped
-      setShowUpload(true)
-    },
-    []
-  )
+  const handleInlineDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    // Open upload dialog when file is dropped
+    setShowUpload(true);
+  }, []);
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-  }
+    e.preventDefault();
+  };
 
   // Batch selection handlers
   const handleSelectDoc = (doc: KnowledgeDocument, selected: boolean) => {
-    setSelectedIds((prev) => {
-      const newSet = new Set(prev)
+    setSelectedIds(prev => {
+      const newSet = new Set(prev);
       if (selected) {
-        newSet.add(doc.id)
+        newSet.add(doc.id);
       } else {
-        newSet.delete(doc.id)
+        newSet.delete(doc.id);
       }
-      return newSet
-    })
-  }
+      return newSet;
+    });
+  };
 
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedIds(new Set(filteredAndSortedDocuments.map((doc) => doc.id)))
+      setSelectedIds(new Set(filteredAndSortedDocuments.map(doc => doc.id)));
     } else {
-      setSelectedIds(new Set())
+      setSelectedIds(new Set());
     }
-  }
+  };
 
-  const isAllSelected = filteredAndSortedDocuments.length > 0 &&
-    filteredAndSortedDocuments.every((doc) => selectedIds.has(doc.id))
-  
-  const isPartialSelected = selectedIds.size > 0 && !isAllSelected
+  const isAllSelected =
+    filteredAndSortedDocuments.length > 0 &&
+    filteredAndSortedDocuments.every(doc => selectedIds.has(doc.id));
+
+  const isPartialSelected = selectedIds.size > 0 && !isAllSelected;
 
   // Batch operations using batch API
   const handleBatchDelete = async () => {
-    if (selectedIds.size === 0) return
-    setBatchLoading(true)
+    if (selectedIds.size === 0) return;
+    setBatchLoading(true);
     try {
-      await batchDelete(Array.from(selectedIds))
-      setSelectedIds(new Set())
+      await batchDelete(Array.from(selectedIds));
+      setSelectedIds(new Set());
     } catch {
       // Error handled by hook
     } finally {
-      setBatchLoading(false)
+      setBatchLoading(false);
     }
-  }
+  };
 
   const handleBatchEnable = async () => {
-    if (selectedIds.size === 0) return
-    setBatchLoading(true)
+    if (selectedIds.size === 0) return;
+    setBatchLoading(true);
     try {
-      await batchEnable(Array.from(selectedIds))
-      setSelectedIds(new Set())
+      await batchEnable(Array.from(selectedIds));
+      setSelectedIds(new Set());
     } catch {
       // Error handled by hook
     } finally {
-      setBatchLoading(false)
+      setBatchLoading(false);
     }
-  }
+  };
 
   const handleBatchDisable = async () => {
-    if (selectedIds.size === 0) return
-    setBatchLoading(true)
+    if (selectedIds.size === 0) return;
+    setBatchLoading(true);
     try {
-      await batchDisable(Array.from(selectedIds))
-      setSelectedIds(new Set())
+      await batchDisable(Array.from(selectedIds));
+      setSelectedIds(new Set());
     } catch {
       // Error handled by hook
     } finally {
-      setBatchLoading(false)
+      setBatchLoading(false);
     }
-  }
+  };
 
   return (
     <div className="space-y-4">
@@ -237,13 +240,9 @@ export function DocumentList({
         )}
         <FolderOpen className="w-5 h-5 text-primary flex-shrink-0" />
         <div className="flex-1 min-w-0">
-          <h2 className="text-base font-medium text-text-primary truncate">
-            {knowledgeBase.name}
-          </h2>
+          <h2 className="text-base font-medium text-text-primary truncate">{knowledgeBase.name}</h2>
           {knowledgeBase.description && (
-            <p className="text-xs text-text-muted truncate">
-              {knowledgeBase.description}
-            </p>
+            <p className="text-xs text-text-muted truncate">{knowledgeBase.description}</p>
           )}
         </div>
       </div>
@@ -253,7 +252,7 @@ export function DocumentList({
         {/* Status filter */}
         <select
           value={statusFilter}
-          onChange={(e) => setStatusFilter(e.target.value as StatusFilter)}
+          onChange={e => setStatusFilter(e.target.value as StatusFilter)}
           className="h-9 px-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
         >
           <option value="all">{t('knowledge.document.document.filter.all')}</option>
@@ -269,7 +268,7 @@ export function DocumentList({
             className="w-full h-9 pl-9 pr-3 text-sm bg-surface border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-primary"
             placeholder={t('knowledge.document.document.search')}
             value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
+            onChange={e => setSearchQuery(e.target.value)}
           />
         </div>
 
@@ -278,11 +277,7 @@ export function DocumentList({
 
         {/* Upload button - right aligned */}
         {canManage && (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setShowUpload(true)}
-          >
+          <Button variant="primary" size="sm" onClick={() => setShowUpload(true)}>
             <Upload className="w-4 h-4 mr-1" />
             {t('knowledge.document.document.upload')}
           </Button>
@@ -444,21 +439,21 @@ export function DocumentList({
 
       <EditDocumentDialog
         open={!!editingDoc}
-        onOpenChange={(open) => !open && setEditingDoc(null)}
+        onOpenChange={open => !open && setEditingDoc(null)}
         document={editingDoc}
         onSuccess={() => {
-          setEditingDoc(null)
-          refresh()
+          setEditingDoc(null);
+          refresh();
         }}
       />
 
       <DeleteDocumentDialog
         open={!!deletingDoc}
-        onOpenChange={(open) => !open && setDeletingDoc(null)}
+        onOpenChange={open => !open && setDeletingDoc(null)}
         document={deletingDoc}
         onConfirm={handleDelete}
         loading={loading}
       />
     </div>
-  )
+  );
 }

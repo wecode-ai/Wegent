@@ -161,6 +161,39 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Poll for new tasks every 5 seconds using the maximum task ID
+  useEffect(() => {
+    const checkForNewTasks = async () => {
+      if (tasks.length === 0) return;
+
+      // Get the maximum task ID from current tasks
+      const maxTaskId = Math.max(...tasks.map(task => task.id));
+
+      try {
+        const result = await taskApis.getNewTasksLite(maxTaskId);
+
+        // If there are new tasks, prepend them to the beginning
+        if (result.items.length > 0) {
+          setTasks(prev => [...result.items.reverse(), ...prev]);
+
+          // Initialize view status for new tasks
+          initializeTaskViewStatus(result.items);
+
+          console.log(`[TaskContext] Found ${result.items.length} new task(s)`);
+        }
+      } catch (error) {
+        console.error('[TaskContext] Failed to check for new tasks:', error);
+      }
+    };
+
+    // Start polling every 5 seconds
+    const interval = setInterval(checkForNewTasks, 5000);
+
+    return () => {
+      clearInterval(interval);
+    };
+  }, [tasks]);
+
   // Only refresh periodically when there are unfinished tasks OR when there's a network error
   // This ensures polling continues even after network errors to recover when connection is restored
   useEffect(() => {

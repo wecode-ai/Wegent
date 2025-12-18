@@ -15,6 +15,7 @@ import OnboardingTour from '@/features/onboarding/OnboardingTour';
 import TaskParamSync from '@/features/tasks/components/TaskParamSync';
 import TeamShareHandler from '@/features/tasks/components/TeamShareHandler';
 import TaskShareHandler from '@/features/tasks/components/TaskShareHandler';
+import { InviteJoinHandler, CreateGroupChatDialog } from '@/features/tasks/components/group-chat';
 import OidcTokenHandler from '@/features/login/components/OidcTokenHandler';
 import '@/app/tasks/tasks.css';
 import '@/features/common/scrollbar.css';
@@ -35,7 +36,16 @@ export default function ChatPage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for refreshing task list
-  const { refreshTasks } = useTaskContext();
+  const { refreshTasks, selectedTaskDetail, setSelectedTask } = useTaskContext();
+
+  // Get current task title for top navigation
+  const currentTaskTitle = selectedTaskDetail?.title;
+
+  // Handle task deletion
+  const handleTaskDeleted = () => {
+    setSelectedTask(null);
+    refreshTasks();
+  };
 
   // Chat stream context
   const { clearAllStreams } = useChatStreamContext();
@@ -49,7 +59,10 @@ export default function ChatPage() {
   // Check for share_id and taskId in URL
   const searchParams = useSearchParams();
   const hasShareId = !!searchParams.get('share_id');
-  const taskId = searchParams.get('taskId');
+
+  // Check if a task is currently open (support multiple parameter formats)
+  const taskId =
+    searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId');
 
   // Check for pending task share from public page (after login)
   useEffect(() => {
@@ -76,6 +89,9 @@ export default function ChatPage() {
 
   // Share button state
   const [shareButton, setShareButton] = useState<React.ReactNode>(null);
+
+  // Create group chat dialog state
+  const [isCreateGroupChatOpen, setIsCreateGroupChatOpen] = useState(false);
 
   const handleShareButtonRender = (button: React.ReactNode) => {
     setShareButton(button);
@@ -132,6 +148,10 @@ export default function ChatPage() {
       <Suspense>
         <TaskShareHandler onTaskCopied={refreshTasks} />
       </Suspense>
+      {/* Handle group chat invite links */}
+      <Suspense>
+        <InviteJoinHandler />
+      </Suspense>
       {/* Onboarding tour */}
       <OnboardingTour
         hasTeams={teams.length > 0}
@@ -161,8 +181,24 @@ export default function ChatPage() {
           <TopNavigation
             activePage="chat"
             variant="with-sidebar"
+            title={currentTaskTitle}
+            taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+            onTaskDeleted={handleTaskDeleted}
           >
+            {/* Create Group Chat Button - only show when no task is open */}
+            {/* Hidden: Group chat creation button */}
+            {/* {!hasOpenTask && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsCreateGroupChatOpen(true)}
+                className="gap-2"
+              >
+                <UserGroupIcon className="h-4 w-4" />
+                <span className="hidden sm:inline">{t('groupChat.create.button')}</span>
+              </Button>
+            )} */}
             {shareButton}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
@@ -178,6 +214,8 @@ export default function ChatPage() {
           />
         </div>
       </div>
+      {/* Create Group Chat Dialog */}
+      <CreateGroupChatDialog open={isCreateGroupChatOpen} onOpenChange={setIsCreateGroupChatOpen} />
       {/* Show footer only when no task is selected */}
       {!taskId && <PoweredByFooter />}
     </>

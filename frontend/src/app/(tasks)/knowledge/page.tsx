@@ -195,9 +195,7 @@ export default function KnowledgePage() {
             </>
           )}
 
-          {activeTab === 'document' && (
-            <KnowledgeDocumentPage />
-          )}
+          {activeTab === 'document' && <KnowledgeDocumentPage />}
         </div>
       </div>
 

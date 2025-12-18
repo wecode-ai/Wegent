@@ -391,7 +391,7 @@ class SharedTaskService:
                     )
 
                     # Create workspace name with timestamp to ensure uniqueness
-                    timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+                    timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
                     workspace_name = (
                         f"ws-{git_repo.replace('/', '-')}-{branch_name}-{timestamp}"
                     )
@@ -423,8 +423,8 @@ class SharedTaskService:
                         namespace="default",
                         json=workspace_crd.model_dump(mode="json", exclude_none=True),
                         is_active=True,
-                        created_at=datetime.utcnow(),
-                        updated_at=datetime.utcnow(),
+                        created_at=datetime.now(),
+                        updated_at=datetime.now(),
                     )
                     db.add(new_workspace)
                     db.flush()  # Get new workspace ID
@@ -507,7 +507,7 @@ class SharedTaskService:
                 task_crd.metadata.labels["forceOverrideBotModel"] = "true"
 
         # Generate unique task name with timestamp to avoid duplicate key errors
-        timestamp = datetime.utcnow().strftime("%Y%m%d%H%M%S%f")
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
         unique_task_name = f"Copy of {original_task.name}-{timestamp}"
 
         # Create new task with updated team reference
@@ -520,8 +520,8 @@ class SharedTaskService:
                 mode="json", exclude_none=True
             ),  # Use updated JSON
             is_active=True,
-            created_at=datetime.utcnow(),
-            updated_at=datetime.utcnow(),
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
         )
 
         db.add(new_task)
@@ -557,8 +557,10 @@ class SharedTaskService:
                 progress=100,  # Mark as fully completed
                 result=original_subtask.result,
                 error_message=original_subtask.error_message,
-                # Remove created_at and updated_at to use database defaults (current timestamp)
-                completed_at=datetime.utcnow(),
+                # Use local time instead of UTC to match other subtask creation in the codebase
+                created_at=datetime.now(),
+                updated_at=datetime.now(),
+                completed_at=datetime.now(),
             )
 
             db.add(new_subtask)
@@ -585,7 +587,7 @@ class SharedTaskService:
                     text_length=original_attachment.text_length,
                     status=original_attachment.status,
                     error_message=original_attachment.error_message,
-                    created_at=datetime.utcnow(),
+                    created_at=datetime.now(),
                 )
                 db.add(new_attachment)
 
@@ -689,7 +691,7 @@ class SharedTaskService:
             # Reuse existing record to avoid unique constraint violation
             existing_share.copied_task_id = copied_task.id
             existing_share.is_active = True
-            existing_share.updated_at = datetime.utcnow()
+            existing_share.updated_at = datetime.now()
             shared_task = existing_share
         else:
             # Create new share relationship record
@@ -740,7 +742,7 @@ class SharedTaskService:
             )
 
         shared_task.is_active = False
-        shared_task.updated_at = datetime.utcnow()
+        shared_task.updated_at = datetime.now()
         db.commit()
 
         return True
