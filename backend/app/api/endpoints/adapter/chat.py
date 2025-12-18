@@ -691,6 +691,19 @@ async def stream_chat(
     assistant_subtask = result["assistant_subtask"]
     ai_triggered = result["ai_triggered"]
 
+    # Link attachment to the user subtask if provided
+    # This must be done before the early return for non-AI-triggered messages
+    # to ensure attachments are visible in group chat even without @mention
+    if attachment:
+        from app.services.attachment import attachment_service
+
+        attachment_service.link_attachment_to_subtask(
+            db=db,
+            attachment_id=attachment.id,
+            subtask_id=user_subtask.id,
+            user_id=current_user.id,
+        )
+
     # If AI not triggered, return early with message saved response
     if not ai_triggered:
 
@@ -713,15 +726,6 @@ async def stream_chat(
     from app.api.dependencies import _set_telemetry_task_context
 
     _set_telemetry_task_context(task_id=task.id, subtask_id=assistant_subtask.id)
-
-    # Link attachment to the user subtask if provided
-    if attachment:
-        attachment_service.link_attachment_to_subtask(
-            db=db,
-            attachment_id=attachment.id,
-            subtask_id=user_subtask.id,
-            user_id=current_user.id,
-        )
 
     # Get first bot for model config and system prompt
     team_crd = Team.model_validate(team.json)
