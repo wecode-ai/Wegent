@@ -36,7 +36,7 @@ class QdrantBackend(BaseStorageBackend):
         self,
         nodes: List[BaseNode],
         knowledge_id: str,
-        document_id: str,
+        doc_ref: str,
         source_file: str,
         created_at: str,
         embed_model,
@@ -59,12 +59,12 @@ class QdrantBackend(BaseStorageBackend):
         # TODO: Implement retrieval with metadata filtering
         raise NotImplementedError()
 
-    def delete_document(self, knowledge_id: str, document_id: str, **kwargs) -> Dict:
+    def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """Delete document from Qdrant."""
         # TODO: Implement deletion
         raise NotImplementedError()
 
-    def get_document(self, knowledge_id: str, document_id: str, **kwargs) -> Dict:
+    def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """Get document details from Qdrant."""
         # TODO: Implement document retrieval
         raise NotImplementedError()

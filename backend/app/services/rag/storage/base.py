@@ -68,7 +68,7 @@ class BaseStorageBackend(ABC):
         self,
         nodes: List[BaseNode],
         knowledge_id: str,
-        document_id: str,
+        doc_ref: str,
         source_file: str,
         created_at: str,
         embed_model,
@@ -80,7 +80,7 @@ class BaseStorageBackend(ABC):
         Args:
             nodes: List of nodes to index
             knowledge_id: Knowledge base ID
-            document_id: Document ID (doc_xxx format)
+            doc_ref: Document reference ID (doc_xxx format)
             source_file: Source file name
             created_at: Creation timestamp
             embed_model: Embedding model
@@ -136,13 +136,13 @@ class BaseStorageBackend(ABC):
         pass
 
     @abstractmethod
-    def delete_document(self, knowledge_id: str, document_id: str, **kwargs) -> Dict:
+    def delete_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Delete document from storage.
 
         Args:
             knowledge_id: Knowledge base ID
-            document_id: Document ID
+            doc_ref: Document reference ID
             **kwargs: Additional parameters
 
         Returns:
@@ -151,13 +151,13 @@ class BaseStorageBackend(ABC):
         pass
 
     @abstractmethod
-    def get_document(self, knowledge_id: str, document_id: str, **kwargs) -> Dict:
+    def get_document(self, knowledge_id: str, doc_ref: str, **kwargs) -> Dict:
         """
         Get document details.
 
         Args:
             knowledge_id: Knowledge base ID
-            document_id: Document ID
+            doc_ref: Document reference ID
             **kwargs: Additional parameters
 
         Returns:

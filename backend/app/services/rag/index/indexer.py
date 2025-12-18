@@ -6,7 +6,7 @@
 Document indexing orchestration.
 """
 
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict
 
@@ -32,7 +32,7 @@ class DocumentIndexer:
         self.splitter = DocumentSplitter(embed_model)
 
     def index_document(
-        self, knowledge_id: str, file_path: str, document_id: str, **kwargs
+        self, knowledge_id: str, file_path: str, doc_ref: str, **kwargs
     ) -> Dict:
         """
         Index a document (synchronous).
@@ -43,7 +43,7 @@ class DocumentIndexer:
         Args:
             knowledge_id: Knowledge base ID
             file_path: Path to document file
-            document_id: Document ID
+            doc_ref: Document reference ID
             **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
 
         Returns:
@@ -60,13 +60,13 @@ class DocumentIndexer:
 
         # Prepare metadata
         source_file = Path(file_path).name
-        created_at = datetime.utcnow().isoformat()
+        created_at = datetime.now(timezone.utc).isoformat()
 
         # Delegate to storage backend for metadata addition and indexing
         result = self.storage_backend.index_with_metadata(
             nodes=nodes,
             knowledge_id=knowledge_id,
-            document_id=document_id,
+            doc_ref=doc_ref,
             source_file=source_file,
             created_at=created_at,
             embed_model=self.embed_model,
@@ -76,7 +76,7 @@ class DocumentIndexer:
         # Add document info to result
         result.update(
             {
-                "document_id": document_id,
+                "doc_ref": doc_ref,
                 "knowledge_id": knowledge_id,
                 "source_file": source_file,
                 "chunk_count": len(nodes),

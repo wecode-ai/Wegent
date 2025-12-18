@@ -9,7 +9,7 @@ Refactored to use modular architecture with pluggable storage backends.
 
 import asyncio
 import uuid
-from typing import Dict
+from typing import Dict, Optional
 
 from sqlalchemy.orm import Session
 
@@ -57,8 +57,8 @@ class DocumentService:
         Returns:
             Indexing result dict
         """
-        # Generate document ID
-        document_id = f"doc_{uuid.uuid4().hex[:12]}"
+        # Generate document reference ID
+        doc_ref = f"doc_{uuid.uuid4().hex[:12]}"
 
         # Create embedding model from CRD
         embed_model = create_embedding_model_from_crd(
@@ -77,7 +77,7 @@ class DocumentService:
         result = indexer.index_document(
             knowledge_id=knowledge_id,
             file_path=file_path,
-            document_id=document_id,
+            doc_ref=doc_ref,
             user_id=user_id,
         )
 
@@ -105,7 +105,7 @@ class DocumentService:
 
         Returns:
             Indexing result dict with:
-                - document_id: Generated document ID
+                - doc_ref: Generated document reference ID
                 - knowledge_id: Knowledge base ID
                 - source_file: Source filename
                 - chunk_count: Number of chunks created
@@ -130,19 +130,19 @@ class DocumentService:
     async def delete_document(
         self,
         knowledge_id: str,
-        document_id: str,
-        user_id: int = None,
+        doc_ref: str,
+        user_id: Optional[int] = None,
     ) -> Dict:
         """
         Delete a document from storage.
 
         Args:
             knowledge_id: Knowledge base ID
-            document_id: Document ID to delete
+            doc_ref: Document reference ID to delete
 
         Returns:
             Deletion result dict with:
-                - document_id: Deleted document ID
+                - doc_ref: Deleted document reference ID
                 - knowledge_id: Knowledge base ID
                 - deleted_chunks: Number of chunks deleted
                 - status: Deletion status
@@ -151,7 +151,7 @@ class DocumentService:
         return await asyncio.to_thread(
             self.storage_backend.delete_document,
             knowledge_id=knowledge_id,
-            document_id=document_id,
+            doc_ref=doc_ref,
             user_id=user_id,
         )
 
@@ -160,7 +160,7 @@ class DocumentService:
         knowledge_id: str,
         page: int = 1,
         page_size: int = 20,
-        user_id: int = None,
+        user_id: Optional[int] = None,
     ) -> Dict:
         """
         List documents in knowledge base with pagination.
