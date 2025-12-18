@@ -6,7 +6,6 @@
 
 import { Suspense, useState, useEffect } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { UserGroupIcon } from '@heroicons/react/24/outline';
 import { teamService } from '@/features/tasks/service/teamService';
 import TopNavigation from '@/features/layout/TopNavigation';
 import TaskSidebar from '@/features/tasks/components/TaskSidebar';
@@ -31,12 +30,8 @@ import { useUser } from '@/features/common/UserContext';
 import { useTaskContext } from '@/features/tasks/contexts/taskContext';
 import { useChatStreamContext } from '@/features/tasks/contexts/chatStreamContext';
 import { paths } from '@/config/paths';
-import { Button } from '@/components/ui/button';
-import { useTranslation } from '@/hooks/useTranslation';
 
 export default function ChatPage() {
-  const { t } = useTranslation();
-
   // Team state from service
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
@@ -68,7 +63,6 @@ export default function ChatPage() {
   // Check if a task is currently open (support multiple parameter formats)
   const taskId =
     searchParams.get('task_id') || searchParams.get('taskid') || searchParams.get('taskId');
-  const hasOpenTask = !!taskId;
 
   // Check for pending task share from public page (after login)
   useEffect(() => {
@@ -193,7 +187,8 @@ export default function ChatPage() {
             onTaskDeleted={handleTaskDeleted}
           >
             {/* Create Group Chat Button - only show when no task is open */}
-            {!hasOpenTask && (
+            {/* Hidden: Group chat creation button */}
+            {/* {!hasOpenTask && (
               <Button
                 variant="outline"
                 size="sm"
@@ -203,7 +198,7 @@ export default function ChatPage() {
                 <UserGroupIcon className="h-4 w-4" />
                 <span className="hidden sm:inline">{t('groupChat.create.button')}</span>
               </Button>
-            )}
+            )} */}
             {shareButton}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}
           </TopNavigation>
