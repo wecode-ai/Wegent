@@ -355,13 +355,15 @@ async def create_response(
     if previous_task_id:
         prev_resp_id = f"resp_{previous_task_id}"
 
-     # Get subtasks for output
+    # Get subtasks for output
     subtasks = (
         db.query(Subtask)
-        .filter(Subtask.task_id == task_dict.get("id"), Subtask.user_id == current_user.id)
+        .filter(
+            Subtask.task_id == task_dict.get("id"), Subtask.user_id == current_user.id
+        )
         .order_by(Subtask.message_id.asc())
         .all()
-    )    
+    )
 
     return _task_to_response_object(
         task_dict,
