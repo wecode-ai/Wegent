@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncGenerator
 
 from app.core.config import settings
+from app.core.shutdown import shutdown_manager
 from app.services.chat.db_handler import db_handler
 from app.services.chat.providers.base import ChunkType, StreamChunk
 from app.services.chat.session_manager import session_manager
@@ -51,8 +52,20 @@ class StreamManager:
         stream_generator: AsyncGenerator[StreamChunk, None],
         cancel_event: asyncio.Event,
         chunk_queue: asyncio.Queue,
-    ) -> asyncio.Task:
-        """Create a background consumer task for LLM streaming."""
+    ) -> asyncio.Task | None:
+        """Create a background consumer task for LLM streaming.
+
+        Returns:
+            asyncio.Task if successful, None if rejected due to shutdown
+        """
+        # Register with shutdown manager first
+        if not await shutdown_manager.register_stream(state.subtask_id):
+            logger.warning(
+                "[STREAM] Rejecting new stream during shutdown: subtask_id=%d",
+                state.subtask_id,
+            )
+            return None
+
         task = asyncio.create_task(
             self._consumer_loop(state, stream_generator, cancel_event, chunk_queue)
         )
@@ -71,10 +84,18 @@ class StreamManager:
             async for chunk in stream_generator:
                 state.chunk_count += 1
 
-                if cancel_event.is_set() or await session_manager.is_cancelled(
-                    state.subtask_id
+                # Check for cancellation (user cancel, session cancel, or shutdown)
+                if (
+                    cancel_event.is_set()
+                    or await session_manager.is_cancelled(state.subtask_id)
+                    or shutdown_manager.is_shutting_down
                 ):
                     state.cancelled = True
+                    if shutdown_manager.is_shutting_down:
+                        logger.info(
+                            "[STREAM] subtask=%s stopping due to server shutdown",
+                            state.subtask_id,
+                        )
                     break
 
                 if chunk.type == ChunkType.CONTENT and chunk.content:
@@ -101,7 +122,9 @@ class StreamManager:
             self._put_queue_safe(chunk_queue, state.error_info)
             self._put_queue_safe(chunk_queue, {"type": "end"})
             _background_consumer_tasks.pop(state.subtask_id, None)
+            # Unregister from both session manager and shutdown manager
             await session_manager.unregister_stream(state.subtask_id)
+            await shutdown_manager.unregister_stream(state.subtask_id)
 
     def _put_queue_safe(self, queue: asyncio.Queue, item: Any) -> None:
         """Put item to queue, ignoring if full or None."""

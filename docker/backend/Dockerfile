@@ -26,9 +26,12 @@ COPY shared /app/shared
 RUN if [ ! -f .env ]; then cp .env.example .env; fi
 
 ENV PORT=8000
+# Default: 600 seconds (10 minutes) for long-running streaming requests to complete
+ENV GRACEFUL_SHUTDOWN_TIMEOUT=600
 # Expose port
 EXPOSE ${PORT}
 
-
-# Start command
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 4"]
+# Start command with graceful shutdown support
+# --timeout-graceful-shutdown: Time to wait for active connections to close
+# Using exec form to ensure proper signal handling (SIGTERM)
+CMD ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT} --workers 4 --timeout-graceful-shutdown ${GRACEFUL_SHUTDOWN_TIMEOUT}"]
