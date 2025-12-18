@@ -2,82 +2,73 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useRef, useCallback } from 'react'
-import { Upload, X, FileText, AlertCircle } from 'lucide-react'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
-import { useAttachment } from '@/hooks/useAttachment'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useRef, useCallback } from 'react';
+import { Upload, X, FileText, AlertCircle } from 'lucide-react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
+import { useAttachment } from '@/hooks/useAttachment';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface DocumentUploadProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onUploadComplete: (attachmentId: number, file: File) => Promise<void>
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onUploadComplete: (attachmentId: number, file: File) => Promise<void>;
 }
 
-export function DocumentUpload({
-  open,
-  onOpenChange,
-  onUploadComplete,
-}: DocumentUploadProps) {
-  const { t } = useTranslation()
-  const fileInputRef = useRef<HTMLInputElement>(null)
-  const { state, handleFileSelect, handleRemove, reset } = useAttachment()
+export function DocumentUpload({ open, onOpenChange, onUploadComplete }: DocumentUploadProps) {
+  const { t } = useTranslation();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const { state, handleFileSelect, handleRemove, reset } = useAttachment();
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0]
+      const file = e.target.files?.[0];
       if (file) {
-        handleFileSelect(file)
+        handleFileSelect(file);
       }
     },
     [handleFileSelect]
-  )
+  );
 
   const handleDrop = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
-      e.preventDefault()
-      const file = e.dataTransfer.files?.[0]
+      e.preventDefault();
+      const file = e.dataTransfer.files?.[0];
       if (file) {
-        handleFileSelect(file)
+        handleFileSelect(file);
       }
     },
     [handleFileSelect]
-  )
+  );
 
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault()
-  }
+    e.preventDefault();
+  };
 
   const handleConfirm = async () => {
     if (state.attachment?.id && state.file) {
       try {
-        await onUploadComplete(state.attachment.id, state.file)
-        reset()
+        await onUploadComplete(state.attachment.id, state.file);
+        reset();
       } catch {
         // Error handled by parent
       }
     }
-  }
+  };
 
   const handleClose = () => {
-    reset()
-    onOpenChange(false)
-  }
+    reset();
+    onOpenChange(false);
+  };
 
   const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -114,20 +105,11 @@ export function DocumentUpload({
               <div className="flex items-start gap-3 p-3 bg-surface rounded-lg">
                 <FileText className="w-8 h-8 text-primary flex-shrink-0" />
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-text-primary truncate">
-                    {state.file.name}
-                  </p>
-                  <p className="text-sm text-text-muted">
-                    {formatFileSize(state.file.size)}
-                  </p>
+                  <p className="font-medium text-text-primary truncate">{state.file.name}</p>
+                  <p className="text-sm text-text-muted">{formatFileSize(state.file.size)}</p>
                 </div>
                 {!state.isUploading && (
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    onClick={handleRemove}
-                  >
+                  <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleRemove}>
                     <X className="w-4 h-4" />
                   </Button>
                 )}
@@ -172,5 +154,5 @@ export function DocumentUpload({
         </div>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

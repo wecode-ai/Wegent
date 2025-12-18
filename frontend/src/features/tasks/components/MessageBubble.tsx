@@ -55,6 +55,12 @@ export interface Message {
   isIncomplete?: boolean;
   /** Flag indicating this message is waiting for first character (streaming but no content yet) */
   isWaiting?: boolean;
+  /** Group chat: sender user name (for USER type messages) */
+  senderUserName?: string;
+  /** Group chat: sender user ID (for determining message alignment) */
+  senderUserId?: number;
+  /** Whether this is a group chat or chat agent type (to show sender names) */
+  shouldShowSender?: boolean;
 }
 
 // CopyButton component for copying markdown content
@@ -183,6 +189,13 @@ export interface MessageBubbleProps {
   onTextSelect?: (selectedText: string) => void;
   /** Paragraph-level action configuration - shows action button on hover for each paragraph in AI messages */
   paragraphAction?: ParagraphAction;
+  /**
+   * Whether this message is from the current user (for group chat alignment).
+   * In group chat, only current user's messages should be right-aligned.
+   * Other users' messages should be left-aligned like AI messages.
+   * If not provided, defaults to true for user messages (backward compatible).
+   */
+  isCurrentUserMessage?: boolean;
 }
 
 // Component for rendering a paragraph with hover action button
@@ -291,11 +304,21 @@ const MessageBubble = memo(
     onSendMessage,
     onTextSelect,
     paragraphAction,
+    isCurrentUserMessage,
   }: MessageBubbleProps) {
-    const bubbleBaseClasses = `relative w-full p-5 text-text-primary ${msg.type === 'user' ? 'overflow-visible' : 'pb-10'}`;
-    const bubbleTypeClasses =
-      msg.type === 'user' ? 'group rounded-2xl border border-border bg-surface shadow-sm' : '';
-    const isUserMessage = msg.type === 'user';
+    // Determine if this is a user-type message (for styling purposes)
+    const isUserTypeMessage = msg.type === 'user';
+
+    // Determine if this message should be right-aligned (current user's message)
+    // For group chat: only current user's messages are right-aligned
+    // For non-group chat (backward compatible): all user messages are right-aligned
+    // Default to true for user messages if isCurrentUserMessage is not provided
+    const shouldAlignRight = isUserTypeMessage && (isCurrentUserMessage ?? true);
+
+    const bubbleBaseClasses = `relative w-full p-5 text-text-primary ${isUserTypeMessage ? 'overflow-visible' : 'pb-10'}`;
+    const bubbleTypeClasses = isUserTypeMessage
+      ? 'group rounded-2xl border border-border bg-surface shadow-sm'
+      : '';
 
     const formatTimestamp = (timestamp: number | undefined) => {
       if (typeof timestamp !== 'number' || Number.isNaN(timestamp)) return '';
@@ -309,8 +332,8 @@ const MessageBubble = memo(
     };
 
     const timestampLabel = formatTimestamp(msg.timestamp);
-    const headerIcon = isUserMessage ? null : <Bot className="w-4 h-4" />;
-    const headerLabel = isUserMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
+    const headerIcon = isUserTypeMessage ? null : <Bot className="w-4 h-4" />;
+    const headerLabel = isUserTypeMessage ? '' : msg.botName || t('messages.bot') || 'Bot';
 
     const renderProgressBar = (status: string, progress: number) => {
       const normalizedStatus = (status ?? '').toUpperCase();
@@ -1241,7 +1264,7 @@ const MessageBubble = memo(
 
     // Handle text selection in AI messages
     const handleTextSelection = () => {
-      if (!onTextSelect || isUserMessage) return;
+      if (!onTextSelect || isUserTypeMessage) return;
 
       const selection = window.getSelection();
       if (selection && selection.toString().trim()) {
@@ -1251,9 +1274,9 @@ const MessageBubble = memo(
     };
 
     return (
-      <div className={`flex ${isUserMessage ? 'justify-end' : 'justify-start'}`} translate="no">
+      <div className={`flex ${shouldAlignRight ? 'justify-end' : 'justify-start'}`} translate="no">
         <div
-          className={`flex ${isUserMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${isUserMessage ? 'items-end' : 'items-start'}`}
+          className={`flex ${shouldAlignRight ? 'max-w-[75%] w-auto' : isUserTypeMessage ? 'max-w-[75%] w-auto' : 'w-full'} flex-col gap-3 ${shouldAlignRight ? 'items-end' : 'items-start'}`}
         >
           {msg.type === 'ai' && msg.thinking && (
             <ThinkingComponent thinking={msg.thinking} taskStatus={msg.subtaskStatus} />
@@ -1262,7 +1285,8 @@ const MessageBubble = memo(
             className={`${bubbleBaseClasses} ${bubbleTypeClasses}`}
             onMouseUp={handleTextSelection}
           >
-            {!isUserMessage && (
+            {/* Show header for AI messages OR for other users' messages in group chat (left-aligned user messages) */}
+            {!isUserTypeMessage && (
               <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
                 {headerIcon}
                 <span className="font-semibold">{headerLabel}</span>
@@ -1274,7 +1298,24 @@ const MessageBubble = memo(
                 )}
               </div>
             )}
-            {isUserMessage && renderAttachments(msg.attachments)}
+            {/* Show sender user name for user messages that are left-aligned (other users in group chat) */}
+            {isUserTypeMessage && !shouldAlignRight && msg.senderUserName && (
+              <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                <span className="font-semibold">{msg.senderUserName}</span>
+                {timestampLabel && <span>{timestampLabel}</span>}
+              </div>
+            )}
+            {/* Show sender user name for current user's messages (right-aligned) in group chat or chat agent type */}
+            {isUserTypeMessage &&
+              shouldAlignRight &&
+              msg.senderUserName &&
+              msg.shouldShowSender && (
+                <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
+                  <span className="font-semibold">{msg.senderUserName}</span>
+                  {timestampLabel && <span>{timestampLabel}</span>}
+                </div>
+              )}
+            {isUserTypeMessage && renderAttachments(msg.attachments)}
             {/* Show waiting indicator when streaming but no content yet */}
             {isWaiting || msg.isWaiting ? (
               <StreamingWaitIndicator isWaiting={true} />
@@ -1289,7 +1330,7 @@ const MessageBubble = memo(
             {/* Show incomplete notice for completed but incomplete messages */}
             {msg.isIncomplete && msg.subtaskStatus !== 'RUNNING' && renderRecoveryNotice()}
             {/* Show copy button for user messages - visible on hover */}
-            {isUserMessage && (
+            {isUserTypeMessage && (
               <div className="absolute -bottom-8 left-2 flex items-center gap-1 z-10 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
                 <CopyButton
                   content={msg.content}
@@ -1318,7 +1359,8 @@ const MessageBubble = memo(
       prevProps.isWaiting === nextProps.isWaiting &&
       prevProps.theme === nextProps.theme &&
       prevProps.onTextSelect === nextProps.onTextSelect &&
-      prevProps.paragraphAction === nextProps.paragraphAction
+      prevProps.paragraphAction === nextProps.paragraphAction &&
+      prevProps.isCurrentUserMessage === nextProps.isCurrentUserMessage
     );
   }
 );

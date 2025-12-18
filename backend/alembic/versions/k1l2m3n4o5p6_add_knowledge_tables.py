@@ -4,7 +4,7 @@
 
 """Add knowledge_documents table
 
-Revision ID: j0k1l2m3n4o5
+Revision ID: k1l2m3n4o5p6
 Revises: i9j0k1l2m3n4
 Create Date: 2025-12-16 10:00:00.000000+08:00
 
@@ -15,11 +15,12 @@ This migration creates:
 """
 from typing import Sequence, Union
 
-from alembic import op
 import sqlalchemy as sa
 
+from alembic import op
+
 # revision identifiers, used by Alembic.
-revision: str = "j0k1l2m3n4o5"
+revision: str = "k1l2m3n4o5p6"
 down_revision: Union[str, None] = "i9j0k1l2m3n4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -48,8 +49,18 @@ def upgrade() -> None:
         ),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default="1"),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP")),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")),
+        sa.Column(
+            "created_at",
+            sa.DateTime(),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP"),
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(),
+            nullable=False,
+            server_default=sa.text("CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"),
+        ),
         sa.PrimaryKeyConstraint("id"),
     )
 
@@ -77,7 +88,9 @@ def downgrade() -> None:
     # Drop knowledge_documents table
     op.drop_index("ix_knowledge_documents_user_id", table_name="knowledge_documents")
     op.drop_index("ix_knowledge_documents_attachment", table_name="knowledge_documents")
-    op.drop_index("ix_knowledge_documents_kind_active_created", table_name="knowledge_documents")
+    op.drop_index(
+        "ix_knowledge_documents_kind_active_created", table_name="knowledge_documents"
+    )
     op.drop_table("knowledge_documents")
 
     # Drop enum type

@@ -1284,6 +1284,25 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
 
         return None
 
+    def get_team_by_name_and_namespace_without_user_check(
+        self, db: Session, team_name: str, team_namespace: str
+    ) -> Optional[Kind]:
+        """
+        Get team by name and namespace without checking user ownership.
+        Used for group chat members to access the task's team.
+        """
+        team = (
+            db.query(Kind)
+            .filter(
+                Kind.name == team_name,
+                Kind.namespace == team_namespace,
+                Kind.kind == "Team",
+                Kind.is_active == True,
+            )
+            .first()
+        )
+        return team
+
     def _convert_to_team_dict(
         self, team: Kind, db: Session, user_id: int
     ) -> Dict[str, Any]:
@@ -1697,12 +1716,41 @@ class TeamKindsService(BaseService[Kind, TeamCreate, TeamUpdate]):
             )
             .first()
         )
+
+        logger.info(
+            f"[_get_bot_summary] Checking shell for bot={bot.name}, shellRef.name={bot_crd.spec.shellRef.name}, user_id={user_id}, found_in_user_shells={shell is not None}"
+        )
+
+        # If not found in user's shells, check public shells (user_id = 0)
+        if not shell:
+            shell = (
+                db.query(Kind)
+                .filter(
+                    Kind.user_id == 0,
+                    Kind.kind == "Shell",
+                    Kind.name == bot_crd.spec.shellRef.name,
+                    Kind.namespace == bot_crd.spec.shellRef.namespace,
+                    Kind.is_active.is_(True),
+                )
+                .first()
+            )
+            logger.info(
+                f"[_get_bot_summary] Checking public shell for bot={bot.name}, shellRef.name={bot_crd.spec.shellRef.name}, found_in_public_shells={shell is not None}"
+            )
+
         shell_query_time = time.time() - t_shell
 
         shell_type = ""
         if shell and shell.json:
             shell_crd = Shell.model_validate(shell.json)
             shell_type = shell_crd.spec.shellType
+            logger.info(
+                f"[_get_bot_summary] Got shell_type={shell_type} for bot={bot.name}"
+            )
+        else:
+            logger.warning(
+                f"[_get_bot_summary] No shell found for bot={bot.name}, shellRef.name={bot_crd.spec.shellRef.name}"
+            )
 
         agent_config = {}
 

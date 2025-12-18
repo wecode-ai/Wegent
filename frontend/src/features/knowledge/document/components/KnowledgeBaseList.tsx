@@ -2,25 +2,25 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState } from 'react'
-import { Plus, FolderOpen } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
-import { KnowledgeBaseCard } from './KnowledgeBaseCard'
-import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog'
-import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog'
-import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog'
-import { DocumentList } from './DocumentList'
-import { useKnowledgeBases } from '../hooks/useKnowledgeBases'
-import type { KnowledgeBase, KnowledgeResourceScope } from '@/types/knowledge'
-import { useTranslation } from '@/hooks/useTranslation'
+import { useState } from 'react';
+import { Plus, FolderOpen } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import { KnowledgeBaseCard } from './KnowledgeBaseCard';
+import { CreateKnowledgeBaseDialog } from './CreateKnowledgeBaseDialog';
+import { EditKnowledgeBaseDialog } from './EditKnowledgeBaseDialog';
+import { DeleteKnowledgeBaseDialog } from './DeleteKnowledgeBaseDialog';
+import { DocumentList } from './DocumentList';
+import { useKnowledgeBases } from '../hooks/useKnowledgeBases';
+import type { KnowledgeBase, KnowledgeResourceScope } from '@/types/knowledge';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface KnowledgeBaseListProps {
-  scope?: KnowledgeResourceScope
-  groupName?: string
-  canManage?: boolean
+  scope?: KnowledgeResourceScope;
+  groupName?: string;
+  canManage?: boolean;
 }
 
 export function KnowledgeBaseList({
@@ -28,16 +28,16 @@ export function KnowledgeBaseList({
   groupName,
   canManage = true,
 }: KnowledgeBaseListProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation();
   const { knowledgeBases, loading, error, create, update, remove, refresh } = useKnowledgeBases({
     scope,
     groupName,
-  })
+  });
 
-  const [showCreateDialog, setShowCreateDialog] = useState(false)
-  const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null)
-  const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null)
-  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null)
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [editingKb, setEditingKb] = useState<KnowledgeBase | null>(null);
+  const [deletingKb, setDeletingKb] = useState<KnowledgeBase | null>(null);
+  const [selectedKb, setSelectedKb] = useState<KnowledgeBase | null>(null);
 
   const handleCreate = async (data: { name: string; description?: string }) => {
     try {
@@ -45,51 +45,45 @@ export function KnowledgeBaseList({
         name: data.name,
         description: data.description,
         namespace: scope === 'group' && groupName ? groupName : 'default',
-      })
-      setShowCreateDialog(false)
+      });
+      setShowCreateDialog(false);
     } catch {
       // Error handled by hook
     }
-  }
+  };
 
   const handleUpdate = async (data: { name: string; description?: string }) => {
-    if (!editingKb) return
+    if (!editingKb) return;
     try {
-      await update(editingKb.id, data)
-      setEditingKb(null)
+      await update(editingKb.id, data);
+      setEditingKb(null);
     } catch {
       // Error handled by hook
     }
-  }
+  };
 
   const handleDelete = async () => {
-    if (!deletingKb) return
+    if (!deletingKb) return;
     try {
-      await remove(deletingKb.id)
-      setDeletingKb(null)
+      await remove(deletingKb.id);
+      setDeletingKb(null);
     } catch {
       // Error handled by hook
     }
-  }
+  };
 
   const handleSelectKb = (kb: KnowledgeBase) => {
-    setSelectedKb(kb)
-  }
+    setSelectedKb(kb);
+  };
 
   const handleBack = () => {
-    setSelectedKb(null)
-    refresh()
-  }
+    setSelectedKb(null);
+    refresh();
+  };
 
   // Show document list if a knowledge base is selected
   if (selectedKb) {
-    return (
-      <DocumentList
-        knowledgeBase={selectedKb}
-        onBack={handleBack}
-        canManage={canManage}
-      />
-    )
+    return <DocumentList knowledgeBase={selectedKb} onBack={handleBack} canManage={canManage} />;
   }
 
   if (loading && knowledgeBases.length === 0) {
@@ -97,7 +91,7 @@ export function KnowledgeBaseList({
       <div className="flex items-center justify-center py-12">
         <Spinner />
       </div>
-    )
+    );
   }
 
   if (error) {
@@ -108,7 +102,7 @@ export function KnowledgeBaseList({
           {t('actions.retry')}
         </Button>
       </div>
-    )
+    );
   }
 
   return (
@@ -116,16 +110,10 @@ export function KnowledgeBaseList({
       {/* Header */}
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-semibold text-text-primary">
-          {scope === 'personal'
-            ? t('knowledge.document.personal')
-            : t('knowledge.document.team')}
+          {scope === 'personal' ? t('knowledge.document.personal') : t('knowledge.document.team')}
         </h2>
         {canManage && (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => setShowCreateDialog(true)}
-          >
+          <Button variant="primary" size="sm" onClick={() => setShowCreateDialog(true)}>
             <Plus className="w-4 h-4 mr-1" />
             {t('knowledge.document.knowledgeBase.create')}
           </Button>
@@ -135,7 +123,7 @@ export function KnowledgeBaseList({
       {/* Knowledge Base Grid */}
       {knowledgeBases.length > 0 ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {knowledgeBases.map((kb) => (
+          {knowledgeBases.map(kb => (
             <KnowledgeBaseCard
               key={kb.id}
               knowledgeBase={kb}
@@ -151,11 +139,7 @@ export function KnowledgeBaseList({
           <FolderOpen className="w-12 h-12 mb-4 opacity-50" />
           <p>{t('knowledge.document.knowledgeBase.empty')}</p>
           {canManage && (
-            <Button
-              variant="outline"
-              className="mt-4"
-              onClick={() => setShowCreateDialog(true)}
-            >
+            <Button variant="outline" className="mt-4" onClick={() => setShowCreateDialog(true)}>
               <Plus className="w-4 h-4 mr-1" />
               {t('knowledge.document.knowledgeBase.create')}
             </Button>
@@ -173,7 +157,7 @@ export function KnowledgeBaseList({
 
       <EditKnowledgeBaseDialog
         open={!!editingKb}
-        onOpenChange={(open) => !open && setEditingKb(null)}
+        onOpenChange={open => !open && setEditingKb(null)}
         knowledgeBase={editingKb}
         onSubmit={handleUpdate}
         loading={loading}
@@ -181,11 +165,11 @@ export function KnowledgeBaseList({
 
       <DeleteKnowledgeBaseDialog
         open={!!deletingKb}
-        onOpenChange={(open) => !open && setDeletingKb(null)}
+        onOpenChange={open => !open && setDeletingKb(null)}
         knowledgeBase={deletingKb}
         onConfirm={handleDelete}
         loading={loading}
       />
     </div>
-  )
+  );
 }

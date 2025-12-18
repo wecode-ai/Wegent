@@ -16,6 +16,7 @@ class BotSummary(BaseModel):
 
     agent_config: Optional[dict[str, Any]] = None
     agent_name: Optional[str] = None
+    shell_type: Optional[str] = None  # Shell type (e.g., "Chat", "Docker", "Dify")
 
 
 class BotInfo(BaseModel):

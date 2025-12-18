@@ -2,27 +2,27 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { useState } from 'react'
+import { useState } from 'react';
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
   DialogFooter,
-} from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { Textarea } from '@/components/ui/textarea'
-import { useTranslation } from '@/hooks/useTranslation'
+} from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface CreateKnowledgeBaseDialogProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  onSubmit: (data: { name: string; description?: string }) => Promise<void>
-  loading?: boolean
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onSubmit: (data: { name: string; description?: string }) => Promise<void>;
+  loading?: boolean;
 }
 
 export function CreateKnowledgeBaseDialog({
@@ -31,42 +31,42 @@ export function CreateKnowledgeBaseDialog({
   onSubmit,
   loading,
 }: CreateKnowledgeBaseDialogProps) {
-  const { t } = useTranslation()
-  const [name, setName] = useState('')
-  const [description, setDescription] = useState('')
-  const [error, setError] = useState('')
+  const { t } = useTranslation();
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [error, setError] = useState('');
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError('')
+    e.preventDefault();
+    setError('');
 
     if (!name.trim()) {
-      setError(t('knowledge.document.knowledgeBase.nameRequired'))
-      return
+      setError(t('knowledge.document.knowledgeBase.nameRequired'));
+      return;
     }
 
     if (name.length > 100) {
-      setError(t('knowledge.document.knowledgeBase.nameTooLong'))
-      return
+      setError(t('knowledge.document.knowledgeBase.nameTooLong'));
+      return;
     }
 
     try {
-      await onSubmit({ name: name.trim(), description: description.trim() || undefined })
-      setName('')
-      setDescription('')
+      await onSubmit({ name: name.trim(), description: description.trim() || undefined });
+      setName('');
+      setDescription('');
     } catch (err) {
-      setError(err instanceof Error ? err.message : t('common.error'))
+      setError(err instanceof Error ? err.message : t('common.error'));
     }
-  }
+  };
 
   const handleOpenChange = (newOpen: boolean) => {
     if (!newOpen) {
-      setName('')
-      setDescription('')
-      setError('')
+      setName('');
+      setDescription('');
+      setError('');
     }
-    onOpenChange(newOpen)
-  }
+    onOpenChange(newOpen);
+  };
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -81,17 +81,19 @@ export function CreateKnowledgeBaseDialog({
               <Input
                 id="name"
                 value={name}
-                onChange={(e) => setName(e.target.value)}
+                onChange={e => setName(e.target.value)}
                 placeholder={t('knowledge.document.knowledgeBase.namePlaceholder')}
                 maxLength={100}
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="description">{t('knowledge.document.knowledgeBase.description')}</Label>
+              <Label htmlFor="description">
+                {t('knowledge.document.knowledgeBase.description')}
+              </Label>
               <Textarea
                 id="description"
                 value={description}
-                onChange={(e) => setDescription(e.target.value)}
+                onChange={e => setDescription(e.target.value)}
                 placeholder={t('knowledge.document.knowledgeBase.descriptionPlaceholder')}
                 maxLength={500}
                 rows={3}
@@ -115,5 +117,5 @@ export function CreateKnowledgeBaseDialog({
         </form>
       </DialogContent>
     </Dialog>
-  )
+  );
 }
