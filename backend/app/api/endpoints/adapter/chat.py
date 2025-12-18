@@ -427,7 +427,7 @@ async def _create_task_and_subtasks(
             result=None,
             completed_at=datetime.now(),  # Placeholder, will be updated when stream completes
             sender_type=SenderType.TEAM,
-            sender_user_id=None,  # AI has no user_id
+            sender_user_id=0,  # AI has no user_id, use 0 instead of None
         )
         db.add(assistant_subtask)
 
