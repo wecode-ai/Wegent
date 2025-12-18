@@ -117,6 +117,15 @@ export interface ChatCancelledPayload {
   subtask_id: number;
 }
 
+export interface ChatMessageAttachment {
+  id: number;
+  original_filename: string;
+  file_extension: string;
+  file_size: number;
+  mime_type: string;
+  status?: string;
+}
+
 export interface ChatMessagePayload {
   subtask_id: number;
   task_id: number;
@@ -128,6 +137,10 @@ export interface ChatMessagePayload {
     avatar?: string;
   };
   created_at: string;
+  /** Single attachment (for backward compatibility) */
+  attachment?: ChatMessageAttachment;
+  /** Multiple attachments */
+  attachments?: ChatMessageAttachment[];
 }
 
 export interface ChatBotCompletePayload {

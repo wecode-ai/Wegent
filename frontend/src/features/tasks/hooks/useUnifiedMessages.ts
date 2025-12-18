@@ -178,6 +178,17 @@ export function useUnifiedMessages({
     const messages: DisplayMessage[] = [];
 
     for (const [, msg] of streamState.messages) {
+      // Handle both singular 'attachment' (from pending messages) and plural 'attachments' (from backend)
+      // When user sends a message with attachment, it's stored in 'attachment' field
+      // When synced from backend, it's in 'attachments' array
+      let attachments: Attachment[] | undefined;
+      if (msg.attachments && Array.isArray(msg.attachments) && msg.attachments.length > 0) {
+        attachments = msg.attachments as Attachment[];
+      } else if (msg.attachment) {
+        // Convert singular attachment to array for consistent rendering
+        attachments = [msg.attachment as Attachment];
+      }
+
       const displayMsg: DisplayMessage = {
         id: msg.id,
         type: msg.type,
@@ -186,7 +197,7 @@ export function useUnifiedMessages({
         timestamp: msg.timestamp,
         subtaskId: msg.subtaskId,
         error: msg.error,
-        attachments: msg.attachments as Attachment[],
+        attachments,
         botName: msg.botName || team?.name,
         senderUserName: msg.senderUserName,
         senderUserId: msg.senderUserId,

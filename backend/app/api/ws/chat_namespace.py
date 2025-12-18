@@ -518,6 +518,22 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             task = result["task"]
             assistant_subtask = result["assistant_subtask"]
+            user_subtask_for_attachment = result["user_subtask"]
+
+            # Link attachment to user subtask if provided
+            # This is important for group chat history to include attachment content
+            if payload.attachment_id and user_subtask_for_attachment:
+                from app.services.attachment import attachment_service
+
+                attachment_service.link_attachment_to_subtask(
+                    db=db,
+                    attachment_id=payload.attachment_id,
+                    subtask_id=user_subtask_for_attachment.id,
+                    user_id=user_id,
+                )
+                logger.info(
+                    f"[WS] chat:send linked attachment {payload.attachment_id} to subtask {user_subtask_for_attachment.id}"
+                )
 
             # Check if AI was triggered (for group chat without @mention)
             if not result["ai_triggered"]:
@@ -533,22 +549,15 @@ class ChatNamespace(socketio.AsyncNamespace):
                 await self.enter_room(sid, task_room)
 
                 if user_subtask:
-                    from app.api.ws.events import ServerEvents
-
-                    await self.emit(
-                        ServerEvents.CHAT_MESSAGE,
-                        {
-                            "subtask_id": user_subtask.id,
-                            "task_id": task.id,
-                            "role": "user",
-                            "content": payload.message,
-                            "sender": {
-                                "user_id": user_id,
-                                "user_name": user_name,
-                            },
-                            "created_at": user_subtask.created_at.isoformat(),
-                        },
-                        room=task_room,
+                    await self._broadcast_user_message(
+                        db=db,
+                        user_subtask=user_subtask,
+                        task_id=task.id,
+                        message=payload.message,
+                        user_id=user_id,
+                        user_name=user_name,
+                        attachment_id=payload.attachment_id,
+                        task_room=task_room,
                         skip_sid=sid,
                     )
                     logger.info(
@@ -619,22 +628,15 @@ class ChatNamespace(socketio.AsyncNamespace):
 
             # Broadcast user message to room (exclude sender)
             if user_subtask:
-                from app.api.ws.events import ServerEvents
-
-                await self.emit(
-                    ServerEvents.CHAT_MESSAGE,
-                    {
-                        "subtask_id": user_subtask.id,
-                        "task_id": task.id,
-                        "role": "user",
-                        "content": payload.message,
-                        "sender": {
-                            "user_id": user_id,
-                            "user_name": user_name,
-                        },
-                        "created_at": user_subtask.created_at.isoformat(),
-                    },
-                    room=task_room,
+                await self._broadcast_user_message(
+                    db=db,
+                    user_subtask=user_subtask,
+                    task_id=task.id,
+                    message=payload.message,
+                    user_id=user_id,
+                    user_name=user_name,
+                    attachment_id=payload.attachment_id,
+                    task_room=task_room,
                     skip_sid=sid,
                 )
                 logger.info(f"[WS] chat:send broadcasted user message to room")
@@ -692,6 +694,79 @@ class ChatNamespace(socketio.AsyncNamespace):
         finally:
             logger.info(f"[WS] chat:send finally block, closing db")
             db.close()
+
+    async def _broadcast_user_message(
+        self,
+        db,
+        user_subtask: Subtask,
+        task_id: int,
+        message: str,
+        user_id: int,
+        user_name: str,
+        attachment_id: Optional[int],
+        task_room: str,
+        skip_sid: str,
+    ):
+        """
+        Broadcast user message to task room (exclude sender).
+
+        This helper method builds attachment info and emits the chat:message event
+        to notify other group members about the new message.
+
+        Args:
+            db: Database session
+            user_subtask: User's subtask object
+            task_id: Task ID
+            message: Message content
+            user_id: Sender's user ID
+            user_name: Sender's user name
+            attachment_id: Optional attachment ID
+            task_room: Task room name
+            skip_sid: Socket ID to skip (sender)
+        """
+        from app.api.ws.events import ServerEvents
+
+        # Build attachment info if present
+        attachment_info = None
+        if attachment_id:
+            from app.services.attachment import attachment_service
+
+            attachment = attachment_service.get_attachment(
+                db=db,
+                attachment_id=attachment_id,
+                user_id=user_id,
+            )
+            if attachment:
+                attachment_info = {
+                    "id": attachment.id,
+                    "original_filename": attachment.original_filename,
+                    "file_extension": attachment.file_extension,
+                    "file_size": attachment.file_size,
+                    "mime_type": attachment.mime_type,
+                    "status": attachment.status.value if attachment.status else None,
+                }
+
+        # Build attachments array (supports multiple attachments in the future)
+        attachments_list = [attachment_info] if attachment_info else None
+
+        await self.emit(
+            ServerEvents.CHAT_MESSAGE,
+            {
+                "subtask_id": user_subtask.id,
+                "task_id": task_id,
+                "role": "user",
+                "content": message,
+                "sender": {
+                    "user_id": user_id,
+                    "user_name": user_name,
+                },
+                "created_at": user_subtask.created_at.isoformat(),
+                "attachment": attachment_info,  # Keep for backward compatibility
+                "attachments": attachments_list,  # New array format
+            },
+            room=task_room,
+            skip_sid=skip_sid,
+        )
 
     async def _stream_chat_response(
         self,

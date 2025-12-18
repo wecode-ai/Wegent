@@ -172,6 +172,12 @@ class ChatMessagePayload(BaseModel):
     content: str
     sender: Dict[str, Any] = Field(default_factory=dict)
     created_at: str
+    attachment: Optional[Dict[str, Any]] = Field(
+        None, description="Single attachment info (for backward compatibility)"
+    )
+    attachments: Optional[List[Dict[str, Any]]] = Field(
+        None, description="Multiple attachments info"
+    )
 
 
 class ChatBotCompletePayload(BaseModel):

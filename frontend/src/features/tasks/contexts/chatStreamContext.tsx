@@ -664,7 +664,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
    * Adds the message to the unified messages Map for real-time display
    */
   const handleChatMessage = useCallback((data: ChatMessagePayload) => {
-    const { task_id, subtask_id, role, content, sender, created_at } = data;
+    const { task_id, subtask_id, role, content, sender, created_at, attachments } = data;
 
     console.log('[ChatStreamContext][chat:message] Received', {
       task_id,
@@ -672,6 +672,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       role,
       sender,
       contentLen: content?.length || 0,
+      attachmentsCount: attachments?.length || 0,
     });
 
     // Generate message ID based on role
@@ -695,6 +696,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
       }
 
       const newMessages = new Map(currentState.messages);
+
       const newMessage: UnifiedMessage = {
         id: messageId,
         type: isUserMessage ? 'user' : 'ai',
@@ -705,6 +707,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         senderUserName: sender?.user_name,
         senderUserId: sender?.user_id,
         shouldShowSender: isUserMessage, // Show sender for user messages in group chat
+        attachments: attachments,
       };
 
       newMessages.set(messageId, newMessage);
@@ -713,6 +716,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         taskId: task_id,
         messageId,
         senderUserName: sender?.user_name,
+        attachmentsCount: attachments?.length || 0,
       });
       logMessagesState('chat:message', task_id, newMessages);
 
