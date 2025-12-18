@@ -15,8 +15,8 @@ import socketio
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.api import api_router
 from app.api import rag
+from app.api.api import api_router
 from app.core.config import settings
 from app.core.exceptions import (
     CustomHTTPException,

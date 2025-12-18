@@ -6,11 +6,11 @@
 Retrieval module for RAG functionality.
 """
 
-from app.services.rag.retrieval.retriever import DocumentRetriever
 from app.services.rag.retrieval.filters import (
+    build_elasticsearch_filters,
     parse_metadata_filters,
-    build_elasticsearch_filters
 )
+from app.services.rag.retrieval.retriever import DocumentRetriever
 
 __all__ = [
     "DocumentRetriever",

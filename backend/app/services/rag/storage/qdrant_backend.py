@@ -6,7 +6,8 @@
 Qdrant storage backend implementation.
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
 from llama_index.core.schema import BaseNode
 
 from app.services.rag.storage.base import BaseStorageBackend
@@ -31,14 +32,18 @@ class QdrantBackend(BaseStorageBackend):
         # TODO: Implement Qdrant vector store creation
         raise NotImplementedError()
 
-    def index(
+    def index_with_metadata(
         self,
         nodes: List[BaseNode],
-        index_name: str,
+        knowledge_id: str,
+        document_id: str,
+        source_file: str,
+        created_at: str,
         embed_model,
+        **kwargs,
     ) -> Dict:
-        """Index nodes into Qdrant."""
-        # TODO: Implement indexing
+        """Add metadata to nodes and index them into Qdrant."""
+        # TODO: Implement metadata addition and indexing
         raise NotImplementedError()
 
     def retrieve(
@@ -48,7 +53,7 @@ class QdrantBackend(BaseStorageBackend):
         embed_model,
         retrieval_setting: Dict[str, Any],
         metadata_condition: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict:
         """Retrieve nodes from Qdrant."""
         # TODO: Implement retrieval with metadata filtering
@@ -65,11 +70,7 @@ class QdrantBackend(BaseStorageBackend):
         raise NotImplementedError()
 
     def list_documents(
-        self,
-        knowledge_id: str,
-        page: int = 1,
-        page_size: int = 20,
-        **kwargs
+        self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs
     ) -> Dict:
         """List documents in Qdrant collection."""
         # TODO: Implement document listing
