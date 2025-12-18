@@ -313,6 +313,7 @@ export interface Task {
   created_at: string;
   updated_at: string;
   completed_at: string;
+  is_group_chat?: boolean; // Whether this task is a group chat
 }
 
 /** GitHub repository new structure */

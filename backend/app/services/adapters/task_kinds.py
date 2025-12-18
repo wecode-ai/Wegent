@@ -424,6 +424,23 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
         # Recalculate total excluding DELETE status (approximate)
         total = total_result if total_result else 0
 
+        # Get task member counts in batch for is_group_chat detection
+        from app.models.task_member import MemberStatus, TaskMember
+
+        task_ids_for_members = [t.id for t in tasks]
+        member_counts = {}
+        if task_ids_for_members:
+            member_count_results = (
+                db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+                .filter(
+                    TaskMember.task_id.in_(task_ids_for_members),
+                    TaskMember.status == MemberStatus.ACTIVE,
+                )
+                .group_by(TaskMember.task_id)
+                .all()
+            )
+            member_counts = {row[0]: row[1] for row in member_count_results}
+
         # Build lightweight result without expensive JOIN operations
         result = []
         for task in tasks:
@@ -532,6 +549,9 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     else workspace_result[0]
                 )
 
+            # Check if this is a group chat (has active members)
+            is_group_chat = member_counts.get(task.id, 0) > 0
+
             result.append(
                 {
                     "id": task.id,
@@ -544,6 +564,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                     "completed_at": completed_at,
                     "team_id": team_id,
                     "git_repo": git_repo,
+                    "is_group_chat": is_group_chat,
                 }
             )
 
@@ -2004,6 +2025,26 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
                 "completed_at": completed_at,
             }
 
+        # Batch query member counts for is_group_chat detection
+        from app.models.task_member import MemberStatus, TaskMember
+
+        task_ids = [t.id for t in tasks]
+        member_count_results = (
+            db.query(TaskMember.task_id, func.count(TaskMember.id).label("count"))
+            .filter(
+                TaskMember.task_id.in_(task_ids),
+                TaskMember.status == MemberStatus.ACTIVE,
+            )
+            .group_by(TaskMember.task_id)
+            .all()
+        )
+        member_counts = {row[0]: row[1] for row in member_count_results}
+
+        # Add is_group_chat to result
+        for task_id_str, data in result.items():
+            task_id = int(task_id_str)
+            data["is_group_chat"] = member_counts.get(task_id, 0) > 0
+
         return result
 
     def _convert_to_task_dict_optimized(
@@ -2047,6 +2088,7 @@ class TaskKindsService(BaseService[Kind, TaskCreate, TaskUpdate]):
             "created_at": related_data.get("created_at", task.created_at),
             "updated_at": related_data.get("updated_at", task.updated_at),
             "completed_at": related_data.get("completed_at"),
+            "is_group_chat": related_data.get("is_group_chat", False),
         }
 
 

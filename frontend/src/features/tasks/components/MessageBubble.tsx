@@ -57,6 +57,8 @@ export interface Message {
   isWaiting?: boolean;
   /** Group chat: sender user name (for USER type messages) */
   senderUserName?: string;
+  /** Whether this is a group chat or chat agent type (to show sender names) */
+  shouldShowSender?: boolean;
 }
 
 // CopyButton component for copying markdown content
@@ -1276,8 +1278,8 @@ const MessageBubble = memo(
                 )}
               </div>
             )}
-            {/* Show sender user name for user messages in group chat */}
-            {isUserMessage && msg.senderUserName && (
+            {/* Show sender user name for user messages in group chat or chat agent type */}
+            {isUserMessage && msg.senderUserName && msg.shouldShowSender && (
               <div className="flex items-center gap-2 mb-2 text-xs opacity-80">
                 <span className="font-semibold">{msg.senderUserName}</span>
                 {timestampLabel && <span>{timestampLabel}</span>}

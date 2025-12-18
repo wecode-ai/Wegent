@@ -101,6 +101,7 @@ class TaskInDB(TaskBase):
     created_at: datetime
     updated_at: datetime
     completed_at: Optional[datetime] = None
+    is_group_chat: bool = False  # Whether this is a group chat task
 
     class Config:
         from_attributes = True
@@ -156,6 +157,7 @@ class TaskLite(BaseModel):
     completed_at: Optional[datetime] = None
     team_id: Optional[int] = None
     git_repo: Optional[str] = None
+    is_group_chat: bool = False  # Whether this is a group chat task
 
     class Config:
         from_attributes = True

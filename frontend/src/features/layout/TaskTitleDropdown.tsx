@@ -39,7 +39,6 @@ export default function TaskTitleDropdown({
   const { user } = useUser();
   const displayTitle = title || 'Wegent';
   const isGroupChat = taskDetail?.is_group_chat || false;
-  const isChatAgentType = taskDetail?.team?.agent_type === 'chat';
 
   const [showMembersDialog, setShowMembersDialog] = useState(false);
   const [showInviteLinkDialog, setShowInviteLinkDialog] = useState(false);
@@ -86,10 +85,10 @@ export default function TaskTitleDropdown({
     }
   };
 
-  // Show group chat options if it's a group chat OR agent_type is 'chat'
-  const showGroupChatOptions = isGroupChat || isChatAgentType;
+  // Only show group chat options if it's a true group chat
+  const showGroupChatOptions = isGroupChat;
 
-  // If not a group chat or not chat agent type, show simple dropdown
+  // If not a group chat, show simple dropdown
   if (!showGroupChatOptions) {
     return (
       <DropdownMenu>
