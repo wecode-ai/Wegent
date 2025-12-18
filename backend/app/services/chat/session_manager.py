@@ -13,7 +13,8 @@ for cross-worker communication in multi-worker deployments.
 import asyncio
 import json
 import logging
-from typing import Any, Dict, List, Optional, Union
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 
 from app.core.cache import cache_manager
 from app.core.config import settings
@@ -29,6 +30,10 @@ CANCEL_FLAG_TTL = 300
 STREAMING_KEY_PREFIX = "chat:streaming:"
 # Redis Pub/Sub channel prefix for streaming updates
 STREAMING_CHANNEL_PREFIX = "chat:stream_channel:"
+# Redis key prefix for task-level streaming status (for group chat)
+TASK_STREAMING_KEY_PREFIX = "chat:task_streaming:"
+# Task streaming status TTL (1 hour)
+TASK_STREAMING_TTL = 3600
 
 
 class SessionManager:
@@ -500,6 +505,80 @@ class SessionManager:
                 f"Error subscribing to streaming channel for subtask {subtask_id}: {e}"
             )
             return None, None
+
+    # ==================== Task-Level Streaming Status (Group Chat) ====================
+
+    def _get_task_streaming_key(self, task_id: int) -> str:
+        """Generate Redis key for task-level streaming status."""
+        return f"{TASK_STREAMING_KEY_PREFIX}{task_id}"
+
+    async def set_task_streaming_status(
+        self,
+        task_id: int,
+        subtask_id: int,
+        user_id: int,
+        username: str,
+    ) -> bool:
+        """
+        Set task-level streaming status (used for group chat).
+
+        Args:
+            task_id: Task ID
+            subtask_id: Subtask ID that is streaming
+            user_id: User who triggered the stream
+            username: Username of the user
+
+        Returns:
+            bool: True if set was successful
+        """
+        try:
+            key = self._get_task_streaming_key(task_id)
+            value = {
+                "subtask_id": subtask_id,
+                "user_id": user_id,
+                "username": username,
+                "started_at": datetime.now().isoformat(),
+            }
+            return await self._cache.set(key, value, expire=TASK_STREAMING_TTL)
+        except Exception as e:
+            logger.error(f"Error setting task streaming status for task {task_id}: {e}")
+            return False
+
+    async def get_task_streaming_status(self, task_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get task-level streaming status.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            dict or None: Streaming status data, or None if not streaming
+        """
+        try:
+            key = self._get_task_streaming_key(task_id)
+            return await self._cache.get(key)
+        except Exception as e:
+            logger.error(f"Error getting task streaming status for task {task_id}: {e}")
+            return None
+
+    async def clear_task_streaming_status(self, task_id: int) -> bool:
+        """
+        Clear task-level streaming status.
+
+        Args:
+            task_id: Task ID
+
+        Returns:
+            bool: True if clear was successful
+        """
+        try:
+            key = self._get_task_streaming_key(task_id)
+            return await self._cache.delete(key)
+        except Exception as e:
+            logger.error(
+                f"Error clearing task streaming status for task {task_id}: {e}"
+            )
+            return False
 
 
 # Global session manager instance

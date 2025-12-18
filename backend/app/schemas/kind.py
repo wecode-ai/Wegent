@@ -304,6 +304,7 @@ class TaskSpec(BaseModel):
     prompt: str
     teamRef: TeamTaskRef
     workspaceRef: WorkspaceTaskRef
+    is_group_chat: bool = False  # Whether this task is a group chat
 
 
 class TaskStatus(Status):

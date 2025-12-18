@@ -92,6 +92,7 @@ export async function sendMessage(params: {
   branch: GitBranch | null;
   task_id?: number;
   taskType?: 'chat' | 'code';
+  title?: string;
   model_id?: string;
   force_override_bot_model?: boolean;
   search_engine?: string;
@@ -105,6 +106,7 @@ export async function sendMessage(params: {
     branch,
     task_id,
     taskType = 'chat',
+    title,
     model_id,
     force_override_bot_model,
     search_engine,
@@ -121,14 +123,28 @@ export async function sendMessage(params: {
     return { error: 'Please select Team', newTask: null };
   }
 
+  // Debug logging
+  const isChatShellResult = isChatShell(team);
+  console.log('[sendMessage] Debug info:', {
+    isChatShell: isChatShellResult,
+    hasStreamCallbacks: !!streamCallbacks,
+    team_agent_type: team?.agent_type,
+    team_bots_length: team?.bots?.length,
+    first_bot_shell_type: team?.bots?.[0]?.bot?.shell_type,
+    will_use_streaming: isChatShellResult && !!streamCallbacks,
+    team_object: team,
+  });
+
   // Chat Shell: use streaming API directly
   if (isChatShell(team) && streamCallbacks) {
+    console.log('[sendMessage] ✅ Using streaming API');
     try {
       const { taskId, abort } = await chatApis.streamChat(
         {
           message: trimmed,
           team_id: team?.id ?? 0,
           task_id: task_id,
+          title: title,
           model_id: model_id,
           force_override_bot_model: force_override_bot_model,
           search_engine: search_engine,
@@ -147,6 +163,7 @@ export async function sendMessage(params: {
   }
 
   // Other shells: use task creation flow
+  console.log('[sendMessage] ❌ Using task creation flow (non-streaming)');
   // For code type tasks, repository is required
   if (taskType === 'code' && !repo) {
     return { error: 'Please select a repository for code tasks', newTask: null };

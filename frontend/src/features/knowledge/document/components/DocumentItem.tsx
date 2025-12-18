@@ -2,23 +2,23 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-'use client'
+'use client';
 
-import { FileText, Trash2, ToggleLeft, ToggleRight, Pencil } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
-import { Checkbox } from '@/components/ui/checkbox'
-import type { KnowledgeDocument } from '@/types/knowledge'
-import { useTranslation } from '@/hooks/useTranslation'
+import { FileText, Trash2, ToggleLeft, ToggleRight, Pencil } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
+import { Checkbox } from '@/components/ui/checkbox';
+import type { KnowledgeDocument } from '@/types/knowledge';
+import { useTranslation } from '@/hooks/useTranslation';
 
 interface DocumentItemProps {
-  document: KnowledgeDocument
-  onToggleStatus?: (doc: KnowledgeDocument) => void
-  onEdit?: (doc: KnowledgeDocument) => void
-  onDelete?: (doc: KnowledgeDocument) => void
-  canManage?: boolean
-  showBorder?: boolean
-  selected?: boolean
-  onSelect?: (doc: KnowledgeDocument, selected: boolean) => void
+  document: KnowledgeDocument;
+  onToggleStatus?: (doc: KnowledgeDocument) => void;
+  onEdit?: (doc: KnowledgeDocument) => void;
+  onDelete?: (doc: KnowledgeDocument) => void;
+  canManage?: boolean;
+  showBorder?: boolean;
+  selected?: boolean;
+  onSelect?: (doc: KnowledgeDocument, selected: boolean) => void;
 }
 
 export function DocumentItem({
@@ -31,47 +31,49 @@ export function DocumentItem({
   selected = false,
   onSelect,
 }: DocumentItemProps) {
-  const { t } = useTranslation()
+  const { t } = useTranslation();
 
   const formatFileSize = (bytes: number) => {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   // Format date with time to seconds level: YYYY/MM/DD HH:mm:ss
   const formatDateTime = (dateString: string) => {
-    const date = new Date(dateString)
-    const year = date.getFullYear()
-    const month = String(date.getMonth() + 1).padStart(2, '0')
-    const day = String(date.getDate()).padStart(2, '0')
-    const hours = String(date.getHours()).padStart(2, '0')
-    const minutes = String(date.getMinutes()).padStart(2, '0')
-    const seconds = String(date.getSeconds()).padStart(2, '0')
-    return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`
-  }
+    const date = new Date(dateString);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+  };
 
   const handleCheckboxChange = (checked: boolean) => {
-    onSelect?.(document, checked)
-  }
+    onSelect?.(document, checked);
+  };
 
   const handleToggleStatus = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    onToggleStatus?.(document)
-  }
+    e.stopPropagation();
+    onToggleStatus?.(document);
+  };
 
   const handleEdit = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    onEdit?.(document)
-  }
+    e.stopPropagation();
+    onEdit?.(document);
+  };
 
   const handleDelete = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    onDelete?.(document)
-  }
+    e.stopPropagation();
+    onDelete?.(document);
+  };
 
   return (
-    <div className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''}`}>
+    <div
+      className={`flex items-center gap-4 px-4 py-3 bg-base hover:bg-surface transition-colors group ${showBorder ? 'border-b border-border' : ''}`}
+    >
       {/* Checkbox for batch selection */}
       {canManage && (
         <div className="flex-shrink-0">
@@ -90,9 +92,7 @@ export function DocumentItem({
 
       {/* File name */}
       <div className="flex-1 min-w-[120px]">
-        <span className="text-sm font-medium text-text-primary truncate">
-          {document.name}
-        </span>
+        <span className="text-sm font-medium text-text-primary truncate">{document.name}</span>
       </div>
 
       {/* Edit button - in the middle area */}
@@ -110,31 +110,22 @@ export function DocumentItem({
 
       {/* Type */}
       <div className="w-20 flex-shrink-0 text-center">
-        <span className="text-xs text-text-muted uppercase">
-          {document.file_extension}
-        </span>
+        <span className="text-xs text-text-muted uppercase">{document.file_extension}</span>
       </div>
 
       {/* Size */}
       <div className="w-20 flex-shrink-0 text-center">
-        <span className="text-xs text-text-muted">
-          {formatFileSize(document.file_size)}
-        </span>
+        <span className="text-xs text-text-muted">{formatFileSize(document.file_size)}</span>
       </div>
 
       {/* Upload date with time */}
       <div className="w-40 flex-shrink-0 text-center">
-        <span className="text-xs text-text-muted">
-          {formatDateTime(document.created_at)}
-        </span>
+        <span className="text-xs text-text-muted">{formatDateTime(document.created_at)}</span>
       </div>
 
       {/* Status badge */}
       <div className="w-16 flex-shrink-0 text-center">
-        <Badge
-          variant={document.status === 'enabled' ? 'success' : 'secondary'}
-          size="sm"
-        >
+        <Badge variant={document.status === 'enabled' ? 'success' : 'secondary'} size="sm">
           {document.status === 'enabled'
             ? t('knowledge.document.document.status.enabled')
             : t('knowledge.document.document.status.disabled')}
@@ -147,9 +138,11 @@ export function DocumentItem({
           <button
             className="p-1.5 rounded-md text-text-muted hover:text-primary hover:bg-primary/10 transition-colors"
             onClick={handleToggleStatus}
-            title={document.status === 'enabled'
-              ? t('knowledge.document.document.disable')
-              : t('knowledge.document.document.enable')}
+            title={
+              document.status === 'enabled'
+                ? t('knowledge.document.document.disable')
+                : t('knowledge.document.document.enable')
+            }
           >
             {document.status === 'enabled' ? (
               <ToggleLeft className="w-4 h-4" />
@@ -167,5 +160,5 @@ export function DocumentItem({
         </div>
       )}
     </div>
-  )
+  );
 }

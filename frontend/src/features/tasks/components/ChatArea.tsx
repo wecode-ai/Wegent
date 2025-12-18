@@ -46,6 +46,8 @@ import { useToast } from '@/hooks/use-toast';
 import { taskApis } from '@/apis/tasks';
 import { useAttachment } from '@/hooks/useAttachment';
 import { chatApis, SearchEngine } from '@/apis/chat';
+import { GroupChatSyncManager } from './group-chat';
+import type { SubtaskWithSender } from '@/apis/group-chat';
 
 const SHOULD_HIDE_QUOTA_NAME_LIMIT = 18;
 
@@ -411,6 +413,51 @@ export default function ChatArea({
     setStreamingTaskId(null);
   }, [currentDisplayTaskId, streamingTaskId, contextResetStream]);
 
+  // Group chat streaming state (for other users to see streaming content)
+  const [groupChatStreamingContent, setGroupChatStreamingContent] = useState<string>('');
+  const [groupChatStreamingSubtaskId, setGroupChatStreamingSubtaskId] = useState<number | null>(
+    null
+  );
+  const [isGroupChatStreaming, setIsGroupChatStreaming] = useState(false);
+
+  // Group chat message handlers
+  const handleNewMessages = useCallback(
+    (messages: SubtaskWithSender[]) => {
+      if (messages.length > 0) {
+        refreshSelectedTaskDetail();
+      }
+    },
+    [refreshSelectedTaskDetail]
+  );
+
+  const handleStreamContent = useCallback((content: string, subtaskId: number) => {
+    console.log('[GroupChat] Stream content:', { subtaskId, contentLength: content.length });
+    // Update group chat streaming state so MessagesArea can display it
+    setGroupChatStreamingContent(content);
+    setGroupChatStreamingSubtaskId(subtaskId);
+    setIsGroupChatStreaming(true);
+  }, []);
+
+  const handleStreamComplete = useCallback(
+    (subtaskId: number, result?: Record<string, unknown>) => {
+      console.log('[GroupChat] Stream complete:', { subtaskId, result });
+      // Clear group chat streaming state
+      setGroupChatStreamingContent('');
+      setGroupChatStreamingSubtaskId(null);
+      setIsGroupChatStreaming(false);
+      // Refresh to get the final message
+      refreshSelectedTaskDetail();
+    },
+    [refreshSelectedTaskDetail]
+  );
+
+  // Reset group chat streaming state when task changes
+  useEffect(() => {
+    setGroupChatStreamingContent('');
+    setGroupChatStreamingSubtaskId(null);
+    setIsGroupChatStreaming(false);
+  }, [selectedTaskDetail?.id]);
+
   // Clear streamingTaskId when the streaming task completes or when we switch to a different task
   useEffect(() => {
     if (streamingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== streamingTaskId) {
@@ -573,13 +620,28 @@ export default function ChatArea({
     }
 
     if (!selectedTeam?.id || selectedTeam.id !== detailTeamId) {
+      // Try to find team in teams list first
       const matchedTeam = teams.find(team => team.id === detailTeamId) || null;
       if (matchedTeam) {
         setSelectedTeam(matchedTeam);
         setHasRestoredPreferences(true);
+      } else {
+        // For group chat members: team might not be in teams list
+        // Use team object directly from selectedTaskDetail if available
+        if (selectedTaskDetail?.team && typeof selectedTaskDetail.team === 'object') {
+          const teamFromDetail = selectedTaskDetail.team as Team;
+          if (teamFromDetail.id === detailTeamId) {
+            console.log(
+              '[ChatArea] Using team from task detail (group chat member):',
+              teamFromDetail.name
+            );
+            setSelectedTeam(teamFromDetail);
+            setHasRestoredPreferences(true);
+          }
+        }
       }
     }
-  }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam]);
+  }, [detailTeamId, teams, selectedTeam?.id, setSelectedTeam, selectedTaskDetail?.team]);
 
   // Set model and override flag when viewing existing task
   useEffect(() => {
@@ -1248,6 +1310,18 @@ export default function ChatArea({
       className="flex-1 flex flex-col min-h-0 w-full relative"
       style={{ height: '100%', boxSizing: 'border-box' }}
     >
+      {/* Group Chat Sync Manager - zero UI, handles polling and streaming */}
+      {selectedTaskDetail?.is_group_chat && selectedTaskDetail.id && (
+        <GroupChatSyncManager
+          taskId={selectedTaskDetail.id}
+          isGroupChat={true}
+          enabled={true}
+          onNewMessages={handleNewMessages}
+          onStreamContent={handleStreamContent}
+          onStreamComplete={handleStreamComplete}
+        />
+      )}
+
       {/* Messages Area: always mounted to keep scroll container stable */}
       <div className={hasMessages ? 'relative flex-1 min-h-0' : 'relative'}>
         {/* Top gradient fade effect - only show when has messages */}
@@ -1283,6 +1357,10 @@ export default function ChatArea({
               streamingSubtaskId={streamingSubtaskId}
               onShareButtonRender={onShareButtonRender}
               onSendMessage={handleSendMessageFromChild}
+              isGroupChat={selectedTaskDetail?.is_group_chat || false}
+              groupChatStreamingContent={groupChatStreamingContent}
+              groupChatStreamingSubtaskId={groupChatStreamingSubtaskId}
+              isGroupChatStreaming={isGroupChatStreaming}
             />
           </div>
         </div>
@@ -1362,6 +1440,8 @@ export default function ChatArea({
                         canSubmit={canSubmit}
                         tipText={randomTip}
                         badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
+                        isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                        team={selectedTeam}
                       />
                     </div>
                   )}
@@ -1621,6 +1701,8 @@ export default function ChatArea({
                       taskType={taskType}
                       canSubmit={canSubmit}
                       tipText={randomTip}
+                      isGroupChat={selectedTaskDetail?.is_group_chat || false}
+                      team={selectedTeam}
                     />
                   </div>
                 )}

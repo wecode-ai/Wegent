@@ -9,22 +9,28 @@ import { Bars3Icon } from '@heroicons/react/24/outline';
 
 import { useTranslation } from '@/hooks/useTranslation';
 import { useIsMobile, useIsDesktop } from './hooks/useMediaQuery';
+import TaskTitleDropdown from './TaskTitleDropdown';
+import { TaskDetail } from '@/types/api';
 
 type TopNavigationProps = {
   activePage?: 'chat' | 'code' | 'wiki' | 'dashboard';
   variant?: 'with-sidebar' | 'standalone';
   showLogo?: boolean;
   title?: string;
+  taskDetail?: TaskDetail | null;
   children?: React.ReactNode;
   onMobileSidebarToggle?: () => void;
+  onTaskDeleted?: () => void;
 };
 
 export default function TopNavigation({
   variant = 'standalone',
   showLogo = false,
   title,
+  taskDetail,
   children,
   onMobileSidebarToggle,
+  onTaskDeleted,
 }: TopNavigationProps) {
   const { t } = useTranslation('common');
   const isMobile = useIsMobile();
@@ -65,7 +71,15 @@ export default function TopNavigation({
           </div>
         )}
 
-        {title && <h1 className="text-xl font-semibold text-text-primary">{title}</h1>}
+        {/* Show task title dropdown when in with-sidebar variant */}
+        {variant === 'with-sidebar' && (
+          <TaskTitleDropdown title={title} taskDetail={taskDetail} onTaskDeleted={onTaskDeleted} />
+        )}
+
+        {/* Show title as heading when explicitly provided and not in with-sidebar variant */}
+        {title && variant !== 'with-sidebar' && (
+          <h1 className="text-xl font-semibold text-text-primary">{title}</h1>
+        )}
       </div>
 
       {/* Center spacer */}

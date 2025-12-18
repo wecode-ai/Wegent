@@ -43,7 +43,16 @@ export default function CodePage() {
   const { teams, isTeamsLoading, refreshTeams } = teamService.useTeams();
 
   // Task context for workbench data
-  const { selectedTaskDetail } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
+
+  // Get current task title for top navigation
+  const currentTaskTitle = selectedTaskDetail?.title;
+
+  // Handle task deletion
+  const handleTaskDeleted = () => {
+    setSelectedTask(null);
+    refreshTasks();
+  };
 
   // Chat stream context
   const { clearAllStreams } = useChatStreamContext();
@@ -195,7 +204,10 @@ export default function CodePage() {
           <TopNavigation
             activePage="code"
             variant="with-sidebar"
+            title={currentTaskTitle}
+            taskDetail={selectedTaskDetail}
             onMobileSidebarToggle={() => setIsMobileSidebarOpen(true)}
+            onTaskDeleted={handleTaskDeleted}
           >
             {shareButton}
             {isMobile ? <ThemeToggle /> : <GithubStarButton />}

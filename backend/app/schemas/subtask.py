@@ -36,6 +36,13 @@ class SubtaskRole(str, Enum):
     ASSISTANT = "ASSISTANT"
 
 
+class SenderType(str, Enum):
+    """Sender type for group chat messages"""
+
+    USER = "USER"  # Message sent by a user
+    TEAM = "TEAM"  # Message sent by the AI team/agent
+
+
 class SubtaskBase(BaseModel):
     """Subtask base model"""
 
@@ -102,6 +109,11 @@ class SubtaskInDB(SubtaskBase):
     completed_at: Optional[datetime] = None
     executor_deleted_at: Optional[bool] = False
     attachments: List[SubtaskAttachment] = []
+    # Group chat fields
+    sender_type: Optional[SenderType] = None  # USER or TEAM
+    sender_user_id: Optional[int] = None  # User ID when sender_type=USER
+    sender_user_name: Optional[str] = None  # User name for display
+    reply_to_subtask_id: Optional[int] = None  # Quoted message ID
 
     @field_serializer("result")
     def mask_result(self, value: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
@@ -132,11 +144,39 @@ class SubtaskWithBot(SubtaskInDB):
         from_attributes = True
 
 
+class SubtaskWithSender(SubtaskInDB):
+    """Subtask model with sender username"""
+
+    sender_username: Optional[str] = None  # Username of the sender (for group chat)
+
+    class Config:
+        from_attributes = True
+
+
 class SubtaskListResponse(BaseModel):
     """Subtask paginated response model"""
 
     total: int
     items: list[SubtaskInDB]
+
+
+class PollMessagesResponse(BaseModel):
+    """Response model for polling new messages"""
+
+    messages: List[SubtaskWithSender]
+    has_streaming: bool = False  # Whether there's an active stream
+    streaming_subtask_id: Optional[int] = None  # ID of the streaming subtask
+
+
+class StreamingStatus(BaseModel):
+    """Response model for streaming status"""
+
+    is_streaming: bool
+    subtask_id: Optional[int] = None
+    started_by_user_id: Optional[int] = None
+    started_by_username: Optional[str] = None
+    current_content: Optional[str] = None
+    started_at: Optional[datetime] = None
 
 
 class SubtaskExecutorUpdate(BaseModel):

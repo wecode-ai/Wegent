@@ -2,5 +2,5 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-export { useKnowledgeBases } from './useKnowledgeBases'
-export { useDocuments } from './useDocuments'
+export { useKnowledgeBases } from './useKnowledgeBases';
+export { useDocuments } from './useDocuments';

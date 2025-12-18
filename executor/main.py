@@ -7,15 +7,17 @@
 # -*- coding: utf-8 -*-
 
 import json
+import os
 import time
 import uuid
-from typing import Dict, Optional, Any
-from fastapi import FastAPI, HTTPException, Body, Request, Query, BackgroundTasks
-from pydantic import BaseModel
-import uvicorn
-from executor.tasks import run_task
-import os
 from contextlib import asynccontextmanager
+from typing import Any, Dict, Optional
+
+import uvicorn
+from executor.services.agent_service import AgentService
+from executor.tasks import process, run_task
+from fastapi import BackgroundTasks, Body, FastAPI, HTTPException, Query, Request
+from pydantic import BaseModel
 
 # Import the shared logger
 from shared.logger import setup_logger
@@ -23,11 +25,10 @@ from shared.status import TaskStatus
 from shared.telemetry.config import get_otel_config
 from shared.telemetry.context import set_task_context, set_user_context
 from shared.telemetry.core import is_telemetry_enabled
-from executor.tasks import process
-from executor.services.agent_service import AgentService
 
 # Use the shared logger setup function
 logger = setup_logger("task_executor")
+
 
 # Define lifespan context manager for startup and shutdown events
 @asynccontextmanager
@@ -39,8 +40,8 @@ async def lifespan(app: FastAPI):
     otel_config = get_otel_config("wegent-executor")
     if otel_config.enabled:
         try:
-            from shared.telemetry.core import init_telemetry
             from shared.telemetry.context import restore_trace_context_from_env
+            from shared.telemetry.core import init_telemetry
 
             init_telemetry(
                 service_name=otel_config.service_name,
@@ -58,7 +59,10 @@ async def lifespan(app: FastAPI):
             logger.info("OpenTelemetry initialized successfully")
 
             # Apply instrumentation
-            from shared.telemetry.instrumentation import setup_opentelemetry_instrumentation
+            from shared.telemetry.instrumentation import (
+                setup_opentelemetry_instrumentation,
+            )
+
             setup_opentelemetry_instrumentation(app, logger)
 
             # Restore parent trace context from environment variables
@@ -73,8 +77,9 @@ async def lifespan(app: FastAPI):
             # This ensures logs have a request_id even without HTTP request
             startup_request_id = str(uuid.uuid4())[:8]
             from shared.telemetry.context import set_request_context
+
             set_request_context(startup_request_id)
-            
+
             logger.info("TASK_INFO environment variable found, attempting to run task")
             status = run_task()
             logger.info(f"Task execution status: {status}")
@@ -90,22 +95,24 @@ async def lifespan(app: FastAPI):
     # Shutdown OpenTelemetry
     if otel_config.enabled:
         from shared.telemetry.core import shutdown_telemetry
+
         shutdown_telemetry()
         logger.info("OpenTelemetry shutdown completed")
+
 
 # Create FastAPI app
 app = FastAPI(
     title="Task Executor API",
     description="API for executing tasks with agents",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 
 # Add middleware for request/response logging and OTEL capture
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
-    from starlette.responses import StreamingResponse
     from opentelemetry import context
+    from starlette.responses import StreamingResponse
 
     # Skip logging for health check requests
     if request.url.path == "/":
@@ -118,7 +125,11 @@ async def log_requests(request: Request, call_next):
     start_time = time.time()
 
     # Always set request context for logging (works even without OTEL)
-    from shared.telemetry.context import set_request_context, extract_trace_context_from_headers
+    from shared.telemetry.context import (
+        extract_trace_context_from_headers,
+        set_request_context,
+    )
+
     set_request_context(request_id)
 
     # Extract and attach trace context from incoming HTTP headers for distributed tracing
@@ -132,7 +143,9 @@ async def log_requests(request: Request, call_next):
             if extracted_ctx:
                 # Attach the extracted context so subsequent spans become children
                 context.attach(extracted_ctx)
-                logger.debug(f"Attached trace context from headers for request {request_id}")
+                logger.debug(
+                    f"Attached trace context from headers for request {request_id}"
+                )
         except Exception as e:
             logger.debug(f"Failed to extract trace context from headers: {e}")
 
@@ -192,7 +205,11 @@ async def log_requests(request: Request, call_next):
                     # Capture response headers
                     if otel_cfg.capture_response_headers:
                         for header_name, header_value in response.headers.items():
-                            if header_name.lower() in ("authorization", "cookie", "set-cookie"):
+                            if header_name.lower() in (
+                                "authorization",
+                                "cookie",
+                                "set-cookie",
+                            ):
                                 header_value = "[REDACTED]"
                             current_span.set_attribute(
                                 f"http.response.header.{header_name}", header_value
@@ -211,15 +228,22 @@ async def log_requests(request: Request, call_next):
                                 max_body_size = otel_cfg.max_body_size
                                 if response_body:
                                     if len(response_body) <= max_body_size:
-                                        body_str = response_body.decode("utf-8", errors="replace")
+                                        body_str = response_body.decode(
+                                            "utf-8", errors="replace"
+                                        )
                                     else:
                                         body_str = (
-                                            response_body[:max_body_size].decode("utf-8", errors="replace")
+                                            response_body[:max_body_size].decode(
+                                                "utf-8", errors="replace"
+                                            )
                                             + f"... [truncated, total size: {len(response_body)} bytes]"
                                         )
-                                    current_span.set_attribute("http.response.body", body_str)
+                                    current_span.set_attribute(
+                                        "http.response.body", body_str
+                                    )
 
                                 from starlette.responses import Response
+
                                 response = Response(
                                     content=response_body,
                                     status_code=response.status_code,
@@ -241,6 +265,7 @@ async def log_requests(request: Request, call_next):
 
 
 agent_service = AgentService()
+
 
 class TaskResponse(BaseModel):
     """Response model for task execution"""
@@ -275,7 +300,7 @@ async def execute_task(request: Request):
         if user_data:
             set_user_context(
                 user_id=str(user_data.get("id", "")) if user_data.get("id") else None,
-                user_name=user_data.get("name")
+                user_name=user_data.get("name"),
             )
 
     try:
@@ -284,7 +309,7 @@ async def execute_task(request: Request):
 
         # Prepare response
         message = f"Task execution status  : {status.value}"
-        
+
         # Set progress value
         if status == TaskStatus.COMPLETED:
             progress = 100
@@ -292,7 +317,7 @@ async def execute_task(request: Request):
             progress = 50  # Task in progress, progress is 50
         else:
             progress = 0
-            
+
         return TaskResponse(
             task_id=task_id,
             subtask_id=subtask_id,
@@ -307,7 +332,9 @@ async def execute_task(request: Request):
 
 
 @app.delete("/api/tasks/session")
-async def delete_session(task_id: str = Query(..., description="Task ID to delete session for")):
+async def delete_session(
+    task_id: str = Query(..., description="Task ID to delete session for")
+):
     """
     Delete an agent session for a specific task_id
     """
@@ -322,7 +349,7 @@ async def delete_session(task_id: str = Query(..., description="Task ID to delet
 @app.post("/api/tasks/cancel")
 async def cancel_task(
     task_id: int = Query(..., description="Task ID to cancel"),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None,
 ):
     """
     Cancel the currently running task for a specific task_id
@@ -338,10 +365,7 @@ async def cancel_task(
     if status == TaskStatus.SUCCESS:
         # Send cancel callback in background without blocking response
         if background_tasks:
-            background_tasks.add_task(
-                agent_service.send_cancel_callback_async,
-                task_id
-            )
+            background_tasks.add_task(agent_service.send_cancel_callback_async, task_id)
         return {"message": message}
     else:
         raise HTTPException(status_code=400, detail=message)
@@ -386,7 +410,11 @@ async def close_all_agent_sessions():
             return {"message": message}
         else:
             # Return 200 status code even with errors, as some agents may have closed successfully
-            return {"message": message, "partial_success": True, "error_detail": error_detail}
+            return {
+                "message": message,
+                "partial_success": True,
+                "error_detail": error_detail,
+            }
     except Exception as e:
         logger.exception(f"Error closing agent connections: {str(e)}")
         raise HTTPException(

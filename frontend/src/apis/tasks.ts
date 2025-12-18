@@ -173,6 +173,13 @@ export const taskApis = {
     return apiClient.get(`/tasks/lite?${query}`);
   },
 
+  getNewTasksLite: async (sinceId: number, limit?: number): Promise<TaskListResponse> => {
+    const query = new URLSearchParams();
+    query.append('since_id', sinceId.toString());
+    if (limit) query.append('limit', limit.toString());
+    return apiClient.get(`/tasks/lite/new?${query}`);
+  },
+
   searchTasks: async (title: string, params?: PaginationParams): Promise<TaskListResponse> => {
     const query = new URLSearchParams();
     query.append('title', title);
