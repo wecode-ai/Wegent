@@ -494,6 +494,7 @@ class ChatNamespace(socketio.AsyncNamespace):
                 message=payload.message,
                 team_id=payload.team_id,
                 task_id=payload.task_id,
+                title=payload.title,
                 attachment_id=payload.attachment_id,
                 enable_web_search=payload.enable_web_search,
                 model_id=payload.force_override_bot_model,
@@ -1033,9 +1034,11 @@ class ChatNamespace(socketio.AsyncNamespace):
 
                 # Emit done event AFTER database is updated
                 # This ensures frontend can immediately fetch the updated data
+                # Include task_id for group chat members who may not have received chat:start
                 await self.emit(
                     ServerEvents.CHAT_DONE,
                     {
+                        "task_id": task_id,
                         "subtask_id": subtask_id,
                         "offset": offset,
                         "result": result,

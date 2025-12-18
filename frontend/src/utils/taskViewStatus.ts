@@ -103,7 +103,25 @@ export function getTaskViewStatus(taskId: number): TaskViewStatus | null {
  * Check if a task is unread
  */
 export function isTaskUnread(task: Task): boolean {
-  // Only show unread badge for terminal states
+  // For group chat tasks, check if there are new messages (any status)
+  if (task.is_group_chat) {
+    const viewStatus = getTaskViewStatus(task.id);
+
+    // If never viewed, it's unread
+    if (!viewStatus) {
+      return true;
+    }
+
+    // Compare task's updated_at with last viewed time
+    const taskUpdatedAt = new Date(task.updated_at).getTime();
+    const viewedAt = new Date(viewStatus.viewedAt).getTime();
+
+    // Use a 1-second tolerance to handle minor timestamp differences
+    const TOLERANCE_MS = 1000;
+    return taskUpdatedAt > viewedAt + TOLERANCE_MS;
+  }
+
+  // For non-group-chat tasks, only show unread badge for terminal states
   if (!['COMPLETED', 'FAILED', 'CANCELLED'].includes(task.status)) {
     return false;
   }

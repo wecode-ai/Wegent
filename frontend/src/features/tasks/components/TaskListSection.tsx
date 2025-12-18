@@ -292,8 +292,13 @@ export default function TaskListSection({
     }
   };
 
-  const getUnreadDotColor = (status: string) => {
-    switch (status) {
+  const getUnreadDotColor = (task: Task) => {
+    // For group chat tasks, always use green to indicate new messages
+    if (task.is_group_chat) {
+      return 'bg-green-500';
+    }
+    // For non-group-chat tasks, use status-based colors
+    switch (task.status) {
       case 'COMPLETED':
         return 'bg-green-500';
       case 'FAILED':
@@ -307,7 +312,12 @@ export default function TaskListSection({
 
   // Determine whether to show status icon in expanded mode
   // Terminal states only show icon when unread, non-terminal states always show
+  // Group chat tasks show icon when there are unread messages
   const shouldShowStatusIcon = (task: Task): boolean => {
+    // For group chat tasks, show icon when there are unread messages
+    if (task.is_group_chat) {
+      return isTaskUnread(task);
+    }
     const terminalStates = ['COMPLETED', 'FAILED', 'CANCELLED'];
     if (terminalStates.includes(task.status)) {
       const unread = isTaskUnread(task);
@@ -388,7 +398,7 @@ export default function TaskListSection({
                         </div>
                         {isTaskUnread(task) && (
                           <span
-                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
                           />
                         )}
                       </div>
@@ -453,7 +463,7 @@ export default function TaskListSection({
                         </div>
                         {isTaskUnread(task) && (
                           <span
-                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task.status)} animate-pulse-dot`}
+                            className={`absolute -top-1 -right-1 w-2 h-2 rounded-full ${getUnreadDotColor(task)} animate-pulse-dot`}
                           />
                         )}
                       </div>

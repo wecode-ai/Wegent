@@ -54,6 +54,7 @@ export interface ChatSendPayload {
   task_id?: number;
   team_id: number;
   message: string;
+  title?: string;
   attachment_id?: number;
   enable_web_search?: boolean;
   force_override_bot_model?: string;
@@ -102,6 +103,7 @@ export interface ChatChunkPayload {
 }
 
 export interface ChatDonePayload {
+  task_id?: number;
   subtask_id: number;
   offset: number;
   result: Record<string, unknown>;

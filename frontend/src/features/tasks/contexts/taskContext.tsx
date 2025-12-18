@@ -282,6 +282,8 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       const isTerminalState = terminalStates.includes(data.status);
       const completedAt = isTerminalState ? data.completed_at || now : undefined;
 
+      // Use a ref-like pattern to capture isGroupChatTask from within setTasks
+      // We need to handle the logic inside setTasks to ensure we have the correct task data
       setTasks(prev => {
         const taskIndex = prev.findIndex(task => task.id === data.task_id);
         if (taskIndex === -1) {
@@ -291,11 +293,11 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
           return prev;
         }
 
-        const updatedTasks = [...prev];
-        const existingTask = updatedTasks[taskIndex];
+        const existingTask = prev[taskIndex];
+        const isGroupChatTask = existingTask.is_group_chat === true;
 
         // Update task status, progress, and completed_at for terminal states
-        updatedTasks[taskIndex] = {
+        const updatedTask = {
           ...existingTask,
           status: data.status as TaskStatus,
           progress: data.progress ?? existingTask.progress,
@@ -304,29 +306,56 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
           ...(completedAt && { completed_at: completedAt }),
         };
 
+        // For group chat tasks, move the task to the top of the list
+        // This ensures new messages in group chats are visible
+        if (isGroupChatTask) {
+          const updatedTasks = [...prev];
+          updatedTasks.splice(taskIndex, 1); // Remove from current position
+          updatedTasks.unshift(updatedTask); // Add to the beginning
+          console.log(`[TaskContext] Moved group chat task ${data.task_id} to top of list`);
+
+          // Schedule the side effects for after state update
+          // For group chat tasks, trigger re-render to show unread indicator
+          // Only if user is not currently viewing this task
+          setTimeout(() => {
+            if (!selectedTask || selectedTask.id !== data.task_id) {
+              setViewStatusVersion(v => v + 1);
+              console.log(
+                `[TaskContext] Triggered re-render for group chat task ${data.task_id} unread indicator`
+              );
+            }
+          }, 0);
+
+          return updatedTasks;
+        }
+
+        // For non-group chat tasks, update in place
+        const updatedTasks = [...prev];
+        updatedTasks[taskIndex] = updatedTask;
+
         console.log(
           `[TaskContext] Updated task ${data.task_id} status to ${data.status} via WebSocket`,
           completedAt ? `completed_at=${completedAt}` : ''
         );
+
+        // Schedule the side effects for after state update
+        // For non-group-chat tasks reaching terminal state, update viewedAt
+        if (isTerminalState && completedAt) {
+          setTimeout(() => {
+            const existingViewStatus = getTaskViewStatus(data.task_id);
+            if (existingViewStatus) {
+              // User has previously viewed this task, update viewedAt to match completed_at
+              markTaskAsViewed(data.task_id, data.status as TaskStatus, completedAt);
+              setViewStatusVersion(v => v + 1);
+              console.log(
+                `[TaskContext] Updated viewedAt for task ${data.task_id} to match completed_at (user previously viewed)`
+              );
+            }
+          }, 0);
+        }
+
         return updatedTasks;
       });
-
-      // When task reaches terminal state, update viewedAt for users who have previously viewed this task
-      // This prevents the "unread" badge from showing for tasks that the user has interacted with
-      // (e.g., user sent a message in task B, switched to task A, then task B completed)
-      if (isTerminalState && completedAt) {
-        const existingViewStatus = getTaskViewStatus(data.task_id);
-        if (existingViewStatus) {
-          // User has previously viewed this task, update viewedAt to match completed_at
-          // This ensures isTaskUnread returns false (since viewedAt >= completed_at)
-          markTaskAsViewed(data.task_id, data.status as TaskStatus, completedAt);
-          // Trigger re-render to update unread status in sidebar
-          setViewStatusVersion(prev => prev + 1);
-          console.log(
-            `[TaskContext] Updated viewedAt for task ${data.task_id} to match completed_at (user previously viewed)`
-          );
-        }
-      }
 
       // Also update selected task detail if it's the same task
       if (selectedTask && selectedTask.id === data.task_id) {
