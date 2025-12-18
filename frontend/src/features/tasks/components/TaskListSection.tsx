@@ -46,9 +46,13 @@ export default function TaskListSection({
   showTitle = true,
 }: TaskListSectionProps) {
   const router = useRouter();
-  const { selectedTaskDetail, setSelectedTask, refreshTasks } = useTaskContext();
+  const { selectedTaskDetail, setSelectedTask, refreshTasks, viewStatusVersion, markTaskAsViewed } =
+    useTaskContext();
   const { clearAllStreams } = useChatStreamContext();
   const { t } = useTranslation('common');
+  // Use viewStatusVersion to trigger re-render when task view status changes
+  // This is needed to update the unread dot immediately when a task is clicked
+  const _viewStatusVersion = viewStatusVersion;
   const [hoveredTaskId, setHoveredTaskId] = useState<number | null>(null);
   const [_loading, setLoading] = useState(false);
   const [longPressTaskId, setLongPressTaskId] = useState<number | null>(null);
@@ -75,6 +79,12 @@ export default function TaskListSection({
     // Clear all stream states when switching tasks to prevent auto-switching back
     // when the previous streaming task completes
     clearAllStreams();
+
+    // Immediately mark task as viewed to clear the unread dot
+    // Use current time as viewedAt to ensure it's always >= task's completed_at/updated_at
+    // This is simpler and more reliable than using task timestamps which may vary
+    // between list items and task details
+    markTaskAsViewed(task.id, task.status);
 
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams();

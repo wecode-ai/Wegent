@@ -68,6 +68,7 @@ export default function TaskSidebar({
     getUnreadCount,
     markAllTasksAsViewed,
     viewStatusVersion,
+    setSelectedTask,
   } = useTaskContext();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isSearchDialogOpen, setIsSearchDialogOpen] = useState(false);
@@ -291,6 +292,10 @@ export default function TaskSidebar({
 
   // New conversation - always navigate to chat page
   const handleNewAgentClick = () => {
+    // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
+    // This prevents the UI from being stuck showing the previous task's messages
+    setSelectedTask(null);
+
     // Clear all stream states to reset the chat area to initial state
     clearAllStreams();
 
@@ -305,6 +310,9 @@ export default function TaskSidebar({
   // Handle navigation button click - for code mode, clear streams to create new task
   const handleNavigationClick = (path: string, isActive: boolean) => {
     if (isActive) {
+      // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
+      setSelectedTask(null);
+
       // If already on this page, clear streams to create new task
       clearAllStreams();
       router.replace(path);

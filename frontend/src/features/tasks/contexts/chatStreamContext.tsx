@@ -122,6 +122,8 @@ interface ChatStreamContextType {
       onError?: (error: Error) => void;
     }
   ) => Promise<boolean>;
+  /** Version number that increments when clearAllStreams is called */
+  clearVersion: number;
 }
 
 // Export the context for components that need optional access (e.g., ClarificationForm)
@@ -146,6 +148,9 @@ const defaultStreamState: StreamState = {
 export function ChatStreamProvider({ children }: { children: ReactNode }) {
   // Use state to trigger re-renders when stream states change
   const [streamStates, setStreamStates] = useState<StreamStateMap>(new Map());
+  // Version number that increments when clearAllStreams is called
+  // Components can watch this to reset their local state
+  const [clearVersion, setClearVersion] = useState(0);
 
   // Get socket context
   const { isConnected, sendChatMessage, cancelChatStream, registerChatHandlers, joinTask } =
@@ -698,6 +703,8 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
     subtaskToTaskRef.current.clear();
     tempToRealTaskIdRef.current.clear();
     setStreamStates(new Map());
+    // Increment clearVersion to notify components to reset their local state
+    setClearVersion(v => v + 1);
   }, []);
 
   /**
@@ -807,6 +814,7 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
         resetStream,
         clearAllStreams,
         resumeStream,
+        clearVersion,
       }}
     >
       {children}

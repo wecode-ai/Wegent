@@ -217,10 +217,16 @@ export function SocketProvider({ children }: { children: ReactNode }) {
       }
 
       // Check if already joined this task room to prevent duplicate joins
+      // This check happens BEFORE adding to the set to handle concurrent calls
       if (joinedTasksRef.current.has(taskId)) {
         console.log('[Socket.IO] Already joined task room, skipping:', taskId);
         return {};
       }
+
+      // Add to set IMMEDIATELY to prevent concurrent duplicate joins
+      // This is crucial because the socket.emit is async and multiple calls
+      // could pass the above check before any callback completes
+      joinedTasksRef.current.add(taskId);
 
       return new Promise(resolve => {
         socket.emit(
@@ -234,8 +240,9 @@ export function SocketProvider({ children }: { children: ReactNode }) {
             };
             error?: string;
           }) => {
-            if (!response.error) {
-              joinedTasksRef.current.add(taskId);
+            // If there was an error, remove from the set so it can be retried
+            if (response.error) {
+              joinedTasksRef.current.delete(taskId);
             }
             resolve(response);
           }

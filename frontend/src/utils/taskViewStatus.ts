@@ -65,7 +65,22 @@ export function markTaskAsViewed(taskId: number, status: TaskStatus, taskTimesta
   // Use task timestamp if provided, otherwise use current time
   // When task timestamp is provided, we use it to ensure viewedAt >= taskUpdatedAt
   // This prevents the "unread" badge from showing due to client/server time differences
-  const viewedAt = taskTimestamp || new Date().toISOString();
+  const newViewedAt = taskTimestamp || new Date().toISOString();
+
+  // Get existing view status to ensure we don't set an older viewedAt
+  // This prevents the case where clicking a task sets viewedAt, but then
+  // loading task detail with a slightly different timestamp resets it to an older value
+  const existingStatus = statusMap[taskId];
+  let viewedAt = newViewedAt;
+
+  if (existingStatus) {
+    const existingTime = new Date(existingStatus.viewedAt).getTime();
+    const newTime = new Date(newViewedAt).getTime();
+    // Keep the newer timestamp to ensure the task stays marked as read
+    if (existingTime > newTime) {
+      viewedAt = existingStatus.viewedAt;
+    }
+  }
 
   statusMap[taskId] = {
     viewedAt,
@@ -102,10 +117,13 @@ export function isTaskUnread(task: Task): boolean {
 
   // If task was updated after last view, it's unread
   // This handles the case where a task is re-run
-  const taskUpdatedAt = new Date(task.completed_at || task.updated_at);
-  const viewedAt = new Date(viewStatus.viewedAt);
+  const taskUpdatedAt = new Date(task.completed_at || task.updated_at).getTime();
+  const viewedAt = new Date(viewStatus.viewedAt).getTime();
 
-  const isUnread = taskUpdatedAt > viewedAt;
+  // Use a 1-second tolerance to handle minor timestamp differences
+  // between task list and task detail responses
+  const TOLERANCE_MS = 1000;
+  const isUnread = taskUpdatedAt > viewedAt + TOLERANCE_MS;
   return isUnread;
 }
 

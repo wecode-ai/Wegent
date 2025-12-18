@@ -653,42 +653,32 @@ export default function MessagesArea({
 
   // Check if pending user message is already in displayMessages (to avoid duplication)
   // This happens when refreshTasks() is called and the backend returns the message
+  //
+  // SIMPLIFIED LOGIC: Only check the LAST user message for exact match
+  // This avoids false positives where an old message might match the new pending message
   const isPendingMessageAlreadyDisplayed = useMemo(() => {
     if (!pendingUserMessage) return false;
 
-    // Check if ANY user message in displayMessages matches the pending message
-    // This handles the case where the message might not be the last one
+    // Get the last user message from displayMessages
     const userMessages = displayMessages.filter(msg => msg.type === 'user');
     if (userMessages.length === 0) return false;
 
+    // Only check the LAST user message - this is the one that would match the pending message
+    const lastUserMessage = userMessages[userMessages.length - 1];
     const pendingTrimmed = pendingUserMessage.trim();
-    // Check all user messages for an EXACT match only
-    // IMPORTANT: Do NOT use includes() as it causes false positives when:
-    // - A new message happens to be a substring of an existing message
-    // - An existing message happens to be a substring of the new message
-    // This was causing the bug where follow-up messages weren't displayed
-    const matchingMessage = userMessages.find(msg => {
-      const msgTrimmed = msg.content.trim();
-      // Exact match
-      if (msgTrimmed === pendingTrimmed) return true;
-      return false;
-    });
+    const lastMsgTrimmed = lastUserMessage.content.trim();
 
-    if (!matchingMessage) return false;
+    // Exact match required
+    if (lastMsgTrimmed !== pendingTrimmed) return false;
 
     // If we have a pending attachment, also check if the backend message has the attachment
-    // This prevents hiding the pending message before the attachment is properly saved
     if (pendingAttachment) {
-      const hasMatchingAttachment = matchingMessage.attachments?.some(
+      const hasMatchingAttachment = lastUserMessage.attachments?.some(
         att => att.id === pendingAttachment.id
       );
-      // Only consider the message as "already displayed" if the attachment is also present
       return hasMatchingAttachment === true;
     }
 
-    // If the message is already displayed in displayMessages, hide the pending message
-    // This prevents duplicate bubbles in group chat scenarios where the backend
-    // returns the user message quickly while AI is still streaming
     return true;
   }, [displayMessages, pendingUserMessage, pendingAttachment]);
   // Check if streaming content is already in displayMessages (to avoid duplication)

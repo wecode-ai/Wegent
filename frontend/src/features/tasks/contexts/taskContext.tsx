@@ -21,6 +21,7 @@ import {
   getUnreadCount,
   markAllTasksAsViewed,
   initializeTaskViewStatus,
+  getTaskViewStatus,
 } from '@/utils/taskViewStatus';
 import { useSocket } from '@/contexts/SocketContext';
 import { TaskCreatedPayload, TaskInvitedPayload, TaskStatusPayload } from '@/types/socket';
@@ -41,7 +42,7 @@ type TaskContextType = {
   searchTasks: (term: string) => Promise<void>;
   isSearching: boolean;
   isSearchResult: boolean;
-  markTaskAsViewed: (taskId: number, status: TaskStatus) => void;
+  markTaskAsViewed: (taskId: number, status: TaskStatus, taskTimestamp?: string) => void;
   getUnreadCount: (tasks: Task[]) => number;
   markAllTasksAsViewed: () => void;
   viewStatusVersion: number;
@@ -69,7 +70,10 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
   const taskStatusMapRef = useRef<Map<number, TaskStatus>>(new Map());
 
   // WebSocket connection for real-time task updates
-  const { registerTaskHandlers, isConnected } = useSocket();
+  const { registerTaskHandlers, isConnected, leaveTask } = useSocket();
+
+  // Track previous task ID for leaving WebSocket room when switching tasks
+  const previousTaskIdRef = useRef<number | null>(null);
 
   // Pagination related
   const [hasMore, setHasMore] = useState(true);
@@ -188,6 +192,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
 
       // Create a new task object from the WebSocket payload
       // Note: Some fields use empty string as default since Task interface requires string type
+      // For streaming tasks, set initial status to RUNNING since the task is already being processed
       const newTask: Task = {
         id: data.task_id,
         title: data.title,
@@ -198,7 +203,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         git_domain: '',
         branch_name: '',
         prompt: '',
-        status: 'PENDING' as TaskStatus,
+        status: 'RUNNING' as TaskStatus,
         task_type: 'chat',
         progress: 0,
         batch: 0,
@@ -233,6 +238,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
       }
 
       // Create a new task object from the WebSocket payload for invited group chat
+      // For streaming tasks, set initial status to RUNNING since the task is already being processed
       const newTask: Task = {
         id: data.task_id,
         title: data.title,
@@ -243,7 +249,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         git_domain: '',
         branch_name: '',
         prompt: '',
-        status: 'PENDING' as TaskStatus,
+        status: 'RUNNING' as TaskStatus,
         task_type: 'chat',
         progress: 0,
         batch: 0,
@@ -304,6 +310,23 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         );
         return updatedTasks;
       });
+
+      // When task reaches terminal state, update viewedAt for users who have previously viewed this task
+      // This prevents the "unread" badge from showing for tasks that the user has interacted with
+      // (e.g., user sent a message in task B, switched to task A, then task B completed)
+      if (isTerminalState && completedAt) {
+        const existingViewStatus = getTaskViewStatus(data.task_id);
+        if (existingViewStatus) {
+          // User has previously viewed this task, update viewedAt to match completed_at
+          // This ensures isTaskUnread returns false (since viewedAt >= completed_at)
+          markTaskAsViewed(data.task_id, data.status as TaskStatus, completedAt);
+          // Trigger re-render to update unread status in sidebar
+          setViewStatusVersion(prev => prev + 1);
+          console.log(
+            `[TaskContext] Updated viewedAt for task ${data.task_id} to match completed_at (user previously viewed)`
+          );
+        }
+      }
 
       // Also update selected task detail if it's the same task
       if (selectedTask && selectedTask.id === data.task_id) {
@@ -434,15 +457,27 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Trigger task detail refresh when selectedTask changes
+  // Trigger task detail refresh and manage WebSocket room when selectedTask changes
   useEffect(() => {
+    const currentTaskId = selectedTask?.id ?? null;
+    const previousTaskId = previousTaskIdRef.current;
+
+    // Leave previous task room if switching to a different task
+    if (previousTaskId !== null && previousTaskId !== currentTaskId) {
+      console.log(`[TaskContext] Leaving WebSocket room for task ${previousTaskId}`);
+      leaveTask(previousTaskId);
+    }
+
+    // Update the ref to track current task
+    previousTaskIdRef.current = currentTaskId;
+
     if (selectedTask) {
       refreshSelectedTaskDetail(false); // Manual task selection, not auto-refresh
     } else {
       setSelectedTaskDetail(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedTask]);
+  }, [selectedTask, leaveTask]);
 
   // Mark task as viewed when selectedTaskDetail is loaded
   // This ensures we have the correct status and timestamps from the backend
@@ -496,6 +531,17 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
     setViewStatusVersion(prev => prev + 1);
   };
 
+  // Wrapper for markTaskAsViewed that also triggers re-render
+  // This ensures the unread dot disappears immediately when a task is clicked
+  const handleMarkTaskAsViewed = useCallback(
+    (taskId: number, status: TaskStatus, taskTimestamp?: string) => {
+      markTaskAsViewed(taskId, status, taskTimestamp);
+      // Trigger re-render to update unread status in sidebar
+      setViewStatusVersion(prev => prev + 1);
+    },
+    []
+  );
+
   return (
     <TaskContext.Provider
       value={{
@@ -514,7 +560,7 @@ export const TaskContextProvider = ({ children }: { children: ReactNode }) => {
         searchTasks,
         isSearching,
         isSearchResult,
-        markTaskAsViewed,
+        markTaskAsViewed: handleMarkTaskAsViewed,
         getUnreadCount,
         markAllTasksAsViewed: handleMarkAllTasksAsViewed,
         viewStatusVersion,

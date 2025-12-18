@@ -354,6 +354,7 @@ export default function ChatArea({
     stopStream: contextStopStream,
     resetStream: contextResetStream,
     resumeStream: contextResumeStream,
+    clearVersion,
   } = useChatStreamContext();
 
   // Track the task ID that is currently being streamed (for new tasks before they have a real ID)
@@ -436,6 +437,37 @@ export default function ChatArea({
     [refreshSelectedTaskDetail]
   );
 
+  // Reset all local state when clearAllStreams is called (e.g., user clicks "New Chat")
+  // This ensures the UI is not stuck in loading/streaming state
+  // Use a ref to track the previous clearVersion to detect actual changes
+  const prevClearVersionRef = useRef(clearVersion);
+  useEffect(() => {
+    // Only reset when clearVersion actually changes (not on initial mount)
+    if (clearVersion !== prevClearVersionRef.current) {
+      console.log('[ChatArea] clearVersion changed, resetting all local state', {
+        prev: prevClearVersionRef.current,
+        current: clearVersion,
+      });
+      prevClearVersionRef.current = clearVersion;
+
+      // Reset ALL streaming-related state immediately
+      setIsLoading(false);
+      setLocalPendingMessage(null);
+      setLocalPendingAttachment(null);
+      setStreamingTaskId(null);
+
+      // Also reset the previousTaskIdRef to prevent stale state issues
+      previousTaskIdRef.current = undefined;
+
+      // Reset hasRestoredPreferences to allow team preference restoration for new task
+      // This ensures the team selector can re-initialize when starting a new conversation
+      setHasRestoredPreferences(false);
+
+      // Reset isCancelling state to prevent UI from being stuck
+      setIsCancelling(false);
+    }
+  }, [clearVersion]);
+
   // Clear streamingTaskId when the streaming task completes or when we switch to a different task
   useEffect(() => {
     if (streamingTaskId && selectedTaskDetail?.id && selectedTaskDetail.id !== streamingTaskId) {
@@ -456,6 +488,9 @@ export default function ChatArea({
     // This handles the case when user clicks "New Chat" or navigates away
     if (!selectedTaskDetail?.id && !streamingTaskId) {
       resetStreamingState();
+      // Also reset isLoading to ensure UI is not stuck in loading state
+      // This is important when user clicks "New Chat" while a message is being sent
+      setIsLoading(false);
     }
   }, [selectedTaskDetail?.id, streamingTaskId, resetStreamingState]);
 

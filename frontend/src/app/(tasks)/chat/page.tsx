@@ -132,6 +132,9 @@ export default function ChatPage() {
 
   // Handle new task from collapsed sidebar button
   const handleNewTask = () => {
+    // IMPORTANT: Clear selected task FIRST to ensure UI state is reset immediately
+    // This prevents the UI from being stuck showing the previous task's messages
+    setSelectedTask(null);
     clearAllStreams();
     router.replace(paths.chat.getHref());
   };
