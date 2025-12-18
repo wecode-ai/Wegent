@@ -23,6 +23,8 @@ interface ChatInputProps {
   tipText?: ChatTipItem | null;
   // Optional badge element to render inline with text
   badge?: React.ReactNode;
+  // Callback when user pastes an image (Ctrl+V)
+  onImagePaste?: (file: File) => void;
 }
 
 export default function ChatInput({
@@ -35,6 +37,7 @@ export default function ChatInput({
   canSubmit = true,
   tipText,
   badge,
+  onImagePaste,
 }: ChatInputProps) {
   const { t, i18n } = useTranslation('chat');
 
@@ -225,11 +228,29 @@ export default function ChatInput({
 
   const handlePaste = useCallback(
     (e: React.ClipboardEvent<HTMLDivElement>) => {
-      e.preventDefault();
       if (disabled) return;
 
-      // Get plain text from clipboard, stripping all formatting and invisible characters
       const clipboardData = e.clipboardData;
+
+      // First, check if clipboard contains image files (Ctrl+V paste image)
+      if (onImagePaste && clipboardData.items) {
+        for (let i = 0; i < clipboardData.items.length; i++) {
+          const item = clipboardData.items[i];
+          if (item.type.startsWith('image/')) {
+            e.preventDefault();
+            const file = item.getAsFile();
+            if (file) {
+              onImagePaste(file);
+            }
+            return;
+          }
+        }
+      }
+
+      // No image found, proceed with text paste handling
+      e.preventDefault();
+
+      // Get plain text from clipboard, stripping all formatting and invisible characters
       let pastedText = clipboardData.getData('text/plain');
 
       // Remove invisible/control characters that can break layout
@@ -261,7 +282,7 @@ export default function ChatInput({
         setShowPlaceholder(!newText);
       }
     },
-    [disabled, setMessage, getTextWithNewlines]
+    [disabled, setMessage, getTextWithNewlines, onImagePaste]
   );
 
   const handleFocus = useCallback(() => {

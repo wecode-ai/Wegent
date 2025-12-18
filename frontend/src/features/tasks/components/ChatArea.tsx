@@ -1362,6 +1362,11 @@ export default function ChatArea({
                         canSubmit={canSubmit}
                         tipText={randomTip}
                         badge={selectedTeam ? <SelectedTeamBadge team={selectedTeam} /> : undefined}
+                        onImagePaste={
+                          isChatShell(selectedTeam) && !attachmentState.attachment && !attachmentState.isUploading
+                            ? handleFileSelect
+                            : undefined
+                        }
                       />
                     </div>
                   )}
@@ -1621,6 +1626,11 @@ export default function ChatArea({
                       taskType={taskType}
                       canSubmit={canSubmit}
                       tipText={randomTip}
+                      onImagePaste={
+                        isChatShell(selectedTeam) && !attachmentState.attachment && !attachmentState.isUploading
+                          ? handleFileSelect
+                          : undefined
+                      }
                     />
                   </div>
                 )}
