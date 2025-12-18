@@ -6,10 +6,8 @@
 Index module for RAG functionality.
 """
 
-from app.services.rag.index.chunker import DocumentChunker
 from app.services.rag.index.indexer import DocumentIndexer
 
 __all__ = [
-    "DocumentChunker",
     "DocumentIndexer",
 ]

@@ -183,11 +183,16 @@ git clone https://github.com/wecode-ai/wegent.git
 cd wegent
 docker-compose up -d
 
+# Optional: Enable RAG features with Elasticsearch
+# docker compose --profile rag up -d
+
 # Access points
 # Frontend: http://localhost:3000
 # Backend API: http://localhost:8000/api/docs
 # Executor Manager: http://localhost:8001
 ```
+
+**Note:** Elasticsearch is optional and only needed for RAG (Retrieval-Augmented Generation) features. Use `docker compose --profile rag up -d` to enable it.
 
 ### Module Development
 
@@ -842,10 +847,11 @@ POST /api/rag/test-connection?retriever_name=my-es-retriever&retriever_namespace
 - **Balanced queries** (0.7/0.3): General purpose (default)
 - **Precise matching** (0.3/0.7): Code search, API names, specific terms
 
-**Migration from Global Config:**
-- Old: RAG used global `ELASTICSEARCH_URL` and `DATASET_INDEX_STEP` environment variables
-- New: Each Retriever CRD defines its own storage configuration
+**RAG Storage Configuration:**
+- Each Retriever CRD defines its own storage configuration (no global environment variables)
 - Benefit: Multiple storage backends, per-user/group configurations, flexible index strategies
+- Elasticsearch is optional - only needed if using RAG features
+- To enable Elasticsearch: `docker compose --profile rag up -d`
 
 **Key environment variables:**
 - `DATABASE_URL`, `REDIS_URL`, `SECRET_KEY`, `ALGORITHM`

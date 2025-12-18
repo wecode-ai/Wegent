@@ -6,7 +6,8 @@
 Custom embedding implementation for external APIs.
 """
 
-from typing import List, Dict, Optional
+from typing import Dict, List, Optional
+
 import requests
 from llama_index.core.base.embeddings.base import BaseEmbedding
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -22,6 +23,7 @@ class CustomEmbedding(BaseEmbedding):
     api_url: str
     model: str
     headers: Dict[str, str]
+    api_key: Optional[str] = None
     _dimension: Optional[int] = None
 
     def __init__(
@@ -29,15 +31,22 @@ class CustomEmbedding(BaseEmbedding):
         api_url: str,
         model: str,
         headers: Optional[Dict[str, str]] = None,
+        api_key: Optional[str] = None,
         embed_batch_size: int = 10,
         **kwargs,
     ):
+        # Merge api_key into headers if provided
+        final_headers = headers.copy() if headers else {}
+        if api_key and "Authorization" not in final_headers:
+            final_headers["Authorization"] = f"Bearer {api_key}"
+
         super().__init__(
             model_name=model,
             embed_batch_size=embed_batch_size,
             api_url=api_url,
             model=model,
-            headers=headers or {},
+            headers=final_headers,
+            api_key=api_key,
             **kwargs,
         )
 
@@ -54,8 +63,7 @@ class CustomEmbedding(BaseEmbedding):
         return self._get_query_embedding(query)
 
     @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10)
+        stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10)
     )
     def _call_api(self, text: str) -> List[float]:
         """
@@ -74,7 +82,7 @@ class CustomEmbedding(BaseEmbedding):
             self.api_url,
             json={"model": self.model, "input": text},
             headers=self.headers,
-            timeout=30
+            timeout=30,
         )
         response.raise_for_status()
         embedding = response.json()["data"][0]["embedding"]

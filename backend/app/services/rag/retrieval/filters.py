@@ -7,18 +7,18 @@ Metadata filtering parser for RAG retrieval.
 Converts Dify-style metadata conditions to LlamaIndex MetadataFilters.
 """
 
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, List, Optional
+
 from llama_index.core.vector_stores import (
-    MetadataFilters,
-    MetadataFilter,
     ExactMatchFilter,
-    FilterOperator
+    FilterOperator,
+    MetadataFilter,
+    MetadataFilters,
 )
 
 
 def parse_metadata_filters(
-    knowledge_id: str,
-    metadata_condition: Optional[Dict[str, Any]] = None
+    knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None
 ) -> MetadataFilters:
     """
     Parse Dify-style metadata condition into LlamaIndex MetadataFilters.
@@ -71,9 +71,7 @@ def parse_metadata_filters(
     }
 
     # Always filter by knowledge_id
-    filters = [
-        ExactMatchFilter(key="knowledge_id", value=knowledge_id)
-    ]
+    filters = [ExactMatchFilter(key="knowledge_id", value=knowledge_id)]
 
     # Parse additional metadata conditions
     if metadata_condition and "conditions" in metadata_condition:
@@ -89,13 +87,7 @@ def parse_metadata_filters(
             filter_op = OPERATOR_MAP.get(operator.lower(), FilterOperator.EQ)
 
             # Create MetadataFilter using LlamaIndex's built-in class
-            filters.append(
-                MetadataFilter(
-                    key=key,
-                    value=value,
-                    operator=filter_op
-                )
-            )
+            filters.append(MetadataFilter(key=key, value=value, operator=filter_op))
 
     # Determine condition type (AND/OR)
     condition = "and"
@@ -106,8 +98,7 @@ def parse_metadata_filters(
 
 
 def build_elasticsearch_filters(
-    knowledge_id: str,
-    metadata_condition: Optional[Dict[str, Any]] = None
+    knowledge_id: str, metadata_condition: Optional[Dict[str, Any]] = None
 ) -> List[Dict[str, Any]]:
     """
     Build Elasticsearch filter clauses for hybrid search (direct ES queries).
@@ -119,9 +110,7 @@ def build_elasticsearch_filters(
     Returns:
         List of Elasticsearch filter clauses for use in ES query DSL
     """
-    filters = [
-        {"term": {"metadata.knowledge_id.keyword": knowledge_id}}
-    ]
+    filters = [{"term": {"metadata.knowledge_id.keyword": knowledge_id}}]
 
     if not metadata_condition or "conditions" not in metadata_condition:
         return filters
