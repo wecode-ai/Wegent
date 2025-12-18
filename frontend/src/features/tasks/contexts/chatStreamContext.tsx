@@ -313,6 +313,21 @@ export function ChatStreamProvider({ children }: { children: ReactNode }) {
             streamingContentRefs.current.set(resolvedTaskId, newContent);
             updateStreamState(resolvedTaskId, { streamingContent: newContent });
           }
+
+          // Handle group chat message without @mention (ai_triggered: false)
+          // In this case, the message was saved but AI was not triggered
+          // We should let onComplete handle the state cleanup to ensure proper sequencing:
+          // 1. onComplete is called
+          // 2. ChatArea's onComplete callback refreshes task detail
+          // 3. Then streaming state is cleared
+          // This prevents the pending message from disappearing before the saved message appears
+          if (data.ai_triggered === false && data.done) {
+            console.log(
+              '[ChatStreamContext] Message saved without AI trigger (group chat without @mention)'
+            );
+            // Don't clear streaming state here - let onComplete handle it
+            // This ensures refreshSelectedTaskDetail completes before clearing pending state
+          }
         },
         onError: (err: Error) => {
           updateStreamState(resolvedTaskId, {

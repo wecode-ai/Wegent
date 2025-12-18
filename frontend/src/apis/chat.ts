@@ -38,6 +38,10 @@ export interface ChatStreamData {
   cached?: boolean;
   /** Whether stream was cancelled */
   cancelled?: boolean;
+  /** Whether AI response was triggered (for group chat without @mention, this is false) */
+  ai_triggered?: boolean;
+  /** Message when AI was not triggered (for group chat without @mention) */
+  message?: string;
 }
 
 /**
