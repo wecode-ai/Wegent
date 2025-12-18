@@ -7,7 +7,8 @@ Base storage backend interface for RAG functionality.
 """
 
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, List, Optional
+
 from llama_index.core.schema import BaseNode
 
 
@@ -63,22 +64,33 @@ class BaseStorageBackend(ABC):
         pass
 
     @abstractmethod
-    def index(
+    def index_with_metadata(
         self,
         nodes: List[BaseNode],
-        index_name: str,
+        knowledge_id: str,
+        document_id: str,
+        source_file: str,
+        created_at: str,
         embed_model,
+        **kwargs,
     ) -> Dict:
         """
-        Index nodes into storage.
+        Add metadata to nodes and index them into storage.
 
         Args:
             nodes: List of nodes to index
-            index_name: Index/collection name
+            knowledge_id: Knowledge base ID
+            document_id: Document ID (doc_xxx format)
+            source_file: Source file name
+            created_at: Creation timestamp
             embed_model: Embedding model
+            **kwargs: Additional parameters (e.g., user_id for per_user index strategy)
 
         Returns:
-            Indexing result dict
+            Indexing result dict with:
+                - indexed_count: Number of nodes indexed
+                - index_name: Index/collection name
+                - status: Indexing status
         """
         pass
 
@@ -90,10 +102,10 @@ class BaseStorageBackend(ABC):
         embed_model,
         retrieval_setting: Dict[str, Any],
         metadata_condition: Optional[Dict[str, Any]] = None,
-        **kwargs
+        **kwargs,
     ) -> Dict:
         """
-        Retrieve nodes from storage (Dify-style API).
+        Retrieve nodes from storage (Dify-compatible API).
 
         Args:
             knowledge_id: Knowledge base ID
@@ -109,7 +121,17 @@ class BaseStorageBackend(ABC):
             **kwargs: Additional parameters
 
         Returns:
-            Retrieval result dict
+            Dict with Dify-compatible format:
+                {
+                    "records": [
+                        {
+                            "content": str,      # Chunk text content
+                            "score": float,      # Relevance score (0-1)
+                            "title": str,        # Document title/source file
+                            "metadata": dict     # Additional metadata
+                        }
+                    ]
+                }
         """
         pass
 
@@ -145,11 +167,7 @@ class BaseStorageBackend(ABC):
 
     @abstractmethod
     def list_documents(
-        self,
-        knowledge_id: str,
-        page: int = 1,
-        page_size: int = 20,
-        **kwargs
+        self, knowledge_id: str, page: int = 1, page_size: int = 20, **kwargs
     ) -> Dict:
         """
         List documents in knowledge base.

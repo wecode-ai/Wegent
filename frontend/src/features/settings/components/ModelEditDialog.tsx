@@ -166,10 +166,20 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         // Set model category type
         setModelCategoryType(model.spec.modelType || 'llm');
         const modelType = model.spec.modelConfig?.env?.model;
-        if (modelType === 'openai') setProviderType('openai');
-        else if (modelType === 'gemini') setProviderType('gemini');
-        else if (modelType === 'claude') setProviderType('anthropic');
-        else setProviderType('openai');
+        // Map model type to provider type
+        if (modelType === 'claude') {
+          setProviderType('anthropic');
+        } else if (
+          modelType === 'openai' ||
+          modelType === 'gemini' ||
+          modelType === 'cohere' ||
+          modelType === 'jina' ||
+          modelType === 'custom'
+        ) {
+          setProviderType(modelType);
+        } else {
+          setProviderType('openai'); // Default fallback
+        }
         setApiKey(model.spec.modelConfig?.env?.api_key || '');
         setBaseUrl(model.spec.modelConfig?.env?.base_url || '');
         const headers = model.spec.modelConfig?.env?.custom_headers;
@@ -227,13 +237,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     }
   }, [open, model]);
 
-  // Determine model options based on provider
+  // Determine model options based on model category type and provider
+  // For embedding/rerank, only show "Custom..." option since they don't use preset LLM models
   const modelOptions =
-    providerType === 'openai'
-      ? OPENAI_MODEL_OPTIONS
-      : providerType === 'gemini'
-        ? GEMINI_MODEL_OPTIONS
-        : ANTHROPIC_MODEL_OPTIONS;
+    modelCategoryType === 'embedding' || modelCategoryType === 'rerank'
+      ? [{ value: 'custom', label: 'Custom...' }]
+      : providerType === 'openai'
+        ? OPENAI_MODEL_OPTIONS
+        : providerType === 'gemini'
+          ? GEMINI_MODEL_OPTIONS
+          : ANTHROPIC_MODEL_OPTIONS;
 
   // Get available protocols for current category type
   const availableProtocols = PROTOCOL_BY_CATEGORY[modelCategoryType] || [];
@@ -246,8 +259,14 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
     if (protocols && protocols.length > 0) {
       setProviderType(protocols[0].value);
     }
-    setModelId('');
-    setCustomModelId('');
+    // For embedding/rerank, automatically set to custom mode
+    if (value === 'embedding' || value === 'rerank') {
+      setModelId('custom');
+      setCustomModelId('');
+    } else {
+      setModelId('');
+      setCustomModelId('');
+    }
   };
 
   // Set model ID when model changes
@@ -454,6 +473,16 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
             }
           : undefined;
 
+      // Map provider type to model field value
+      // For LLM: openai -> openai, anthropic -> claude, gemini -> gemini
+      // For embedding/rerank: use provider type directly (openai, cohere, jina, custom)
+      let modelFieldValue = providerType;
+      if (modelCategoryType === 'llm') {
+        if (providerType === 'anthropic') {
+          modelFieldValue = 'claude';
+        }
+      }
+
       const modelCRD: ModelCRD = {
         apiVersion: 'agent.wecode.io/v1',
         kind: 'Model',
@@ -465,12 +494,7 @@ const ModelEditDialog: React.FC<ModelEditDialogProps> = ({
         spec: {
           modelConfig: {
             env: {
-              model:
-                providerType === 'openai'
-                  ? 'openai'
-                  : providerType === 'gemini'
-                    ? 'gemini'
-                    : 'claude',
+              model: modelFieldValue,
               model_id: finalModelId,
               api_key: apiKey,
               ...(baseUrl && { base_url: baseUrl }),

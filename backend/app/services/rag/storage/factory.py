@@ -6,10 +6,12 @@
 Storage backend factory for creating storage backends from Retriever CRD.
 """
 
-from typing import Dict, Any
+from typing import Any, Dict
+
+from app.schemas.kind import Retriever
 from app.services.rag.storage.base import BaseStorageBackend
 from app.services.rag.storage.elasticsearch_backend import ElasticsearchBackend
-from app.schemas.kind import Retriever
+from app.services.rag.storage.qdrant_backend import QdrantBackend
 
 
 def create_storage_backend(retriever: Retriever) -> BaseStorageBackend:
@@ -35,14 +37,13 @@ def create_storage_backend(retriever: Retriever) -> BaseStorageBackend:
         "password": storage_config.password,
         "apiKey": storage_config.apiKey,
         "indexStrategy": storage_config.indexStrategy.model_dump(exclude_none=True),
-        "ext": storage_config.ext or {}
+        "ext": storage_config.ext or {},
     }
 
     # Create backend based on type
     if storage_type == "elasticsearch":
         return ElasticsearchBackend(config)
     elif storage_type == "qdrant":
-        # TODO: Implement QdrantBackend when needed
-        raise ValueError(f"Qdrant backend not yet implemented")
+        return QdrantBackend(config)
     else:
         raise ValueError(f"Unsupported storage type: {storage_type}")
