@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
-from app.api.dependencies import get_db
+from app.api.dependencies import get_db, with_task_telemetry
 from app.core import security
 from app.core.config import settings
 from app.models.user import User
@@ -76,8 +76,8 @@ def create_task_with_optional_id(
 
 @router.post("/{task_id}", response_model=TaskInDB, status_code=status.HTTP_201_CREATED)
 def create_task_with_id(
-    task_id: int,
     task_create: TaskCreate,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -135,7 +135,7 @@ def search_tasks_by_title(
 
 @router.get("/{task_id}", response_model=TaskDetail)
 def get_task(
-    task_id: int,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -147,8 +147,8 @@ def get_task(
 
 @router.put("/{task_id}", response_model=TaskInDB)
 def update_task(
-    task_id: int,
     task_update: TaskUpdate,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -160,7 +160,7 @@ def update_task(
 
 @router.delete("/{task_id}")
 def delete_task(
-    task_id: int,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -171,8 +171,8 @@ def delete_task(
 
 @router.post("/{task_id}/cancel")
 async def cancel_task(
-    task_id: int,
     background_tasks: BackgroundTasks,
+    task_id: int = Depends(with_task_telemetry),
     current_user: User = Depends(security.get_current_user),
     db: Session = Depends(get_db),
 ):

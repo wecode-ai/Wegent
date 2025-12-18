@@ -165,13 +165,32 @@ jobs:
         run: |
           npx wait-on http://localhost:3000 http://localhost:8000/api/docs --timeout 60000
 
+      - name: Start Mock Model Server for image upload tests
+        working-directory: ./frontend
+        run: |
+          npx tsx e2e/utils/mock-model-server.ts &
+          echo $! > mock-server.pid
+          sleep 3
+          # Verify mock server is running
+          curl -f http://localhost:9999/health || echo "Mock server health check failed (non-critical)"
+
       - name: Run E2E tests
         working-directory: ./frontend
         env:
           E2E_BASE_URL: http://localhost:3000
           E2E_API_URL: http://localhost:8000
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
           CI: true
         run: npx playwright test --project=chromium --project=api
+
+      - name: Stop Mock Model Server
+        if: always()
+        working-directory: ./frontend
+        run: |
+          if [ -f mock-server.pid ]; then
+            kill $(cat mock-server.pid) 2>/dev/null || true
+            rm mock-server.pid
+          fi
 
       - name: Upload test results
         if: always()
@@ -339,12 +358,31 @@ jobs:
       - name: Wait for backend
         run: npx wait-on http://localhost:8000/api/docs --timeout 60000
 
+      - name: Start Mock Model Server for image upload tests
+        working-directory: ./frontend
+        run: |
+          npx tsx e2e/utils/mock-model-server.ts &
+          echo $! > mock-server.pid
+          sleep 3
+          # Verify mock server is running
+          curl -f http://localhost:9999/health || echo "Mock server health check failed (non-critical)"
+
       - name: Run API tests
         working-directory: ./frontend
         env:
           E2E_API_URL: http://localhost:8000
+          MOCK_MODEL_SERVER_URL: http://localhost:9999
           CI: true
         run: npx playwright test --project=api
+
+      - name: Stop Mock Model Server
+        if: always()
+        working-directory: ./frontend
+        run: |
+          if [ -f mock-server.pid ]; then
+            kill $(cat mock-server.pid) 2>/dev/null || true
+            rm mock-server.pid
+          fi
 
       - name: Upload API test results
         if: always()
