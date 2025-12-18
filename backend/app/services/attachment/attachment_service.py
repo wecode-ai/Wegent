@@ -356,6 +356,63 @@ class AttachmentService:
 
         return True
 
+    # Image file extensions supported for vision models
+    IMAGE_EXTENSIONS = frozenset([".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"])
+
+    def is_image_attachment(self, attachment: SubtaskAttachment) -> bool:
+        """
+        Check if an attachment is an image file.
+
+        Args:
+            attachment: SubtaskAttachment record
+
+        Returns:
+            True if the attachment is an image file
+        """
+        return attachment.file_extension.lower() in self.IMAGE_EXTENSIONS
+
+    def build_vision_content_block(
+        self, attachment: SubtaskAttachment
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Build an OpenAI-compatible vision content block for an image attachment.
+
+        Args:
+            attachment: SubtaskAttachment record with image_base64 data
+
+        Returns:
+            Vision content block dict, or None if not an image or no image data
+        """
+        if not self.is_image_attachment(attachment) or not attachment.image_base64:
+            return None
+
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{attachment.mime_type};base64,{attachment.image_base64}"
+            },
+        }
+
+    def build_document_text_prefix(
+        self, attachment: SubtaskAttachment
+    ) -> Optional[str]:
+        """
+        Build a text prefix containing document content for prepending to messages.
+
+        Args:
+            attachment: SubtaskAttachment record with extracted_text
+
+        Returns:
+            Formatted text prefix, or None if no extracted text
+        """
+        if not attachment.extracted_text:
+            return None
+
+        return (
+            f"【文件内容 - {attachment.original_filename}】:\n"
+            f"{attachment.extracted_text}\n\n"
+        )
+
     def build_message_with_attachment(
         self,
         message: str,
@@ -375,17 +432,7 @@ class AttachmentService:
             For images: Dict with vision content structure
             For documents: String with combined text
         """
-        # Check if this is an image attachment
-        is_image = attachment.file_extension.lower() in [
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".gif",
-            ".bmp",
-            ".webp",
-        ]
-
-        if is_image and attachment.image_base64:
+        if self.is_image_attachment(attachment) and attachment.image_base64:
             # Return vision-compatible message structure
             # This will be handled specially by the chat service
             return {
@@ -395,17 +442,13 @@ class AttachmentService:
                 "mime_type": attachment.mime_type,
                 "filename": attachment.original_filename,
             }
-        elif attachment.extracted_text:
-            # For documents, combine text as before
-            combined = (
-                f"【文件内容 - {attachment.original_filename}】:\n"
-                f"{attachment.extracted_text}\n\n"
-                f"【用户问题】:\n"
-                f"{message}"
-            )
-            return combined
-        else:
-            return message
+
+        doc_prefix = self.build_document_text_prefix(attachment)
+        if doc_prefix:
+            # For documents, combine text
+            return f"{doc_prefix}【用户问题】:\n{message}"
+
+        return message
 
 
 # Global service instance
