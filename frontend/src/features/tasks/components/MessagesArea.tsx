@@ -253,7 +253,7 @@ export default function MessagesArea({
                 content,
                 timestamp: new Date(sub.updated_at).getTime(),
                 botName: sub.bots?.[0]?.name || 'Bot',
-                userName: selectedTaskDetail?.user?.user_name,
+                userName: sub.sender_user_name || selectedTaskDetail?.user?.user_name,
                 teamName: selectedTaskDetail?.team?.name,
                 attachments: attachmentsWithImages,
               };
