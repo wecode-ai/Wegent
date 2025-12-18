@@ -327,7 +327,7 @@ class ChatService(ChatServiceBase):
             )
             messages.extend(await tool_handler.execute_all(tool_calls))
 
-    async def _get_group_chat_history(self, task_id: int) -> list[dict[str, str]]:
+    async def _get_group_chat_history(self, task_id: int) -> list[dict[str, Any]]:
         """
         Get chat history for group chat mode from database.
 
@@ -338,53 +338,119 @@ class ChatService(ChatServiceBase):
         The "User" prefix indicates that the content in brackets is a username.
         Assistant messages remain unchanged.
 
+        For messages with attachments:
+        - Image attachments are included as vision content (base64 encoded)
+        - Document attachments have their extracted text prepended to the message
+
         Args:
             task_id: Task ID
 
         Returns:
             List of message dictionaries with role and content
+            Content can be a string or a list (for vision messages)
         """
+        return await asyncio.to_thread(self._get_group_chat_history_sync, task_id)
+
+    def _get_group_chat_history_sync(self, task_id: int) -> list[dict[str, Any]]:
+        """Synchronous implementation of group chat history retrieval."""
+        from app.models.subtask import Subtask, SubtaskStatus
+        from app.models.user import User
+        from app.services.attachment import attachment_service
         from app.services.chat.db_handler import _db_session
 
-        def _get_history_sync() -> list[dict[str, str]]:
-            from app.models.subtask import Subtask, SubtaskRole, SubtaskStatus
-            from app.models.user import User
-
-            history = []
-            with _db_session() as db:
-                # Get all completed subtasks for this task, ordered by message_id
-                subtasks = (
-                    db.query(Subtask, User.user_name)
-                    .outerjoin(User, Subtask.sender_user_id == User.id)
-                    .filter(
-                        Subtask.task_id == task_id,
-                        Subtask.status == SubtaskStatus.COMPLETED,
-                    )
-                    .order_by(Subtask.message_id.asc())
-                    .all()
+        history: list[dict[str, Any]] = []
+        with _db_session() as db:
+            subtasks = (
+                db.query(Subtask, User.user_name)
+                .outerjoin(User, Subtask.sender_user_id == User.id)
+                .filter(
+                    Subtask.task_id == task_id,
+                    Subtask.status == SubtaskStatus.COMPLETED,
                 )
+                .order_by(Subtask.message_id.asc())
+                .all()
+            )
 
-                for subtask, sender_username in subtasks:
-                    if subtask.role == SubtaskRole.USER:
-                        # User message - include "User[username]:" prefix
-                        content = subtask.prompt or ""
-                        if sender_username:
-                            content = f"User[{sender_username}]: {content}"
-                        history.append({"role": "user", "content": content})
-                    elif subtask.role == SubtaskRole.ASSISTANT:
-                        # Assistant message - use result.value
-                        content = ""
-                        if subtask.result and isinstance(subtask.result, dict):
-                            content = subtask.result.get("value", "")
-                        if content:
-                            history.append({"role": "assistant", "content": content})
+            for subtask, sender_username in subtasks:
+                msg = self._build_history_message(
+                    db, subtask, sender_username, attachment_service
+                )
+                if msg:
+                    history.append(msg)
 
-            return history
+        return history
 
-        # Run in executor to avoid blocking
-        import asyncio
+    def _build_history_message(
+        self,
+        db,
+        subtask,
+        sender_username: str | None,
+        attachment_service,
+    ) -> dict[str, Any] | None:
+        """Build a single history message from a subtask."""
+        from app.models.subtask import SubtaskRole
 
-        return await asyncio.get_event_loop().run_in_executor(None, _get_history_sync)
+        if subtask.role == SubtaskRole.USER:
+            return self._build_user_message(
+                db, subtask, sender_username, attachment_service
+            )
+        elif subtask.role == SubtaskRole.ASSISTANT:
+            return self._build_assistant_message(subtask)
+        return None
+
+    def _build_user_message(
+        self,
+        db,
+        subtask,
+        sender_username: str | None,
+        attachment_service,
+    ) -> dict[str, Any]:
+        """Build a user message with optional attachments."""
+        from app.models.subtask_attachment import AttachmentStatus, SubtaskAttachment
+
+        # Build text content with username prefix
+        text_content = subtask.prompt or ""
+        if sender_username:
+            text_content = f"User[{sender_username}]: {text_content}"
+
+        # Get attachments
+        attachments = (
+            db.query(SubtaskAttachment)
+            .filter(
+                SubtaskAttachment.subtask_id == subtask.id,
+                SubtaskAttachment.status == AttachmentStatus.READY,
+            )
+            .all()
+        )
+
+        if not attachments:
+            return {"role": "user", "content": text_content}
+
+        # Process attachments
+        vision_parts: list[dict[str, Any]] = []
+        for attachment in attachments:
+            vision_block = attachment_service.build_vision_content_block(attachment)
+            if vision_block:
+                vision_parts.append(vision_block)
+            else:
+                doc_prefix = attachment_service.build_document_text_prefix(attachment)
+                if doc_prefix:
+                    text_content = f"{doc_prefix}{text_content}"
+
+        # Build final content
+        if vision_parts:
+            return {
+                "role": "user",
+                "content": [{"type": "text", "text": text_content}, *vision_parts],
+            }
+        return {"role": "user", "content": text_content}
+
+    def _build_assistant_message(self, subtask) -> dict[str, Any] | None:
+        """Build an assistant message from subtask result."""
+        if not subtask.result or not isinstance(subtask.result, dict):
+            return None
+        content = subtask.result.get("value", "")
+        return {"role": "assistant", "content": content} if content else None
 
     def _truncate_group_chat_history(
         self, history: list[dict[str, str]], task_id: int
